@@ -6,40 +6,40 @@ on:
       - "v*"
 
 permissions:
-  contents: write
+  contents: read
 
 env:
-  GO_VERSION: "1.23"
+  GO_VERSION: "1.24"
   NODE_VERSION: "22"
 
 jobs:
   preflight:
-    # The repository is still in its planning phase. Until the Phase 0 scaffold
-    # (go.mod, web/package.json) lands, every other job is skipped so that the
-    # workflow stays green instead of failing on a missing toolchain.
-    name: Preflight (scaffold present?)
+    # The Phase 0 scaffold has landed. This job no longer skips the release: it
+    # asserts the layout GoReleaser needs and fails the tag build if it is gone.
+    name: Preflight (repository layout)
     runs-on: ubuntu-latest
-    outputs:
-      scaffold: ${{ steps.check.outputs.scaffold }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Detect scaffold
-        id: check
+      - name: Check the expected layout
         run: |
-          if [ -f go.mod ] && [ -f web/package.json ]; then
-            echo "scaffold=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "scaffold=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::Phase 0 scaffold not found (go.mod / web/package.json); skipping build jobs."
-          fi
+          missing=0
+          for path in go.mod go.sum .goreleaser.yaml cmd/gintrack wasm \
+                      web/package.json web/package-lock.json web/dist/.gitkeep; do
+            if [ ! -e "$path" ]; then
+              echo "::error::missing $path"
+              missing=1
+            fi
+          done
+          exit "$missing"
 
   release:
     name: Build and publish release
     runs-on: ubuntu-latest
     needs: [preflight]
-    if: needs.preflight.outputs.scaffold == 'true'
+    permissions:
+      contents: write
     steps:
       - name: Checkout (full history for changelog)
         uses: actions/checkout@v4
@@ -60,11 +60,13 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
 
+      # GoReleaser's before.hooks rebuild these too, so this is belt and braces:
+      # it lets the smoke test below run before a single binary is cross-built.
       - name: Build WASM core
-        env:
-          GOOS: js
-          GOARCH: wasm
-        run: go build -trimpath -o web/public/core.wasm ./wasm
+        run: make wasm
+
+      - name: WASM smoke test
+        run: node scripts/wasm-smoke.mjs
 
       - name: Build web bundle
         working-directory: web
@@ -76,6 +78,9 @@ jobs:
         run: |
           test -f web/dist/index.html
           test -f web/dist/core.wasm || test -f web/public/core.wasm
+
+      - name: Validate the GoReleaser configuration
+        run: go run github.com/goreleaser/goreleaser/v2@latest check
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6

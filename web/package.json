@@ -18,7 +18,8 @@
     "test": "vitest",
     "test:watch": "vitest --watch",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "wasm:smoke": "node ../scripts/wasm-smoke.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "5.102.8",

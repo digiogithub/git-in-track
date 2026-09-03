@@ -1,19 +1,21 @@
 # 09 — CI/CD and Releases
 
-This document defines how **git-in-track** is built, verified and released. It contains
-complete, ready-to-copy YAML for the GitHub Actions workflows and for GoReleaser, plus the
+This document defines how **git-in-track** is built, verified and released. It explains the
+committed GitHub Actions workflows and the GoReleaser configuration, and adds the
 versioning policy, branch strategy, release checklist and the distribution channels planned
 for later phases.
 
-> Status: planning. The workflow files below are **not** yet committed to
-> `.github/workflows/`. They live here until Phase 0 (Foundations) creates the repository
-> scaffold, at which point they are copied verbatim to their real paths.
+> Status: implemented. `.github/workflows/ci.yml`, `.github/workflows/release.yml`,
+> `.goreleaser.yaml`, `.golangci.yaml` and the `Makefile` are committed and are the source
+> of truth. This document explains them; when the two disagree, the file wins and this
+> document is the bug.
 
 - Module path: `github.com/digiogithub/git-in-track`
 - CLI binary: `gintrack`
-- Toolchain: Go 1.23+, Node 22, npm
-- Build artifacts: `web/dist` (Vite bundle), `web/public/core.wasm` (Go → WASM core),
-  `gintrack` (single static binary embedding `web/dist` via `go:embed`)
+- Toolchain: Go 1.24 in CI (`go.mod` declares `go 1.23.0`, so 1.23 still builds), Node 22, npm
+- Build artifacts: `web/dist` (Vite bundle), `web/public/core.wasm` + `web/public/wasm_exec.js`
+  (Go → WASM core, both git-ignored), `gintrack` (single static binary embedding `web/dist`
+  via `go:embed`)
 
 ---
 
@@ -25,7 +27,7 @@ ships the WASM core:
 ```
 1. wasm    GOOS=js GOARCH=wasm go build -o web/public/core.wasm ./wasm
 2. web     npm ci && npm run build            -> web/dist
-3. build   go build -tags embed ./cmd/gintrack -> gintrack (embeds web/dist)
+3. build   go build ./cmd/gintrack             -> gintrack (embeds web/dist)
 ```
 
 Any pipeline that produces a runnable binary must run these three steps in this order.
@@ -40,7 +42,7 @@ graph LR
   D --> E[vite build]
   A --> F[wasm build]
   F --> E
-  E --> G[go build with embed]
+  E --> G[go build, embeds web/dist]
   B --> G
   C --> G
   G --> H{tag v*?}
@@ -52,307 +54,102 @@ graph LR
 
 ## 2. `.github/workflows/ci.yml`
 
-> **Repository status.** The workflows below are committed under `.github/workflows/` from day
-> one. Because the code scaffold does not exist yet, each workflow starts with a `preflight` job
-> that checks for `go.mod` and `web/package.json` and skips every other job (with a notice) when
-> they are missing. Once the Phase 0 scaffold lands, the guard becomes a no-op and the pipelines
-> run exactly as documented here. The guard can be removed after 1.0.
+**Source of truth: [`.github/workflows/ci.yml`](../.github/workflows/ci.yml).** The file is
+the specification; this section explains it and is kept in step with it. `make lint-ci`
+parses both workflows as YAML and runs `actionlint` when it is installed.
 
-Runs on every push to `main` and on every pull request. Fails fast on formatting and
-static analysis, then runs the full test suite and a real build.
+Runs on every push to `main`, on every pull request, and on demand. Fails fast on
+formatting and static analysis, then runs the full test suite and a real build.
+
+| Job         | Name in the checks list             | What it does                                                                                     |
+| ----------- | ----------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `preflight` | Preflight (repository layout)       | Asserts the scaffold every other job needs is present, and fails if a change removed it            |
+| `workflows` | Workflows (YAML + actionlint)       | Parses `.github/workflows/*.yml` with PyYAML, then runs `actionlint`                               |
+| `go`        | Go (vet, test, lint)                | `go mod download`, tidy check, `gofmt` check, `go vet`, `go test -race` + coverage, golangci-lint  |
+| `web`       | Web (lint, typecheck, test, build)  | `npm ci`, ESLint, `tsc -b`, vitest, `vite build`, uploads `web/dist`                               |
+| `wasm`      | WASM core                           | `make wasm`, size report, `node scripts/wasm-smoke.mjs`, uploads `core.wasm` + `wasm_exec.js`      |
+| `build`     | Full build (embed frontend)         | WASM → web → `go build`, runs `gintrack version` and `--help`, uploads the binary                  |
+
+Everything except `build` fans out from `preflight`; `build` waits for all of them, so a
+failed lint or test never produces a downloadable artifact.
+
+### Preflight
+
+The Phase 0 scaffold has landed, so the guard no longer skips the pipeline when `go.mod`
+and `web/package.json` are missing. It now asserts the layout — `go.mod`, `go.sum`,
+`Makefile`, `.goreleaser.yaml`, `.golangci.yaml`, `cmd/gintrack`, `wasm`, the web
+workspace, `web/dist/.gitkeep` and `scripts/wasm-smoke.mjs` — and **fails** when something
+is gone, which is a real regression rather than a reason to stay green. Downstream jobs
+therefore no longer carry an `if:` condition, and the required status checks of §8 always
+report.
+
+### The two traps this repository sets
 
 ```yaml
-name: CI
+# 1. .golangci.yaml is a v2 config, so the action must be v7+ with a v2.x linter.
+- uses: golangci/golangci-lint-action@v8
+  with:
+    version: ${{ env.GOLANGCI_LINT_VERSION }}   # v2.x
+    args: --timeout=5m
 
-on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-  workflow_dispatch:
-
-permissions:
-  contents: read
-
-concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
-env:
-  GO_VERSION: "1.23"
-  NODE_VERSION: "22"
-
-jobs:
-  go:
-    name: Go (vet, test, lint)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-          cache-dependency-path: go.sum
-
-      - name: Download modules
-        run: go mod download
-
-      - name: Verify go.mod is tidy
-        run: |
-          go mod tidy
-          git diff --exit-code -- go.mod go.sum
-
-      - name: Check gofmt
-        run: |
-          unformatted=$(gofmt -l . | grep -v '^web/' || true)
-          if [ -n "$unformatted" ]; then
-            echo "These files are not gofmt'ed:"
-            echo "$unformatted"
-            exit 1
-          fi
-
-      - name: go vet
-        run: go vet ./...
-
-      - name: go test (race + coverage)
-        run: go test -race -covermode=atomic -coverprofile=coverage.out ./...
-
-      - name: Upload coverage artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: go-coverage
-          path: coverage.out
-          retention-days: 7
-
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
-        with:
-          version: v1.61.0
-          args: --timeout=5m
-
-  web:
-    name: Web (lint, typecheck, test, build)
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: web
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: ESLint
-        run: npm run lint
-
-      - name: TypeScript typecheck
-        run: npm run typecheck
-
-      - name: Unit tests (vitest)
-        run: npm run test -- --run --coverage
-
-      - name: Vite build
-        run: npm run build
-
-      - name: Upload web bundle
-        uses: actions/upload-artifact@v4
-        with:
-          name: web-dist
-          path: web/dist
-          retention-days: 7
-
-  wasm:
-    name: WASM core
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-          cache-dependency-path: go.sum
-
-      - name: Build core.wasm
-        env:
-          GOOS: js
-          GOARCH: wasm
-        run: go build -trimpath -o core.wasm ./wasm
-
-      - name: Report size
-        run: ls -lh core.wasm
-
-      - name: Upload core.wasm
-        uses: actions/upload-artifact@v4
-        with:
-          name: core-wasm
-          path: core.wasm
-          retention-days: 7
-
-  build:
-    name: Full build (embed frontend)
-    runs-on: ubuntu-latest
-    needs: [go, web, wasm]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-          cache-dependency-path: go.sum
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-
-      - name: Build WASM core into web/public
-        env:
-          GOOS: js
-          GOARCH: wasm
-        run: go build -trimpath -o web/public/core.wasm ./wasm
-
-      - name: Build web bundle
-        working-directory: web
-        run: |
-          npm ci
-          npm run build
-
-      - name: Build gintrack binary
-        env:
-          CGO_ENABLED: "0"
-        run: |
-          go build -trimpath \
-            -ldflags "-s -w -X main.version=ci -X main.commit=${{ github.sha }} -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            -o dist/gintrack ./cmd/gintrack
-
-      - name: Smoke test
-        run: |
-          ./dist/gintrack version
-          ./dist/gintrack --help
-
-      - name: Upload dev binary
-        uses: actions/upload-artifact@v4
-        with:
-          name: gintrack-linux-amd64-dev
-          path: dist/gintrack
-          retention-days: 7
+# 2. npm installs third-party Go sources under web/node_modules; never build them.
+- run: go list ./... | grep -v '/web/node_modules/' | xargs go vet
 ```
 
 ### Notes on the CI workflow
 
 - **Caching**: `actions/setup-go@v5` with `cache: true` caches both the module cache and
   the build cache, keyed on `go.sum`. `actions/setup-node@v4` with `cache: npm` caches the
-  npm cache directory keyed on `web/package-lock.json`. No manual `actions/cache` step is
-  needed.
+  npm cache directory keyed on `web/package-lock.json`. `golangci/golangci-lint-action`
+  keeps its own analysis cache. No manual `actions/cache` step is needed.
 - **`concurrency`** cancels superseded runs on the same branch/PR, which keeps queue times
   low on a small open-source project.
 - **`permissions: contents: read`** — CI never needs write access.
 - **`go mod tidy` check** prevents drift between imports and `go.mod`.
-- The `build` job depends on all three verification jobs so that a broken lint/test never
+- **golangci-lint v2.** `.golangci.yaml` is a `version: "2"` configuration, so the action
+  must be `golangci/golangci-lint-action@v7` or later with a `v2.x` linter version;
+  `@v6` only knows how to install golangci-lint v1 and fails to parse the config. The
+  version is pinned in the `GOLANGCI_LINT_VERSION` environment variable to the release
+  verified locally by `make lint`, and the action's default `verify: true` additionally
+  validates the config against its JSON schema.
+- **Never lint `web/node_modules`.** npm ships Go sources there; every Go step filters
+  `go list ./...` through `grep -v '/web/node_modules/'`, matching `GO_PKGS` in the
+  Makefile.
+- **`gofmt` scope.** The check skips `web/node_modules/` only, so `web/embed.go` is
+  formatted like every other Go file in the module.
+- **No `--coverage` for vitest.** The web workspace does not install a coverage provider,
+  and `vitest --coverage` would try to install one non-interactively in CI.
+- The `build` job depends on every verification job so that a broken lint/test never
   produces a downloadable artifact.
-- Later phases add a `e2e` job running Playwright against `gintrack serve` (Phase 2+) and a
-  `matrix` of `ubuntu-latest`, `macos-latest`, `windows-latest` for the Go job once file
+- Later phases add an `e2e` job running Playwright against `gintrack serve` (Phase 2+) and
+  a `matrix` of `ubuntu-latest`, `macos-latest`, `windows-latest` for the Go job once file
   watching is implemented (Phase 2), because `fsnotify` behaviour is platform specific.
 
 ---
 
 ## 3. `.github/workflows/release.yml`
 
-Triggered by pushing a tag matching `v*`. Builds the frontend and the WASM core first,
-then hands over to GoReleaser, which cross-compiles, archives, checksums, generates the
-changelog and publishes the GitHub Release.
+**Source of truth: [`.github/workflows/release.yml`](../.github/workflows/release.yml).**
 
-```yaml
-name: Release
+Triggered by pushing a tag matching `v*`. Builds the WASM core and the frontend first,
+smoke-tests the WASM module, validates the GoReleaser configuration, then hands over to
+GoReleaser, which cross-compiles, archives, checksums, generates the changelog and
+publishes the GitHub Release.
 
-on:
-  push:
-    tags:
-      - "v*"
+| Job         | Steps                                                                                 |
+| ----------- | ------------------------------------------------------------------------------------- |
+| `preflight` | asserts the repository layout GoReleaser needs                                          |
+| `release`   | checkout with `fetch-depth: 0` → setup Go/Node → `make wasm` → `node scripts/wasm-smoke.mjs` → `npm ci && npm run build` → verify embedded assets → `goreleaser check` → `goreleaser release --clean` |
 
-permissions:
-  contents: write
+Permissions follow least privilege: the workflow is `contents: read` at the top level and
+only the `release` job raises itself to `contents: write`, which is what GoReleaser needs
+to create the GitHub Release. `fetch-depth: 0` is required for the generated changelog.
 
-env:
-  GO_VERSION: "1.23"
-  NODE_VERSION: "22"
+### Snapshot build (local, or optional for `main`)
 
-jobs:
-  release:
-    name: Build and publish release
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout (full history for changelog)
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-          cache-dependency-path: go.sum
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-
-      - name: Build WASM core
-        env:
-          GOOS: js
-          GOARCH: wasm
-        run: go build -trimpath -o web/public/core.wasm ./wasm
-
-      - name: Build web bundle
-        working-directory: web
-        run: |
-          npm ci
-          npm run build
-
-      - name: Verify embedded assets exist
-        run: |
-          test -f web/dist/index.html
-          test -f web/dist/core.wasm || test -f web/public/core.wasm
-
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v6
-        with:
-          distribution: goreleaser
-          version: "~> v2"
-          args: release --clean
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-```
-
-### Snapshot job (optional, for `main`)
-
-A nightly or manual snapshot build is useful to catch cross-compilation breakage before a
-tag is cut. It is the same workflow with `args: release --snapshot --clean --skip=publish`
-and no `contents: write` permission.
-
+A snapshot build catches cross-compilation breakage before a tag is cut. Locally that is
+`make release-snapshot`; as a nightly or manual workflow it is the same job with
+`args: release --snapshot --clean --skip=publish` and no `contents: write` permission.
 ---
 
 ## 4. Artifacts are unsigned
@@ -418,147 +215,42 @@ have to search for them.
 
 ## 5. `.goreleaser.yaml`
 
+**Source of truth: [`.goreleaser.yaml`](../.goreleaser.yaml)**, validated by
+`make release-check` (`goreleaser check`) and by the release workflow before it publishes.
+
 GoReleaser v2 configuration. CGO is disabled everywhere so the binaries are fully static
 and cross-compilation needs no C toolchain. `before.hooks` rebuild the WASM core and the
-web bundle so that a local `goreleaser release --snapshot` reproduces CI exactly.
+web bundle, in that order, so that a local `make release-snapshot` reproduces CI exactly:
 
 ```yaml
-# .goreleaser.yaml
-version: 2
-
-project_name: gintrack
-
 before:
   hooks:
     - go mod tidy
     - go mod download
-    # The Go core compiled to WebAssembly, consumed by the web app.
     - sh -c "GOOS=js GOARCH=wasm go build -trimpath -o web/public/core.wasm ./wasm"
-    # The React/Vite bundle that the binary embeds through go:embed.
     - sh -c "cd web && npm ci && npm run build"
+```
 
-builds:
-  - id: gintrack
-    main: ./cmd/gintrack
-    binary: gintrack
-    env:
-      - CGO_ENABLED=0
-    flags:
-      - -trimpath
-      - -tags=embed
+The `ldflags` set the four variables declared in `cmd/gintrack/main.go` — `main.version`,
+`main.commit`, `main.date` and `main.builtBy` — which is what `gintrack version` prints:
+
+```yaml
     ldflags:
       - -s -w
       - -X main.version={{ .Version }}
       - -X main.commit={{ .FullCommit }}
       - -X main.date={{ .CommitDate }}
       - -X main.builtBy=goreleaser
-    goos:
-      - linux
-      - darwin
-      - windows
-    goarch:
-      - amd64
-      - arm64
-    mod_timestamp: "{{ .CommitTimestamp }}"
-
-archives:
-  - id: default
-    ids:
-      - gintrack
-    name_template: "gintrack_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    formats:
-      - tar.gz
-    format_overrides:
-      - goos: windows
-        formats:
-          - zip
-    files:
-      - README.md
-      - LICENSE
-      - CHANGELOG.md
-      - src: docs/**/*.md
-        dst: docs
-        strip_parent: false
-
-checksum:
-  name_template: "checksums.txt"
-  algorithm: sha256
-
-snapshot:
-  version_template: "{{ incpatch .Version }}-snapshot-{{ .ShortCommit }}"
-
-changelog:
-  use: github
-  sort: asc
-  abbrev: -1
-  groups:
-    - title: Features
-      regexp: '^.*?feat(\([[:word:]\-\.]+\))??!?:.+$'
-      order: 0
-    - title: Bug fixes
-      regexp: '^.*?fix(\([[:word:]\-\.]+\))??!?:.+$'
-      order: 1
-    - title: Performance
-      regexp: '^.*?perf(\([[:word:]\-\.]+\))??!?:.+$'
-      order: 2
-    - title: Refactors
-      regexp: '^.*?refactor(\([[:word:]\-\.]+\))??!?:.+$'
-      order: 3
-    - title: Documentation
-      regexp: '^.*?docs(\([[:word:]\-\.]+\))??!?:.+$'
-      order: 4
-    - title: Others
-      order: 999
-  filters:
-    exclude:
-      - '^test:'
-      - '^test\('
-      - '^chore:'
-      - '^chore\('
-      - '^ci:'
-      - '^ci\('
-      - '^style:'
-      - "merge conflict"
-      - Merge pull request
-      - Merge remote-tracking branch
-      - Merge branch
-
-release:
-  github:
-    owner: digiogithub
-    name: git-in-track
-  draft: false
-  prerelease: auto
-  mode: replace
-  name_template: "git-in-track {{ .Tag }}"
-  header: |
-    ## git-in-track {{ .Tag }}
-
-    A git-native, markdown-first project management tool.
-  footer: |
-    ---
-
-    ### Verifying your download
-
-    All artifacts are listed in `checksums.txt` (SHA-256).
-
-    ```bash
-    sha256sum -c checksums.txt --ignore-missing   # Linux
-    shasum -a 256 -c checksums.txt --ignore-missing   # macOS
-    ```
-
-    ### Unsigned binaries
-
-    These binaries are **not code-signed and not notarized**.
-
-    - **macOS**: `xattr -d com.apple.quarantine ./gintrack`, or System Settings >
-      Privacy & Security > "Open Anyway".
-    - **Windows**: SmartScreen > "More info" > "Run anyway", or
-      `Unblock-File -Path .\gintrack_*.zip` before extracting.
-    - **Linux**: `chmod +x gintrack`.
-
-    **Full changelog**: https://github.com/digiogithub/git-in-track/compare/{{ .PreviousTag }}...{{ .Tag }}
 ```
+
+The rest of the file configures the 3×2 `goos`/`goarch` matrix, `tar.gz` archives with a
+`zip` override for Windows, `checksums.txt` (SHA-256), the grouped Conventional-Commits
+changelog, and the release notes template that repeats the Gatekeeper and SmartScreen
+instructions of §4 on every release.
+
+There is no `-tags=embed` build tag: `web/embed.go` embeds `web/dist` unconditionally and
+reports `Built() == false` when the directory holds nothing but its `.gitkeep`, which is
+what lets `go install` produce a working CLI without a frontend build.
 
 ### Artifact matrix produced
 
@@ -574,82 +266,68 @@ release:
 
 ---
 
-## 6. `Makefile` sketch
+## 6. `Makefile`
 
-The Makefile is the single local entry point; CI reproduces the same commands so that
-"works on my machine" and "works in CI" cannot diverge.
+The Makefile is the single local entry point; CI calls the same targets (`make wasm`,
+`node scripts/wasm-smoke.mjs`) or the identical commands, so "works on my machine" and
+"works in CI" cannot diverge.
 
-```makefile
-# Makefile — git-in-track
-SHELL          := /bin/bash
-BINARY         := gintrack
-CMD            := ./cmd/gintrack
-WASM_OUT       := web/public/core.wasm
-DIST           := dist
+**Source of truth: [`Makefile`](../Makefile).** Targets:
 
-VERSION        ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-COMMIT         ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
-DATE           ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
-LDFLAGS        := -s -w \
-                  -X main.version=$(VERSION) \
-                  -X main.commit=$(COMMIT) \
-                  -X main.date=$(DATE)
+| Target             | What it does                                                             |
+| ------------------ | ------------------------------------------------------------------------ |
+| `deps`             | `go mod download` and `npm ci` in `web/`                                  |
+| `wasm`             | `GOOS=js GOARCH=wasm go build -o web/public/core.wasm ./wasm`, then copies the matching `wasm_exec.js` |
+| `wasm-smoke`       | depends on `wasm`; runs `scripts/wasm-smoke.mjs` (§6.1)                   |
+| `web`              | depends on `wasm`; `npm ci && npm run build` → `web/dist`                 |
+| `build`            | `go build` → `bin/gintrack`, embedding `web/dist`                         |
+| `test`             | `test-go` (race + coverage) and `test-web` (vitest)                       |
+| `lint`             | `lint-go`, `lint-web` and `lint-ci`                                       |
+| `lint-ci`          | parses both workflow files as YAML and runs `actionlint` when installed   |
+| `fmt`              | `gofmt -w` over the tracked Go sources                                    |
+| `run` / `dev`      | companion server / Vite dev server                                        |
+| `release-check`    | `goreleaser check` on `.goreleaser.yaml`, no build                        |
+| `release-snapshot` | `goreleaser release --snapshot --clean --skip=publish`                    |
+| `clean`            | removes build outputs, keeping `web/dist/.gitkeep`                        |
 
-export CGO_ENABLED := 0
+Two details matter and are easy to get wrong:
 
-.DEFAULT_GOAL := build
-.PHONY: help deps web wasm build test test-go test-web lint lint-go lint-web run release-snapshot clean
+- **`GO_PKGS`.** npm installs third-party *Go* sources under `web/node_modules` (for
+  example `flatted/golang`), which `go list ./...` happily returns. Every Go target
+  filters them out:
 
-help: ## Show available targets
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
-	  awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
+  ```makefile
+  GO_PKGS = $(shell go list ./... | grep -v '/web/node_modules/')
+  ```
 
-deps: ## Install Go modules and npm dependencies
-	go mod download
-	cd web && npm ci
+  CI does the same with `go list ./... | grep -v '/web/node_modules/' | xargs go vet`.
+  `golangci-lint` excludes the same path through `linters.exclusions.paths`.
 
-wasm: ## Compile the shared Go core to WebAssembly
-	GOOS=js GOARCH=wasm go build -trimpath -o $(WASM_OUT) ./wasm
-	@cp "$$(go env GOROOT)/lib/wasm/wasm_exec.js" web/public/wasm_exec.js 2>/dev/null || \
-	 cp "$$(go env GOROOT)/misc/wasm/wasm_exec.js" web/public/wasm_exec.js
+- **`clean` keeps `web/dist/.gitkeep`.** `web/embed.go` declares `//go:embed all:dist`, so
+  deleting the directory breaks `go build` until the frontend is rebuilt.
 
-web: wasm ## Build the React app into web/dist
-	cd web && npm run build
+### 6.1 WASM smoke test
 
-build: web ## Build the gintrack binary embedding web/dist
-	mkdir -p $(DIST)
-	go build -trimpath -tags embed -ldflags "$(LDFLAGS)" -o $(DIST)/$(BINARY) $(CMD)
+`scripts/wasm-smoke.mjs` (Node 22, ESM) proves the browser bundle can actually call into
+the Go core, without a browser and without Playwright. It does exactly what
+`web/src/core-bridge/worker.ts` does at runtime:
 
-test: test-go test-web ## Run all tests
+1. evaluates `web/public/wasm_exec.js` in the current context, which defines `globalThis.Go`;
+2. instantiates `web/public/core.wasm` against `go.importObject`;
+3. calls `go.run(instance)` — `wasm/main_js.go` ends in `select {}`, so the promise never
+   resolves and the module stays resident; an early exit or a trap fails the test;
+4. asserts `gintrackCore.version()` returns `{"ok":true,"data":{version,commit,date,schema}}`;
+5. asserts `gintrackCore.parseItem(path, text)` returns an envelope whose `data` carries
+   `id`, `type`, `title` and a computed `rev` — `rev` is never stored in a file, so its
+   presence is the proof that real core code ran;
+6. asserts a malformed item comes back as `{"ok":false,"error":{"code":...}}`.
 
-test-go: ## Go tests with the race detector
-	go test -race -covermode=atomic -coverprofile=coverage.out ./...
+Node 20+ already provides every global `wasm_exec.js` expects (`crypto`, `TextEncoder`,
+`TextDecoder`, `performance`); the script installs them from `node:` builtins only when
+they are missing, so it also runs on older hosts.
 
-test-web: ## Vitest unit tests
-	cd web && npm run test -- --run
-
-lint: lint-go lint-web ## Run all linters
-
-lint-go: ## gofmt check + go vet + golangci-lint
-	gofmt -l . | grep -v '^web/' | tee /dev/stderr | (! read)
-	go vet ./...
-	golangci-lint run --timeout=5m
-
-lint-web: ## ESLint + TypeScript typecheck
-	cd web && npm run lint && npm run typecheck
-
-run: build ## Build and start the companion server on 127.0.0.1:7317
-	$(DIST)/$(BINARY) serve --addr 127.0.0.1:7317
-
-dev: ## Vite dev server with the companion proxy (needs `make run` in another shell)
-	cd web && npm run dev
-
-release-snapshot: ## Local GoReleaser dry run, no publishing
-	goreleaser release --snapshot --clean --skip=publish
-
-clean: ## Remove build outputs
-	rm -rf $(DIST) web/dist $(WASM_OUT) coverage.out
-```
+Run it with `make wasm-smoke` (which builds the artifacts first) or `npm run wasm:smoke`
+from `web/`. The `wasm` job in CI and the `release` job both run it.
 
 ---
 
@@ -696,7 +374,8 @@ git-in-track follows [Semantic Versioning 2.0.0](https://semver.org/).
 ### Protection rules for `main`
 
 - Require a pull request before merging, with at least 1 approving review.
-- Require status checks to pass: `Go (vet, test, lint)`, `Web (lint, typecheck, test,
+- Require status checks to pass: `Preflight (repository layout)`,
+  `Workflows (YAML + actionlint)`, `Go (vet, test, lint)`, `Web (lint, typecheck, test,
   build)`, `WASM core`, `Full build (embed frontend)`.
 - Require branches to be up to date before merging.
 - Require conversation resolution before merging.
@@ -734,9 +413,11 @@ by the pipeline; the rest are the maintainer's responsibility.
 - [ ] `main` is green in CI and there are no open blocking issues for the milestone.
 - [ ] `make lint test` passes locally on macOS **and** Linux (Windows if the release
       touches the watcher or path handling).
+- [ ] `make wasm-smoke` passes: `core.wasm` instantiates and answers outside a browser.
+- [ ] `make release-check` validates `.goreleaser.yaml`.
 - [ ] `make release-snapshot` succeeds and produces all 6 archives plus `checksums.txt`.
-- [ ] The snapshot binary runs: `./dist/gintrack version`, `gintrack serve` starts and the
-      embedded web app loads at `http://127.0.0.1:7317`.
+- [ ] The snapshot binary runs: `./dist/gintrack_linux_amd64_v1/gintrack version`,
+      `gintrack serve` starts and the embedded web app loads at `http://127.0.0.1:7317`.
 - [ ] Data model changes, if any, are accompanied by a migration and a `schemaVersion`
       bump.
 - [ ] `CHANGELOG.md` "Unreleased" section is reviewed; anything the generated changelog
@@ -786,7 +467,8 @@ app unless the frontend was built first, so it is documented as the "developer i
 go install github.com/digiogithub/git-in-track/cmd/gintrack@latest
 ```
 
-The `embed` build tag guards the `go:embed` directive; without it the CLI still runs
+`web/embed.go` embeds `web/dist` unconditionally, and a checkout that was never built ships
+only the directory's `.gitkeep`. `web.Built()` then reports `false`: the CLI still runs
 `gintrack mcp` and the file-based commands, and `gintrack serve` reports that no embedded
 UI is available and points at the released binaries.
 
