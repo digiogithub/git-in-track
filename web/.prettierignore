@@ -1,0 +1,6 @@
+dist
+coverage
+node_modules
+public/core.wasm
+public/wasm_exec.js
+package-lock.json
