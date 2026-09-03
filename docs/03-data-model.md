@@ -357,6 +357,11 @@ Both operations produce one commit and MUST NOT be mixed with content edits.
 - `id_allocation.reserved` lets a person pre-allocate a block while working offline for a long time:
   `reserved: {task: [200, 249]}` means "nobody else takes 200–249", enforced only by convention and
   by other clients' scan step (reserved ranges participate in `max_seen`).
+- `id_allocation.ranges` assigns a permanent block per person, keyed by handle and then by item
+  type (`jose: {task: [[1000, 1999]]}`). It is read only when `strategy: ranges`: the allocator then
+  takes the first free number inside the acting user's block and fails with "id range exhausted"
+  when the block is full. Under either strategy, a block that belongs to somebody else participates
+  in `max_seen` and is never allocated from.
 - Agents (MCP) are instructed to create items one at a time and re-read the index between creations
   (doc 05, agent conventions).
 
@@ -487,6 +492,9 @@ id_allocation:
     milestone: 3
   reserved:               # optional offline pre-allocation
     task: [[200, 249]]
+  ranges:                 # only read when strategy is `ranges` (section 4.2)
+    jose:  { task: [[1000, 1999]] }
+    marta: { task: [[2000, 2999]] }
   redirects:              # written by `gintrack doctor --renumber`
     ACME-US-0043: ACME-US-0044
 

@@ -75,6 +75,17 @@ type IDAllocation struct {
 	Counters      map[ItemType]int       `yaml:"counters,omitempty"`
 	Reserved      map[ItemType][]IDRange `yaml:"reserved,omitempty"`
 	Redirects     map[ItemID]ItemID      `yaml:"redirects,omitempty"`
+
+	// Ranges assigns a block of numbers to each person, keyed by handle and then
+	// by item type. It is only read when Strategy is "ranges", the opt-in of
+	// docs/03 section 4.2 for very large teams:
+	//
+	//	id_allocation:
+	//	  strategy: ranges
+	//	  ranges:
+	//	    jose:  { task: [[1000, 1999]] }
+	//	    marta: { task: [[2000, 2999]] }
+	Ranges map[string]map[ItemType][]IDRange `yaml:"ranges,omitempty"`
 }
 
 // IDRange is an inclusive range of item numbers reserved by one person while
