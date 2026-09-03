@@ -120,7 +120,7 @@ product implements:
 docs/.pmngr/project.yaml     # project key, statuses, labels, members
 docs/.pmngr/epics/           # <KEY>-EP-<NNNN>-<slug>.md
 docs/.pmngr/stories/         # <KEY>-US-<NNNN>-<slug>.md
-docs/.pmngr/tasks/           # <KEY>-TK-<NNNN>-<slug>.md
+docs/.pmngr/tasks/           # <KEY>-T-<NNNN>-<slug>.md
 docs/.pmngr/milestones/      # <KEY>-MS-<NNNN>-<slug>.md
 docs/.pmngr/comments/<ITEM-ID>/<timestamp>-<author>.md
 ```
@@ -175,7 +175,7 @@ Never edit or delete someone else's comment.
 ### Create a task under a story
 
 Add a file in `docs/.pmngr/tasks/` named `<ID>-<slug>.md`. The ID rule:
-`<PROJECT-KEY>-TK-<NNNN>`, where `NNNN` is the next unused number for that type,
+`<PROJECT-KEY>-T-<NNNN>`, where `NNNN` is the next unused number for that type,
 zero-padded to four digits, scanning the existing files in the folder. Set
 `parent` to the story ID and `type: task`.
 
