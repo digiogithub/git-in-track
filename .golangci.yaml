@@ -1,0 +1,70 @@
+# golangci-lint configuration — see docs/10-development-guidelines.md, section 2.2.
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - ineffassign
+    - unused
+    - revive
+    - errorlint
+    - wrapcheck
+    - bodyclose
+    - contextcheck
+    - noctx
+    - gocritic
+    - misspell
+    - unconvert
+    - predeclared
+    - copyloopvar
+    - nilerr
+  settings:
+    revive:
+      rules:
+        - name: exported
+        - name: package-comments
+        - name: error-strings
+        - name: error-naming
+        - name: context-as-argument
+        - name: indent-error-flow
+    errcheck:
+      check-type-assertions: true
+    gocritic:
+      enabled-tags: [diagnostic, style, performance]
+      disabled-checks: [hugeParam, rangeValCopy]
+    misspell:
+      locale: US
+      # Data-model spellings that are values, not prose: the status category
+      # `cancelled` is written that way in every project.yaml, and `metricas`
+      # is part of a Spanish slug fixture.
+      ignore-rules:
+        - cancelled
+        - metricas
+  exclusions:
+    paths:
+      # Third-party Go sources npm installs under the web workspace.
+      - web/node_modules
+    rules:
+      # Table-driven tests legitimately ignore some errors in setup helpers.
+      - path: _test\.go
+        linters: [errcheck, wrapcheck, gocritic]
+      # Generated WASM glue is not ours to style.
+      - path: wasm/glue/
+        linters: [revive, gocritic]
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes: [github.com/digiogithub/git-in-track]
+  exclusions:
+    paths:
+      - web/node_modules

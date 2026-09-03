@@ -753,7 +753,7 @@ bearer token this prevents drive-by localhost attacks from arbitrary web pages.
 - **Versioning** — the path carries the major version (`/api/v1`). Additive changes only
   within a major version; clients must ignore unknown fields.
 - **Optimistic concurrency** — every item, page and board response carries `rev`, a
-  content hash (`sha256:` + first 12 hex chars of the canonical file bytes) and the same
+  content hash (`sha256:` + first 16 hex chars of the canonical file bytes) and the same
   value in the `ETag` header. Mutations require `If-Match: <rev>`; a mismatch returns
   `409 Conflict`. `If-Match: *` bypasses the check (documented as unsafe).
 - **Pagination** — `?limit=` (default 50, max 500) and `?offset=`, plus `X-Total-Count`.

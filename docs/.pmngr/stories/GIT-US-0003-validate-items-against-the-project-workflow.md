@@ -2,9 +2,10 @@
 id: GIT-US-0003
 type: story
 title: Validate items against the project workflow
-status: backlog
+status: in_progress
 created: 2026-09-03T00:00:00Z
-updated: 2026-09-03T00:00:00Z
+updated: 2026-09-03T21:17:39Z
+started: 2026-09-03T21:17:39Z
 author: team
 priority: high
 parent: GIT-EP-0001

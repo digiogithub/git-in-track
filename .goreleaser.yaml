@@ -1,0 +1,135 @@
+# GoReleaser configuration — see docs/09-ci-cd-and-releases.md, section 5.
+# Artifacts are deliberately unsigned and unnotarized; checksums.txt is the
+# integrity mechanism (ADR-011).
+version: 2
+
+project_name: gintrack
+
+before:
+  hooks:
+    - go mod tidy
+    - go mod download
+    # The Go core compiled to WebAssembly, consumed by the web app.
+    - sh -c "GOOS=js GOARCH=wasm go build -trimpath -o web/public/core.wasm ./wasm"
+    # The React/Vite bundle that the binary embeds through go:embed.
+    - sh -c "cd web && npm ci && npm run build"
+
+builds:
+  - id: gintrack
+    main: ./cmd/gintrack
+    binary: gintrack
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .FullCommit }}
+      - -X main.date={{ .CommitDate }}
+      - -X main.builtBy=goreleaser
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: default
+    ids:
+      - gintrack
+    name_template: "gintrack_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    files:
+      - README.md
+      - LICENSE
+      - src: docs/**/*.md
+        dst: docs
+        strip_parent: false
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot-{{ .ShortCommit }}"
+
+changelog:
+  use: github
+  sort: asc
+  abbrev: -1
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\([[:word:]\-\.]+\))??!?:.+$'
+      order: 0
+    - title: Bug fixes
+      regexp: '^.*?fix(\([[:word:]\-\.]+\))??!?:.+$'
+      order: 1
+    - title: Performance
+      regexp: '^.*?perf(\([[:word:]\-\.]+\))??!?:.+$'
+      order: 2
+    - title: Refactors
+      regexp: '^.*?refactor(\([[:word:]\-\.]+\))??!?:.+$'
+      order: 3
+    - title: Documentation
+      regexp: '^.*?docs(\([[:word:]\-\.]+\))??!?:.+$'
+      order: 4
+    - title: Others
+      order: 999
+  filters:
+    exclude:
+      - '^test:'
+      - '^test\('
+      - '^chore:'
+      - '^chore\('
+      - '^ci:'
+      - '^ci\('
+      - '^style:'
+      - "merge conflict"
+      - Merge pull request
+      - Merge remote-tracking branch
+      - Merge branch
+
+release:
+  github:
+    owner: digiogithub
+    name: git-in-track
+  draft: false
+  prerelease: auto
+  mode: replace
+  name_template: "git-in-track {{ .Tag }}"
+  header: |
+    ## git-in-track {{ .Tag }}
+
+    A git-native, markdown-first project management tool.
+  footer: |
+    ---
+
+    ### Verifying your download
+
+    All artifacts are listed in `checksums.txt` (SHA-256).
+
+    ```bash
+    sha256sum -c checksums.txt --ignore-missing        # Linux
+    shasum -a 256 -c checksums.txt --ignore-missing    # macOS
+    ```
+
+    ### Unsigned binaries
+
+    These binaries are **not code-signed and not notarized**.
+
+    - **macOS**: `xattr -d com.apple.quarantine ./gintrack`, or System Settings >
+      Privacy & Security > "Open Anyway".
+    - **Windows**: SmartScreen > "More info" > "Run anyway", or
+      `Unblock-File -Path .\gintrack_*.zip` before extracting.
+    - **Linux**: `chmod +x gintrack`.
+
+    **Full changelog**: https://github.com/digiogithub/git-in-track/compare/{{ .PreviousTag }}...{{ .Tag }}
