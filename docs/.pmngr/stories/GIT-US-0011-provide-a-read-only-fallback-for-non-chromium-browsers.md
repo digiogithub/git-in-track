@@ -2,9 +2,10 @@
 id: GIT-US-0011
 type: story
 title: Provide a read-only fallback for non-Chromium browsers
-status: backlog
+status: in_progress
 created: 2026-09-03T00:00:00Z
-updated: 2026-09-03T00:00:00Z
+updated: 2026-09-03T21:47:06Z
+started: 2026-09-03T21:47:06Z
 author: team
 priority: medium
 parent: GIT-EP-0002

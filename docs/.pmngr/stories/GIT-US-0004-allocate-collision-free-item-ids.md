@@ -2,9 +2,10 @@
 id: GIT-US-0004
 type: story
 title: Allocate collision-free item IDs
-status: in_progress
+status: done
 created: 2026-09-03T00:00:00Z
-updated: 2026-09-03T21:17:39Z
+updated: 2026-09-03T21:47:05Z
+closed: 2026-09-03T21:47:05Z
 started: 2026-09-03T21:17:39Z
 author: team
 priority: high

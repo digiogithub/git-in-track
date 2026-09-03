@@ -2,9 +2,10 @@
 id: GIT-M-0001
 type: milestone
 title: Phase 0 — Foundations
-status: in_progress
+status: done
 created: 2026-09-03T00:00:00Z
-updated: 2026-09-03T20:42:39Z
+updated: 2026-09-03T21:47:05Z
+closed: 2026-09-03T21:47:05Z
 started: 2026-09-03T20:42:39Z
 author: team
 labels: [core, ci, wasm]

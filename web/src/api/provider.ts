@@ -5,66 +5,52 @@
  * code may import `isomorphic-git`, the WASM bridge or `fetch('/api/...')`
  * directly: features talk to this interface only.
  *
- * Phase 0 declares the interface and the vocabulary. Board, sprint, retro and
- * git members land with their phases (3 and 4) and are intentionally absent
- * here so the scaffold does not promise behaviour that is not designed yet.
+ * Item, page and query shapes are shared with the WASM core contract in
+ * `@/core-bridge/api` so that the browser provider can pass them through
+ * unchanged and the companion provider maps them 1:1 onto the REST API.
+ *
+ * Board, sprint, retro and git members land with their phases (3 and 4) and
+ * are intentionally absent here.
  */
+
+import type {
+  Comment,
+  Diagnostic,
+  IndexStats,
+  Item,
+  ItemDraft,
+  ItemFilter,
+  ItemPage,
+  ItemPatch,
+  ItemType,
+  KbNode,
+  KbPage,
+  Priority,
+  ProjectSummary,
+  SearchHit,
+} from '@/core-bridge/api';
+
+export type {
+  Comment,
+  Diagnostic,
+  IndexStats,
+  Item,
+  ItemDraft,
+  ItemFilter,
+  ItemPage,
+  ItemPatch,
+  ItemType,
+  KbNode,
+  KbPage,
+  Priority,
+  ProjectSummary,
+  SearchHit,
+};
 
 export type ProviderKind = 'browser' | 'companion';
 
-export type ItemType = 'epic' | 'story' | 'task' | 'milestone';
-
-export type Priority = 'critical' | 'high' | 'medium' | 'low';
-
 /** Statuses are configured per project in `project.yaml`; the UI never hardcodes them. */
 export type ItemStatus = string;
-
-/** `ACME/ACME-US-0042` when serialised. */
-export type ItemRef = {
-  projectKey: string;
-  id: string;
-};
-
-export type ItemLinkType = 'blocks' | 'blocked_by' | 'relates_to' | 'duplicates';
-
-export type ItemLink = {
-  type: ItemLinkType;
-  ref: string;
-};
-
-/**
- * Front matter plus an optional body. `rev` is a content hash computed at read
- * time, never stored in the file, and is required by every write.
- */
-export type Item = {
-  ref: ItemRef;
-  type: ItemType;
-  title: string;
-  status: ItemStatus;
-  created: string;
-  updated: string;
-  author?: string;
-  assignees: string[];
-  labels: string[];
-  priority?: Priority;
-  parent?: string;
-  milestone?: string;
-  estimate?: number;
-  effort?: number;
-  due?: string;
-  links: ItemLink[];
-  path: string;
-  rev: string;
-  body?: string;
-};
-
-export type Comment = {
-  item: ItemRef;
-  author: string;
-  created: string;
-  body: string;
-  path: string;
-};
 
 export type Capabilities = {
   /** false for the `webkitdirectory` read-only fallback. */
@@ -96,14 +82,8 @@ export type RepoInfo = {
   lastIndexedAt?: string;
   state: 'ready' | 'needs-permission' | 'indexing' | 'error';
   error?: string;
-};
-
-export type ProjectInfo = {
-  key: string;
-  name: string;
-  repoId: string;
-  statuses: string[];
-  itemCount: number;
+  /** Project keys discovered inside this repository. */
+  projects: string[];
 };
 
 export type MountInput = {
@@ -113,112 +93,24 @@ export type MountInput = {
   docsFolder?: string;
 };
 
-export type IndexStats = {
-  repoId: string;
-  filesScanned: number;
-  itemsFound: number;
-  errors: number;
-  durationMs: number;
-};
-
-export type SortDirection = 'asc' | 'desc';
-
-export type ItemQuery = {
-  projectKey?: string;
-  text?: string;
-  type?: ItemType[];
-  status?: ItemStatus[];
-  labels?: string[];
-  assignees?: string[];
-  priority?: Priority[];
-  milestone?: string;
-  parent?: string;
-  updatedAfter?: string;
-  sort?: { field: keyof Item; direction: SortDirection }[];
-  limit?: number;
-  cursor?: string;
-};
-
-export type Page<T> = {
-  rows: T[];
-  total: number;
-  nextCursor?: string;
-};
-
-/** A knowledge base scope: a project's docs folder or a team's `knowledge/`. */
+/** A knowledge base scope: a project's docs folder (team `knowledge/` arrives in Phase 3). */
 export type KbScope = { kind: 'project'; projectKey: string } | { kind: 'team'; teamId: string };
-
-export type KbNode = {
-  path: string;
-  name: string;
-  kind: 'file' | 'directory';
-  children?: KbNode[];
-};
-
-export type KbPage = {
-  scope: KbScope;
-  path: string;
-  title: string;
-  content: string;
-  rev: string;
-  updated: string;
-};
 
 export type SearchQuery = {
   text: string;
-  scopes?: KbScope[];
+  projectKey?: string;
   limit?: number;
 };
 
-export type SearchResult = {
-  kind: 'item' | 'kb';
-  title: string;
-  snippet: string;
-  path: string;
-  ref?: ItemRef;
-  score: number;
-};
-
-export type CreateItemInput = {
-  projectKey: string;
-  type: ItemType;
-  title: string;
-  status?: ItemStatus;
-  parent?: string;
-  milestone?: string;
-  labels?: string[];
-  assignees?: string[];
-  priority?: Priority;
-  body?: string;
-};
-
-export type ItemPatch = Partial<
-  Pick<
-    Item,
-    | 'title'
-    | 'status'
-    | 'assignees'
-    | 'labels'
-    | 'priority'
-    | 'parent'
-    | 'milestone'
-    | 'estimate'
-    | 'effort'
-    | 'due'
-    | 'links'
-    | 'body'
-  >
->;
-
 export type UpdateOp = {
-  ref: ItemRef;
+  id: string;
   patch: ItemPatch;
   rev: string;
 };
 
 export type BatchResult = {
   applied: number;
-  failed: { ref: ItemRef; code: ProviderErrorCode; message: string }[];
+  failed: { id: string; code: ProviderErrorCode; message: string }[];
 };
 
 export type ProviderErrorCode =
@@ -226,13 +118,14 @@ export type ProviderErrorCode =
   | 'validation_failed'
   | 'not_found'
   | 'read_only'
+  | 'permission_denied'
   | 'git_conflict'
   | 'git_auth_failed'
   | 'repo_not_cloned'
   | 'internal';
 
 export type ChangeEvent =
-  | { kind: 'items'; repoId: string; refs: ItemRef[] }
+  | { kind: 'items'; repoId: string; ids: string[] }
   | { kind: 'kb'; repoId: string; paths: string[] }
   | { kind: 'repo'; repoId: string }
   | { kind: 'index'; repoId: string; stats: IndexStats };
@@ -250,27 +143,29 @@ export interface DataProvider {
 
   // workspace
   listRepos(): Promise<RepoInfo[]>;
-  listProjects(): Promise<ProjectInfo[]>;
+  listProjects(): Promise<ProjectSummary[]>;
   mountRepo(input: MountInput): Promise<RepoInfo>;
   unmountRepo(repoId: string): Promise<void>;
   reindex(repoId: string, opts?: { full?: boolean }): Promise<IndexStats>;
 
   // read
-  listItems(query: ItemQuery): Promise<Page<Item>>;
-  getItem(ref: ItemRef, opts?: { body?: boolean }): Promise<Item>;
-  getChildren(ref: ItemRef): Promise<Item[]>;
-  listComments(ref: ItemRef): Promise<Comment[]>;
+  listItems(query: ItemFilter): Promise<ItemPage>;
+  getItem(id: string): Promise<Item>;
+  getChildren(id: string): Promise<Item[]>;
+  listComments(id: string): Promise<Comment[]>;
   listKbTree(scope: KbScope): Promise<KbNode[]>;
   getPage(scope: KbScope, path: string): Promise<KbPage>;
   readAsset(scope: KbScope, path: string): Promise<Blob>;
-  search(query: SearchQuery): Promise<SearchResult[]>;
+  search(query: SearchQuery): Promise<SearchHit[]>;
+  validateItem(input: { id?: string; text?: string; path?: string }): Promise<Diagnostic[]>;
 
   // write (all rev-checked)
-  createItem(input: CreateItemInput): Promise<Item>;
-  updateItem(ref: ItemRef, patch: ItemPatch, rev: string): Promise<Item>;
+  createItem(input: ItemDraft): Promise<Item>;
+  updateItem(id: string, patch: ItemPatch, rev: string): Promise<Item>;
+  moveItem(id: string, status: ItemStatus, rev: string): Promise<Item>;
   updateMany(ops: UpdateOp[]): Promise<BatchResult>;
-  deleteItem(ref: ItemRef, rev: string): Promise<void>;
-  addComment(ref: ItemRef, body: string): Promise<Comment>;
+  deleteItem(id: string, rev: string): Promise<void>;
+  addComment(id: string, body: string, author?: string): Promise<Comment>;
   writePage(scope: KbScope, path: string, content: string, rev?: string): Promise<KbPage>;
 
   // events

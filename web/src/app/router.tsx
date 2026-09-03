@@ -1,7 +1,7 @@
-import { createRootRoute, createRoute, createRouter } from '@tanstack/react-router';
+import { createRoute, createRouter } from '@tanstack/react-router';
 
-import { AppShell } from '@/app/layout/AppShell';
 import { NotFound } from '@/app/layout/NotFound';
+import { rootRoute } from '@/app/rootRoute';
 import { ItemDetail } from '@/features/backlog/ItemDetail';
 import { ItemTable } from '@/features/backlog/ItemTable';
 import { BoardList } from '@/features/boards/BoardList';
@@ -15,11 +15,6 @@ import { WorkspaceHome } from '@/features/workspace/WorkspaceHome';
  * instead of using file-based routing keeps route ids, params and search
  * schemas type-checked from one place.
  */
-const rootRoute = createRootRoute({
-  component: AppShell,
-  notFoundComponent: NotFound,
-});
-
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/',
@@ -32,7 +27,7 @@ const addRepositoryRoute = createRoute({
   component: AddRepositoryPage,
 });
 
-const projectRoute = createRoute({
+export const projectRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/p/$project',
 });

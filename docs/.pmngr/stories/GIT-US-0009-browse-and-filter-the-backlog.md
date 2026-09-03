@@ -2,9 +2,10 @@
 id: GIT-US-0009
 type: story
 title: Browse and filter the backlog
-status: backlog
+status: in_progress
 created: 2026-09-03T00:00:00Z
-updated: 2026-09-03T00:00:00Z
+updated: 2026-09-03T21:47:06Z
+started: 2026-09-03T21:47:06Z
 author: team
 priority: high
 parent: GIT-EP-0002
