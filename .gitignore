@@ -1,0 +1,26 @@
+# Go
+/bin/
+/dist/
+*.test
+*.out
+coverage.*
+
+# Frontend
+web/node_modules/
+web/dist/
+web/public/core.wasm
+web/public/wasm_exec.js
+web/.vite/
+
+# Local tooling
+.env
+.env.*
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# gintrack local state (never commit caches or tokens)
+.gintrack-cache/
