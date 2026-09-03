@@ -2,9 +2,10 @@
 id: GIT-EP-0001
 type: epic
 title: Foundations
-status: backlog
+status: in_progress
 created: 2026-09-03T00:00:00Z
-updated: 2026-09-03T00:00:00Z
+updated: 2026-09-03T20:42:39Z
+started: 2026-09-03T20:42:39Z
 author: team
 priority: critical
 milestone: GIT-M-0001
