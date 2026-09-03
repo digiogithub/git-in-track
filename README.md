@@ -2,8 +2,8 @@
 
 > Git-native, Markdown-first project management for teams — and for their AI agents.
 
-[![CI](https://img.shields.io/badge/CI-not%20yet%20configured-lightgrey)](.github/workflows/ci.yml)
-[![Release](https://img.shields.io/badge/release-planning-lightgrey)](https://github.com/digiogithub/git-in-track/releases)
+[![CI](https://github.com/digiogithub/git-in-track/actions/workflows/ci.yml/badge.svg)](https://github.com/digiogithub/git-in-track/actions/workflows/ci.yml)
+[![Release](https://github.com/digiogithub/git-in-track/actions/workflows/release.yml/badge.svg)](https://github.com/digiogithub/git-in-track/releases)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 ## What is git-in-track
