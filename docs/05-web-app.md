@@ -1,0 +1,886 @@
+# 05 — Web application architecture (`web/`)
+
+Status: planning document. Applies to Phases 1–6 of the roadmap; each section marks
+the phase in which the described capability lands.
+
+The web application is the primary human interface of **git-in-track**. It is a
+React 18 + Vite + TypeScript single-page application that lives in `web/` and is
+built to `web/dist`, which the `gintrack` binary embeds with `go:embed`.
+
+The same bundle serves two very different runtimes:
+
+| Mode | How it is reached | Filesystem | Git | Index |
+|---|---|---|---|---|
+| Browser-only | Any static host, or `file://`-adjacent dev server, or the embedded server without a companion feature flag | File System Access API handles | `isomorphic-git` + CORS proxy | Go core compiled to WASM, in a Web Worker, cached in IndexedDB |
+| Companion | `http://127.0.0.1:7317` served by `gintrack serve` | Native, via the CLI process | `go-git` or system `git` | Native Go core, fsnotify-driven |
+
+Everything above the *data provider* boundary (see §4) is identical in both modes.
+This is the single most important architectural constraint of the frontend: **no
+feature code may import `isomorphic-git`, the WASM bridge, or `fetch('/api/...')`
+directly.** Features talk to the provider interface only.
+
+---
+
+## 1. Folder structure
+
+```
+web/
+  index.html
+  vite.config.ts
+  tsconfig.json
+  tailwind.config.ts
+  components.json              # shadcn/ui generator config
+  public/
+    core.wasm                  # produced by `make wasm`, git-ignored
+    wasm_exec.js               # copied verbatim from $(go env GOROOT)/lib/wasm
+    favicon.svg
+    manifest.webmanifest
+  e2e/                         # Playwright specs + fixture repo
+    fixtures/acme-repo/        # a real git repo used by e2e and Vitest integration tests
+  src/
+    main.tsx                   # bootstrap: providers, router, error boundary
+    app/
+      router.tsx               # TanStack Router route tree
+      routes/                  # one file per route (see §3)
+      layout/                  # AppShell, Sidebar, CommandPalette, Titlebar
+      providers.tsx            # QueryClientProvider, ThemeProvider, I18nProvider, DataProviderProvider
+      error/                   # RouteErrorBoundary, GlobalErrorBoundary, crash report dump
+    features/
+      kb/                      # knowledge base viewer (project docs + team knowledge/)
+      backlog/                 # epics, stories, tasks, milestones, comments
+      boards/                  # kanban + scrum boards, sprint planning
+      retros/                  # retrospectives and improvement actions
+      sync/                    # sync panel, conflicts, credentials, git log
+      settings/                # workspace, repos, appearance, agents/MCP status
+    core-bridge/               # WASM worker client (browser-only mode)
+      worker.ts                # the Web Worker entry point
+      client.ts                # typed RPC client with request ids
+      protocol.ts              # shared message types (generated-adjacent, hand-checked)
+      fs-bridge.ts             # File System Access <-> worker file access
+    api/                       # companion client
+      client.ts                # REST client (fetch + zod parsing)
+      ws.ts                    # WebSocket subscription with reconnect/backoff
+      probe.ts                 # health probe for 127.0.0.1:7317
+      types.ts                 # zod schemas mirroring internal/core model
+    data/
+      provider.ts              # the DataProvider interface (§4)
+      browser-provider.ts      # BrowserProvider implementation
+      companion-provider.ts    # CompanionProvider implementation
+      select-provider.ts       # auto-detection + upgrade orchestration
+    stores/                    # Zustand stores (§5)
+    markdown/                  # unified pipeline, plugins, renderers (§7)
+    editor/                    # CodeMirror 6 setup, front matter form (§8)
+    components/
+      ui/                      # shadcn/ui generated primitives (button, dialog, ...)
+      common/                  # app-level shared components (ItemBadge, StatusPill, ...)
+    lib/                       # pure utilities: ids, slugs, dates, refs, hashing
+    i18n/                      # locales/en.json, locales/es.json, i18n.ts
+    styles/                    # tailwind entry, tokens, prose styles
+    types/                     # ambient declarations, Go/WASM type mirrors
+```
+
+Rules enforced by ESLint (`eslint-plugin-boundaries` or `import/no-restricted-paths`):
+
+- `features/*` may import from `data`, `components`, `lib`, `markdown`, `editor`,
+  `stores`, `i18n` — never from `core-bridge` or `api`.
+- `data/browser-provider.ts` is the only file allowed to import `core-bridge`
+  and `isomorphic-git`; `data/companion-provider.ts` is the only file allowed to
+  import `api`.
+- No feature imports another feature. Cross-feature needs go through `data` or
+  `components/common`.
+- `components/ui/*` is generated; it never imports from `features` or `data`.
+
+---
+
+## 2. Domain vocabulary used by the UI
+
+Mirrors `internal/core` (see doc 02). The frontend re-declares it with zod so that
+both providers validate identically.
+
+- `ItemRef` — `{ projectKey: string; id: string }`, serialised as `ACME/ACME-US-0042`.
+- `Item` — front matter + optional `body`. Types: `epic | story | task | milestone`.
+- `Comment` — `{ item, author, created, body }`.
+- `Board`, `Sprint`, `Retro` — team-repo artifacts.
+- `rev` — content hash returned by the provider, never stored in the file. Used
+  for optimistic concurrency on every write (see doc 06 §9).
+- `RemoteRef` — a board card whose project repo is not available locally; carries
+  `{ ref, title, status, updated, url, snapshotAt }` from
+  `.pmngr/index/<projectKey>.json`.
+
+---
+
+## 3. Routing map (TanStack Router)
+
+File-based-ish but declared explicitly in `src/app/router.tsx` for type safety.
+Search params are typed and validated with zod through `validateSearch`, so filter
+state is shareable by URL and survives reloads.
+
+```
+/                                        WorkspaceHome
+/onboarding                              AddRepositoryWizard (modal-capable route)
+/settings                                SettingsLayout
+  /settings/workspace                      workspace + repo list
+  /settings/repositories/$repoId            per-repo settings
+  /settings/appearance                      theme, density, font, locale
+  /settings/sync                            branch policy, commit-on-save, author
+  /settings/credentials                     credential storage + CORS proxy
+  /settings/agents                          agent / MCP status
+/p/$projectKey                           ProjectLayout
+  /p/$projectKey/kb/*                       KbViewer (splat path into the docs folder)
+  /p/$projectKey/items                      ItemTable (list view, filters in search params)
+  /p/$projectKey/items/$itemId              ItemDetail
+  /p/$projectKey/items/$itemId/edit         ItemEditor
+  /p/$projectKey/epics                      EpicTree
+  /p/$projectKey/milestones                 MilestoneList
+  /p/$projectKey/milestones/$milestoneId    MilestoneDetail
+  /p/$projectKey/graph                      LinkGraph (Phase 6)
+/team/$teamId                            TeamLayout
+  /team/$teamId/kb/*                        TeamKbViewer
+  /team/$teamId/boards                      BoardList
+  /team/$teamId/boards/$boardSlug           BoardView (kanban or scrum)
+  /team/$teamId/boards/$boardSlug/planning  SprintPlanning
+  /team/$teamId/sprints/$sprintId           SprintDetail
+  /team/$teamId/retros                      RetroList
+  /team/$teamId/retros/$retroId             RetroBoard
+  /team/$teamId/metrics                     Metrics (Phase 6)
+/sync                                    SyncPanel
+  /sync/conflicts/$conflictId              ConflictResolver
+/search                                  GlobalSearch
+```
+
+### 3.1 Screen-by-screen
+
+**WorkspaceHome (`/`)** — Landing surface. Cards for every mounted repository
+(project or team) with: name, project key, branch, ahead/behind counters, dirty
+file count, last index time, and mode badge (Browser / Companion). Empty state
+launches the Add Repository wizard. Below the repos: "Recently edited" (from the
+index, `updated desc`, limit 20), "Assigned to me" (matching `team.yaml` identity
+or the configured git author email), and a sync health strip.
+
+**AddRepositoryWizard (`/onboarding`)** — Four steps.
+1. *Kind*: project repository or team repository.
+2. *Location*: in browser-only mode, "Choose folder" invokes
+   `showDirectoryPicker()`; in companion mode, a path input with server-side
+   autocompletion plus a "clone from URL" option. Firefox/Safari get the
+   `webkitdirectory` read-only fallback with an explicit banner.
+3. *Detection*: the provider scans for `.git`, for `project.yaml`/`team.yaml`, and
+   proposes the docs folder (defaults: an existing `docs/`, else the folder
+   containing `.pmngr`, else repo root). For a fresh project the wizard offers to
+   scaffold `docs/.pmngr/` with `project.yaml` (`key`, `name`, status workflow
+   picked from a template).
+4. *Confirm*: shows what will be written, then runs the initial index with a
+   progress bar (files scanned / items found / errors).
+
+**KbViewer (`/p/$projectKey/kb/*`, `/team/$teamId/kb/*`)** — Two panes. Left: a
+virtualised file tree of the docs folder (or `knowledge/` for teams) with fuzzy
+filter, folder collapse state persisted per repo, and an outline toggle showing
+the current page's headings. Right: the rendered Markdown page (§7) with a sticky
+breadcrumb, "Edit" button, backlinks section (from the core link graph), and
+outgoing wikilink chips. Unresolved wikilinks render in a distinct style and offer
+"Create page". Deep links `#heading-slug` scroll and highlight.
+
+**ItemTable (`/p/$projectKey/items`)** — TanStack Table over the index. Columns:
+id, type, title, status, assignees, labels, priority, estimate, milestone,
+parent, updated. Features: column visibility + order persisted per project;
+multi-sort; grouping by status/epic/milestone; row virtualisation (target: 10k
+rows at 60fps); saved views stored in the workspace store and shareable as URLs.
+Filters live entirely in search params:
+`?q=&status=todo,in_progress&labels=auth&assignee=jose&priority=high&milestone=M2&updatedAfter=2026-08-01`.
+Bulk actions (change status, add label, set milestone, assign) issue one provider
+`updateMany` call which becomes one commit when commit-on-save is on.
+
+**ItemDetail (`/p/$projectKey/items/$itemId`)** — Read view: title, id chip,
+status pill, metadata grid, rendered body, acceptance-criteria checklist with
+inline toggling (a checkbox toggle is a body write, so it goes through the same
+rev-checked update), children (stories of an epic, tasks of a story), typed links
+(`blocks`, `blocked_by`, `relates_to`, `duplicates`) rendered as navigable chips,
+comments thread with a composer, and an activity strip from `git log` for that
+path (Phase 4). A right rail shows file path, last commit, and "Open in editor"
+(companion mode only, via a server endpoint that shells out to `$EDITOR`).
+
+**ItemEditor (`/p/$projectKey/items/$itemId/edit`)** — §8.
+
+**EpicTree (`/p/$projectKey/epics`)** — Three-level tree (epic → story → task)
+with lazy expansion, per-node rollups (done/total, points sum, % complete), inline
+status change, and drag to re-parent (a re-parent writes the child's `parent`
+field). A "flatten" toggle switches to a table of all descendants.
+
+**MilestoneList / MilestoneDetail** — Milestones sorted by `due`, each with a
+progress bar, item count by status, overdue highlight, and a burnup sparkline
+(Phase 6). Detail view lists member items with the same table component as
+ItemTable, pre-filtered.
+
+**BoardView (`/team/$teamId/boards/$boardSlug`)** — §9. Columns from the board
+file, cards resolved from every configured project. Kanban and Scrum share the
+component; Scrum adds a sprint selector and a backlog drawer.
+
+**SprintPlanning (`/team/$teamId/boards/$boardSlug/planning`)** — Two panes:
+candidate backlog (filterable, across projects) on the left, sprint contents on
+the right; drag between them. Header shows sprint goal (editable), dates, total
+points, and per-assignee capacity vs. committed points. "Start sprint" writes the
+sprint file and updates the board's `sprints[]`.
+
+**RetroList / RetroBoard (`/team/$teamId/retros...`)** — RetroBoard renders three
+columns (Went well / To improve / Actions) backed by the retro Markdown sections.
+Sticky-note cards are list items in the body; adding a note appends a bullet.
+Voting (Phase 6) is stored as a `votes` map in front matter. Any action can be
+"promoted to task": a dialog picks the target project, and the provider creates a
+task in that repo and writes the produced ref back into the retro's `actions[]`.
+
+**SyncPanel (`/sync`)** — Per-repo rows: branch, ahead/behind, dirty files,
+last fetch, and buttons Fetch / Sync / Push. Expanding a row shows the staged
+change set (path, item id, title) and the commit message that will be used.
+Conflicts appear as a list linking to ConflictResolver (doc 06 §5).
+
+**ConflictResolver (`/sync/conflicts/$conflictId`)** — Front matter conflicts
+render as a field-by-field table (ours / theirs / merged, with the auto-merge
+result preselected). Body conflicts render side-by-side with a CodeMirror merge
+view. "Accept merged" writes the resolved file and stages it.
+
+**SettingsLayout (`/settings/*`)** — Workspace (mounted repos, remove/repair,
+re-index, clear caches), per-repo (docs folder, project key, default branch,
+ignored globs), appearance (§12), sync (branch policy, commit-on-save toggle and
+message template with live preview, author name/email override), credentials
+(§ doc 06 §7 — storage mode, CORS proxy URL, "forget credentials"), agents.
+
+**Agents / MCP status (`/settings/agents`)** — Companion mode only (Phase 5).
+Shows whether `gintrack mcp` is reachable (stdio child or streamable HTTP),
+the exposed tool list with descriptions, a live call log (tool, args summary,
+duration, result size, error), rate/size limits, and a copy-ready client config
+snippet. In browser-only mode the page explains that MCP requires the companion
+and links to the install instructions.
+
+**GlobalSearch (`/search`)** — Full-text over items and KB pages via the core
+query engine. Results grouped by kind, with snippet highlighting, filter chips,
+and keyboard navigation. The same component powers the ⌘K command palette, which
+also lists commands ("Sync all", "New story", "Toggle theme").
+
+---
+
+## 4. The data provider boundary
+
+`src/data/provider.ts` defines one interface. Both implementations satisfy it and
+the whole UI is written against it.
+
+```ts
+export interface DataProvider {
+  readonly kind: 'browser' | 'companion';
+  readonly capabilities: Capabilities;
+
+  // workspace
+  listRepos(): Promise<RepoInfo[]>;
+  mountRepo(input: MountInput): Promise<RepoInfo>;
+  unmountRepo(repoId: string): Promise<void>;
+  reindex(repoId: string, opts?: { full?: boolean }): Promise<IndexStats>;
+
+  // read
+  queryItems(q: ItemQuery): Promise<Page<Item>>;
+  getItem(ref: ItemRef, opts?: { body?: boolean }): Promise<Item>;
+  getChildren(ref: ItemRef): Promise<Item[]>;
+  listComments(ref: ItemRef): Promise<Comment[]>;
+  listKbTree(scope: KbScope): Promise<KbNode[]>;
+  getKbPage(scope: KbScope, path: string): Promise<KbPage>;
+  readAsset(scope: KbScope, path: string): Promise<Blob>;
+  search(q: SearchQuery): Promise<SearchResult[]>;
+
+  // write (all rev-checked)
+  createItem(input: CreateItemInput): Promise<Item>;
+  updateItem(ref: ItemRef, patch: ItemPatch, rev: string): Promise<Item>;
+  updateMany(ops: UpdateOp[]): Promise<BatchResult>;
+  deleteItem(ref: ItemRef, rev: string): Promise<void>;
+  addComment(ref: ItemRef, body: string): Promise<Comment>;
+  writeKbPage(scope: KbScope, path: string, content: string, rev?: string): Promise<KbPage>;
+
+  // boards / sprints / retros
+  listBoards(teamId: string): Promise<Board[]>;
+  getBoard(teamId: string, slug: string): Promise<BoardView>;
+  moveCard(teamId: string, slug: string, move: CardMove, rev: string): Promise<BoardView>;
+  getSprint(teamId: string, id: string): Promise<Sprint>;
+  updateSprint(teamId: string, id: string, patch: SprintPatch, rev: string): Promise<Sprint>;
+  getRetro(teamId: string, id: string): Promise<Retro>;
+  updateRetro(teamId: string, id: string, patch: RetroPatch, rev: string): Promise<Retro>;
+
+  // git (Phase 4)
+  gitStatus(repoId: string): Promise<GitStatus>;
+  sync(repoId: string, opts: SyncOptions): Promise<SyncResult>;
+  listConflicts(repoId: string): Promise<Conflict[]>;
+  resolveConflict(repoId: string, id: string, resolution: Resolution): Promise<void>;
+
+  // events
+  subscribe(handler: (e: ChangeEvent) => void): Unsubscribe;
+}
+```
+
+`Capabilities` is what the UI branches on — never `kind`:
+
+```ts
+interface Capabilities {
+  write: boolean;            // false for the webkitdirectory fallback
+  git: boolean;
+  ssh: boolean;              // companion only
+  watch: boolean;            // fsnotify push events
+  fullTextSearch: 'core' | 'bleve';
+  mcp: boolean;
+  openInEditor: boolean;
+  maxBatchWrite: number;
+}
+```
+
+### 4.1 BrowserProvider
+
+Composes three things: File System Access handles (§6), the WASM core worker (§6.3
+and §7 of doc 02), and `isomorphic-git` for git operations (doc 06 §6). It owns the
+IndexedDB caches (`handles`, `index`, `blobs`, `prefs`). Writes go
+`provider → worker (validate + serialise front matter) → FS handle write → worker
+incremental reindex → emit ChangeEvent`.
+
+### 4.2 CompanionProvider
+
+Thin: every method is one REST call against the `/api/v1` surface defined in doc 07
+plus zod parsing; `subscribe` attaches to the WebSocket at
+`ws://127.0.0.1:7317/api/v1/events` and sends a `subscribe` frame scoped to the
+topics and projects the current route needs. Every request carries
+`Authorization: Bearer <token>` (the WebSocket uses the `?token=` query parameter,
+since browsers cannot set headers on `WebSocket`); the token is supplied by the
+companion when it serves the app and is entered once in settings when the app runs
+on the Vite dev server. Errors are RFC 7807 problem documents; the client switches
+on the stable `code` field, never on the HTTP status alone, and maps it to a typed
+`ProviderError` (`stale_revision` → `RevConflict`, `validation_failed` →
+`ValidationError` with per-field `errors[]` surfaced in the editor,
+`git_conflict` → `ConflictPending`, `git_auth_failed` → `AuthRequired`,
+`repo_not_cloned` → `RemoteOnly`). The client sends `If-Match: <rev>` on writes.
+
+### 4.3 Auto-detection and upgrade
+
+`select-provider.ts` runs a health probe:
+
+1. On boot, `GET http://127.0.0.1:7317/api/v1/health` with
+   `AbortSignal.timeout(700)` and `mode: 'cors'`. This route is unauthenticated and
+   answers `{"status":"ok","version":"0.4.0","uptimeSeconds":8123}`. A successful
+   probe is followed by `GET /api/v1/capabilities` (authenticated) to read
+   `schema`, `ui` and the `features` map, which is what populates `Capabilities`.
+   CORS is the companion's decision, not ours: it echoes the embedded origin
+   always, `http://localhost:5173` only under `--dev`, and anything in
+   `server.extraOrigins`; any other origin gets no CORS headers and the probe
+   simply fails.
+2. If the app is *served by* the companion (same origin), skip the probe and use
+   `CompanionProvider` immediately.
+3. If the probe succeeds cross-origin and `capabilities.schema` matches the
+   bundle's expected schema, show a
+   non-blocking toast: *"Companion detected — enable faster indexing, file
+   watching and SSH git?"* with Enable / Not now / Never (persisted per origin in
+   `localStorage`).
+4. On Enable, the app re-runs provider construction, migrates open route state,
+   and re-mounts repos by matching absolute paths reported by the companion
+   against handle names; unmatched repos stay browser-mounted.
+5. Re-probe on `visibilitychange` (throttled to once per 30 s) and after any
+   WebSocket close, so starting `gintrack serve` mid-session upgrades within
+   seconds. Downgrade is symmetric: if the WS closes and three probes fail, fall
+   back to `BrowserProvider` (if handles are still granted) or to a read-only
+   "companion offline" state.
+
+Schema mismatch (`capabilities.schema` newer than the bundle's) shows a blocking dialog:
+"Update the web app / use the embedded UI at 127.0.0.1:7317".
+
+---
+
+## 5. State management
+
+Three layers, deliberately separated:
+
+**TanStack Query — all server/provider state.** Query keys are structured:
+
+```
+['repos']
+['items', projectKey, queryHash]
+['item', projectKey, itemId]
+['kb', scope, path]
+['board', teamId, slug]
+['git', 'status', repoId]
+```
+
+Defaults: `staleTime` 30 s in companion mode (the WS invalidates precisely) and
+5 s in browser-only mode; `gcTime` 15 min; `refetchOnWindowFocus` only for
+`['git','status']`. Mutations use `onMutate` optimistic updates plus rollback, and
+always carry `rev`; a `RevConflict` triggers a refetch and a "changed elsewhere"
+diff dialog rather than a silent overwrite. The WS/worker `ChangeEvent` stream is
+translated into `queryClient.invalidateQueries` calls with the narrowest key that
+covers the changed path.
+
+**Zustand — client-only state.** One store per concern, each with a small,
+explicit `persist` partialize:
+
+- `useWorkspaceStore` — mounted repos, active repo/team, provider kind, capability
+  snapshot, onboarding progress. Persisted (IndexedDB via `idb-keyval` storage
+  adapter, because handles cannot go in `localStorage`).
+- `useUiStore` — sidebar width, open panels, tree expansion, table column config,
+  saved views, density. Persisted to `localStorage`.
+- `useEditorStore` — open buffers, dirty flags, autosave timers, last saved rev.
+  Not persisted (drafts are persisted separately, see §8).
+- `useBoardStore` — drag session state, optimistic card positions, WIP warnings.
+  Ephemeral.
+- `useSyncStore` — in-flight sync operations, per-repo progress, conflict list.
+  Ephemeral.
+- `useThemeStore`, `useI18nStore` — persisted to `localStorage`.
+
+Selectors are always used (`useUiStore(s => s.density)`) to avoid whole-store
+re-renders; stores expose actions, never raw setters, so the mutation surface is
+testable in isolation.
+
+**URL — navigational and filter state.** Anything a user might want to share or
+bookmark (filters, sort, selected item, board column focus, KB path) lives in the
+route, not in a store.
+
+---
+
+## 6. File System Access API (browser-only mode)
+
+### 6.1 Acquiring and persisting permission
+
+```ts
+const handle = await window.showDirectoryPicker({ id: 'gintrack-repo', mode: 'readwrite' });
+await idb.set(`handle:${repoId}`, handle);   // structured-clonable
+```
+
+Directory handles survive reloads when stored in IndexedDB, but the *permission*
+does not always survive. On boot, for each stored handle:
+
+```ts
+let perm = await handle.queryPermission({ mode: 'readwrite' });
+if (perm === 'prompt') perm = await handle.requestPermission({ mode: 'readwrite' });
+```
+
+`requestPermission` requires transient user activation, so the app never calls it
+during boot render. Instead repos load in a `needs-permission` state and the
+workspace shows a single "Reconnect folders" button that grants all pending
+handles in one user gesture (Chromium allows several `requestPermission` calls
+inside one activation). Denied handles are kept but marked; the repo card offers
+"Choose folder again".
+
+We request persistent permission where available (Chromium's persisted grant when
+the site is installed as a PWA or the user allows "on every visit"), and we call
+`navigator.storage.persist()` at first mount so the IndexedDB index cache is not
+evicted under pressure.
+
+### 6.2 Traversal, writes, and safety
+
+- Traversal uses `for await (const [name, h] of dir.entries())` with a worker-side
+  ignore list: `.git`, `node_modules`, `.DS_Store`, `*.swp`, `*.tmp`, `.#*`,
+  `4913` (Vim's probe file), plus user globs from settings.
+- Reads use `handle.getFile()` → `File.arrayBuffer()`; batches are transferred to
+  the worker (§6.3).
+- Writes use `createWritable()`; we write to a temp name in the same directory
+  and rename via `move()` where supported, falling back to a direct writable when
+  `move()` is unavailable. Every write is preceded by a re-read + rev comparison.
+- `.git` is never touched by the FS layer directly except through
+  `isomorphic-git`'s `fs` adapter, which is a thin shim over the same handles
+  (doc 06 §6).
+
+### 6.3 Fallback and support matrix
+
+| Browser | Directory picker | Read | Write | Git in browser | Notes |
+|---|---|---|---|---|---|
+| Chrome / Edge 108+ | Yes | Yes | Yes | Yes | Full browser-only mode |
+| Opera / Brave / Arc (Chromium) | Yes | Yes | Yes | Yes | Brave shields may block the CORS proxy |
+| Safari 17+ | No (`showDirectoryPicker` absent) | via `<input webkitdirectory>` | No | No | Read-only KB + backlog viewer |
+| Firefox 128+ | No | via `<input webkitdirectory>` | No | No | Read-only; companion recommended |
+| Any browser + companion | n/a | Yes | Yes | Yes (native) | Recommended path everywhere |
+
+The read-only fallback loads the selected directory into memory as a
+`Map<path, File>`, feeds the same WASM indexer, and sets `capabilities.write =
+false`; every write affordance renders disabled with a tooltip pointing at
+"Install the companion" or "Use a Chromium browser". A dismissible banner states
+the limitation at the top of the app shell. Files above a configurable size cap
+(default 5 MB) are indexed by metadata only.
+
+### 6.4 WASM core integration
+
+- Build: `make wasm` runs `GOOS=js GOARCH=wasm go build -o web/public/core.wasm ./wasm`
+  and copies `wasm_exec.js` from the toolchain. Both are git-ignored; CI builds
+  them before `vite build`.
+- Loading happens inside a dedicated Web Worker (`core-bridge/worker.ts`), so the
+  main thread never blocks on a full index:
+
+```ts
+importScripts('/wasm_exec.js');
+const go = new Go();
+const { instance } = await WebAssembly.instantiateStreaming(fetch('/core.wasm'), go.importObject);
+go.run(instance);                    // registers globalThis.gintrackCore
+```
+
+  `instantiateStreaming` needs `Content-Type: application/wasm`; the companion
+  sets it, and static hosts are documented in the deployment notes. A fallback
+  path uses `WebAssembly.instantiate(await (await fetch(...)).arrayBuffer(), ...)`.
+- Message protocol — envelope with request ids and cancellation:
+
+```ts
+type Req =
+  | { id: number; op: 'index'; repoId: string; files: FileChunk[] }
+  | { id: number; op: 'reindex'; repoId: string; changed: string[]; deleted: string[] }
+  | { id: number; op: 'query'; repoId: string; query: ItemQuery }
+  | { id: number; op: 'parse'; path: string; bytes: ArrayBuffer }
+  | { id: number; op: 'serialize'; item: Item; body: string }
+  | { id: number; op: 'validate'; item: Item }
+  | { id: number; op: 'allocateId'; repoId: string; type: ItemType }
+  | { id: number; op: 'linkGraph'; repoId: string }
+  | { id: number; op: 'cancel'; target: number };
+
+type Res =
+  | { id: number; ok: true; result: unknown; transfer?: Transferable[] }
+  | { id: number; ok: false; error: { code: string; message: string; path?: string } }
+  | { id: number; progress: { done: number; total: number; phase: string } };
+```
+
+  `client.ts` keeps a `Map<number, Deferred>`, applies a per-op timeout, and
+  rejects everything on worker crash then respawns the worker and replays the
+  index from the IndexedDB snapshot.
+- Transfers: file contents cross as `ArrayBuffer` in the `transfer` list, never as
+  strings, so there is no structured-clone copy. Query results come back as one
+  UTF-8 encoded JSON `ArrayBuffer` decoded on the main thread (measurably cheaper
+  than deep object cloning for thousands of rows).
+- Batching: the FS crawler emits chunks of up to 256 files or 4 MB, whichever
+  comes first, and the worker parses each chunk before requesting the next
+  (back-pressure via awaiting the response). Progress messages drive the wizard's
+  progress bar.
+- Incremental reindex: after a write, only the touched paths are sent with
+  `op: 'reindex'`; the Go core patches its in-memory index and returns the set of
+  affected item ids, which the provider turns into precise query invalidations.
+  The full index is snapshotted to IndexedDB (one record per repo, MessagePack or
+  JSON) with the repo's file-mtime/size digest; on next boot, if the digest of a
+  cheap metadata-only crawl matches, the snapshot is trusted and only differing
+  files are re-parsed. Cold index target: 5k files in under 3 s on a mid-range
+  laptop; warm boot under 400 ms.
+- Memory: Go's WASM runtime grows its heap monotonically. The worker is
+  terminated and respawned when the index is dropped (repo unmounted) or after a
+  configurable idle period, to release memory back to the browser.
+
+---
+
+## 7. Markdown rendering pipeline
+
+One `unified` processor, built once per scope and memoised, in `src/markdown/`.
+
+```
+remark-parse
+  → remark-frontmatter(['yaml'])       // strip + expose front matter
+  → remark-gfm                          // tables, task lists, strikethrough, autolinks
+  → remark-wiki-link                    // [[Page]] / [[Page|alias]] / [[Page#heading]]
+  → remark-directive + remarkCallouts    // ::: note / > [!WARNING] Obsidian style
+  → remark-footnotes (via gfm)           // GFM footnotes
+  → remark-math (optional, per-repo)     // $...$ / $$...$$
+  → remark-rehype({ allowDangerousHtml: false })
+  → rehype-slug + rehype-autolink-headings
+  → rehypeResolveAssets                  // repo-relative images/links → object URLs / routes
+  → rehypeMermaidPlaceholder             // pre.mermaid → <div data-mermaid> for lazy render
+  → rehype-katex (only when math enabled)
+  → rehype-highlight (shiki via rehype-pretty-code, see below)
+  → rehype-sanitize(schema)
+  → rehype-react (React 18 runtime, custom component map)
+```
+
+**Sanitisation.** A hardened schema derived from `defaultSchema`:
+allow `input[type=checkbox][checked][disabled]` for task lists; allow
+`className` only on `code`, `pre`, `span`, `div`, `li`, `section` and only with a
+prefix allowlist (`language-`, `hljs-`, `shiki`, `callout-`, `footnote`, `task-list`);
+allow `data-mermaid`, `data-item-ref`, `data-wikilink` on `div`/`a`/`span`; allow
+`id` on headings, `href` restricted to `http`, `https`, `mailto`, `blob:` and
+in-app `#`/relative paths; drop `iframe`, `script`, `style`, `object`, event
+handlers, and `javascript:`. Sanitisation runs **after** every transform, so no
+plugin can inject unchecked HTML. Raw HTML in Markdown is off by default and, when
+enabled per repo in settings, still passes through the same schema.
+
+**Syntax highlighting.** Default: `shiki` with the `github-light`/`github-dark`
+dual-theme output (CSS variables switch with the app theme, no re-highlight on
+theme change). Shiki's grammars are loaded lazily per language via dynamic import
+and cached; the bundle ships a small default set (ts, js, go, json, yaml, bash,
+sql, md, diff) and fetches others on demand. `highlight.js` remains a build-time
+alternative (`VITE_HIGHLIGHTER=hljs`) for environments where the extra weight
+matters; the sanitize schema accepts both class prefixes.
+
+**Mermaid.** Never at parse time. The rehype plugin emits
+`<div data-mermaid="<encoded source>">`; a React component intersection-observes
+it, dynamically `import('mermaid')` on first visibility, initialises with
+`{ startOnLoad: false, securityLevel: 'strict', theme: currentTheme }`, renders to
+SVG in a detached container, sanitises the SVG, and injects it. Failures render
+the source in a `<pre>` with an error note. Diagrams re-render on theme change
+(debounced) and expose a zoom/pan overlay on click.
+
+**Wikilinks.** Resolution order: exact relative path → path with `.md` appended →
+unique basename match in the same scope → case-insensitive basename match →
+unresolved. Resolution uses the link graph the Go core already computes, so the
+frontend does not re-implement it. Resolved links become router `<Link>`s to
+`/p/$projectKey/kb/<path>`; item references (`[[ACME-US-0042]]` or a link to a
+`.pmngr` file) render as an `ItemChip` with live status from the index.
+Unresolved links get `data-unresolved` styling and a "Create page" affordance.
+
+**Images and assets.** `rehypeResolveAssets` rewrites repo-relative `src` values
+to a sentinel; a React `<RepoImage>` component asks the provider for the bytes.
+Browser mode: `URL.createObjectURL(blob)` with a per-page revocation registry on
+unmount and an LRU cap (default 64 objects / 64 MB). Companion mode: a plain URL
+`/api/v1/projects/:key/kb/asset?path=...` (the binary sibling of the KB page
+endpoint in doc 07 §5.5) so the browser HTTP cache does the work. Absolute
+external images are allowed but load through `referrerpolicy="no-referrer"` and
+can be blocked entirely by a per-repo setting.
+
+**Performance.** Rendering runs in `startTransition`; pages over a size threshold
+(default 200 KB) render progressively by top-level block with `content-visibility:
+auto` on sections. The processor result is cached per `(scope, path, rev, theme)`
+in an LRU of 50 pages.
+
+---
+
+## 8. Editor
+
+CodeMirror 6, wrapped in `src/editor/`.
+
+- Extensions: `markdown()` with GFM plus nested code-language highlighting,
+  `EditorView.lineWrapping`, history, search panel, bracket matching, active-line
+  highlight, our own decorations for wikilinks (clickable, ⌘-click navigates),
+  item refs, front matter delimiters (rendered as a folded region when the form
+  editor is open), and a paste handler that turns pasted images into files written
+  next to the page (`assets/<slug>-<n>.png`) plus a Markdown image link.
+- Two-way front matter editing: a generated form (fields from the project schema:
+  status select from the configured workflow, assignees multiselect from
+  `team.yaml`, labels combobox with existing values, priority, estimate, due date
+  picker, parent/milestone pickers with typeahead over the index) and a
+  **Raw YAML** toggle. Both edit the same document: the form applies a
+  `core.serialize` result as a single CodeMirror transaction restricted to the
+  front matter range, so the cursor and undo history in the body are preserved.
+  Invalid YAML in raw mode disables the form with an inline parse error and a
+  "restore last valid" button.
+- Live validation from the core (`op: 'validate'`) on a 300 ms debounce: unknown
+  status, dangling `parent`, unknown milestone, malformed date, duplicate id.
+  Errors show in a footer bar and as gutter markers.
+- Preview: side-by-side (scroll-synced by source line ↔ rendered block mapping) or
+  toggled; the preview uses the exact §7 pipeline.
+- Autosave: debounced 800 ms after the last keystroke, and immediately on blur,
+  route change, or `visibilitychange` to hidden. Each save sends the buffer with
+  the `rev` observed when the buffer was opened or last saved. On `RevConflict`
+  the editor does not overwrite: it opens a merge dialog (current disk version vs.
+  buffer) built on CodeMirror's merge view.
+- Drafts: unsaved buffers are mirrored to IndexedDB every 2 s keyed by
+  `(repoId, path)`; on reload the editor offers to restore. Draft entries are
+  cleared on successful save.
+- Commit-on-save (Phase 4): when enabled, a save also produces a commit using the
+  configured template; the editor footer shows the resulting message and a
+  "amend last commit" option when the previous commit touched the same file within
+  a configurable window (default 5 min).
+
+---
+
+## 9. Boards UX
+
+- **Library:** `dnd-kit` (`@dnd-kit/core`, `sortable`, `modifiers`). Keyboard
+  sensor enabled, so cards can be moved with Space + arrows; a live region
+  announces "Moved ACME-US-0042 to In progress, position 2 of 7".
+- **Data:** column definitions and card order come from the board Markdown file;
+  card content comes from the per-project indexes. A card whose project is not
+  mounted renders as a `RemoteRefCard`: muted styling, a "remote" badge, title and
+  status from `.pmngr/index/<projectKey>.json`, a "snapshot from <relative time>"
+  tooltip, and an external link to the file on the git host. Drag is disabled for
+  remote cards with an explanatory tooltip ("Clone the project repository to move
+  this item").
+- **Move semantics:** dropping in a different column maps to a status change in
+  the item's project repo (using the column's `statuses` mapping — if a column
+  maps several statuses, a small popover asks which one), plus an update to the
+  board file's `order:` list. Both writes happen in one provider `moveCard` call
+  so they can be one commit.
+- **Optimistic update:** the card moves instantly; `useBoardStore` keeps the
+  optimistic position and TanStack Query holds the previous board snapshot for
+  rollback. On failure the card animates back and a toast explains why. On
+  `RevConflict` (someone else reordered the board) we refetch, re-apply the local
+  move on top of the new order when the target column still exists, and only
+  surface a dialog if that fails.
+- **WIP limits:** a column over its limit shows a coloured header and a count
+  badge; dragging into a full column shows a warning drop state and, on drop, a
+  confirm dialog ("In progress is at its WIP limit of 3. Move anyway?"). Limits
+  are advisory, never blocking, and the choice is remembered for the session.
+- **Scrum extras:** sprint selector, sprint goal banner, points totals per column
+  and per assignee, and a collapsible backlog drawer that is a drop target.
+- **Performance:** columns virtualise beyond 100 cards; cards are memoised on
+  `(ref, rev, position)`; drag overlays use `transform` only.
+
+---
+
+## 10. Offline and PWA
+
+- `vite-plugin-pwa` in `generateSW` mode: precache the app shell, `core.wasm`,
+  `wasm_exec.js`, fonts and icons; runtime-cache shiki grammars and mermaid chunks
+  with stale-while-revalidate. `/api/**` (including the `/api/v1/events` WebSocket
+  upgrade) is **never** cached.
+- Browser-only mode is fully offline-capable: handles, index snapshot, drafts and
+  preferences all live locally. The only online need is git remote access.
+- Companion mode degrades to a read-only "companion offline" banner with the last
+  successful query results still visible from the Query cache.
+- Installability matters for permission persistence on Chromium, so the manifest,
+  icons and an "Install app" hint in settings are part of Phase 1.
+- Update flow: on new service worker, show a "New version available — Reload"
+  toast; never auto-reload with a dirty editor buffer.
+
+---
+
+## 11. Internationalisation
+
+- `i18next` + `react-i18next`, namespaces per feature, JSON catalogues in
+  `src/i18n/locales/<lang>/<ns>.json`. English is the source language and the only
+  one guaranteed complete; Spanish ships as the second locale.
+- All user-facing strings go through `t()`; ESLint `i18next/no-literal-string` is
+  on for `features/**` with a small allowlist (ids, keyboard shortcuts).
+- Dates/numbers via `Intl` with the active locale; relative times via
+  `Intl.RelativeTimeFormat`. Repo content (Markdown, item titles) is never
+  translated.
+- Locale detection: stored preference → `navigator.languages` → `en`. RTL is
+  prepared for (logical CSS properties, `dir` on `<html>`) though no RTL locale
+  ships initially.
+
+---
+
+## 12. Accessibility
+
+- shadcn/ui is Radix-based, so dialogs, menus, tabs, tooltips and comboboxes come
+  with correct roles and focus management; we keep those primitives rather than
+  hand-rolling.
+- Keyboard: every action reachable without a pointer. Global shortcuts (⌘K search,
+  `g` `b` boards, `g` `i` items, `e` edit, `s` sync) are listed in a shortcuts
+  dialog and are disabled while an editor or input has focus.
+- Drag & drop always has a keyboard equivalent plus a "Move to…" menu on each card.
+- Focus is visible everywhere (`:focus-visible` ring from the token set), route
+  changes move focus to the main heading, and a skip link precedes the sidebar.
+- Colour is never the only signal: status pills carry text, WIP warnings carry an
+  icon, diff views mark added/removed with symbols.
+- Contrast targets WCAG 2.1 AA in both themes; the prose and code themes are
+  checked with automated contrast tests.
+- `prefers-reduced-motion` disables drag animations, page transitions and mermaid
+  re-render animation.
+- Automated checks: `axe-core` via `@axe-core/playwright` on every e2e screen, plus
+  `jest-axe`-style assertions in component tests for the complex widgets.
+
+---
+
+## 13. Theming and design tokens
+
+- Tailwind CSS with CSS custom properties for tokens (`--background`,
+  `--foreground`, `--muted`, `--accent`, `--destructive`, plus semantic
+  `--status-todo`, `--status-in-progress`, …, and `--priority-*`).
+- Three theme states: `light`, `dark`, `system`. `system` sets no attribute and
+  relies on `prefers-color-scheme`; explicit choices stamp `data-theme` on
+  `<html>`. Tokens are defined on `:root`, redefined under the media query, and
+  again under `[data-theme="dark"]`, so the toggle wins in both directions.
+- Density setting (comfortable / compact) changes spacing tokens only.
+- Typography: system UI stack by default, optional Inter + JetBrains Mono
+  self-hosted (no external font CDN, so offline works). Prose styles are custom
+  rather than `@tailwindcss/typography` defaults, to keep them token-driven.
+- Status and priority colours are configurable per project in `project.yaml`;
+  the UI maps unknown statuses to a neutral token instead of failing.
+
+---
+
+## 14. Testing strategy
+
+**Unit (Vitest, jsdom).** `lib/` helpers (ref parsing, slugs, id formatting,
+date math), the markdown pipeline (snapshot tests per feature: gfm table, task
+list, callout, footnote, wikilink resolved/unresolved, mermaid placeholder, math,
+XSS payloads that must be sanitised), zod schemas, Zustand store actions,
+the WASM RPC client against a mocked worker (timeouts, cancellation, crash and
+respawn).
+
+**Component (Vitest + Testing Library).** Every screen rendered against an
+in-memory `FakeProvider` implementing `DataProvider` over fixture data. This is
+the main reason the provider interface exists: the whole UI is testable without a
+browser filesystem, a Go binary, or a git repo. Covered: table filtering/sorting,
+item editor save + conflict dialog, board drag via keyboard sensor, WIP warning,
+retro action promotion, conflict resolver field merge.
+
+**Contract tests.** One shared suite runs against `FakeProvider`,
+`BrowserProvider` (with an in-memory FS handle shim) and `CompanionProvider`
+(against a `gintrack serve` started by the test harness on a random port). Any
+provider that passes the suite is interchangeable; drift between modes shows up
+here, not in production.
+
+**E2E (Playwright).** Chromium project with the File System Access API driven via
+CDP (`browser_context` permission grant plus a fixture directory), and a second
+project running against `gintrack serve` with the embedded UI. Fixture repo lives
+at `web/e2e/fixtures/acme-repo` — a real git repo (two branches, a prepared
+conflict, ~200 items) materialised into a temp dir per test via a setup script,
+so tests can commit and reset freely. Scenarios: onboarding a project repo,
+browsing the KB with mermaid and wikilinks, creating a story, editing with
+autosave, moving a card across a board, running a sync that conflicts and
+resolving it, upgrading from browser-only to companion mid-session.
+Firefox and WebKit projects run a reduced suite covering the read-only fallback.
+
+**Visual and a11y.** Playwright screenshots for the board, KB page and editor in
+both themes, with a small pixel tolerance; `axe` scan per screen.
+
+**Performance budgets in CI.** Initial JS ≤ 300 KB gzip (excluding `core.wasm`,
+shiki grammars and mermaid, all lazily loaded); index 5k items ≤ 3 s in the
+worker benchmark; board with 500 cards renders ≤ 100 ms per interaction. Budgets
+are asserted by a script over the Vite bundle report and a Playwright trace.
+
+---
+
+## 15. Build and dev workflow
+
+**Build.**
+
+```
+make wasm   # GOOS=js GOARCH=wasm go build -o web/public/core.wasm ./wasm
+            # + copy $(go env GOROOT)/lib/wasm/wasm_exec.js to web/public/
+make web    # npm ci && npm run build  -> web/dist
+make build  # go build ./cmd/gintrack  (embeds web/dist via go:embed)
+```
+
+`internal/server` declares `//go:embed all:../../web/dist` and serves it with an
+SPA fallback (any unknown path that is not under `/api` returns `index.html`).
+`web/dist` contains a `.gitkeep` and a build-time generated `version.json` so the
+embed never fails on a clean checkout; CI always builds the web app before the Go
+binary. Vite config: `base: '/'`, hashed asset filenames, manual chunks for
+`react`, `codemirror`, `shiki`, `mermaid`, `isomorphic-git`, and
+`build.target: 'es2022'`. `core.wasm` is served from `public/` (not hashed) so the
+service worker can precache it by a stable name; its version is checked against a
+`version` string exported by the module at init and a mismatch forces a reload.
+
+**Dev.**
+
+```
+npm run dev          # vite dev server on :5173
+npm run dev:companion# vite dev with VITE_FORCE_COMPANION=1
+gintrack serve --dev # companion on :7317 with permissive CORS for :5173
+```
+
+`vite.config.ts` proxies `/api` (with `ws: true`, so the `/api/v1/events` upgrade
+works too) to
+`http://127.0.0.1:7317`, so the dev server behaves like the embedded build.
+`VITE_FORCE_PROVIDER=browser|companion` overrides auto-detection for debugging.
+Scripts: `dev`, `build`, `preview`, `lint` (ESLint flat config + `eslint-plugin-react-hooks`
++ boundaries), `typecheck` (`tsc --noEmit`, `strict: true`, `noUncheckedIndexedAccess`),
+`test`, `test:e2e`, `format` (Prettier). CI runs lint, typecheck, unit, contract
+and the Chromium e2e project on every PR; the full browser matrix runs nightly.
+
+---
+
+## 16. Phase mapping
+
+| Phase | Frontend deliverables |
+|---|---|
+| 0 | `web/` scaffold, Tailwind + shadcn, router skeleton, `DataProvider` interface, `FakeProvider`, CI (lint/typecheck/test) |
+| 1 | File System Access mount, WASM worker bridge, KB viewer with the full markdown pipeline, item table/detail/editor, epic tree, milestones, IndexedDB index cache, read-only fallback |
+| 2 | `CompanionProvider`, health probe + upgrade toast, WS-driven invalidation, contract test suite across providers |
+| 3 | Team repo mounting, boards (kanban + scrum) with dnd-kit, sprint planning, remote reference cards, multi-project item table |
+| 4 | Sync panel, conflict resolver UI, commit-on-save settings, credentials screen, git activity strips |
+| 5 | Agent/MCP status screen, call log, agent-oriented empty states and AGENTS.md surfacing in the KB |
+| 6 | Retro board, action promotion, metrics (burndown, CFD), link graph view, PWA polish, visual/a11y test gates, 1.0 |
+
+---
+
+## 17. Open questions
+
+1. Should saved views and column layouts be committed to the repo (shareable,
+   reviewable) instead of living in `localStorage`? Leaning: opt-in, stored under
+   `.pmngr/views/`.
+2. Shiki vs. highlight.js as the shipped default — decided in favour of shiki for
+   dual-theme output; revisit if the lazy grammar loading proves fragile offline.
+3. Whether the read-only fallback should attempt an OPFS copy of the selected
+   folder to enable local-only editing without the File System Access API
+   (writes would then need an explicit "export changes" step).
+4. Multi-team workspaces: the router already namespaces by `teamId`, but the
+   settings UI currently assumes one team. Revisit in Phase 3.
