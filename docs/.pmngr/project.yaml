@@ -1,0 +1,90 @@
+# docs/.pmngr/project.yaml
+# git-in-track's own backlog, managed with git-in-track itself (dogfooding).
+# Field reference: docs/03-data-model.md, section 6.
+schema: 1
+key: GIT
+name: git-in-track
+description: >-
+  A git-native, markdown-first project management tool for teams. Every artifact is a
+  Markdown file with YAML front matter that lives in a git repository. Humans use a web
+  UI; AI agents read and write the same files directly or through a local MCP server.
+timezone: UTC
+
+docs:
+  path: docs
+  wikilinks: true
+  mermaid: true
+  math: false
+  footnotes: true
+  callouts: true
+  attachments_dir: .pmngr/attachments
+
+workflow:
+  initial: backlog
+  statuses:
+    - { id: backlog,     name: Backlog,     category: todo }
+    - { id: todo,        name: To Do,       category: todo }
+    - { id: in_progress, name: In Progress, category: in_progress, wip: 4 }
+    - { id: in_review,   name: In Review,   category: in_progress, wip: 4 }
+    - { id: done,        name: Done,        category: done,      terminal: true }
+    - { id: cancelled,   name: Cancelled,   category: cancelled, terminal: true }
+  transitions:
+    backlog:     [todo, cancelled]
+    todo:        [in_progress, backlog, cancelled]
+    in_progress: [in_review, todo, cancelled]
+    in_review:   [done, in_progress, cancelled]
+    done:        [in_progress]
+    cancelled:   [backlog]
+
+id_allocation:
+  strategy: scan
+  write_counters: true
+  counters:               # hints only, NOT authoritative (the index scan wins)
+    epic: 7
+    story: 30
+    task: 0
+    milestone: 7
+
+priorities: [critical, high, medium, low]
+
+estimation:
+  scale: fibonacci
+  values: [1, 2, 3, 5, 8, 13, 21]
+  track_hours: false
+
+labels:
+  - { name: core,             color: "#4f46e5", description: Shared Go core (model, parser, index) }
+  - { name: cli,              color: "#0891b2", description: gintrack command line }
+  - { name: server,           color: "#0d9488", description: Local HTTP/WebSocket API }
+  - { name: web,              color: "#7c3aed", description: React web app }
+  - { name: wasm,             color: "#c2410c", description: WebAssembly build of the core }
+  - { name: mcp,              color: "#be123c", description: MCP server for AI agents }
+  - { name: docs,             color: "#65a30d", description: Documentation and knowledge base }
+  - { name: ci,               color: "#475569", description: Pipelines and releases }
+  - { name: git,              color: "#ea580c", description: Git sync and conflict handling }
+  - { name: security,         color: "#dc2626" }
+  - { name: performance,      color: "#ca8a04" }
+  - { name: good-first-issue, color: "#16a34a", description: Small, well-scoped, good for newcomers }
+  - { name: agent-ok,         color: "#2563eb", description: Suitable for an AI agent to pick up via MCP }
+
+defaults:
+  epic:
+    status: backlog
+    priority: medium
+  story:
+    status: backlog
+    priority: medium
+  task:
+    status: todo
+    priority: medium
+
+custom_fields:
+  - { key: phase,   type: number, applies_to: [milestone, epic], description: Roadmap phase number }
+  - { key: version, type: string, applies_to: [milestone], description: Target release tag }
+
+people:
+  - { handle: team, name: git-in-track maintainers, email: jose@digio.es }
+
+links:
+  host: github
+  web_url: https://github.com/digiogithub/git-in-track
