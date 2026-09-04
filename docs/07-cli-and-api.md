@@ -73,7 +73,7 @@ gintrack version
 
 ### 2.2 `go install` (developers)
 
-Requires Go 1.23+. `go install` builds **without** the embedded web app, because a fresh
+Requires Go 1.25+. `go install` builds **without** the embedded web app, because a fresh
 module download holds nothing under `web/dist` but its `.gitkeep`. **There is no build
 tag**: `web/embed.go` embeds `web/dist` unconditionally and `web.Built()` reports `false`
 when the directory is empty, so `gintrack serve` says there is no embedded UI while

@@ -11,7 +11,7 @@ versioning policy, branch strategy, release checklist and the distribution chann
 
 - Module path: `github.com/digiogithub/git-in-track`
 - CLI binary: `gintrack`
-- Toolchain: Go 1.24 in CI (`go.mod` declares `go 1.23.0`, so 1.23 still builds), Node 22, npm
+- Toolchain: Go 1.25 in CI, matching the `go 1.25.0` directive in `go.mod` (the MCP SDK requires it), Node 22, npm
 - Build artifacts: `web/dist` (Vite bundle), `web/public/core.wasm` + `web/public/wasm_exec.js`
   (Go → WASM core, both git-ignored), `gintrack` (single static binary embedding `web/dist`
   via `go:embed`)

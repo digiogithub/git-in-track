@@ -42,7 +42,7 @@ Then read only what your task needs: `docs/01-vision-and-scope.md`,
 
 ## Tech stack
 
-- **Backend and CLI**: Go 1.23+, cobra (CLI), chi (HTTP), fsnotify, go-git,
+- **Backend and CLI**: Go 1.25+, cobra (CLI), chi (HTTP), fsnotify, go-git,
   goldmark, yaml.v3, an MCP Go SDK, and `go:embed` to embed the built frontend
   (`web/dist`) into the binary.
 - **Frontend**: React 18 + Vite + TypeScript in `web/`, with TanStack Router and
