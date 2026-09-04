@@ -123,7 +123,7 @@ type SprintResult struct {
 	Sprint core.SprintView         `json:"sprint"`
 	Board  *core.BoardView         `json:"board,omitempty"`
 	Report *core.SprintCloseReport `json:"report,omitempty"`
-	Writes []VaultWriteSet         `json:"writes"`
+	Writes []RepoWriteSet          `json:"writes"`
 }
 
 // ------------------------------------------------------------------ vault ---
@@ -214,7 +214,7 @@ func (v *Vault) WriteSprint(
 	v.fs.begin()
 	written, err := store.Write(ctx, s, expected)
 	if err != nil {
-		return nil, WriteSet{}, err
+		return nil, WriteSet{}, fmt.Errorf("write sprint: %w", err)
 	}
 	writes, err := v.commit(ctx)
 	if err != nil {
@@ -291,7 +291,7 @@ func (c sprintContext) validateInput(ctx context.Context) core.SprintValidateInp
 // view renders one sprint over every open repository.
 func (c sprintContext) view(ctx context.Context, s *core.Sprint) core.SprintView {
 	board := c.board(ctx, s.Board)
-	view := core.BuildSprintView(s, board, c.input())
+	view := core.BuildSprintView(s, board, c.input(ctx))
 	view.Diagnostics = append(view.Diagnostics, s.Validate(c.validateInput(ctx))...)
 	view.Diagnostics = append(view.Diagnostics, core.ValidateSprintSet(c.sprints)...)
 	return view
@@ -311,7 +311,7 @@ func (w *Workspace) Sprints(ctx context.Context, p SprintListParams) (SprintList
 	out := SprintListResult{Sprints: []core.SprintSummary{}, Diagnostics: []core.Diagnostic{}}
 	out.Diagnostics = append(out.Diagnostics, c.diags...)
 	out.Diagnostics = append(out.Diagnostics, core.ValidateSprintSet(c.sprints)...)
-	in := c.input()
+	in := c.input(ctx)
 	for _, s := range c.sprints {
 		if p.Board != "" && s.Board != p.Board {
 			continue
@@ -402,7 +402,7 @@ func (w *Workspace) CreateSprint(ctx context.Context, p SprintCreateParams) (Spr
 	if err != nil {
 		return SprintResult{}, err
 	}
-	return c.result(ctx, written, []VaultWriteSet{teamWrites(c.team.ID, writes)}), nil
+	return c.result(ctx, written, []RepoWriteSet{teamWrites(c.team.ID, writes)}), nil
 }
 
 // UpdateSprint changes the fields of one sprint file and nothing else: the
@@ -495,7 +495,7 @@ func (w *Workspace) UpdateSprint(ctx context.Context, p SprintUpdateParams) (Spr
 	if err != nil {
 		return SprintResult{}, err
 	}
-	return c.result(ctx, written, []VaultWriteSet{teamWrites(c.team.ID, writes)}), nil
+	return c.result(ctx, written, []RepoWriteSet{teamWrites(c.team.ID, writes)}), nil
 }
 
 // StartSprint makes a sprint active: it copies the scope into `committed`, so
@@ -526,7 +526,7 @@ func (w *Workspace) StartSprint(ctx context.Context, p SprintStartParams) (Sprin
 	if err != nil {
 		return SprintResult{}, err
 	}
-	sets := []VaultWriteSet{teamWrites(c.team.ID, writes)}
+	sets := []RepoWriteSet{teamWrites(c.team.ID, writes)}
 
 	// The board follows the sprint it runs, so that opening the board shows the
 	// sprint that has just started (docs/04 section 5.5).
@@ -565,7 +565,7 @@ func (w *Workspace) CloseSprint(ctx context.Context, p SprintCloseParams) (Sprin
 	view := c.view(ctx, sprint)
 	report := core.SummarizeClose(sprint, view)
 
-	var sets []VaultWriteSet
+	var sets []RepoWriteSet
 	for _, decision := range p.Carry {
 		outcome, written := c.carry(ctx, sprint, decision)
 		report.Carried = append(report.Carried, outcome)
@@ -589,7 +589,7 @@ func (w *Workspace) CloseSprint(ctx context.Context, p SprintCloseParams) (Sprin
 // closed with a list of what could not be moved.
 func (c sprintContext) carry(
 	ctx context.Context, sprint *core.Sprint, decision SprintCarry,
-) (core.SprintCarryResult, []VaultWriteSet) {
+) (core.SprintCarryResult, []RepoWriteSet) {
 	out := core.SprintCarryResult{Ref: decision.Ref, Action: core.SprintCarryAction(decision.Action)}
 	if !out.Action.Valid() {
 		out.Error = fmt.Sprintf("%q is not a closing choice: leave, next or backlog", decision.Action)
@@ -625,7 +625,7 @@ func (c sprintContext) carry(
 			return out, nil
 		}
 		out.Sprint = target.ID
-		return out, []VaultWriteSet{teamWrites(c.team.ID, writes)}
+		return out, []RepoWriteSet{teamWrites(c.team.ID, writes)}
 	case core.CarryBacklog:
 		owner, cloned := c.owners[ref.Project]
 		if !cloned {
@@ -651,7 +651,7 @@ func (c sprintContext) carry(
 			return out, nil
 		}
 		out.Status = status
-		return out, []VaultWriteSet{{VaultID: owner.ID, Written: writes.Written, Removed: writes.Removed}}
+		return out, []RepoWriteSet{{VaultID: owner.ID, Written: writes.Written, Removed: writes.Removed}}
 	}
 	return out, nil
 }
@@ -682,16 +682,16 @@ func (c sprintContext) nextSprint(from *core.Sprint, named string) *core.Sprint 
 
 // result renders a sprint after a write, so that the caller never has to read
 // it back to see what it now looks like.
-func (c sprintContext) result(ctx context.Context, s *core.Sprint, writes []VaultWriteSet) SprintResult {
+func (c sprintContext) result(ctx context.Context, s *core.Sprint, writes []RepoWriteSet) SprintResult {
 	if writes == nil {
-		writes = []VaultWriteSet{}
+		writes = []RepoWriteSet{}
 	}
 	return SprintResult{Sprint: c.view(ctx, s), Writes: writes}
 }
 
 // teamWrites tags a write set with the repository it belongs to.
-func teamWrites(vaultID string, writes WriteSet) VaultWriteSet {
-	return VaultWriteSet{VaultID: vaultID, Written: writes.Written, Removed: writes.Removed}
+func teamWrites(vaultID string, writes WriteSet) RepoWriteSet {
+	return RepoWriteSet{VaultID: vaultID, Written: writes.Written, Removed: writes.Removed}
 }
 
 // parseSprintDate decodes a required `YYYY-MM-DD` field.

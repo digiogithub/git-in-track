@@ -19,7 +19,7 @@ const BoardsDirName = "boards"
 // `projects` entry that means "every non-archived project" (docs/04 5.1, 5.2).
 const BoardWildcard = "*"
 
-// BoardKind is the flavour of a board.
+// BoardKind is the flavor of a board.
 type BoardKind string
 
 // The two board kinds. A scrum board is sprint-scoped and is implemented by

@@ -25,6 +25,11 @@ LDFLAGS        := -s -w \
 # sources that are not part of this module's source tree.
 GO_PKGS         = $(shell go list ./... | grep -v '/web/node_modules/')
 
+# Keep in step with GOLANGCI_LINT_VERSION in .github/workflows/ci.yml, so that
+# `make lint` and CI always run the same linter release.
+GOLANGCI_LINT_PKG     := github.com/golangci/golangci-lint/v2/cmd/golangci-lint
+GOLANGCI_LINT_VERSION ?= v2.5.0
+
 export CGO_ENABLED := 0
 
 .DEFAULT_GOAL := build
@@ -73,16 +78,21 @@ test-web: ## Vitest unit tests
 
 lint: lint-go lint-web lint-ci ## Run every linter
 
-lint-go: ## gofmt check, go vet and golangci-lint when installed
+lint-go: ## gofmt check, go vet and golangci-lint (installed or via go run)
 	@unformatted=$$(gofmt -l . | grep -v '^web/node_modules/' || true); \
 	if [ -n "$$unformatted" ]; then \
 	  echo "These files are not gofmt'ed:"; echo "$$unformatted"; exit 1; \
 	fi
 	go vet $(GO_PKGS)
+	@# Never skip: a silent skip is how a lint failure reaches CI unnoticed. When
+	@# the binary is missing we run the pinned release through `go run`, which is
+	@# slower but is the exact version CI uses (GOLANGCI_LINT_VERSION in
+	@# .github/workflows/ci.yml).
 	@if command -v golangci-lint >/dev/null 2>&1; then \
 	  golangci-lint run --timeout=5m; \
 	else \
-	  echo "golangci-lint not installed; skipping (see docs/10-development-guidelines.md)"; \
+	  echo "golangci-lint not installed; running $(GOLANGCI_LINT_VERSION) with go run (slower)"; \
+	  go run $(GOLANGCI_LINT_PKG)@$(GOLANGCI_LINT_VERSION) run --timeout=5m; \
 	fi
 
 lint-web: ## ESLint and the TypeScript type check

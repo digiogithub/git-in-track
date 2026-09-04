@@ -261,7 +261,7 @@ func (a SprintCarryAction) Valid() bool {
 	return a == CarryLeave || a == CarryNext || a == CarryBacklog
 }
 
-// SprintCloseReport is what closing a sprint summarised: which references were
+// SprintCloseReport is what closing a sprint summarized: which references were
 // finished, which were not, and what was decided about each unfinished one.
 type SprintCloseReport struct {
 	Sprint     string      `json:"sprint"`

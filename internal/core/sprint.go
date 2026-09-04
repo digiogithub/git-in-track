@@ -39,7 +39,7 @@ func (s SprintState) Valid() bool {
 
 // sprintIDRE splits a sprint id from the right, because a team key may contain
 // hyphens: everything before the last `-S-` is the team key (docs/04 8.1).
-var sprintIDRE = regexp.MustCompile(`^([A-Z][A-Z0-9-]{1,15})-S-([0-9]{4,})$`)
+var sprintIDRE = regexp.MustCompile(`^([A-Z][A-Z0-9-]{1,15})-S-(\d{4,})$`)
 
 // ParseSprintID decodes `<TEAMKEY>-S-<NNNN>`.
 func ParseSprintID(s string) (TeamKey, int, error) {
@@ -529,13 +529,13 @@ func (s *SprintStore) NextID(ctx context.Context, team TeamKey) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	max := 0
+	highest := 0
 	for _, sprint := range sprints {
-		if _, number, err := ParseSprintID(sprint.ID); err == nil && number > max {
-			max = number
+		if _, number, err := ParseSprintID(sprint.ID); err == nil && number > highest {
+			highest = number
 		}
 	}
-	return FormatSprintID(team, max+1), nil
+	return FormatSprintID(team, highest+1), nil
 }
 
 // Write persists a sprint, enforcing the optimistic lock when expected is not

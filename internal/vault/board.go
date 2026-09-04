@@ -93,11 +93,11 @@ type MovePlan struct {
 	SprintAdd bool   `json:"sprintAdd,omitempty"`
 }
 
-// VaultWriteSet is a WriteSet plus the repository it belongs to. A move writes
+// RepoWriteSet is a WriteSet plus the repository it belongs to. A move writes
 // to two repositories — the item in its project clone, the order list in the
 // team repository — and the host has to persist each in the right place
 // (docs/04 R-MOVE-1).
-type VaultWriteSet struct {
+type RepoWriteSet struct {
 	VaultID string   `json:"vaultId"`
 	Written []File   `json:"written"`
 	Removed []string `json:"removed"`
@@ -105,10 +105,10 @@ type VaultWriteSet struct {
 
 // BoardMoveResult is the answer of "board.move".
 type BoardMoveResult struct {
-	Board  core.BoardView  `json:"board"`
-	Item   *core.Item      `json:"item,omitempty"`
-	Move   MovePlan        `json:"move"`
-	Writes []VaultWriteSet `json:"writes"`
+	Board  core.BoardView `json:"board"`
+	Item   *core.Item     `json:"item,omitempty"`
+	Move   MovePlan       `json:"move"`
+	Writes []RepoWriteSet `json:"writes"`
 }
 
 // BoardParams is the input of "board.get".
@@ -182,7 +182,7 @@ func (v *Vault) WriteBoard(ctx context.Context, b *core.Board, expected core.Rev
 	v.fs.begin()
 	written, err := store.Write(ctx, b, expected)
 	if err != nil {
-		return nil, WriteSet{}, err
+		return nil, WriteSet{}, fmt.Errorf("write board: %w", err)
 	}
 	writes, err := v.commit(ctx)
 	if err != nil {
@@ -193,15 +193,15 @@ func (v *Vault) WriteBoard(ctx context.Context, b *core.Board, expected core.Rev
 
 // BoardSource collects the items of one project the vault serves, so that a
 // board can be rendered over them. It takes the vault lock.
-func (v *Vault) BoardSource(key core.ProjectKey, vaultID string) (core.BoardSource, bool) {
+func (v *Vault) BoardSource(ctx context.Context, key core.ProjectKey, vaultID string) (core.BoardSource, bool) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	return v.boardSource(key, vaultID)
+	return v.boardSource(ctx, key, vaultID)
 }
 
 // boardSource is BoardSource with the lock already held. Bodies are dropped:
 // a board renders hundreds of cards and none of them shows one.
-func (v *Vault) boardSource(key core.ProjectKey, vaultID string) (core.BoardSource, bool) {
+func (v *Vault) boardSource(ctx context.Context, key core.ProjectKey, vaultID string) (core.BoardSource, bool) {
 	var ref core.ProjectRef
 	found := false
 	for _, p := range v.projects {
@@ -216,7 +216,7 @@ func (v *Vault) boardSource(key core.ProjectKey, vaultID string) (core.BoardSour
 	source := core.BoardSource{Project: key, VaultID: vaultID, Config: ref.Config}
 	filter := core.Filter{Projects: []core.ProjectKey{key}, Limit: core.MaxLimit, Sort: "id"}
 	for {
-		page, err := v.index.Items(context.Background(), filter)
+		page, err := v.index.Items(ctx, filter)
 		if err != nil {
 			break
 		}
@@ -305,7 +305,7 @@ func (v *Vault) boardGet(ctx context.Context, raw []byte) (any, error) {
 		input.Projects = append(input.Projects, v.team.Config.Projects...)
 	}
 	for _, key := range declared {
-		if source, ok := v.boardSource(key, ""); ok {
+		if source, ok := v.boardSource(ctx, key, ""); ok {
 			input.Sources = append(input.Sources, source)
 		}
 	}
@@ -317,14 +317,13 @@ func (v *Vault) boardGet(ctx context.Context, raw []byte) (any, error) {
 
 // teamScope returns the project keys team.yaml declares and the workflows of
 // the ones this vault serves. The caller holds the lock.
-func (v *Vault) teamScope() ([]core.ProjectKey, map[core.ProjectKey]*core.ProjectConfig) {
-	var declared []core.ProjectKey
+func (v *Vault) teamScope() (declared []core.ProjectKey, configs map[core.ProjectKey]*core.ProjectConfig) {
 	if v.team != nil && v.team.Config != nil {
 		for _, p := range v.team.Config.Projects {
 			declared = append(declared, p.Key)
 		}
 	}
-	configs := map[core.ProjectKey]*core.ProjectConfig{}
+	configs = map[core.ProjectKey]*core.ProjectConfig{}
 	for _, p := range v.projects {
 		if !p.Team && p.Config != nil {
 			configs[p.Key] = p.Config
@@ -403,7 +402,7 @@ func (w *Workspace) boardContext() (boardContext, error) {
 }
 
 // input builds the render input of a board: one source per cloned project.
-func (c boardContext) input() core.BoardInput {
+func (c boardContext) input(ctx context.Context) core.BoardInput {
 	in := core.BoardInput{
 		Declared: c.declared, TeamVaultID: c.team.ID,
 		Projects: c.projects, Snapshots: c.snapshots, Now: c.now,
@@ -413,7 +412,7 @@ func (c boardContext) input() core.BoardInput {
 		if !ok {
 			continue
 		}
-		if source, ok := owner.Vault.BoardSource(key, owner.ID); ok {
+		if source, ok := owner.Vault.BoardSource(ctx, key, owner.ID); ok {
 			in.Sources = append(in.Sources, source)
 		}
 	}
@@ -458,7 +457,7 @@ func (w *Workspace) BoardView(ctx context.Context, id string) (core.BoardView, e
 // cannot be read leaves the board unscoped and is reported as a diagnostic by
 // render, never as a failure.
 func (c boardContext) inputFor(ctx context.Context, board *core.Board) core.BoardInput {
-	in := c.input()
+	in := c.input(ctx)
 	if board.Kind == core.BoardScrum && board.Sprint != "" {
 		if sprint, err := c.team.Vault.Sprint(ctx, board.Sprint); err == nil {
 			in.Sprint = sprint
@@ -539,7 +538,7 @@ func (w *Workspace) MoveCard(ctx context.Context, p BoardMoveParams) (BoardMoveR
 			},
 			Sprint: plan.Sprint, SprintAdd: plan.SprintAdd,
 		},
-		Writes: []VaultWriteSet{},
+		Writes: []RepoWriteSet{},
 	}
 
 	// 1. The sprint, in the team repository. Dragging a card out of the backlog
@@ -584,7 +583,7 @@ func (w *Workspace) MoveCard(ctx context.Context, p BoardMoveParams) (BoardMoveR
 			return BoardMoveResult{}, err
 		}
 		result.Item = item
-		result.Writes = append(result.Writes, VaultWriteSet{
+		result.Writes = append(result.Writes, RepoWriteSet{
 			VaultID: owner.ID, Written: writes.Written, Removed: writes.Removed,
 		})
 	}
@@ -606,7 +605,7 @@ func (w *Workspace) MoveCard(ctx context.Context, p BoardMoveParams) (BoardMoveR
 		undoSprint()
 		return BoardMoveResult{}, err
 	}
-	result.Writes = append(result.Writes, VaultWriteSet{
+	result.Writes = append(result.Writes, RepoWriteSet{
 		VaultID: c.team.ID, Written: boardWrites.Written, Removed: boardWrites.Removed,
 	})
 
@@ -661,8 +660,8 @@ type BoardUpdateParams struct {
 // BoardUpdateResult is the answer of "board.update": the board as it now
 // renders, and what the team repository has to save.
 type BoardUpdateResult struct {
-	Board  core.BoardView  `json:"board"`
-	Writes []VaultWriteSet `json:"writes"`
+	Board  core.BoardView `json:"board"`
+	Writes []RepoWriteSet `json:"writes"`
 }
 
 // UpdateBoard rewrites the board file of the team repository and nothing else.
@@ -736,6 +735,6 @@ func (w *Workspace) UpdateBoard(ctx context.Context, p BoardUpdateParams) (Board
 	}
 	return BoardUpdateResult{
 		Board:  c.render(ctx, written),
-		Writes: []VaultWriteSet{teamWrites(c.team.ID, writes)},
+		Writes: []RepoWriteSet{teamWrites(c.team.ID, writes)},
 	}, nil
 }
