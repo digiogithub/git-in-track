@@ -335,7 +335,7 @@ func (s *Server) publishBoardMove(r *http.Request, result any) {
 // event per repository, plus the index refresh each of them implies. It is what
 // a card move, a sprint edit and a board edit all report through
 // (docs/04 R-MOVE-1, R-SPR-3).
-func (s *Server) publishWriteSets(r *http.Request, sets []vault.VaultWriteSet) {
+func (s *Server) publishWriteSets(r *http.Request, sets []vault.RepoWriteSet) {
 	requestID := requestIDOf(r)
 	for _, set := range sets {
 		m, found := s.repos.lookup(set.VaultID)

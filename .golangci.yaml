@@ -41,10 +41,12 @@ linters:
     misspell:
       locale: US
       # Data-model spellings that are values, not prose: the status category
-      # `cancelled` is written that way in every project.yaml, and `metricas`
-      # is part of a Spanish slug fixture.
+      # `cancelled` is written that way in every project.yaml, `ageing` is the
+      # snapshot-freshness grade the API and the web app exchange on the wire
+      # (docs/04, docs/07), and `metricas` is part of a Spanish slug fixture.
       ignore-rules:
         - cancelled
+        - ageing
         - metricas
   exclusions:
     paths:

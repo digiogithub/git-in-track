@@ -106,6 +106,9 @@ linters:
       disabled-checks: [hugeParam, rangeValCopy]
     misspell:
       locale: US
+      # Data-model spellings that are values, not prose: `cancelled` (a status
+      # category) and `ageing` (a snapshot-freshness grade sent over the wire).
+      ignore-rules: [cancelled, ageing, metricas]
 
   exclusions:
     rules:
@@ -124,6 +127,11 @@ formatters:
     goimports:
       local-prefixes: [github.com/digiogithub/git-in-track]
 ```
+
+`make lint` never skips golangci-lint. When the binary is not on `PATH` it runs the
+pinned release through `go run` (`GOLANGCI_LINT_VERSION` in the `Makefile`, kept in step
+with the same variable in `.github/workflows/ci.yml`), so a local `make lint` and CI
+always report the same findings.
 
 Adding a linter is a PR of its own: enable it, fix the whole repository, merge. Never
 enable a linter and leave `//nolint` sprinkled behind. Any `//nolint` **must** name the
@@ -731,7 +739,7 @@ Rules for fixtures:
 | Node.js        | 22 LTS     | npm 10+                                            |
 | git            | 2.40+      | used by tests and by native git mode               |
 | GNU Make       | any        | Windows: use WSL, Git Bash, or run commands by hand |
-| golangci-lint  | 1.61+      | `go install github.com/golangci/golangci-lint/...`  |
+| golangci-lint  | v2.5.0     | optional: `make lint` falls back to `go run` on the pinned version |
 | GoReleaser     | v2         | only for `make release-snapshot`                    |
 | Chromium browser | recent   | File System Access API for browser-only mode        |
 

@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -421,7 +422,7 @@ func TestConcurrentMovesMerge(t *testing.T) {
 
 			// git merge-file rewrites the first file in place and exits with the
 			// number of conflicts; anything but 0 is a conflict.
-			cmd := exec.Command("git", "merge-file", "-L", "mine", "-L", "base", "-L", "yours",
+			cmd := exec.CommandContext(context.Background(), "git", "merge-file", "-L", "mine", "-L", "base", "-L", "yours",
 				minePath, basePath, yoursPath)
 			out, err := cmd.CombinedOutput()
 			if err != nil {

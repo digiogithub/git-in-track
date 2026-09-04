@@ -268,7 +268,7 @@ func TestWorkspaceSearchSpansEveryRepository(t *testing.T) {
 		}
 		for _, h := range team {
 			if h.VaultID == "demo-team" && h.Project != "DEMO-TEAM" {
-				t.Errorf("a team knowledge-base hit must be labelled with the team key, got %q", h.Project)
+				t.Errorf("a team knowledge-base hit must be labeled with the team key, got %q", h.Project)
 			}
 		}
 
