@@ -1,9 +1,10 @@
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { FakeProvider } from '@/api/fake-provider';
 import type { RepoInfo } from '@/api/provider';
+import { useAppStore } from '@/app/store';
 import { renderWithRouter } from '@/test/router';
 
 import { WorkspaceHome } from './WorkspaceHome';
@@ -106,5 +107,20 @@ describe('WorkspaceHome', () => {
       await screen.findByRole('button', { name: /reconnect folders \(1\)/i }, { timeout: 5000 }),
     ).toBeEnabled();
     expect(screen.getByText(/expired the permission for this folder/i)).toBeInTheDocument();
+  });
+});
+
+describe('companion mode', () => {
+  afterEach(() => {
+    useAppStore.getState().reset();
+  });
+
+  it('replaces the browser folder picker with the companion guidance', async () => {
+    useAppStore.getState().setMode('companion', '1.2.3');
+    renderWithRouter({ index: WorkspaceHome, provider: new FakeProvider({ repos: [readyRepo] }) });
+
+    expect(await screen.findByText(/gintrack add/i)).toBeVisible();
+    expect(screen.queryByRole('button', { name: /open folder/i })).toBeNull();
+    expect(screen.queryByText(/never leave your machine/i)).toBeNull();
   });
 });

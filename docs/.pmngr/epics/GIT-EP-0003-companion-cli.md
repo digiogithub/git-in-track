@@ -2,9 +2,10 @@
 id: GIT-EP-0003
 type: epic
 title: Companion CLI
-status: in_progress
+status: done
 created: 2026-09-03T00:00:00Z
-updated: 2026-09-04T05:06:40Z
+updated: 2026-09-04T05:48:51Z
+closed: 2026-09-04T05:48:51Z
 started: 2026-09-04T05:06:40Z
 author: team
 priority: critical

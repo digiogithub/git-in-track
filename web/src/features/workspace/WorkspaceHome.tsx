@@ -36,6 +36,9 @@ export function WorkspaceHome() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const setPendingVault = useAppStore((state) => state.setPendingVault);
+  // In companion mode the repositories come from the configuration file, so the
+  // browser folder picker would be misleading: `gintrack add` is the way in.
+  const companion = useAppStore((state) => state.mode) === 'companion';
   const [error, setError] = useState<string | null>(null);
 
   const repos = useQuery({ queryKey: ['repos'], queryFn: () => provider.listRepos() });
@@ -104,38 +107,41 @@ export function WorkspaceHome() {
       <header className="space-y-1">
         <h1 className="text-2xl font-semibold tracking-tight">Workspace</h1>
         <p className="text-sm text-muted-foreground">
-          Open a project folder from this device. Files are read in your browser and never leave
-          your machine.
+          {companion
+            ? 'Repositories registered with the companion. Run `gintrack add <path>` to register another one.'
+            : 'Open a project folder from this device. Files are read in your browser and never leave your machine.'}
         </p>
       </header>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <FolderGit2 aria-hidden="true" className="h-4 w-4" />
-            Open a project folder
-          </CardTitle>
-          <CardDescription>
-            The next step detects <code>.pmngr/project.yaml</code> and confirms the documentation
-            folder.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <FolderPickers onPicked={startWizard} onError={setError} />
-          {pending.length > 0 ? (
-            <Button
-              variant="secondary"
-              onClick={() => {
-                reconnect.mutate(pending.map((repo) => repo.id));
-              }}
-              disabled={reconnect.isPending}
-            >
-              <ShieldAlert aria-hidden="true" className="h-4 w-4" />
-              Reconnect folders ({pending.length})
-            </Button>
-          ) : null}
-        </CardContent>
-      </Card>
+      {companion ? null : (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <FolderGit2 aria-hidden="true" className="h-4 w-4" />
+              Open a project folder
+            </CardTitle>
+            <CardDescription>
+              The next step detects <code>.pmngr/project.yaml</code> and confirms the documentation
+              folder.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <FolderPickers onPicked={startWizard} onError={setError} />
+            {pending.length > 0 ? (
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  reconnect.mutate(pending.map((repo) => repo.id));
+                }}
+                disabled={reconnect.isPending}
+              >
+                <ShieldAlert aria-hidden="true" className="h-4 w-4" />
+                Reconnect folders ({pending.length})
+              </Button>
+            ) : null}
+          </CardContent>
+        </Card>
+      )}
 
       {error ? (
         <p role="alert" className="text-sm text-destructive">
