@@ -86,6 +86,7 @@ func (s *Server) mountSync(r chi.Router) {
 	r.Post("/run", s.handleSyncRun)
 	r.Post("/abort", s.handleSyncAbort)
 	r.Get("/conflicts", s.handleSyncConflicts)
+	r.Patch("/settings", s.handleSyncSettingsPatch)
 	r.Post("/conflicts/resolve", s.notImplemented(
 		"Resolving a conflict from the API arrives with GIT-US-0022; "+
 			"until then resolve the files and continue the rebase, or POST /api/v1/sync/abort."))
@@ -353,6 +354,57 @@ type syncSettings struct {
 	// browser provider's flag so the UI branches on one field in both modes.
 	Supported bool   `json:"supported"`
 	Reason    string `json:"reason,omitempty"`
+}
+
+// syncSettingsPatch is the body of PATCH /api/v1/sync/settings. Every field is
+// a pointer so that an absent one is left alone.
+type syncSettingsPatch struct {
+	PullStrategy   *string `json:"pullStrategy,omitempty"`
+	PushOnSync     *bool   `json:"pushOnSync,omitempty"`
+	MaxPushRetries *int    `json:"maxPushRetries,omitempty"`
+}
+
+// handleSyncSettingsPatch serves PATCH /api/v1/sync/settings.
+func (s *Server) handleSyncSettingsPatch(w http.ResponseWriter, r *http.Request) {
+	var patch syncSettingsPatch
+	if !decodeBody(w, r, &patch) {
+		return
+	}
+	if err := s.git.applySync(patch); err != nil {
+		failProblem(w, r, codeInvalidRequest, err.Error())
+		return
+	}
+	if _, err := s.git.persist(); err != nil {
+		// The running process already honors the change; only the file did not
+		// take it, and the user has to know which of the two happened.
+		s.log.Warn("could not persist the sync settings", "error", err)
+	}
+	writeJSON(w, r, http.StatusOK, s.git.syncView())
+}
+
+// applySync validates and swaps the sync half of the git settings.
+func (g *gitState) applySync(patch syncSettingsPatch) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	next := g.settings
+	if patch.PullStrategy != nil {
+		strategy := config.PullStrategy(*patch.PullStrategy)
+		if !strategy.Valid() {
+			return &settingsError{field: "pullStrategy", message: "unknown strategy: use rebase or merge"}
+		}
+		next.PullStrategy = strategy
+	}
+	if patch.PushOnSync != nil {
+		next.PushOnSync = *patch.PushOnSync
+	}
+	if patch.MaxPushRetries != nil {
+		if *patch.MaxPushRetries < 0 {
+			return &settingsError{field: "maxPushRetries", message: "must not be negative"}
+		}
+		next.MaxPushRetries = *patch.MaxPushRetries
+	}
+	g.settings = next
+	return nil
 }
 
 // syncView renders the sync settings.

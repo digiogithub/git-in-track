@@ -408,3 +408,29 @@ func TestSyncResolveIsDeferred(t *testing.T) {
 		t.Fatalf("code = %q", doc.Code)
 	}
 }
+
+func TestSyncSettingsPatch(t *testing.T) {
+	t.Parallel()
+
+	fx := newSyncServer(t, config.Default().Git)
+	var body syncStatusBody
+
+	decode(t, send(t, fx.server, request{
+		method: http.MethodPatch, target: "/api/v1/sync/settings",
+		body: map[string]any{"pullStrategy": "merge", "pushOnSync": false},
+	}), http.StatusOK, nil)
+	decode(t, send(t, fx.server, request{method: http.MethodGet, target: "/api/v1/sync/status"}),
+		http.StatusOK, &body)
+	if body.Settings.PullStrategy != "merge" || body.Settings.PushOnSync {
+		t.Fatalf("settings = %+v", body.Settings)
+	}
+
+	decode(t, send(t, fx.server, request{
+		method: http.MethodPatch, target: "/api/v1/sync/settings",
+		body: map[string]any{"pullStrategy": "octopus"},
+	}), http.StatusBadRequest, nil)
+	decode(t, send(t, fx.server, request{
+		method: http.MethodPatch, target: "/api/v1/sync/settings",
+		body: map[string]any{"maxPushRetries": -1},
+	}), http.StatusBadRequest, nil)
+}
