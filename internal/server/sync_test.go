@@ -395,20 +395,6 @@ func TestSyncConflictsAndAbort(t *testing.T) {
 	}
 }
 
-func TestSyncResolveIsDeferred(t *testing.T) {
-	t.Parallel()
-
-	fx := newSyncServer(t, config.Default().Git)
-	var doc problemBody
-	decode(t, send(t, fx.server, request{
-		method: http.MethodPost, target: "/api/v1/sync/conflicts/resolve",
-		body: map[string]any{"repo": testRepoID, "path": "docs/same.md", "resolution": "ours"},
-	}), http.StatusNotImplemented, &doc)
-	if doc.Code != "not_implemented" {
-		t.Fatalf("code = %q", doc.Code)
-	}
-}
-
 func TestSyncSettingsPatch(t *testing.T) {
 	t.Parallel()
 

@@ -529,8 +529,15 @@ func writeGitError(w http.ResponseWriter, r *http.Request, err error) {
 		code = gitops.CodeCommitFailed
 	}
 	status := http.StatusInternalServerError
-	if code == gitops.CodeNoIdentity || code == gitops.CodeTemplateInvalid || code == gitops.CodeUnsupported {
+	switch code {
+	case gitops.CodeNoIdentity, gitops.CodeTemplateInvalid, gitops.CodeUnsupported:
 		status = http.StatusBadRequest
+	case gitops.CodeNotFound:
+		// The conflict list the resolver was opened from is stale: the
+		// integration moved on, so the client refetches instead of retrying.
+		status = http.StatusNotFound
+	case gitops.CodeConflict, gitops.CodeInProgress:
+		status = http.StatusConflict
 	}
 	writeProblem(w, r, status, code, "Git operation failed", err.Error())
 }

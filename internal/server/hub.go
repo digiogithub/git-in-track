@@ -14,6 +14,7 @@ const (
 	eventGitCommit        = "git.commit"
 	eventSyncProgress     = "sync.progress"
 	eventConflictDetected = "conflict.detected"
+	eventConflictResolved = "conflict.resolved"
 	eventResumeGap        = "resume.gap"
 	eventStreamOverflow   = "stream.overflow"
 )

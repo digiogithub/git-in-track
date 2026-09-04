@@ -86,10 +86,9 @@ func (s *Server) mountSync(r chi.Router) {
 	r.Post("/run", s.handleSyncRun)
 	r.Post("/abort", s.handleSyncAbort)
 	r.Get("/conflicts", s.handleSyncConflicts)
+	r.Get("/conflicts/file", s.handleSyncConflictFile)
+	r.Post("/conflicts/resolve", s.handleSyncConflictResolve)
 	r.Patch("/settings", s.handleSyncSettingsPatch)
-	r.Post("/conflicts/resolve", s.notImplemented(
-		"Resolving a conflict from the API arrives with GIT-US-0022; "+
-			"until then resolve the files and continue the rebase, or POST /api/v1/sync/abort."))
 }
 
 // handleSyncStatus serves GET /api/v1/sync/status.
@@ -247,7 +246,7 @@ func (s *Server) syncOne(ctx context.Context, op string, m *mount, opts gitops.S
 }
 
 // publishConflict announces a stopped integration, naming every path so that
-// the UI can offer the resolver (GIT-US-0022) instead of a generic failure.
+// the UI can offer the resolver instead of a generic failure.
 func (s *Server) publishConflict(ctx context.Context, op string, backend gitops.Backend, res gitops.SyncResult) {
 	paths := make([]string, 0, len(res.Conflicts))
 	kind := gitops.ConflictContent
@@ -259,7 +258,7 @@ func (s *Server) publishConflict(ctx context.Context, op string, backend gitops.
 	}
 	data := conflictEventData{
 		OperationID: op, Repo: res.Repo, Paths: paths, Kind: kind,
-		Conflicts: res.Conflicts, Strategy: res.Strategy, Resolvable: "manual",
+		Conflicts: res.Conflicts, Strategy: res.Strategy, Resolvable: "assisted",
 	}
 	if st, err := backend.SyncStatus(ctx); err == nil {
 		data.Status, data.Operation = &st, st.Operation
@@ -314,8 +313,8 @@ func (s *Server) handleSyncAbort(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleSyncConflicts serves GET /api/v1/sync/conflicts: the conflicted paths
-// of every repository whose integration stopped. Reading the three versions of
-// a conflicted file and writing a resolution is GIT-US-0022.
+// of every repository whose integration stopped. The three versions of one of
+// them are served by GET /api/v1/sync/conflicts/file (conflicts.go).
 func (s *Server) handleSyncConflicts(w http.ResponseWriter, r *http.Request) {
 	wanted := r.URL.Query().Get("repo")
 	out := make([]conflictEventData, 0, len(s.repos.all()))
@@ -338,7 +337,7 @@ func (s *Server) handleSyncConflicts(w http.ResponseWriter, r *http.Request) {
 		status := st
 		out = append(out, conflictEventData{
 			Repo: m.id, Paths: paths, Kind: st.Conflicted[0].Kind, Conflicts: st.Conflicted,
-			Operation: st.Operation, Resolvable: "manual", Status: &status,
+			Operation: st.Operation, Resolvable: "assisted", Status: &status,
 		})
 	}
 	writeJSON(w, r, http.StatusOK, map[string]any{"conflicts": out})
