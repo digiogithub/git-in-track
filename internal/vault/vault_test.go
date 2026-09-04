@@ -759,3 +759,69 @@ func TestAsError(t *testing.T) {
 		}
 	})
 }
+
+func TestConflictMerge(t *testing.T) {
+	const path = "docs/.pmngr/stories/DEMO-US-0001-guest-checkout.md"
+	base := "---\nid: DEMO-US-0001\ntype: story\ntitle: Guest checkout\nstatus: todo\n" +
+		"labels: [frontend]\nauthor: jose\ncreated: 2026-01-01T00:00:00Z\n" +
+		"updated: 2026-01-01T00:00:00Z\n---\n\n## Description\n\nOne.\n"
+	ours := strings.Replace(base, "labels: [frontend]", "labels: [frontend, mine]", 1)
+	theirs := strings.Replace(base, "status: todo", "status: done", 1)
+
+	tests := []struct {
+		name     string
+		params   map[string]any
+		wantErr  bool
+		contains []string
+	}{
+		{
+			name: "the three versions are merged field by field",
+			params: map[string]any{
+				"path": path, "base": base, "ours": ours, "theirs": theirs,
+			},
+			contains: []string{"labels: [frontend, mine]", "status: done"},
+		},
+		{
+			name: "keep mine takes one whole side",
+			params: map[string]any{
+				"path": path, "base": base, "ours": ours, "theirs": theirs,
+				"resolution": map[string]any{"take": "ours"},
+			},
+			contains: []string{"labels: [frontend, mine]", "status: todo"},
+		},
+		{
+			name:    "a call with no path is refused",
+			params:  map[string]any{"base": base, "ours": ours, "theirs": theirs},
+			wantErr: true,
+		},
+	}
+
+	v, _ := loadedVault(t)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, err := json.Marshal(tc.params)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			result, err := v.Dispatch(t.Context(), "conflict.merge", raw)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("want an error, got %+v", result)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("conflict.merge: %v", err)
+			}
+			merge, ok := result.(core.MergeResult)
+			if !ok {
+				t.Fatalf("result type = %T", result)
+			}
+			for _, want := range tc.contains {
+				if !strings.Contains(merge.Content, want) {
+					t.Errorf("the merged file is missing %q:\n%s", want, merge.Content)
+				}
+			}
+		})
+	}
+}
