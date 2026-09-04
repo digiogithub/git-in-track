@@ -669,9 +669,11 @@ func TestDeferredRoutesAnswerNotImplemented(t *testing.T) {
 	t.Parallel()
 
 	s, _ := newAPIServer(t)
+	// Boards are served since GIT-US-0017 and sprints since GIT-US-0018; both
+	// are covered by boards_test.go and sprints_test.go.
 	for _, target := range []string{
-		"/api/v1/boards", "/api/v1/boards/platform-kanban", "/api/v1/sprints",
-		"/api/v1/retros", "/api/v1/sync/status", "/api/v1/git/status?repo=demo",
+		"/api/v1/retros",
+		"/api/v1/sync/status", "/api/v1/git/status?repo=demo",
 	} {
 		var doc problemBody
 		decode(t, send(t, s, request{method: http.MethodGet, target: target}), http.StatusNotImplemented, &doc)

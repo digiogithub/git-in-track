@@ -37,6 +37,15 @@ func (s *Server) kbScope(w http.ResponseWriter, r *http.Request) (*mount, string
 	if m, found := s.repos.forProject(key); found {
 		return m, key, true
 	}
+	// A team knowledge base is addressed by its team key: it is a scope of the
+	// team repository's index, not a project (docs/04 section 4).
+	if m, found := s.repos.workspace().TeamMount(); found {
+		if team := m.Vault.Team(); team != nil && string(team.Key) == key {
+			if owner, ok := s.repos.lookup(m.ID); ok {
+				return owner, key, true
+			}
+		}
+	}
 	// A team space is addressed by its repository id, not by a project key.
 	if m, found := s.repos.lookup(key); found {
 		return m, "", true

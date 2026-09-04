@@ -17,7 +17,12 @@
 
 import type {
   BatchResult,
+  BoardMoveResult,
+  BoardPatch,
+  BoardSummary,
+  BoardView,
   Capabilities,
+  CardMove,
   ChangeEvent,
   Comment,
   DataProvider,
@@ -34,15 +39,32 @@ import type {
   KbScope,
   MountInput,
   ProjectSummary,
+  RefResolution,
   RepoInfo,
   SearchHit,
   SearchQuery,
+  SnapshotRefresh,
+  SnapshotResult,
+  SprintCarry,
+  SprintDraft,
+  SprintFilter,
+  SprintPatch,
+  SprintResult,
+  SprintSummary,
+  SprintView,
+  TeamSummary,
   Unsubscribe,
   UpdateOp,
 } from '@/api/provider';
 import { ProviderError } from '@/api/provider';
 import { hydrateOrBuild } from '@/cache/index-cache';
-import type { CoreMethodName, CoreParams, CoreResult, WriteSet } from '@/core-bridge/api';
+import type {
+  CoreMethodName,
+  CoreParams,
+  CoreResult,
+  VaultWriteSet,
+  WriteSet,
+} from '@/core-bridge/api';
 import { coreClient, type CoreClient } from '@/core-bridge/client';
 import {
   FsaVault,
@@ -78,6 +100,8 @@ export type BrowserProviderOptions = {
 /** Core error codes that map onto a provider code; everything else is internal. */
 const CORE_ERROR_CODES: Record<string, ProviderError['code']> = {
   stale_revision: 'stale_revision',
+  wip_limit_exceeded: 'wip_limit_exceeded',
+  repo_not_cloned: 'repo_not_cloned',
   rev_mismatch: 'stale_revision',
   conflict: 'stale_revision',
   validation_failed: 'validation_failed',
@@ -201,6 +225,26 @@ export class BrowserProvider implements DataProvider {
   }
 
   /**
+   * The team repository among the open folders. `team.get` fails with
+   * `not_found` when none is open, which is a normal state, not an error the
+   * UI has to show.
+   */
+  async getTeam(): Promise<TeamSummary | null> {
+    await this.#ensureActive();
+    try {
+      return await this.#call('team.get', undefined);
+    } catch (error) {
+      if (error instanceof ProviderError && error.code === 'not_found') return null;
+      throw error;
+    }
+  }
+
+  async resolveRef(ref: string): Promise<RefResolution> {
+    await this.#ensureActive();
+    return this.#call('ref.resolve', { ref });
+  }
+
+  /**
    * Mounts a folder the user already picked. `MountInput.location` is the id
    * returned by `registerVault` (see `fs/vault-registry.ts`), which keeps
    * browser handles out of the provider interface.
@@ -254,7 +298,15 @@ export class BrowserProvider implements DataProvider {
 
   async unmountRepo(repoId: string): Promise<void> {
     this.#mounts.delete(repoId);
-    if (this.#activeRepoId === repoId) this.#activeRepoId = null;
+    if (this.#activeRepoId === repoId) {
+      this.#activeRepoId = [...this.#mounts.keys()][0] ?? null;
+    }
+    try {
+      await this.#call('workspace.unmount', { vaultId: repoId });
+    } catch (error) {
+      // A folder the core never loaded is already unmounted as far as it knows.
+      if (!(error instanceof ProviderError && error.code === 'not_found')) throw error;
+    }
     await removeHandleRecord(repoId);
     this.#emit({ kind: 'repo', repoId });
   }
@@ -269,11 +321,11 @@ export class BrowserProvider implements DataProvider {
 
     const events = await this.#vaultCall(() => mount.vault.rescan());
     const stats = events.length
-      ? await this.#call('vault.apply', { events })
-      : await this.#call('vault.stats', undefined);
+      ? await this.#call('vault.apply', { events, vaultId: repoId })
+      : await this.#call('vault.stats', { vaultId: repoId });
 
     mount.lastIndexedAt = new Date().toISOString();
-    mount.projects = (await this.#call('project.list', undefined)).map((project) => project.key);
+    mount.projects = await this.#projectsOf(repoId);
     await this.#touchRecord(mount);
 
     this.#emit({ kind: 'index', repoId, stats });
@@ -305,20 +357,27 @@ export class BrowserProvider implements DataProvider {
     return this.#call('comment.list', { id });
   }
 
+  /**
+   * A team scope reads the `knowledge/` folder of the team repository. Both
+   * scopes are addressed by key: the core indexes the team knowledge base under
+   * the team key exactly as it indexes a project's docs folder under its
+   * project key (docs/04 §4).
+   */
   async listKbTree(scope: KbScope): Promise<KbNode[]> {
     await this.#ensureActive();
-    // TODO(GIT-US-0016): team scopes read `knowledge/` from the team repository.
-    return this.#call('kb.tree', scope.kind === 'project' ? { project: scope.projectKey } : {});
+    return this.#call('kb.tree', {
+      project: scope.kind === 'project' ? scope.projectKey : scope.teamId,
+    });
   }
 
-  async getPage(_scope: KbScope, path: string): Promise<KbPage> {
+  async getPage(scope: KbScope, path: string): Promise<KbPage> {
     await this.#ensureActive();
-    return this.#call('kb.page', { path });
+    return this.#call('kb.page', { path, ...this.#scopeVault(scope) });
   }
 
   /** Binary reads never go through the core: the bytes come from the vault. */
-  async readAsset(_scope: KbScope, path: string): Promise<Blob> {
-    const mount = await this.#ensureActive();
+  async readAsset(scope: KbScope, path: string): Promise<Blob> {
+    const mount = (await this.#mountForScope(scope)) ?? (await this.#ensureActive());
     return this.#vaultCall(() => mount.vault.readBinary(path));
   }
 
@@ -339,15 +398,16 @@ export class BrowserProvider implements DataProvider {
   // -------------------------------------------------------------------- write
 
   async createItem(input: ItemDraft): Promise<Item> {
-    const mount = await this.#ensureWritable();
+    const active = await this.#ensureWritable();
     const { item, writes } = await this.#call('item.create', input);
+    const mount = this.#mountForItem(item.id, active);
     await this.#persist(mount, writes);
     this.#emit({ kind: 'items', repoId: mount.id, ids: [item.id] });
     return item;
   }
 
   async updateItem(id: string, patch: ItemPatch, rev: string): Promise<Item> {
-    const mount = await this.#ensureWritable();
+    const mount = this.#mountForItem(id, await this.#ensureWritable());
     const { item, writes } = await this.#call('item.update', { id, patch, rev });
     await this.#persist(mount, writes);
     this.#emit({ kind: 'items', repoId: mount.id, ids: [item.id] });
@@ -355,7 +415,7 @@ export class BrowserProvider implements DataProvider {
   }
 
   async moveItem(id: string, status: ItemStatus, rev: string): Promise<Item> {
-    const mount = await this.#ensureWritable();
+    const mount = this.#mountForItem(id, await this.#ensureWritable());
     const { item, writes } = await this.#call('item.move', { id, status, rev });
     await this.#persist(mount, writes);
     this.#emit({ kind: 'items', repoId: mount.id, ids: [item.id] });
@@ -377,30 +437,198 @@ export class BrowserProvider implements DataProvider {
   }
 
   async deleteItem(id: string, rev: string): Promise<void> {
-    const mount = await this.#ensureWritable();
+    const mount = this.#mountForItem(id, await this.#ensureWritable());
     const { writes } = await this.#call('item.delete', { id, rev });
     await this.#persist(mount, writes);
     this.#emit({ kind: 'items', repoId: mount.id, ids: [id] });
   }
 
   async addComment(id: string, body: string, author = 'me'): Promise<Comment> {
-    const mount = await this.#ensureWritable();
+    const mount = this.#mountForItem(id, await this.#ensureWritable());
     const { comment, writes } = await this.#call('comment.add', { id, author, body });
     await this.#persist(mount, writes);
     this.#emit({ kind: 'items', repoId: mount.id, ids: [id] });
     return comment;
   }
 
-  async writePage(_scope: KbScope, path: string, content: string, rev?: string): Promise<KbPage> {
-    const mount = await this.#ensureWritable();
+  async writePage(scope: KbScope, path: string, content: string, rev?: string): Promise<KbPage> {
+    const active = await this.#ensureWritable();
+    const mount = (await this.#mountForScope(scope)) ?? active;
     const { page, writes } = await this.#call('kb.write', {
       path,
       text: content,
+      vaultId: mount.id,
       ...(rev === undefined ? {} : { rev }),
     });
     await this.#persist(mount, writes);
     this.#emit({ kind: 'kb', repoId: mount.id, paths: [page.path] });
     return page;
+  }
+
+  // -------------------------------------------------------------------- boards
+
+  /**
+   * The boards of the team repository. Without one open there is nothing to
+   * list, which is a state rather than an error.
+   */
+  async listBoards(): Promise<BoardSummary[]> {
+    await this.#ensureActive();
+    try {
+      const result = await this.#call('board.list', undefined);
+      return result.boards;
+    } catch (error) {
+      if (error instanceof ProviderError && error.code === 'not_found') return [];
+      throw error;
+    }
+  }
+
+  async getBoard(slug: string): Promise<BoardView> {
+    await this.#ensureActive();
+    return this.#call('board.get', { board: slug });
+  }
+
+  /**
+   * A move writes two repositories, so the core answers with one `WriteSet`
+   * per repository and each is persisted into the folder it belongs to.
+   */
+  async moveCard(move: CardMove): Promise<BoardMoveResult> {
+    await this.#ensureWritable();
+    const result = await this.#call('board.move', {
+      board: move.board,
+      ref: move.ref,
+      toColumn: move.toColumn,
+      position: move.position,
+      ...(move.status === undefined ? {} : { status: move.status }),
+      ...(move.rev === undefined ? {} : { rev: move.rev }),
+      ...(move.itemRev === undefined ? {} : { itemRev: move.itemRev }),
+      ...(move.force === undefined ? {} : { force: move.force }),
+    });
+    await this.#persistSets(result.writes);
+    if (result.item) {
+      const mount = this.#mountForItem(result.item.id, await this.#ensureActive());
+      this.#emit({ kind: 'items', repoId: mount.id, ids: [result.item.id] });
+    }
+    return result;
+  }
+
+  /**
+   * Edits the board file of the team repository and nothing else: one write,
+   * persisted through the team repository's directory handle.
+   */
+  async updateBoard(slug: string, patch: BoardPatch, rev?: string): Promise<BoardView> {
+    await this.#ensureWritable();
+    const result = await this.#call('board.update', {
+      board: slug,
+      patch,
+      ...(rev === undefined ? {} : { rev }),
+    });
+    await this.#persistSets(result.writes);
+    return result.board;
+  }
+
+  // ------------------------------------------------------------------- sprints
+
+  /**
+   * The sprints of the team repository. Without one open there is nothing to
+   * list, which is a state rather than an error.
+   */
+  async listSprints(filter: SprintFilter = {}): Promise<SprintSummary[]> {
+    await this.#ensureActive();
+    try {
+      const result = await this.#call('sprint.list', {
+        ...(filter.board === undefined ? {} : { board: filter.board }),
+        ...(filter.state === undefined ? {} : { state: filter.state }),
+      });
+      return result.sprints;
+    } catch (error) {
+      if (error instanceof ProviderError && error.code === 'not_found') return [];
+      throw error;
+    }
+  }
+
+  async getSprint(id: string): Promise<SprintView> {
+    await this.#ensureActive();
+    return this.#call('sprint.get', { id });
+  }
+
+  async createSprint(input: SprintDraft): Promise<SprintResult> {
+    await this.#ensureWritable();
+    return this.#persistSprint(await this.#call('sprint.create', input));
+  }
+
+  async updateSprint(id: string, patch: SprintPatch, rev?: string): Promise<SprintResult> {
+    await this.#ensureWritable();
+    return this.#persistSprint(
+      await this.#call('sprint.update', { id, patch, ...(rev === undefined ? {} : { rev }) }),
+    );
+  }
+
+  async startSprint(id: string, rev?: string, force?: boolean): Promise<SprintResult> {
+    await this.#ensureWritable();
+    return this.#persistSprint(
+      await this.#call('sprint.start', {
+        id,
+        ...(rev === undefined ? {} : { rev }),
+        ...(force === undefined ? {} : { force }),
+      }),
+    );
+  }
+
+  async closeSprint(id: string, carry?: SprintCarry[], rev?: string): Promise<SprintResult> {
+    await this.#ensureWritable();
+    return this.#persistSprint(
+      await this.#call('sprint.close', {
+        id,
+        ...(carry === undefined ? {} : { carry }),
+        ...(rev === undefined ? {} : { rev }),
+      }),
+    );
+  }
+
+  /** Persists what a sprint call wrote: the team repository, and the project
+   * repository of an item a closing decision sent back to the backlog. */
+  async #persistSprint(result: SprintResult): Promise<SprintResult> {
+    await this.#persistSets(result.writes);
+    return result;
+  }
+
+  /** Writes one `WriteSet` per repository into the folder it belongs to. */
+  async #persistSets(sets: VaultWriteSet[]): Promise<void> {
+    for (const set of sets) {
+      const mount = this.#mounts.get(set.vaultId);
+      if (!mount) continue;
+      await this.#persist(mount, { written: set.written, removed: set.removed });
+      this.#emit({ kind: 'repo', repoId: mount.id });
+    }
+  }
+
+  // ----------------------------------------------------------------- snapshots
+
+  async listSnapshots(): Promise<SnapshotResult[]> {
+    const result = await this.#call('snapshot.list', undefined);
+    return result.snapshots;
+  }
+
+  /**
+   * Regenerating a snapshot writes one file into the team repository, so the
+   * write set comes back the way a card move's does and is persisted through
+   * the same directory handle.
+   */
+  async refreshSnapshots(input: SnapshotRefresh = {}): Promise<SnapshotResult[]> {
+    if (!input.dryRun) await this.#ensureWritable();
+    const result = await this.#call('snapshot.refresh', {
+      ...(input.projects === undefined ? {} : { projects: input.projects }),
+      ...(input.generatedBy === undefined ? {} : { generatedBy: input.generatedBy }),
+      ...(input.includeClosed === undefined ? {} : { includeClosed: input.includeClosed }),
+      ...(input.dryRun === undefined ? {} : { dryRun: input.dryRun }),
+    });
+    for (const set of result.writes) {
+      const mount = this.#mounts.get(set.vaultId);
+      if (!mount) continue;
+      await this.#persist(mount, { written: set.written, removed: set.removed });
+      this.#emit({ kind: 'repo', repoId: mount.id });
+    }
+    return result.snapshots;
   }
 
   // ------------------------------------------------------------------- events
@@ -438,22 +666,37 @@ export class BrowserProvider implements DataProvider {
     }
   }
 
-  /** Pushes the whole folder into the core and refreshes the mount record. */
+  /**
+   * Pushes the whole folder into the core and refreshes the mount record.
+   *
+   * Every folder gets its own repository inside the core workspace, keyed by
+   * the same id the handle store uses, so that a team repository and several
+   * project clones are open at the same time (GIT-US-0016). Loading one folder
+   * no longer evicts the others.
+   */
   async #load(
     repoId: string,
     vault: VaultFS,
     meta: { kind: RepoInfo['kind']; docsFolder: string },
   ): Promise<IndexStats> {
     const files = await this.#vaultCall(async () => vault.cachedFiles() ?? vault.readTextFiles());
+    await this.#call('workspace.mount', {
+      vaultId: repoId,
+      role: meta.kind,
+      rootLabel: vault.name,
+    });
     // The IndexedDB snapshot cache (GIT-US-0007) paints the vault structure
     // before the files are parsed again, then the real index replaces it.
     let stats: IndexStats;
     try {
-      ({ stats } = await hydrateOrBuild(this.#client, repoId, files, { rootLabel: vault.name }));
+      ({ stats } = await hydrateOrBuild(this.#client, repoId, files, {
+        rootLabel: vault.name,
+        vaultId: repoId,
+      }));
     } catch (error) {
       throw toProviderError(error);
     }
-    const projects = (await this.#call('project.list', undefined)).map((project) => project.key);
+    const projects = await this.#projectsOf(repoId);
 
     const mount: MountedRepo = {
       id: repoId,
@@ -468,6 +711,46 @@ export class BrowserProvider implements DataProvider {
     this.#activeRepoId = repoId;
     await this.#touchRecord(mount);
     return stats;
+  }
+
+  /** Project keys one repository of the workspace exposes. */
+  async #projectsOf(repoId: string): Promise<string[]> {
+    const summary = await this.#call('workspace.list', undefined);
+    const entry = summary.vaults.find((v) => v.id === repoId);
+    return entry?.projects ?? [];
+  }
+
+  /** The repository a knowledge-base scope reads from, when it is known. */
+  async #mountForScope(scope: KbScope): Promise<MountedRepo | undefined> {
+    if (scope.kind === 'project') return this.#mountForProject(scope.projectKey);
+    const summary = await this.#call('workspace.list', undefined);
+    const teamVault = summary.vaults.find((v) => v.team);
+    return teamVault ? this.#mounts.get(teamVault.id) : undefined;
+  }
+
+  /** `vaultId` for a knowledge-base scope, so a page read hits the right folder. */
+  #scopeVault(scope: KbScope): { vaultId?: string } {
+    if (scope.kind !== 'project') return {};
+    const mount = this.#mountForProject(scope.projectKey);
+    return mount ? { vaultId: mount.id } : {};
+  }
+
+  /** The folder holding a project, by the key its items are prefixed with. */
+  #mountForProject(key: string): MountedRepo | undefined {
+    for (const mount of this.#mounts.values()) {
+      if (mount.projects.includes(key)) return mount;
+    }
+    return undefined;
+  }
+
+  /**
+   * The folder that owns an item id. The project key is the id's own prefix,
+   * which is what lets a write land in the right repository without the caller
+   * having to say which one it meant.
+   */
+  #mountForItem(id: string, fallback: MountedRepo): MountedRepo {
+    const key = id.split('-')[0] ?? '';
+    return this.#mountForProject(key) ?? fallback;
   }
 
   /** Keeps the persisted record in step with what the last index found. */

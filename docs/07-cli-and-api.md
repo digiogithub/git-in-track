@@ -407,8 +407,8 @@ run `gintrack doctor` for the details
 
 The positional argument limits the run to one registered repository. `--watch` (stay
 running and re-index on file changes) belongs to `gintrack serve`, which drives the same
-indexer behind the file watcher; `--out`, `--snapshot` and the persisted index cache
-arrive with the cache and the team boards.
+indexer behind the file watcher. Publishing a project's index to the team repository is
+`gintrack snapshot` (§4.13); `--out` and the persisted index cache arrive with the cache.
 
 ### 4.5 `gintrack item …`
 
@@ -586,9 +586,10 @@ warning: column "In review" is at its WIP limit (3/3)
 
 Cards are `ref: <projectKey>/<itemId>` references, never copies. When the referenced
 project repo is not registered locally, the card is resolved from
-`.pmngr/index/<projectKey>.json` and marked `remote: true`; `board move` on a remote card
-updates the board order but refuses to change the item status (exit 4 with a problem
-detail explaining the repo is not cloned).
+`.pmngr/index/<projectKey>.json` and marked `remote: true`, carrying `source: "snapshot"`,
+`snapshotAt`, `stale` and `remoteUrl`; `board move` on a remote card updates the board
+order but refuses to change the item status (exit 4 with a problem detail explaining the
+repo is not cloned). Refresh those snapshots with `gintrack snapshot` (§4.13).
 
 ### 4.7 `gintrack sync [--dry-run]`
 
@@ -748,6 +749,46 @@ defaultWorkspace: work
 workspaces:
 ```
 
+### 4.13 `gintrack snapshot [KEY...]`
+
+Refreshes the committed index snapshots of the team repository (doc 04 §6), so that team
+boards can render the cards of projects other people have not cloned.
+
+```
+gintrack snapshot [KEY...] [flags]
+  --team string           Id of the registered team repository (default: the only one)
+  --generated-by string   Handle recorded in the file (default: the configured author)
+  --include-closed        Keep closed items regardless of their age
+  --max-age-days int      How long a closed item stays in the snapshot (default 30)
+  --dry-run               Report what would change; write nothing
+  --json                  Machine-readable output
+```
+
+```
+$ gintrack snapshot
+DEMO     .pmngr/index/DEMO.json       written     (5 items)
+WEB      —                            skipped     (not cloned in this workspace)
+1 written, 0 unchanged, 1 skipped
+commit them with `git -C ~/code/acme-team commit -m "chore(pmngr): refresh index snapshots"`
+
+$ gintrack snapshot
+DEMO     .pmngr/index/DEMO.json       unchanged   (5 items)
+WEB      —                            skipped     (not cloned in this workspace)
+0 written, 1 unchanged, 1 skipped
+```
+
+- The file carries front-matter-derived fields only — never a body, never a comment
+  (R-SNAP-1) — with items sorted by id, two-space indentation and a trailing newline
+  (R-SNAP-2).
+- A project no registered repository serves is **skipped with a reason**, never guessed at.
+- A regenerated file whose content matches the one on disk is **not written**: the run
+  reports `unchanged` and the git history is left alone (ADR-014). This is what makes the
+  command safe to run in CI on every push, or on a schedule.
+- The command writes files; it does not commit or push them. Committing is `gintrack sync`
+  (§4.7) or git itself, with the message prefix of R-SNAP-7.
+- Exit codes: 4 when no team repository is registered or a named key is not declared, 2
+  for a malformed key.
+
 ---
 
 ## 5. Local REST API
@@ -863,8 +904,19 @@ Field notes: `code` is a stable machine string (clients switch on it, not on `ty
 Catalog of `code` values: `unauthorized`, `forbidden`, `not_found`, `invalid_request`,
 `validation_failed`, `invalid_front_matter`, `precondition_required`, `stale_revision`,
 `conflict`, `duplicate_id`, `workflow_transition_denied`, `read_only`,
-`repo_not_registered`, `repo_not_cloned`, `git_dirty`, `git_auth_failed`, `git_conflict`,
-`index_unavailable`, `rate_limited`, `not_implemented`, `internal`.
+`repo_not_registered`, `repo_not_cloned`, `wip_limit_exceeded`, `sprint_overlap`,
+`sprint_already_active`, `git_dirty`, `git_auth_failed`,
+`git_conflict`, `index_unavailable`, `rate_limited`, `not_implemented`, `internal`.
+
+`wip_limit_exceeded` (HTTP 409) is a *refusal the caller may repeat*: a board's WIP limit is
+advisory (doc 04 R-COL-5), so the move is declined once with the column and the limit in `detail`,
+and the same request with `force` goes through. It exists so that a limit is never exceeded
+silently, and never blocks a team that has decided to exceed it.
+
+`sprint_overlap` and `sprint_already_active` (HTTP 409) have the same shape: two sprints of one
+board sharing a day, and a second active sprint on one board, are refused once with the other
+sprint named in `detail`. `sprint_already_active` is repeatable with `force`; `sprint_overlap` is
+not — the caller has to change the dates.
 
 `not_implemented` (HTTP 501) is what a route of a later phase answers: the path exists so
 that a client learns "not yet" from the code instead of guessing from a 404.
@@ -936,6 +988,47 @@ GET /api/v1/repos/ACME
 }
 ```
 
+#### Teams and cross-repository references
+
+```http
+GET /api/v1/workspace                   # every open repository, its projects, the team among them
+GET /api/v1/teams                       # zero or one team repository
+GET /api/v1/teams/{key}                 # team.yaml: members, projects, policies, diagnostics
+GET /api/v1/refs?ref=ACME/ACME-US-0042  # where a cross-repository reference points
+```
+
+`GET /api/v1/teams/{key}` answers with the parsed `team.yaml` (doc 04 §3) plus, for every declared
+project, whether a clone of it is open in this workspace:
+
+```json
+{
+  "key": "ACME-TEAM",
+  "name": "ACME Delivery Team",
+  "knowledgePath": "knowledge",
+  "vaultId": "acme-team",
+  "members": [{ "handle": "jose", "name": "Jose Ruiz", "role": "lead", "active": true }],
+  "projects": [
+    { "key": "ACME", "name": "ACME Platform", "repo": "https://github.com/acme/platform.git",
+      "docsPath": "docs", "cloned": true,  "vaultId": "acme-api", "localDocsPath": "docs" },
+    { "key": "WEB",  "name": "Marketing Website", "repo": "https://gitlab.com/acme/website.git",
+      "docsPath": "documentation", "cloned": false }
+  ],
+  "diagnostics": []
+}
+```
+
+`GET /api/v1/refs` resolves `<projectKey>/<itemId>` across every mounted repository. A reference
+into a project nobody cloned is **not** a 404 — it is the normal state of a team board (doc 04 §7):
+
+```json
+{ "ref": "WEB/WEB-US-0031", "project": "WEB", "item": "WEB-US-0031",
+  "declared": true, "cloned": false,
+  "reason": "project WEB is not cloned on this machine" }
+```
+
+A malformed reference (no `/`, a lowercase key, an id whose prefix disagrees with the key) is a
+`400` with the `invalid_request` problem code.
+
 #### Projects
 
 ```http
@@ -951,7 +1044,7 @@ PATCH /api/v1/projects/{key}            # If-Match required; writes project.yaml
 GET /api/v1/projects/{key}/kb/tree      ?depth=3
 GET /api/v1/projects/{key}/kb/page?path=architecture/overview.md&format=raw|html|both
 PUT /api/v1/projects/{key}/kb/page      If-Match; body {"path":…,"content":"…"}
-GET /api/v1/teams/{key}/kb/tree         # team knowledge/ folder, same shape
+GET /api/v1/teams/{key}/kb/tree         # team knowledge/ folder, same shape, {key} is the team key
 GET /api/v1/kb/tree                     ?project=ACME    # flat form, vault-relative
 GET /api/v1/kb/page?path=docs/index.md  ?project=ACME
 PUT /api/v1/kb/page                     If-Match; body {"path":…,"content":"…"}
@@ -1079,19 +1172,52 @@ POST /api/v1/items/ACME-T-0311/comments
 
 #### Boards, sprints, retrospectives
 
+Boards are served since GIT-US-0017 and sprints since GIT-US-0018; retrospectives still answer
+`not_implemented`, and so does a sprint's burndown until the metrics of GIT-US-0028.
+
 ```http
-GET  /api/v1/boards                         ?team=acme-team
-GET  /api/v1/boards/{slug}                  ?resolve=true (hydrate refs from project repos)
-POST /api/v1/boards/{slug}/cards/move       If-Match
-PATCH /api/v1/boards/{slug}                 If-Match (columns, wip, filters)
+GET  /api/v1/snapshots                      committed index snapshots, with their age
+POST /api/v1/snapshots                      refresh them; body {projects?, generatedBy?,
+                                            includeClosed?, dryRun?}
+GET  /api/v1/boards                         list the boards of the team repository
+GET  /api/v1/boards/{slug}                  always resolved against the open repositories
+POST /api/v1/boards/{slug}/cards/move       If-Match: <board rev>; body carries itemRev
+PATCH /api/v1/boards/{slug}                 If-Match (title, columns, wip, filters, sprint)
 GET  /api/v1/sprints                        ?board=platform-scrum&state=active
-GET  /api/v1/sprints/{id}
-GET  /api/v1/sprints/{id}/burndown
-POST /api/v1/sprints                        create a sprint
+GET  /api/v1/sprints/{id}                   scope, candidates and metrics; ETag: <sprint rev>
+POST /api/v1/sprints                        create a sprint; the core allocates the id
+PATCH /api/v1/sprints/{id}                  If-Match (goal, dates, addItems, removeItems)
+POST /api/v1/sprints/{id}/start             If-Match; {force?} to run two at once
+POST /api/v1/sprints/{id}/close             If-Match; {carry:[{ref,action,sprint?,status?}]}
+GET  /api/v1/sprints/{id}/burndown          not_implemented until GIT-US-0028
 GET  /api/v1/retros
 GET  /api/v1/retros/{id}
 POST /api/v1/retros/{id}/actions/promote    {"action":2,"project":"ACME","type":"task"}
 ```
+
+```json
+POST /api/v1/snapshots
+{"generatedBy":"jose"}
+
+200
+{ "snapshots":[
+    {"project":"ACME","path":".pmngr/index/ACME.json","status":"written","items":151,
+     "info":{"project":"ACME","path":".pmngr/index/ACME.json","present":true,
+             "enabled":true,"generated":"2026-09-04T10:00:00Z","generatedBy":"jose",
+             "items":151,"freshness":"fresh","stale":false}},
+    {"project":"AWEB","path":".pmngr/index/AWEB.json","status":"skipped","items":0,
+     "reason":"no open repository serves this project; clone it to refresh its snapshot",
+     "info":{"project":"AWEB","path":".pmngr/index/AWEB.json","present":true,
+             "enabled":true,"generated":"2026-09-01T18:00:00Z","items":88,
+             "freshness":"ageing","stale":false}}
+  ],
+  "writes":[{"vaultId":"acme-team",
+             "written":[{"path":".pmngr/index/ACME.json","text":"…"}],"removed":[]}] }
+```
+
+A `status` of `written` means the file changed; `unchanged` means the regenerated document
+matched the one on disk and nothing was written (ADR-014); `skipped` means no open
+repository serves that project. `dryRun: true` computes everything and writes nothing.
 
 ```json
 GET /api/v1/boards/platform-kanban?resolve=true
@@ -1118,13 +1244,95 @@ GET /api/v1/boards/platform-kanban?resolve=true
 ```json
 POST /api/v1/boards/platform-kanban/cards/move
 If-Match: sha256:88fa…101
-{"ref":"ACME/ACME-T-0311","toColumn":"In review","position":0,"updateStatus":true}
+{"ref":"ACME/ACME-T-0311","toColumn":"in_review","position":0,
+ "itemRev":"sha256:7ab0…d12"}
 
 200
-{ "board":{"rev":"sha256:91cd…773"},
-  "item":{"id":"ACME-T-0311","status":"in_review","rev":"sha256:5e88…4b1"},
-  "wip":{"column":"In review","used":3,"limit":3,"exceeded":false} }
+{ "board": { …the whole board, re-rendered… },
+  "item":  {"id":"ACME-T-0311","status":"in_review","rev":"sha256:5e88…4b1"},
+  "move":  {"ref":"ACME/ACME-T-0311","fromColumn":"in_progress","toColumn":"in_review",
+            "status":"in_review","statusChanged":true,"choices":["in_review"],
+            "wip":{"column":"in_review","used":3,"limit":4,"exceeded":false}},
+  "writes":[{"vaultId":"acme-platform","written":[{"path":"docs/.pmngr/tasks/…md","text":"…"}],
+             "removed":[]},
+            {"vaultId":"acme-team","written":[{"path":".pmngr/boards/platform-kanban.md","text":"…"}],
+             "removed":[]}] }
 ```
+
+Notes on the move:
+
+- `toColumn` is a **column id**, not its display name.
+- `If-Match` carries the revision of the *board*; `itemRev` carries the revision of the *item*.
+  They live in different repositories and therefore hold two independent optimistic locks; either
+  may be omitted to skip that check, and `If-Match: *` skips the board's.
+- `position` is the 0-based index in the target column; `-1` appends. A move into the column the
+  card already sits in is a re-order: `statusChanged` is `false`, no item file is written, and
+  `writes` carries the team repository only.
+- `status` may be sent to pick one of `choices` when a column maps several statuses for the
+  project; otherwise the first mapped status wins (doc 04 R-MOVE-2).
+- `force: true` (or `?force=true`) confirms a move over a WIP limit, and a transition the project
+  workflow does not declare.
+- A card whose project nobody cloned answers `repo_not_cloned` (404): the board's `order:` still
+  holds it, but nothing here can write its status.
+- `writes[]` is what a host without a file system of its own must persist — the browser build
+  writes each set into the folder its `vaultId` names.
+- On a scrum board, a move out of the `backlog_column` also commits the card to the sprint: the
+  answer carries `move.sprint` and `move.sprintAdd`, and `writes[]` holds the sprint file as well
+  (doc 04 R-SCRUM-4).
+
+```json
+GET /api/v1/sprints/ACME-TEAM-S-0007
+200
+ETag: "sha256:c1d2…"
+{ "sprint": {"id":"ACME-TEAM-S-0007","title":"Sprint 7 — SSO end to end","board":"platform-scrum",
+             "state":"active","start":"2026-08-24","end":"2026-09-06","goal":"…",
+             "items":["ACME/ACME-US-0042","WEB/WEB-US-0031"],
+             "committed":["ACME/ACME-US-0042","WEB/WEB-US-0031"],
+             "totalDays":14,"remainingDays":5,
+             "metrics":{"items":2,"resolved":2,"done":0,"points":13,"committedPoints":13,
+                        "donePoints":0,"added":0,"unresolved":0},
+             "rev":"sha256:c1d2…"},
+  "cards":[ …the scope, live or snapshot-resolved, in the order of the file… ],
+  "backlog":[ …what the board shows that the sprint does not list… ],
+  "diagnostics":[] }
+
+PATCH /api/v1/sprints/ACME-TEAM-S-0007
+If-Match: "sha256:c1d2…"
+{"goal":"Ship SSO to staging","addItems":["ACME/ACME-T-0108"],"removeItems":["WEB/WEB-US-0031"]}
+
+POST /api/v1/sprints/ACME-TEAM-S-0007/close
+If-Match: "sha256:c1d2…"
+{"carry":[{"ref":"ACME/ACME-T-0108","action":"next","sprint":"ACME-TEAM-S-0008"},
+          {"ref":"ACME/ACME-US-0042","action":"backlog"}]}
+
+200
+{ "sprint": { …the sprint, now closed… },
+  "report": {"sprint":"ACME-TEAM-S-0007","board":"platform-scrum",
+             "completed":[…],"incomplete":[…],"unresolved":[],
+             "completedPoints":8,"incompletePoints":5,
+             "carried":[{"ref":"ACME/ACME-T-0108","action":"next","sprint":"ACME-TEAM-S-0008"},
+                        {"ref":"ACME/ACME-US-0042","action":"backlog","status":"backlog"}]},
+  "writes":[ …one set per repository written… ] }
+```
+
+Notes on sprints:
+
+- Every write carries `If-Match` with the *sprint's* revision (`*` to overwrite unconditionally).
+  A sprint edit writes the sprint file only: membership, the goal and the dates are team-repository
+  state, so they stay editable for a project nobody cloned (doc 04 R-SPR-2).
+- `addItems` and `removeItems` edit the scope without resending it, which keeps a planning drag a
+  one-line diff. `items` replaces the whole list when a client really means to.
+- `POST /sprints` allocates the id from the team key and the sprints already on disk; the body
+  never carries one. Dates overlapping another sprint of the same board are refused with
+  `sprint_overlap` (409) naming the other sprint.
+- `POST /sprints/{id}/start` copies `items` into `committed` and points the board at the sprint,
+  answering with the re-rendered board. A board already running a sprint answers
+  `sprint_already_active` (409); `{"force":true}` runs two at once.
+- `POST /sprints/{id}/close` writes nothing but the sprint file unless `carry` says so: `leave`
+  changes nothing, `next` appends the reference to another sprint of the same board (the earliest
+  planned one when `sprint` is absent), and `backlog` writes the first `todo` status of that
+  project's workflow into the item's own repository. A decision that could not be applied comes
+  back with `error` on its `carried` entry, and the closing still goes through.
 
 #### Search
 
@@ -1145,6 +1353,12 @@ GET /api/v1/search?q=oidc+discovery&scope=items,kb&project=ACME&limit=20
   "total":7,"tookMs":9,"engine":"bleve"
 }
 ```
+
+Without `?project=`, the query spans **every mounted repository** — the team knowledge base
+included — and each hit carries the `project` it belongs to (the team key for a team
+knowledge-base page) plus the `vaultId` of the repository that answered, so a workspace never
+returns a row whose source is ambiguous (GIT-US-0016). With `?project=<KEY>`, only the repository
+exposing that key is searched, and an unknown key is a `404`.
 
 #### Sync and git
 
@@ -1523,12 +1737,28 @@ type Store interface {
 type Index interface {
     Build(ctx context.Context, full bool) (IndexStats, error)
     ApplyFileEvents(ctx context.Context, events []FileEvent) (IndexDelta, error)
-    Snapshot() Snapshot                    // serializable to .pmngr/index/<key>.json
+    Snapshot() Snapshot                    // the whole index, for the local cache
     Load(snap Snapshot) error
+    // ProjectSnapshot builds the committed, reduced form of one project:
+    // .pmngr/index/<KEY>.json in the team repository (doc 04 §6).
+    ProjectSnapshot(key ProjectKey, opts ProjectSnapshotOptions) (ProjectSnapshot, error)
     LinkGraph() Graph                      // parent/child, typed links, wikilinks, backlinks
     Stats() IndexStats
     Warnings() []Warning
 }
+
+// The reader side of the committed snapshots is a set of plain functions, because
+// it needs no state beyond the files it is given (doc 04 §§6 and 7):
+//
+//   func ReadSnapshots(fs FS, teamDir string, keys []ProjectKey,
+//       policy SnapshotPolicy, now time.Time) *SnapshotSet
+//   func (s *SnapshotSet) Item(key ProjectKey, id ItemID) (ProjectSnapshotItem, bool)
+//   func (s *SnapshotSet) Info(key ProjectKey) SnapshotInfo   // age, staleness, errors
+//   func SameSnapshotContent(a, b ProjectSnapshot) bool       // ADR-014
+//   func (p TeamProject) FileURL(path string) string          // doc 04 §7.3
+//
+// BuildBoardView takes the set on its BoardInput and renders the cards of the
+// projects nobody cloned from it.
 
 // Query is the read side used by the CLI, HTTP handlers, MCP tools and the WASM bridge.
 type Query interface {

@@ -238,7 +238,7 @@ Handles are declared in the team repository's `team.yaml` (doc 04, §3.2) and MA
 
 | Field | Allowed values |
 |---|---|
-| `type` | `epic`, `story`, `task`, `milestone`, `comment` (board/sprint/retro types exist only in the team repo) |
+| `type` | `epic`, `story`, `task`, `milestone`, `comment` (the `board`, `sprint` and `retro` types exist only in the team repo, and are specified in [doc 04](./04-team-repository.md) §§5, 8 and 9) |
 | `priority` | `critical`, `high`, `medium`, `low` |
 | `status` | any `id` declared in `project.yaml:workflow.statuses` |
 | relation kind | `blocks`, `blocked_by`, `relates_to`, `duplicates`, `duplicated_by` |
@@ -436,7 +436,9 @@ default `false`), `footnotes` (bool, default `true`), `callouts` (bool, default 
 
 - `statuses`: ordered list of `{id, name, category, wip?, color?, terminal?}`.
   - `id`: `[a-z][a-z0-9_]{0,31}`, unique.
-  - `category`: `todo | in_progress | done | cancelled` — the *coarse* bucket used by boards,
+  - `category`: `todo | in_progress | done | cancelled` — the *coarse* bucket used by boards
+    (a board column maps `categories:` instead of `statuses:` when it must work for a project
+    whose workflow the team has never seen — doc 04 R-COL-2),
     metrics, and agents that do not know a project's custom workflow. This field is what makes
     heterogeneous projects comparable on a team board.
   - `terminal`: bool; items in a terminal status are excluded from "open work" queries.
@@ -1201,6 +1203,10 @@ Severity: **E** = error (blocks writes to the affected item; `doctor` exits non-
 | `W-LAYOUT-NESTED` / `W-LAYOUT-STRAY` | W | Files where the layout does not expect them |
 | `W-ESTIMATE-SCALE` | W | `estimate` not in `estimation.values` |
 | `W-PROJ-COUNTER-STALE` | W | Counter below scanned max |
+
+The `E-TEAM-*` / `W-TEAM-*` codes belong to `team.yaml` and are catalogued in
+[`04-team-repository.md`](./04-team-repository.md) §3.5. They share this catalog's namespace and
+the same severity rules: `internal/core` emits both from one `Diagnostic` type.
 
 `gintrack doctor` flags: `--strict` (warnings become non-zero exit, for CI), `--fix` (safe
 autofixes: slugs, key order, timestamp normalisation, label catalog), `--renumber` (§4.3),

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path"
 	"strings"
@@ -561,4 +562,18 @@ func EncodeProjectSnapshot(s ProjectSnapshot) ([]byte, error) { return encodeJSO
 // repository: .pmngr/index/<KEY>.json.
 func ProjectSnapshotPath(teamBacklogPath string, key ProjectKey) string {
 	return path.Join(teamBacklogPath, indexDirName, string(key)+".json")
+}
+
+// decodeJSON is the one JSON reader of this package. It rejects trailing
+// content so that a truncated or concatenated document is an error rather than
+// a half-read snapshot.
+func decodeJSON(data []byte, v any) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	if err := dec.Decode(v); err != nil {
+		return fmt.Errorf("decode json: %w", err)
+	}
+	if dec.More() {
+		return errors.New("decode json: trailing content after the document")
+	}
+	return nil
 }

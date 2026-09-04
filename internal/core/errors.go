@@ -61,6 +61,52 @@ const (
 	CodeProjInitial          Code = "E-PROJ-INITIAL"
 	CodeProjTransitionTarget Code = "E-PROJ-TRANSITION-TARGET"
 
+	// Team-repository codes (docs/04 section 3.5). The rules that need a local
+	// clone (W-TEAM-KEY-MISMATCH) are raised by the workspace, not by the parser.
+	CodeTeamSchema            Code = "E-TEAM-SCHEMA"
+	CodeTeamKey               Code = "E-TEAM-KEY"
+	CodeTeamKeyDup            Code = "E-TEAM-KEY-DUP"
+	CodeTeamHandleDup         Code = "E-TEAM-HANDLE-DUP"
+	CodeTeamEmailDup          Code = "E-TEAM-EMAIL-DUP"
+	CodeTeamMemberFields      Code = "E-TEAM-MEMBER-FIELDS"
+	CodeTeamProjectFields     Code = "E-TEAM-PROJECT-FIELDS"
+	CodeTeamBacklogInTeamRepo Code = "E-TEAM-BACKLOG-IN-TEAM-REPO"
+	CodeTeamKeyMismatch       Code = "W-TEAM-KEY-MISMATCH"
+	CodeTeamWebURL            Code = "W-TEAM-WEB-URL"
+
+	// Board codes (docs/04 section 5.10). The WIP condition is live and is
+	// reported by the rendered view, never by a file check.
+	CodeBoardID              Code = "E-BOARD-ID"
+	CodeBoardKind            Code = "E-BOARD-KIND"
+	CodeBoardColumns         Code = "E-BOARD-COLUMNS"
+	CodeBoardColMapping      Code = "E-BOARD-COL-MAPPING"
+	CodeBoardStatusAmbiguous Code = "E-BOARD-STATUS-AMBIGUOUS"
+	CodeBoardSprintKind      Code = "E-BOARD-SPRINT-KIND"
+	CodeBoardUnknownProject  Code = "W-BOARD-UNKNOWN-PROJECT"
+	CodeBoardRefFormat       Code = "W-BOARD-REF-FORMAT"
+	CodeBoardRefDead         Code = "W-BOARD-REF-DEAD"
+	CodeBoardWipExceeded     Code = "W-BOARD-WIP-EXCEEDED"
+	CodeBoardUnmappedStatus  Code = "W-BOARD-UNMAPPED-STATUS"
+
+	// Sprint codes (docs/04 section 8.4). A sprint is team-repo state, so a
+	// reference into a project nobody cloned is never an error.
+	CodeSprintID                Code = "E-SPRINT-ID"
+	CodeSprintDates             Code = "E-SPRINT-DATES"
+	CodeSprintBoard             Code = "E-SPRINT-BOARD"
+	CodeSprintState             Code = "E-SPRINT-STATE"
+	CodeSprintTwoActive         Code = "W-SPRINT-TWO-ACTIVE"
+	CodeSprintOverlap           Code = "W-SPRINT-OVERLAP"
+	CodeSprintRefDead           Code = "W-SPRINT-REF-DEAD"
+	CodeSprintRefUnknownProject Code = "W-SPRINT-REF-UNKNOWN-PROJECT"
+
+	// Index-snapshot codes (docs/04 section 6). A snapshot is a cache, so only
+	// a file that cannot be used at all is an error; the rest is advisory.
+	CodeSnapMalformed   Code = "E-SNAP-MALFORMED"
+	CodeSnapKeyMismatch Code = "W-SNAP-KEY-MISMATCH"
+	CodeSnapStale       Code = "W-SNAP-STALE"
+	CodeSnapDirty       Code = "W-SNAP-DIRTY"
+	CodeSnapMissing     Code = "W-SNAP-MISSING"
+
 	CodeWarnNoDone       Code = "W-PROJ-NO-DONE"
 	CodeWarnLabelDup     Code = "W-PROJ-LABEL-DUP"
 	CodeWarnCounterStale Code = "W-PROJ-COUNTER-STALE"

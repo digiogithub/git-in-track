@@ -67,7 +67,13 @@ export function renderWithRouter(options: RenderWithRouterOptions): RenderResult
       path: '/p/$project/kb/$',
       component: Placeholder,
     }),
+    createRoute({
+      getParentRoute: () => rootRoute,
+      path: '/p/$project/items/$id',
+      component: Placeholder,
+    }),
     createRoute({ getParentRoute: () => rootRoute, path: '/boards', component: Placeholder }),
+    createRoute({ getParentRoute: () => rootRoute, path: '/boards/$slug', component: Placeholder }),
     createRoute({ getParentRoute: () => rootRoute, path: '/settings', component: Placeholder }),
   ]);
 

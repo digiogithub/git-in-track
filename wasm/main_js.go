@@ -24,17 +24,20 @@ var (
 	date    = "unknown"
 )
 
-// api is the single vault the worker drives. One worker owns one vault, so a
-// package-level value is the whole lifecycle: it is created when the module
-// starts and lives until the worker is terminated.
-var api = newVault()
+// api is the workspace the worker drives. One worker owns one workspace, which
+// holds every folder the user opened: the project clones and, when there is
+// one, the team repository (docs/04 section 1). A package-level value is the
+// whole lifecycle: it is created when the module starts and lives until the
+// worker is terminated.
+var api = newWorkspace()
 
-// newVault returns the in-memory vault of a browser-only session, tagged with
-// the build of this module. Its files arrive through the "vault.load" method.
-func newVault() *vault.Vault {
-	v := vault.NewInMemory()
-	v.SetVersion(version)
-	return v
+// newWorkspace returns the empty workspace of a browser-only session, tagged
+// with the build of this module. Repositories arrive through "workspace.mount"
+// and their files through "vault.load".
+func newWorkspace() *vault.Workspace {
+	w := vault.NewWorkspace()
+	w.SetVersion(version)
+	return w
 }
 
 func main() {

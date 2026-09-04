@@ -8,6 +8,14 @@
 
 import type {
   BatchResult,
+  BoardCard,
+  BoardColumnView,
+  BoardColumnPatch,
+  BoardMoveResult,
+  BoardPatch,
+  BoardSummary,
+  BoardView,
+  CardMove,
   Capabilities,
   ChangeEvent,
   Comment,
@@ -24,9 +32,25 @@ import type {
   KbScope,
   MountInput,
   ProjectSummary,
+  RefResolution,
   RepoInfo,
   SearchHit,
   SearchQuery,
+  SnapshotInfo,
+  SnapshotItemSummary,
+  SnapshotRefresh,
+  SnapshotResult,
+  SprintCarry,
+  SprintCarryResult,
+  SprintDraft,
+  SprintFilter,
+  SprintPatch,
+  SprintResult,
+  SprintState,
+  SprintSummary,
+  SprintView,
+  StatusCategory,
+  TeamSummary,
   Unsubscribe,
   UpdateOp,
 } from '@/api/provider';
@@ -38,12 +62,300 @@ export type FakeData = {
   comments?: Comment[];
   pages?: KbPage[];
   repos?: RepoInfo[];
+  /** The team repository of the workspace; omit for a workspace without one. */
+  team?: TeamSummary | null;
+  /** The boards of the team repository; omit for the sample boards. */
+  boards?: FakeBoard[];
+  /** The sprints of the team repository; omit for the sample sprint. */
+  sprints?: FakeSprint[];
+  /** The day the sprint header counts its remaining days from. */
+  today?: string;
 };
+
+/**
+ * A board as the team repository stores it: columns mapping onto per-project
+ * statuses, an advisory WIP limit and one card ref per line under `order`
+ * (docs/04-team-repository.md §5). The fake renders it the way the Go core
+ * does, so a component test exercises the real semantics.
+ */
+export type FakeBoard = {
+  id: string;
+  kind: 'kanban' | 'scrum';
+  title: string;
+  description?: string;
+  projects: string[];
+  columns: {
+    id: string;
+    name: string;
+    /** Project key, or `*` for the default rule. */
+    statuses: Record<string, string[]>;
+    wip?: number;
+    color?: string;
+  }[];
+  filters?: BoardView['filters'];
+  order: Record<string, string[]>;
+  /** Scrum only: the sprint the board is scoped to (docs/04 §5.5). */
+  sprint?: string;
+  /** Scrum only: the column that offers the sprint candidates. */
+  backlogColumn?: string;
+  rev: string;
+};
+
+/**
+ * A sprint as the team repository stores it (docs/04 §8.2): a goal, a date
+ * range, a state and one `<projectKey>/<itemId>` reference per line.
+ */
+export type FakeSprint = {
+  id: string;
+  title: string;
+  board: string;
+  state: SprintState;
+  start: string;
+  end: string;
+  goal?: string;
+  items: string[];
+  committed?: string[];
+  capacityHours?: number;
+  velocityTarget?: number;
+  participants?: string[];
+  rev: string;
+};
+
+/** The board of `sampleTeam`: cards from a cloned project and a remote one. */
+export const sampleBoard: FakeBoard = {
+  id: 'delivery',
+  kind: 'kanban',
+  title: 'Delivery',
+  description: 'Everything the squad is working on, across both repositories.',
+  projects: ['ACME', 'WEB'],
+  columns: [
+    { id: 'todo', name: 'To Do', statuses: { '*': ['backlog', 'todo'] }, color: '#94a3b8' },
+    { id: 'in_progress', name: 'In Progress', statuses: { '*': ['in_progress'] }, wip: 1 },
+    { id: 'in_review', name: 'In Review', statuses: { '*': ['in_review'] }, wip: 2 },
+    { id: 'done', name: 'Done', statuses: { '*': ['done', 'cancelled'] } },
+  ],
+  filters: { types: ['story', 'task'] },
+  order: {
+    todo: ['ACME/ACME-T-0107', 'WEB/WEB-US-0031'],
+    in_progress: ['ACME/ACME-US-0042'],
+    in_review: [],
+    done: [],
+  },
+  rev: 'sha256:00000000000000b1',
+};
+
+/** The scrum board of `sampleTeam`, scoped to `sampleSprint`. */
+export const sampleScrumBoard: FakeBoard = {
+  id: 'acme-scrum',
+  kind: 'scrum',
+  title: 'SSO Sprint Board',
+  description: 'The sprint the squad is running.',
+  projects: ['ACME', 'WEB'],
+  sprint: 'ACME-TEAM-S-0007',
+  backlogColumn: 'sprint_backlog',
+  columns: [
+    { id: 'sprint_backlog', name: 'Sprint Backlog', statuses: { '*': ['backlog', 'todo'] } },
+    { id: 'in_progress', name: 'In Progress', statuses: { '*': ['in_progress'] }, wip: 2 },
+    { id: 'in_review', name: 'In Review', statuses: { '*': ['in_review'] }, wip: 2 },
+    { id: 'done', name: 'Done', statuses: { '*': ['done', 'cancelled'] } },
+  ],
+  filters: { types: ['story', 'task'] },
+  order: { in_progress: ['ACME/ACME-US-0042'] },
+  rev: 'sha256:00000000000000b2',
+};
+
+/** The sprint `sampleScrumBoard` runs: one cloned item and one remote one. */
+export const sampleSprint: FakeSprint = {
+  id: 'ACME-TEAM-S-0007',
+  title: 'Sprint 7 — SSO end to end',
+  board: 'acme-scrum',
+  state: 'active',
+  start: '2026-08-24',
+  end: '2026-09-06',
+  goal: 'A tenant can log in with their identity provider in staging.',
+  items: ['ACME/ACME-US-0042', 'WEB/WEB-US-0031'],
+  committed: ['ACME/ACME-US-0042', 'WEB/WEB-US-0031'],
+  capacityHours: 260,
+  velocityTarget: 21,
+  participants: ['marta', 'jose'],
+  rev: 'sha256:00000000000000c1',
+};
+
+/**
+ * The coarse bucket of a status. The fake knows the sample workflow, which is
+ * what lets it tell finished work from open work the way the core does.
+ */
+function categoryOf(status: string | undefined): StatusCategory {
+  switch (status) {
+    case 'done':
+      return 'done';
+    case 'cancelled':
+      return 'cancelled';
+    case 'in_progress':
+    case 'in_review':
+    case 'doing':
+    case 'review':
+      return 'in_progress';
+    default:
+      return 'todo';
+  }
+}
+
+/** A card sits in a terminal status of its own project. */
+function isDone(card: BoardCard): boolean {
+  const category = card.category ?? categoryOf(card.status);
+  return category === 'done' || category === 'cancelled';
+}
 
 const writableCapabilities: Capabilities = {
   ...readOnlyCapabilities,
   write: true,
   maxBatchWrite: 50,
+};
+
+/**
+ * The committed index snapshot of the project nobody cloned: what a remote card
+ * renders from (docs/04 §6). `generated` is a day old, so the card is dated but
+ * not stale.
+ */
+export const sampleRemoteItems: SnapshotItemSummary[] = [
+  {
+    id: 'WEB-US-0031',
+    type: 'story',
+    title: 'Rewrite the hero section',
+    status: 'in_progress',
+    category: 'in_progress',
+    priority: 'high',
+    assignees: ['marta'],
+    labels: ['frontend'],
+    estimate: 5,
+    updated: '2026-09-01T08:30:00Z',
+    path: 'documentation/.pmngr/stories/WEB-US-0031-rewrite-the-hero-section.md',
+    rev: 'sha256:00000000000000c1',
+  },
+];
+
+/** The state of that snapshot, as the team surface reports it. */
+export const sampleSnapshotInfo: SnapshotInfo = {
+  project: 'WEB',
+  path: '.pmngr/index/WEB.json',
+  present: true,
+  enabled: true,
+  generated: '2026-09-03T06:00:00Z',
+  generatedBy: 'marta',
+  generator: 'gintrack-core',
+  items: sampleRemoteItems.length,
+  ageSeconds: 30 * 3600,
+  freshness: 'ageing',
+  stale: false,
+};
+
+/**
+ * One card of a project nobody cloned, read from the committed snapshot: the
+ * fields the snapshot published, the age of the file and a link to the item on
+ * the git host, never an editable card (docs/04 §7).
+ */
+function remoteCard(ref: string, project: string, id: string, declared: boolean): BoardCard {
+  const entry = sampleRemoteItems.find((item) => item.id === id);
+  if (!entry) {
+    return {
+      ref,
+      project,
+      item: id,
+      declared,
+      remote: true,
+      reason: `project ${project} is not cloned on this machine and has no index snapshot yet; clone it to move this card`,
+    };
+  }
+  return {
+    ref,
+    project,
+    item: id,
+    declared,
+    remote: true,
+    source: 'snapshot',
+    snapshotAt: sampleSnapshotInfo.generated ?? '',
+    stale: sampleSnapshotInfo.stale,
+    remoteUrl: `https://gitlab.com/acme/website/-/blob/main/${entry.path}`,
+    title: entry.title,
+    type: entry.type,
+    ...(entry.status === undefined ? {} : { status: entry.status }),
+    ...(entry.priority === undefined ? {} : { priority: entry.priority }),
+    ...(entry.assignees ? { assignees: entry.assignees } : {}),
+    ...(entry.labels ? { labels: entry.labels } : {}),
+    ...(entry.estimate === undefined ? {} : { estimate: entry.estimate }),
+    ...(entry.updated === undefined ? {} : { updated: entry.updated }),
+    path: entry.path,
+    rev: entry.rev,
+    reason: `${project} is not cloned on this machine: this card is read from the index snapshot of 1 day ago and cannot be edited here`,
+  };
+}
+
+/** A project whose snapshot has never been generated. */
+const missingSnapshot = (project: string): SnapshotInfo => ({
+  project,
+  path: `.pmngr/index/${project}.json`,
+  present: false,
+  enabled: true,
+  items: 0,
+  freshness: 'unknown',
+  stale: false,
+});
+
+/**
+ * A team repository declaring two projects: one the workspace has open and one
+ * nobody cloned, which is the shape docs/04 §7 asks the UI to render.
+ */
+export const sampleTeam: TeamSummary = {
+  key: 'ACME-TEAM',
+  name: 'ACME Delivery Team',
+  description: 'Squad owning the platform and the marketing website.',
+  timezone: 'Europe/Madrid',
+  root: '.',
+  knowledgePath: 'knowledge',
+  vaultId: 'repo-team',
+  members: [
+    {
+      handle: 'jose',
+      name: 'Jose Ruiz',
+      role: 'lead',
+      emails: ['jose@example.com'],
+      active: true,
+    },
+    { handle: 'marta', name: 'Marta Alonso', role: 'dev', active: true },
+    { handle: 'laura', name: 'Laura Prat', role: 'dev', active: false },
+  ],
+  projects: [
+    {
+      key: 'ACME',
+      name: 'ACME Platform',
+      repo: 'https://github.com/acme/platform.git',
+      docsPath: 'docs',
+      host: 'github',
+      webUrl: 'https://github.com/acme/platform',
+      cloned: true,
+      vaultId: 'repo-1',
+      localDocsPath: 'docs',
+      snapshot: missingSnapshot('ACME'),
+      browseUrl: 'https://github.com/acme/platform',
+    },
+    {
+      key: 'WEB',
+      name: 'Marketing Website',
+      repo: 'https://gitlab.com/acme/website.git',
+      docsPath: 'documentation',
+      host: 'gitlab',
+      webUrl: 'https://gitlab.com/acme/website',
+      cloned: false,
+      snapshot: sampleSnapshotInfo,
+      browseUrl: 'https://gitlab.com/acme/website',
+    },
+  ],
+  policies: { definition_of_done: 'knowledge/ways-of-working/definition-of-done.md' },
+  cadence: { sprintLengthDays: 14 },
+  defaults: { board: 'delivery' },
+  snapshots: { enabled: true, maxAgeDays: 7 },
+  diagnostics: [],
 };
 
 export const sampleProject: ProjectSummary = {
@@ -206,6 +518,10 @@ export class FakeProvider implements DataProvider {
   private comments: Comment[];
   private pages: Map<string, KbPage>;
   private repos: RepoInfo[];
+  private team: TeamSummary | null;
+  private boards: Map<string, FakeBoard>;
+  private sprints: Map<string, FakeSprint>;
+  private today: string;
   private handlers = new Set<(event: ChangeEvent) => void>();
   private revCounter = 1000;
 
@@ -215,6 +531,14 @@ export class FakeProvider implements DataProvider {
     this.items = new Map((data.items ?? sampleItems).map((i) => [i.id, structuredClone(i)]));
     this.comments = structuredClone(data.comments ?? sampleComments);
     this.pages = new Map((data.pages ?? samplePages).map((p) => [p.path, structuredClone(p)]));
+    this.team = data.team ?? null;
+    this.boards = new Map(
+      (data.boards ?? [sampleBoard, sampleScrumBoard]).map((b) => [b.id, structuredClone(b)]),
+    );
+    this.sprints = new Map(
+      (data.sprints ?? [sampleSprint]).map((s) => [s.id, structuredClone(s)]),
+    );
+    this.today = data.today ?? '2026-09-02';
     this.repos = data.repos ?? [
       {
         id: 'repo-1',
@@ -249,6 +573,30 @@ export class FakeProvider implements DataProvider {
 
   listProjects(): Promise<ProjectSummary[]> {
     return Promise.resolve(structuredClone(this.projects));
+  }
+
+  getTeam(): Promise<TeamSummary | null> {
+    return Promise.resolve(this.team ? structuredClone(this.team) : null);
+  }
+
+  resolveRef(ref: string): Promise<RefResolution> {
+    const [project = '', item = ''] = ref.split('/');
+    const declared = this.team?.projects.some((p) => p.key === project) ?? false;
+    const found = this.items.get(item);
+    const resolution: RefResolution = {
+      ref,
+      project,
+      item,
+      declared,
+      cloned: this.projects.some((p) => p.key === project),
+    };
+    if (found) return Promise.resolve({ ...resolution, found: structuredClone(found) });
+    return Promise.resolve({
+      ...resolution,
+      reason: resolution.cloned
+        ? `project ${project} is open but has no item ${item}`
+        : `project ${project} is not cloned on this machine`,
+    });
   }
 
   mountRepo(input: MountInput): Promise<RepoInfo> {
@@ -506,6 +854,625 @@ export class FakeProvider implements DataProvider {
     this.comments.push(comment);
     this.emit({ kind: 'items', repoId: 'repo-1', ids: [id] });
     return Promise.resolve(structuredClone(comment));
+  }
+
+  // -------------------------------------------------------------------- boards
+
+  listBoards(): Promise<BoardSummary[]> {
+    if (!this.team) return Promise.resolve([]);
+    return Promise.resolve(
+      [...this.boards.values()].map((b) => ({
+        id: b.id,
+        kind: b.kind,
+        title: b.title,
+        ...(b.description === undefined ? {} : { description: b.description }),
+        path: `.pmngr/boards/${b.id}.md`,
+        rev: b.rev,
+        vaultId: 'repo-team',
+        projects: b.projects,
+        columns: b.columns.length,
+        ...(b.sprint === undefined ? {} : { sprint: b.sprint }),
+        diagnostics: [],
+      })),
+    );
+  }
+
+  getBoard(slug: string): Promise<BoardView> {
+    const board = this.boards.get(slug);
+    if (!board) return Promise.reject(new ProviderError('not_found', `No board ${slug}`));
+    return Promise.resolve(this.renderBoard(board));
+  }
+
+  moveCard(move: CardMove): Promise<BoardMoveResult> {
+    this.assertWritable();
+    const board = this.boards.get(move.board);
+    if (!board) return Promise.reject(new ProviderError('not_found', `No board ${move.board}`));
+    if (move.rev !== undefined && move.rev !== board.rev) {
+      return Promise.reject(
+        new ProviderError('stale_revision', `Board ${board.id} changed on disk`),
+      );
+    }
+    const column = board.columns.find((c) => c.id === move.toColumn);
+    if (!column) {
+      return Promise.reject(
+        new ProviderError('validation_failed', `Board ${board.id} has no column ${move.toColumn}`),
+      );
+    }
+
+    const view = this.renderBoard(board);
+    const card = view.columns.flatMap((c) => c.cards).find((c) => c.ref === move.ref);
+    if (!card) {
+      return Promise.reject(new ProviderError('not_found', `${move.ref} is not on this board`));
+    }
+    if (card.remote) {
+      return Promise.reject(
+        new ProviderError(
+          'repo_not_cloned',
+          `${card.project} is not cloned on this machine; clone it to move this card`,
+        ),
+      );
+    }
+
+    const from = view.columns.find((c) => c.cards.some((entry) => entry.ref === move.ref));
+    const target = view.columns.find((c) => c.id === column.id);
+    const used = (target?.cards.length ?? 0) + (from?.id === column.id ? 0 : 1);
+    const exceeded = (column.wip ?? 0) > 0 && used > (column.wip ?? 0);
+    if (exceeded && !move.force) {
+      return Promise.reject(
+        new ProviderError(
+          'wip_limit_exceeded',
+          `${column.name} is at its WIP limit of ${column.wip}; confirm the move to exceed it`,
+        ),
+      );
+    }
+
+    const choices = column.statuses[card.project] ?? column.statuses['*'] ?? [];
+    const status = move.status ?? (from?.id === column.id ? card.status : choices[0]);
+    const statusChanged = status !== undefined && status !== card.status;
+    let item: Item | undefined;
+    if (statusChanged && status !== undefined) {
+      const existing = this.items.get(card.item);
+      if (!existing) return Promise.reject(new ProviderError('not_found', `No item ${card.item}`));
+      if (move.itemRev !== undefined && move.itemRev !== existing.rev) {
+        return Promise.reject(
+          new ProviderError('stale_revision', `Item ${card.item} changed on disk`),
+        );
+      }
+      item = { ...existing, status, rev: this.nextRev() };
+      this.items.set(card.item, item);
+    }
+
+    for (const id of Object.keys(board.order)) {
+      board.order[id] = (board.order[id] ?? []).filter((ref) => ref !== move.ref);
+    }
+    const list = board.order[column.id] ?? [];
+    const at = move.position < 0 || move.position > list.length ? list.length : move.position;
+    board.order[column.id] = [...list.slice(0, at), move.ref, ...list.slice(at)];
+    board.rev = this.nextRev();
+
+    this.emit({ kind: 'repo', repoId: 'repo-team' });
+    if (item) this.emit({ kind: 'items', repoId: 'repo-1', ids: [item.id] });
+
+    return Promise.resolve({
+      board: this.renderBoard(board),
+      ...(item ? { item: structuredClone(item) } : {}),
+      move: {
+        ref: move.ref,
+        ...(from ? { fromColumn: from.id } : {}),
+        toColumn: column.id,
+        ...(status === undefined ? {} : { status }),
+        statusChanged,
+        choices,
+        wip: { column: column.id, used, limit: column.wip ?? 0, exceeded },
+      },
+      writes: [],
+    });
+  }
+
+  updateBoard(slug: string, patch: BoardPatch, rev?: string): Promise<BoardView> {
+    this.assertWritable();
+    const board = this.boards.get(slug);
+    if (!board) return Promise.reject(new ProviderError('not_found', `No board ${slug}`));
+    if (rev !== undefined && rev !== '*' && rev !== board.rev) {
+      return Promise.reject(new ProviderError('stale_revision', `Board ${slug} changed on disk`));
+    }
+    if (patch.sprint !== undefined) {
+      if (board.kind !== 'scrum') {
+        return Promise.reject(
+          new ProviderError('validation_failed', 'a kanban board cannot be scoped to a sprint'),
+        );
+      }
+      if (patch.sprint !== '' && !this.sprints.has(patch.sprint)) {
+        return Promise.reject(new ProviderError('not_found', `No sprint ${patch.sprint}`));
+      }
+      board.sprint = patch.sprint;
+    }
+    if (patch.title !== undefined) board.title = patch.title;
+    if (patch.description !== undefined) board.description = patch.description;
+    if (patch.backlogColumn !== undefined) board.backlogColumn = patch.backlogColumn;
+    if (patch.columns !== undefined) {
+      board.columns = patch.columns.map((column: BoardColumnPatch) => ({
+        id: column.id,
+        name: column.name ?? column.id,
+        statuses: column.statuses ?? {},
+        ...(column.wip === undefined ? {} : { wip: column.wip }),
+        ...(column.color === undefined ? {} : { color: column.color }),
+      }));
+    }
+    board.rev = this.nextRev();
+    this.emit({ kind: 'repo', repoId: 'repo-team' });
+    return Promise.resolve(this.renderBoard(board));
+  }
+
+  // ------------------------------------------------------------------- sprints
+
+  listSprints(filter: SprintFilter = {}): Promise<SprintSummary[]> {
+    if (!this.team) return Promise.resolve([]);
+    const rows = [...this.sprints.values()]
+      .filter((s) => (filter.board ? s.board === filter.board : true))
+      .filter((s) => (filter.state ? s.state === filter.state : true))
+      .sort((a, b) => a.id.localeCompare(b.id))
+      .map((s) => this.renderSprint(s).sprint);
+    return Promise.resolve(rows);
+  }
+
+  getSprint(id: string): Promise<SprintView> {
+    const sprint = this.sprints.get(id);
+    if (!sprint) return Promise.reject(new ProviderError('not_found', `No sprint ${id}`));
+    return Promise.resolve(this.renderSprint(sprint));
+  }
+
+  createSprint(input: SprintDraft): Promise<SprintResult> {
+    this.assertWritable();
+    if (!this.boards.has(input.board)) {
+      return Promise.reject(new ProviderError('not_found', `No board ${input.board}`));
+    }
+    const overlap = [...this.sprints.values()].find(
+      (s) => s.board === input.board && s.start <= input.end && input.start <= s.end,
+    );
+    if (overlap) {
+      return Promise.reject(
+        new ProviderError(
+          'sprint_overlap',
+          `${input.start} to ${input.end} overlaps sprint ${overlap.id} (${overlap.start} to ${overlap.end}) on board ${input.board}; sprints on one board cannot share a day`,
+        ),
+      );
+    }
+    const numbers = [...this.sprints.keys()].map((id) => Number(id.split('-').pop() ?? 0));
+    const next = (numbers.length > 0 ? Math.max(...numbers) : 0) + 1;
+    const sprint: FakeSprint = {
+      id: `ACME-TEAM-S-${String(next).padStart(4, '0')}`,
+      title: input.title ?? `Sprint ${next}`,
+      board: input.board,
+      state: input.state ?? 'planned',
+      start: input.start,
+      end: input.end,
+      ...(input.goal === undefined ? {} : { goal: input.goal }),
+      items: [...(input.items ?? [])],
+      rev: this.nextRev(),
+    };
+    this.sprints.set(sprint.id, sprint);
+    this.emit({ kind: 'repo', repoId: 'repo-team' });
+    return Promise.resolve({ sprint: this.renderSprint(sprint), writes: [] });
+  }
+
+  updateSprint(id: string, patch: SprintPatch, rev?: string): Promise<SprintResult> {
+    this.assertWritable();
+    const sprint = this.sprints.get(id);
+    if (!sprint) return Promise.reject(new ProviderError('not_found', `No sprint ${id}`));
+    if (rev !== undefined && rev !== '*' && rev !== sprint.rev) {
+      return Promise.reject(new ProviderError('stale_revision', `Sprint ${id} changed on disk`));
+    }
+    if (patch.title !== undefined) sprint.title = patch.title;
+    if (patch.goal !== undefined) sprint.goal = patch.goal;
+    if (patch.start !== undefined) sprint.start = patch.start;
+    if (patch.end !== undefined) sprint.end = patch.end;
+    if (patch.state !== undefined) sprint.state = patch.state;
+    if (patch.capacityHours !== undefined) sprint.capacityHours = patch.capacityHours;
+    if (patch.velocityTarget !== undefined) sprint.velocityTarget = patch.velocityTarget;
+    if (patch.participants !== undefined) sprint.participants = [...patch.participants];
+    if (patch.items !== undefined) sprint.items = [...patch.items];
+    for (const ref of patch.addItems ?? []) {
+      if (!sprint.items.includes(ref)) sprint.items.push(ref);
+    }
+    if (patch.removeItems?.length) {
+      sprint.items = sprint.items.filter((ref) => !patch.removeItems?.includes(ref));
+    }
+    sprint.rev = this.nextRev();
+    this.emit({ kind: 'repo', repoId: 'repo-team' });
+    return Promise.resolve({ sprint: this.renderSprint(sprint), writes: [] });
+  }
+
+  startSprint(id: string, rev?: string, force?: boolean): Promise<SprintResult> {
+    this.assertWritable();
+    const sprint = this.sprints.get(id);
+    if (!sprint) return Promise.reject(new ProviderError('not_found', `No sprint ${id}`));
+    if (rev !== undefined && rev !== '*' && rev !== sprint.rev) {
+      return Promise.reject(new ProviderError('stale_revision', `Sprint ${id} changed on disk`));
+    }
+    const running = [...this.sprints.values()].find(
+      (s) => s.id !== id && s.board === sprint.board && s.state === 'active',
+    );
+    if (running && !force) {
+      return Promise.reject(
+        new ProviderError(
+          'sprint_already_active',
+          `board ${sprint.board} is already running sprint ${running.id}; close it first, or confirm to run two at once`,
+        ),
+      );
+    }
+    sprint.state = 'active';
+    sprint.committed = [...sprint.items];
+    sprint.rev = this.nextRev();
+    const board = this.boards.get(sprint.board);
+    const result: SprintResult = { sprint: this.renderSprint(sprint), writes: [] };
+    if (board && board.sprint !== sprint.id) {
+      board.sprint = sprint.id;
+      board.rev = this.nextRev();
+      result.board = this.renderBoard(board);
+    }
+    this.emit({ kind: 'repo', repoId: 'repo-team' });
+    return Promise.resolve(result);
+  }
+
+  closeSprint(id: string, carry: SprintCarry[] = [], rev?: string): Promise<SprintResult> {
+    this.assertWritable();
+    const sprint = this.sprints.get(id);
+    if (!sprint) return Promise.reject(new ProviderError('not_found', `No sprint ${id}`));
+    if (rev !== undefined && rev !== '*' && rev !== sprint.rev) {
+      return Promise.reject(new ProviderError('stale_revision', `Sprint ${id} changed on disk`));
+    }
+    const view = this.renderSprint(sprint);
+    const completed = view.cards.filter((card) => isDone(card));
+    const incomplete = view.cards.filter((card) => !isDone(card));
+    const carried = carry.map((decision) => {
+      const outcome: SprintCarryResult = { ref: decision.ref, action: decision.action };
+      if (decision.action === 'next') {
+        const target =
+          (decision.sprint ? this.sprints.get(decision.sprint) : undefined) ??
+          [...this.sprints.values()].find(
+            (s) => s.board === sprint.board && s.state === 'planned',
+          );
+        if (!target) {
+          outcome.error = `no sprint to carry ${decision.ref} into`;
+          return outcome;
+        }
+        if (!target.items.includes(decision.ref)) target.items.push(decision.ref);
+        target.rev = this.nextRev();
+        outcome.sprint = target.id;
+        return outcome;
+      }
+      if (decision.action === 'backlog') {
+        const id = decision.ref.split('/')[1] ?? '';
+        const item = this.items.get(id);
+        if (!item) {
+          outcome.error = `project ${decision.ref.split('/')[0] ?? ''} is not cloned on this machine`;
+          return outcome;
+        }
+        const status = decision.status ?? 'backlog';
+        this.items.set(id, { ...item, status, rev: this.nextRev() });
+        outcome.status = status;
+        this.emit({ kind: 'items', repoId: 'repo-1', ids: [id] });
+      }
+      return outcome;
+    });
+    sprint.state = 'closed';
+    sprint.rev = this.nextRev();
+    this.emit({ kind: 'repo', repoId: 'repo-team' });
+    return Promise.resolve({
+      sprint: this.renderSprint(sprint),
+      report: {
+        sprint: sprint.id,
+        board: sprint.board,
+        completed,
+        incomplete,
+        unresolved: [],
+        completedPoints: completed.reduce((sum, card) => sum + (card.estimate ?? 0), 0),
+        incompletePoints: incomplete.reduce((sum, card) => sum + (card.estimate ?? 0), 0),
+        metrics: view.sprint.metrics,
+        carried,
+      },
+      writes: [],
+    });
+  }
+
+  /** Renders a sprint the way `core.BuildSprintView` does. */
+  private renderSprint(sprint: FakeSprint): SprintView {
+    const board = this.boards.get(sprint.board);
+    const cards = sprint.items.map((ref) => this.cardFor(ref, sprint));
+    const backlog = board ? this.candidatesFor(board, sprint) : [];
+    return {
+      sprint: this.summarize(sprint, cards),
+      cards,
+      backlog,
+      diagnostics: [],
+    };
+  }
+
+  /** The header of a sprint: the file's own fields plus what the cards say. */
+  private summarize(sprint: FakeSprint, cards: BoardCard[]): SprintSummary {
+    const committed = new Set(sprint.committed ?? []);
+    const started = sprint.state !== 'planned' || committed.size > 0;
+    const resolved = cards.filter((card) => card.status !== undefined);
+    const done = resolved.filter((card) => isDone(card));
+    const points = (list: BoardCard[]) => list.reduce((sum, card) => sum + (card.estimate ?? 0), 0);
+    const days = (from: string, to: string) =>
+      Math.floor((Date.parse(to) - Date.parse(from)) / 86_400_000) + 1;
+    return {
+      id: sprint.id,
+      title: sprint.title,
+      board: sprint.board,
+      state: sprint.state,
+      start: sprint.start,
+      end: sprint.end,
+      ...(sprint.goal === undefined ? {} : { goal: sprint.goal }),
+      ...(sprint.capacityHours === undefined ? {} : { capacityHours: sprint.capacityHours }),
+      ...(sprint.velocityTarget === undefined ? {} : { velocityTarget: sprint.velocityTarget }),
+      ...(sprint.participants ? { participants: sprint.participants } : {}),
+      items: [...sprint.items],
+      ...(sprint.committed ? { committed: [...sprint.committed] } : {}),
+      totalDays: days(sprint.start, sprint.end),
+      remainingDays: Math.max(0, days(this.today, sprint.end)),
+      metrics: {
+        items: sprint.items.length,
+        resolved: resolved.length,
+        done: done.length,
+        points: points(resolved),
+        committedPoints: points(resolved.filter((card) => committed.has(card.ref))),
+        donePoints: points(done),
+        added: started ? sprint.items.filter((ref) => !committed.has(ref)).length : 0,
+        unresolved: sprint.items.length - resolved.length,
+      },
+      path: `.pmngr/sprints/${sprint.id}.md`,
+      rev: sprint.rev,
+    };
+  }
+
+  /** One card of a sprint scope, live or read from the committed snapshot. */
+  private cardFor(ref: string, sprint: FakeSprint): BoardCard {
+    const [project = '', id = ''] = ref.split('/');
+    const declared = (this.team?.projects.map((p) => p.key) ?? []).includes(project);
+    const cloned = new Set(this.projects.map((p) => p.key));
+    const committed = (sprint.committed ?? []).includes(ref);
+    if (!cloned.has(project)) {
+      return { ...remoteCard(ref, project, id, declared), inSprint: true, committed };
+    }
+    const item = this.items.get(id);
+    if (!item) {
+      return {
+        ref,
+        project,
+        item: id,
+        declared,
+        remote: false,
+        inSprint: true,
+        committed,
+        reason: `${id} does not exist in the clone of ${project}`,
+      };
+    }
+    return { ...this.liveCard(project, item), inSprint: true, committed };
+  }
+
+  /** The candidates a board offers for a sprint: what it shows and the sprint does not. */
+  private candidatesFor(board: FakeBoard, sprint: FakeSprint): BoardCard[] {
+    const column = board.columns.find((c) => c.id === board.backlogColumn);
+    const out: BoardCard[] = [];
+    for (const item of this.items.values()) {
+      if (item.deleted) continue;
+      const project = item.id.split('-')[0] ?? '';
+      if (!board.projects.includes(project)) continue;
+      const types = board.filters?.types;
+      if (types && !types.includes(item.type)) continue;
+      const ref = `${project}/${item.id}`;
+      if (sprint.items.includes(ref)) continue;
+      const mapped = column
+        ? (column.statuses[project] ?? column.statuses['*'] ?? [])
+        : board.columns.flatMap((c) => c.statuses[project] ?? c.statuses['*'] ?? []);
+      if (!item.status || !mapped.includes(item.status)) continue;
+      out.push({ ...this.liveCard(project, item), backlog: true });
+    }
+    return out.sort((a, b) => a.ref.localeCompare(b.ref));
+  }
+
+  /** One card read from an open repository. */
+  private liveCard(project: string, item: Item): BoardCard {
+    return {
+      ref: `${project}/${item.id}`,
+      project,
+      item: item.id,
+      declared: true,
+      remote: false,
+      vaultId: 'repo-1',
+      source: 'live',
+      title: item.title,
+      type: item.type,
+      ...(item.status === undefined ? {} : { status: item.status, category: categoryOf(item.status) }),
+      ...(item.priority === undefined ? {} : { priority: item.priority }),
+      ...(item.assignees ? { assignees: item.assignees } : {}),
+      ...(item.labels ? { labels: item.labels } : {}),
+      ...(item.estimate === undefined ? {} : { estimate: item.estimate }),
+      ...(item.updated === undefined ? {} : { updated: item.updated }),
+      path: item.path,
+      rev: item.rev,
+    };
+  }
+
+  /**
+   * Renders a board the way `core.BuildBoardView` does: filters first, then one
+   * column per status mapping, then the `order` list, then everything else by
+   * priority. A ref into a project the workspace has not opened stays where the
+   * board puts it and is marked remote.
+   */
+  listSnapshots(): Promise<SnapshotResult[]> {
+    return Promise.resolve(this.snapshotRows('unchanged'));
+  }
+
+  refreshSnapshots(input: SnapshotRefresh = {}): Promise<SnapshotResult[]> {
+    if (!input.dryRun) this.assertWritable();
+    const rows = this.snapshotRows('written').filter(
+      (row) => !input.projects?.length || input.projects.includes(row.project),
+    );
+    return Promise.resolve(rows);
+  }
+
+  /** One row per declared project: cloned ones are regenerated, the rest skipped. */
+  private snapshotRows(status: 'written' | 'unchanged'): SnapshotResult[] {
+    const cloned = new Set(this.projects.map((p) => p.key));
+    return (this.team?.projects ?? []).map((project) => ({
+      project: project.key,
+      path: project.snapshot.path,
+      status: cloned.has(project.key) ? status : 'skipped',
+      items: project.snapshot.items,
+      ...(cloned.has(project.key)
+        ? {}
+        : { reason: 'no open repository serves this project; clone it to refresh its snapshot' }),
+      info: project.snapshot,
+    }));
+  }
+
+  private renderBoard(board: FakeBoard): BoardView {
+    const declared = this.team?.projects.map((p) => p.key) ?? board.projects;
+    const cloned = new Set(this.projects.map((p) => p.key));
+    const rank: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+    // A scrum board shows the scope of its sprint, plus the candidates the
+    // sprint does not list in its backlog column (docs/04 §5.5).
+    const sprint =
+      board.kind === 'scrum' && board.sprint ? this.sprints.get(board.sprint) : undefined;
+    const inSprint = (ref: string) => sprint?.items.includes(ref) ?? false;
+    const committed = (ref: string) => sprint?.committed?.includes(ref) ?? false;
+
+    const placed = new Set<string>();
+    const columns: BoardColumnView[] = board.columns.map((column) => {
+      const cards: BoardCard[] = [];
+      for (const item of this.items.values()) {
+        if (item.deleted) continue;
+        const project = item.id.split('-')[0] ?? '';
+        if (!cloned.has(project) || !board.projects.includes(project)) continue;
+        const types = board.filters?.types;
+        if (types && !types.includes(item.type)) continue;
+        const mapped = column.statuses[project] ?? column.statuses['*'] ?? [];
+        if (!item.status || !mapped.includes(item.status)) continue;
+        const ref = `${project}/${item.id}`;
+        if (sprint && !inSprint(ref) && column.id !== board.backlogColumn) continue;
+        cards.push({
+          ...(sprint
+            ? inSprint(ref)
+              ? { inSprint: true, committed: committed(ref) }
+              : { backlog: true }
+            : {}),
+          ref,
+          project,
+          item: item.id,
+          declared: declared.includes(project),
+          remote: false,
+          vaultId: 'repo-1',
+          title: item.title,
+          type: item.type,
+          ...(item.status === undefined ? {} : { status: item.status }),
+          ...(item.priority === undefined ? {} : { priority: item.priority }),
+          ...(item.assignees ? { assignees: item.assignees } : {}),
+          ...(item.labels ? { labels: item.labels } : {}),
+          ...(item.estimate === undefined ? {} : { estimate: item.estimate }),
+          ...(item.updated === undefined ? {} : { updated: item.updated }),
+          path: item.path,
+          rev: item.rev,
+        });
+        placed.add(ref);
+      }
+      for (const ref of board.order[column.id] ?? []) {
+        if (placed.has(ref)) continue;
+        const [project = '', id = ''] = ref.split('/');
+        if (cloned.has(project)) continue;
+        if (sprint && !inSprint(ref)) continue;
+        cards.push({
+          ...remoteCard(ref, project, id, declared.includes(project)),
+          ...(sprint ? { inSprint: true, committed: committed(ref) } : {}),
+        });
+        placed.add(ref);
+      }
+      // A remote item the sprint lists but the order does not: it lands in the
+      // column its snapshot status maps to.
+      for (const ref of sprint?.items ?? []) {
+        if (placed.has(ref)) continue;
+        const [project = '', id = ''] = ref.split('/');
+        if (cloned.has(project)) continue;
+        const card = remoteCard(ref, project, id, declared.includes(project));
+        const mapped = column.statuses[project] ?? column.statuses['*'] ?? [];
+        if (!card.status || !mapped.includes(card.status)) continue;
+        cards.push({ ...card, inSprint: true, committed: committed(ref) });
+        placed.add(ref);
+      }
+      const order = board.order[column.id] ?? [];
+      cards.sort((a, b) => {
+        const ia = order.indexOf(a.ref);
+        const ib = order.indexOf(b.ref);
+        if (ia >= 0 && ib >= 0) return ia - ib;
+        if (ia >= 0) return -1;
+        if (ib >= 0) return 1;
+        return (
+          (rank[a.priority ?? 'low'] ?? 3) - (rank[b.priority ?? 'low'] ?? 3) ||
+          a.ref.localeCompare(b.ref)
+        );
+      });
+      return {
+        id: column.id,
+        name: column.name,
+        ...(column.wip === undefined ? {} : { wip: column.wip }),
+        ...(column.color === undefined ? {} : { color: column.color }),
+        cards,
+        exceeded: (column.wip ?? 0) > 0 && cards.length > (column.wip ?? 0),
+      };
+    });
+
+    const unmapped: BoardCard[] = [];
+    for (const item of this.items.values()) {
+      if (item.deleted) continue;
+      const project = item.id.split('-')[0] ?? '';
+      if (!cloned.has(project) || !board.projects.includes(project)) continue;
+      const types = board.filters?.types;
+      if (types && !types.includes(item.type)) continue;
+      const ref = `${project}/${item.id}`;
+      if (placed.has(ref)) continue;
+      if (sprint && !inSprint(ref)) continue;
+      unmapped.push({
+        ref,
+        project,
+        item: item.id,
+        declared: true,
+        remote: false,
+        title: item.title,
+        type: item.type,
+        ...(item.status === undefined ? {} : { status: item.status }),
+        reason: `status ${item.status ?? ''} maps to no column of this board`,
+      });
+    }
+
+    return {
+      id: board.id,
+      kind: board.kind,
+      title: board.title,
+      ...(board.description === undefined ? {} : { description: board.description }),
+      path: `.pmngr/boards/${board.id}.md`,
+      rev: board.rev,
+      teamVaultId: 'repo-team',
+      projects: board.projects,
+      filters: board.filters ?? {},
+      swimlanes: {},
+      card: {},
+      ...(board.sprint === undefined ? {} : { sprint: board.sprint }),
+      ...(board.backlogColumn === undefined ? {} : { backlogColumn: board.backlogColumn }),
+      ...(sprint
+        ? {
+            sprintInfo: this.summarize(
+              sprint,
+              sprint.items.map((ref) => this.cardFor(ref, sprint)),
+            ),
+          }
+        : {}),
+      columns,
+      unmapped,
+      diagnostics: [],
+    };
   }
 
   writePage(_scope: KbScope, path: string, content: string, rev?: string): Promise<KbPage> {

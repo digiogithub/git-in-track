@@ -297,6 +297,65 @@ func (s *Server) publishPageWrite(r *http.Request, m *mount, result any) {
 	m.touch(s.now())
 }
 
+// publishBoardMove announces a card move. It writes to two repositories, so it
+// publishes one file event per repository and, when a status changed, the item
+// event the backlog views listen to (docs/04 R-MOVE-1).
+func (s *Server) publishBoardMove(r *http.Request, result any) {
+	moved, ok := result.(vault.BoardMoveResult)
+	if !ok {
+		return
+	}
+	requestID := requestIDOf(r)
+	s.publishWriteSets(r, moved.Writes)
+	if moved.Item == nil || string(moved.Item.ID) == "" {
+		return
+	}
+	for _, set := range moved.Writes {
+		m, found := s.repos.lookup(set.VaultID)
+		if !found || set.VaultID == "" {
+			continue
+		}
+		s.hub.Publish(eventItemChanged, itemChangedData{
+			Repo:      m.id,
+			ID:        string(moved.Item.ID),
+			Op:        "moved",
+			Rev:       string(moved.Item.Rev),
+			Origin:    "api",
+			RequestID: requestID,
+		})
+	}
+}
+
+// publishWriteSets announces the files a multi-repository call wrote: one file
+// event per repository, plus the index refresh each of them implies. It is what
+// a card move, a sprint edit and a board edit all report through
+// (docs/04 R-MOVE-1, R-SPR-3).
+func (s *Server) publishWriteSets(r *http.Request, sets []vault.VaultWriteSet) {
+	requestID := requestIDOf(r)
+	for _, set := range sets {
+		m, found := s.repos.lookup(set.VaultID)
+		for _, file := range set.Written {
+			repo := set.VaultID
+			if found {
+				repo = m.id
+			}
+			s.hub.Publish(eventFileChanged, fileChangedData{
+				Repo:    repo,
+				Path:    file.Path,
+				Op:      "write",
+				Size:    int64(len(file.Text)),
+				IsPmngr: isBacklogPath(file.Path),
+				IsKb:    !isBacklogPath(file.Path),
+			})
+		}
+		if !found {
+			continue
+		}
+		s.publishIndexUpdated(m, indexCounts{Updated: 1}, requestID)
+		m.touch(s.now())
+	}
+}
+
 // publishDelta announces what an incremental index pass changed. It is the
 // watcher's counterpart of publishWrite.
 func (s *Server) publishDelta(m *mount, delta core.IndexDelta) {

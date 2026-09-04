@@ -57,10 +57,11 @@ function fakeClient(handlers: Partial<Record<CoreMethodName, Handler>>) {
   // exactly as `CoreClient` implements them.
   const client = {
     call,
-    loadVault: (files: unknown, options: { rootLabel?: string } = {}) =>
+    loadVault: (files: unknown, options: { rootLabel?: string; vaultId?: string } = {}) =>
       call('vault.load', { files, ...options }),
-    loadSnapshot: (blob: unknown) => call('snapshot.load', blob),
-    exportSnapshot: () => call('snapshot.export', undefined),
+    loadSnapshot: (blob: unknown, vaultId?: string) =>
+      call('snapshot.load', vaultId === undefined ? blob : { ...(blob as object), vaultId }),
+    exportSnapshot: (vaultId?: string) => call('snapshot.export', vaultId),
   } as unknown as CoreClient;
   return { client, call };
 }
@@ -112,6 +113,28 @@ function vaultFiles(): Record<string, string> {
 async function mount(handlers: Partial<Record<CoreMethodName, Handler>> = {}, writable = true) {
   const vault = new MemoryVault(vaultFiles(), { name: 'acme-repo', writable });
   const { client, call } = fakeClient({
+    'workspace.mount': (params) => ({
+      id: (params as { vaultId: string }).vaultId,
+      role: 'project',
+      label: 'acme-repo',
+      projects: [],
+      team: false,
+      stats,
+    }),
+    'workspace.unmount': (params) => ({ unmounted: (params as { vaultId: string }).vaultId }),
+    'workspace.list': () => ({
+      vaults: [
+        {
+          id: 'repo-1',
+          role: 'project',
+          label: 'acme-repo',
+          projects: [project.key],
+          team: false,
+          stats,
+        },
+      ],
+      diagnostics: [],
+    }),
     'vault.load': () => stats,
     'snapshot.export': () => ({ fingerprint: stats.fingerprint, json: '{}' }),
     'vault.apply': () => stats,
@@ -146,6 +169,7 @@ describe('BrowserProvider', () => {
         { path: 'docs/index.md', text: '# Docs\n' },
       ],
       rootLabel: 'acme-repo',
+      vaultId: 'repo-1',
     });
     expect(repo).toMatchObject({
       id: 'repo-1',
@@ -319,8 +343,87 @@ describe('BrowserProvider', () => {
         { op: 'write', path: 'docs/index.md', text: '# Docs, edited\n' },
         { op: 'remove', path: 'docs/.pmngr/stories/ACME-US-0001-login-with-sso.md' },
       ],
+      vaultId: 'repo-1',
     });
     expect(events.some((event) => event.kind === 'index')).toBe(true);
+  });
+
+  it('keeps every opened folder mounted in the core workspace', async () => {
+    const team = new MemoryVault({ 'team.yaml': 'key: ACME-TEAM\n' }, { name: 'acme-team' });
+    const { provider, call } = await mount({
+      // The workspace answers for both folders once the second one is loaded.
+      'workspace.list': () => ({
+        vaults: [
+          { id: 'repo-1', role: 'project', label: 'acme-repo', projects: ['ACME'], team: false, stats },
+          { id: 'repo-2', role: 'team', label: 'acme-team', projects: [], team: true, teamKey: 'ACME-TEAM', stats },
+        ],
+        diagnostics: [],
+      }),
+    });
+
+    registerVault(team, 'repo-2');
+    const mounted = await provider.mountRepo({ kind: 'team', location: 'repo-2', docsFolder: '' });
+
+    expect(mounted.id).toBe('repo-2');
+    // Opening the second folder mounts it beside the first, never over it.
+    expect(call).toHaveBeenCalledWith('workspace.mount', {
+      vaultId: 'repo-1',
+      role: 'project',
+      rootLabel: 'acme-repo',
+    });
+    expect(call).toHaveBeenCalledWith('workspace.mount', {
+      vaultId: 'repo-2',
+      role: 'team',
+      rootLabel: 'acme-team',
+    });
+    const repos = await provider.listRepos();
+    expect(repos.map((repo) => repo.id).sort()).toEqual(['repo-1', 'repo-2']);
+  });
+
+  it('reads the team repository through the workspace', async () => {
+    const team = {
+      key: 'ACME-TEAM',
+      name: 'ACME Delivery Team',
+      root: '.',
+      knowledgePath: 'knowledge',
+      members: [],
+      projects: [],
+      cadence: {},
+      defaults: {},
+      snapshots: { enabled: true },
+      diagnostics: [],
+    };
+    const { provider } = await mount({ 'team.get': () => team });
+
+    await expect(provider.getTeam()).resolves.toMatchObject({ key: 'ACME-TEAM' });
+  });
+
+  it('reports no team when no open folder holds a team.yaml', async () => {
+    const { provider } = await mount({
+      'team.get': () => {
+        throw coreError('not_found', 'no open repository holds a team.yaml');
+      },
+    });
+
+    await expect(provider.getTeam()).resolves.toBeNull();
+  });
+
+  it('resolves a reference into a project nobody cloned without failing', async () => {
+    const { provider } = await mount({
+      'ref.resolve': () => ({
+        ref: 'WEB/WEB-US-0031',
+        project: 'WEB',
+        item: 'WEB-US-0031',
+        declared: true,
+        cloned: false,
+        reason: 'project WEB is not cloned on this machine',
+      }),
+    });
+
+    await expect(provider.resolveRef('WEB/WEB-US-0031')).resolves.toMatchObject({
+      declared: true,
+      cloned: false,
+    });
   });
 
   it('falls back to vault.stats when nothing changed', async () => {
@@ -328,7 +431,7 @@ describe('BrowserProvider', () => {
 
     await provider.reindex('repo-1');
 
-    expect(call).toHaveBeenCalledWith('vault.stats', undefined);
+    expect(call).toHaveBeenCalledWith('vault.stats', { vaultId: 'repo-1' });
   });
 
   it('reloads the whole vault when a full reindex is requested', async () => {

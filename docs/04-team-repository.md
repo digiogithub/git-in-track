@@ -316,11 +316,61 @@ projects:
 | `E-TEAM-KEY-DUP` | E | Duplicate project `key`. |
 | `E-TEAM-HANDLE-DUP` | E | Duplicate member `handle`. |
 | `E-TEAM-EMAIL-DUP` | E | An email appears under two members. |
-| `E-TEAM-PROJECT-FIELDS` | E | A project entry lacks `key`, `name`, `repo`, or `docs_path`. |
+| `E-TEAM-MEMBER-FIELDS` | E | A member entry has a malformed `handle`, or no member is declared. |
+| `E-TEAM-PROJECT-FIELDS` | E | A project entry lacks `key`, `name`, `repo`, or `docs_path`, or none is declared. |
 | `E-TEAM-BACKLOG-IN-TEAM-REPO` | E | `.pmngr/{epics,stories,tasks,milestones,comments}` exists in the team repo. |
 | `W-TEAM-KEY-MISMATCH` | W | Cloned project's `project.yaml:key` ≠ the declared `key`. |
 | `W-TEAM-WEB-URL` | W | `web_url` absent and not inferable (blob links disabled for that project). |
 | `W-TEAM-HINT-DEAD` | W | No `local_hints` path exists on this machine (informational). |
+
+### 3.6 Loading a team repository — the workspace (implemented, GIT-US-0016)
+
+`team.yaml` is parsed by `internal/core` (`core.LoadTeamConfig`, `core.DiscoverTeam`) and never
+by an adapter, so the companion process and the WebAssembly build validate it identically.
+
+A **workspace** (`internal/vault`, type `Workspace`) is several repositories open at once: the
+project clones the user has, plus at most one team repository. It is what makes the cross-repository
+half of this document possible without a second implementation of anything:
+
+| Concern | Where it is answered |
+|---|---|
+| One repository: items, pages, comments, writes | the `Vault` of that repository, unchanged |
+| Which repository answers a call | `Workspace.route`, by explicit `vaultId`, then `project`, then the project key embedded in an item `id`, then the project half of a `ref` |
+| `ref: <KEY>/<ITEM-ID>` resolution | `Workspace.ResolveRef` — see below |
+| Search over everything that is open | `Workspace.Search`, merging the per-repository rankings |
+| The team surface of §3 | `Workspace.Team` |
+
+The hosts differ only in how repositories get in: the browser worker calls `workspace.mount` and
+pushes each folder's files with `vault.load` (both carry a `vaultId`); the companion attaches the
+vaults it already opened over the registered repositories.
+
+**Reference resolution.** `core.ParseRef` decodes `<projectKey>/<itemId>` and rejects a reference
+that disagrees with itself (`WEB/ACME-US-0042`). Resolution never fails on a reference into a
+project nobody cloned — that is the normal state of a team board (§7) — and answers instead with:
+
+| Field | Meaning |
+|---|---|
+| `declared` | `team.yaml` lists the project. |
+| `cloned` | A repository exposing the project is open in this workspace. |
+| `vaultId` | The repository the item was resolved in. |
+| `found` | The item, without its body; absent when the reference is remote. |
+| `reason` | One sentence explaining an unresolved reference, for the UI. |
+
+**Unique project keys.** `E-TEAM-KEY-DUP` covers a `team.yaml` that declares a key twice. The
+workspace raises the same code for the case only it can see: two *open repositories* serving the
+same project key, which would make routing ambiguous.
+
+**The team knowledge base** is indexed as a scope of the team repository's index, keyed by the team
+key, so `knowledge/` is walked, searched, wikilinked and served by exactly the code that serves a
+project's docs folder. It is addressed as `/api/v1/teams/<TEAMKEY>/kb/…` and, in the web app, at
+`/p/<TEAMKEY>/kb/…`.
+
+**Not cloned is a state, not an error.** Every project of `team.yaml` is listed with `cloned: true`
+or `cloned: false`. Rendering a remote card's title and status from a committed snapshot (§6) is
+GIT-US-0019; this build recognises and marks the project, and offers its `repo` URL as the way in.
+
+The fixture `testdata/fixtures/team-basic` is the end-to-end case: a team repository declaring
+`DEMO` (opened next to it from `testdata/fixtures/project-basic`) and `WEB` (never cloned).
 
 ---
 
@@ -349,10 +399,22 @@ Recommended structure (convention, not enforced): `ways-of-working/`, `decisions
 
 ## 5. Boards — `.pmngr/boards/<slug>.md`
 
+**Status: boards are implemented — kanban (GIT-US-0017), scrum ([§5.5](#55-scrum-boards),
+GIT-US-0018) and snapshot-backed remote cards (GIT-US-0019).**
+
 A board is a *view*: columns, ordering, filters, swimlanes. It holds no work item state. Moving a
 card between columns changes the **status of the referenced item in its own project repository**,
 which means moving a card on a board can require writing to a different git repository than the one
 holding the board — a fact the UI must surface ([§5.7](#57-what-happens-when-a-card-moves)).
+
+**Implementation home.** `internal/core/board.go` parses, validates and emits the file;
+`internal/core/boardview.go` turns a board plus the items of the open repositories into the
+columns the UI renders and decides what a move implies. `internal/vault/board.go` is the plumbing
+— read the files, hand the pieces to the core, write the answer back — and answers `board.list`,
+`board.get`, `board.move` and `board.update` for a workspace. `internal/server/boards.go` and
+`internal/server/sprints.go` serve the same calls over HTTP ([doc 07 §5.5](./07-cli-and-api.md)).
+The fixtures are `testdata/fixtures/team-basic/.pmngr/boards/delivery.md` (kanban) and
+`demo-scrum.md` with `.pmngr/sprints/DEMO-TEAM-S-0001.md` (scrum).
 
 ### 5.1 Front matter
 
@@ -397,8 +459,12 @@ columns:
 - **R-COL-3** A status that maps to two columns is `E-BOARD-STATUS-AMBIGUOUS` for that project.
 - **R-COL-4** An item whose status maps to no column is not shown; the board header shows
   "3 items hidden (unmapped status)" with a link to list them.
-- **R-COL-5** `wip` is advisory. Exceeding it colours the column header and shows a badge; it never
-  blocks a move (a rule that blocks writes to another repository would be unenforceable anyway).
+- **R-COL-5** `wip` is advisory: it is never a stored constraint, and a column that is already over
+  its limit renders every card it holds. Exceeding it colours the column header and shows a badge.
+  A move that *would* put the column over its limit is refused **once**, with the code
+  `wip_limit_exceeded` and a sentence naming the column and the limit; repeating the call with
+  `force` (the "Move anyway" button) goes through. Advisory, but never silently exceeded — and a
+  hard block would be unenforceable anyway, since the item lives in another repository.
 
 ### 5.3 Filters
 
@@ -446,7 +512,31 @@ A scrum board differs from a kanban board in three ways:
 3. The board renders sprint metrics: committed vs. completed points, remaining days, burndown
    (Phase 6).
 
-`kind: kanban` boards ignore `sprint`/`backlog_column`.
+`kind: kanban` boards ignore `sprint`/`backlog_column`, and `sprint` on a kanban board is
+`E-BOARD-SPRINT-KIND`.
+
+**As built (GIT-US-0018).** `BuildBoardView` takes the sprint the board's `sprint:` names and:
+
+- **R-SCRUM-1** The working columns hold the references the sprint lists, and nothing else. A
+  reference the sprint dropped disappears from the board even while `order:` still names it — the
+  order list is a position, never a membership.
+- **R-SCRUM-2** A candidate appears in `backlog_column` when the board's filters keep it, it is not
+  in a terminal status, and *that column's own* status mapping claims it. Mapping the backlog column
+  to `categories: [todo]` therefore offers exactly the unstarted work, whatever each project's
+  workflow calls it. A board that declares no `backlog_column` shows no candidates at all.
+- **R-SCRUM-3** A column may be both: in [§5.9](#59-complete-example--scrum-board-for-one-project)
+  `sprint_backlog` holds the sprint's own `todo` items *and* the candidates. Cards say which they
+  are — `inSprint`, `committed` and `backlog` on the rendered card.
+- **R-SCRUM-4** Dragging a candidate out of the backlog column commits it to the sprint: the
+  reference is appended to the sprint file, and the status change and the order write follow as for
+  any move (R-MOVE-1). Dragging a card *into* the backlog column changes no membership — leaving a
+  sprint is an explicit act in the planning view, never a side effect of a drop.
+- **R-SCRUM-5** A remote candidate may join the sprint (team-repo state, R-REM-1) but keeps its
+  status, so it renders in whatever column its snapshot status maps to rather than where it was
+  dropped.
+- **R-SCRUM-6** The rendered board carries `sprintInfo`: the goal, the dates, the days remaining
+  (both ends inclusive, 0 once the end has passed), and the metrics — items, resolved, done,
+  points, committed points, done points, and how many references were added after the start.
 
 ### 5.6 Card order
 
@@ -469,7 +559,8 @@ order:
   that no longer belong to the column (status changed elsewhere) are ignored on read and pruned on
   the next write.
 - **R-ORD-3** The list is stored one ref per line so that two people re-ordering different columns
-  produce non-overlapping diffs. Concurrent re-ordering *of the same column* is a genuine text
+  produce non-overlapping diffs; a fractional index was considered and rejected in
+  [ADR-013](./adr/ADR-013-board-card-ordering.md). Concurrent re-ordering *of the same column* is a genuine text
   conflict; the conflict UI offers "take mine / take theirs / union (mine first)". This is accepted:
   card order is the least valuable state in the system.
 - **R-ORD-4** Ordering is per column, not global, and is not stored per swimlane. When swimlanes are
@@ -501,9 +592,13 @@ sequenceDiagram
 ```
 
 - **R-MOVE-1** A move writes to two repositories: the item's status in the project repo, and the
-  board's `order` in the team repo. Both writes are independent commits. If the project write fails
-  (dirty rev, no clone, read-only), the board write MUST be rolled back so the board never shows a
-  position that contradicts the item.
+  board's `order` in the team repo. Both writes are independent commits. If either write fails
+  (dirty rev, no clone, read-only), the other MUST be rolled back so the board never shows a
+  position that contradicts the item. The implementation writes the item first — it is the write
+  that can be refused for a reason the caller has to see — and rolls the status back when the board
+  write fails. The two repositories hold two independent optimistic locks: the board's revision and
+  the item's, so a move carries both (`rev` and `itemRev`, or `If-Match` and `itemRev` over HTTP).
+  A re-order inside one column changes no status and writes the board file only.
 - **R-MOVE-2** The new status is the **first** status listed for the target column for that project
   (`statuses["*"]` or the project override), or, for a `categories:` column, the project's first
   status in that category. `project.yaml:workflow.transitions` is consulted; a disallowed transition
@@ -645,6 +740,17 @@ Capacity for this sprint is 2.5 FTE (Tomás is half-time). Daily at 09:45 CET.
 | `W-BOARD-WIP-EXCEEDED` | W | Live condition, reported in the UI, not by `doctor`. |
 | `W-BOARD-UNMAPPED-STATUS` | W | A project status maps to no column. |
 
+**Writing a board back.** `SerializeBoard` is the only writer. It emits the front matter in the key
+order of §5.1, one column per block entry, the `statuses` mapping with `"*"` first and the project
+overrides sorted, and `order:` one ref per line — never in flow style, and `[]` for a column whose
+list is deliberately empty. Emission is deterministic (no Go map iteration reaches the output) and
+idempotent: parsing a board and serialising it again yields the same bytes. That is what makes a
+concurrent move a mergeable diff, and `internal/core` pins it with a test that drives
+`git merge-file` over two divergent moves.
+
+Columns the board no longer declares are dropped from `order:` on the next write, and so are refs
+the column no longer shows (R-ORD-2).
+
 ---
 
 ## 6. Index snapshots — `.pmngr/index/<projectKey>.json`
@@ -762,9 +868,18 @@ Rules:
 
 - **R-SNAP-6** The snapshot for project `K` is refreshed when: (a) `gintrack sync` runs and `K` is
   resolvable locally; (b) the companion server's watcher sees a change under `K`'s `.pmngr/` and
-  `snapshots.enabled` is true (debounced, default 30 s); (c) `gintrack index --snapshot K` is run
-  explicitly; (d) CI in the *project* repo runs `gintrack snapshot --push-to-team` (optional
-  workflow, useful for projects few people clone).
+  `snapshots.enabled` is true (debounced, default 30 s); (c) `gintrack snapshot [K]` is run
+  explicitly, which is also how CI in the *project* repo publishes for a project few people clone;
+  (d) a client calls `POST /api/v1/snapshots` (companion) or `snapshot.refresh` (browser).
+- **R-SNAP-6a** *(as built, GIT-US-0019)* (a) and (b) arrive with the git and watcher phases. What
+  exists today is (c) and (d): `gintrack snapshot [KEY...]` in the CLI, and the `snapshot.list` /
+  `snapshot.refresh` pair of the core contract, served over HTTP as `GET` and `POST
+  /api/v1/snapshots`. All three generate from the same `(*Index).ProjectSnapshot`, write only into
+  the team repository, and skip — with a reason — every project no open repository serves. The
+  `source` block is left out until the git backend of Phase 4 can fill it honestly.
+- **R-SNAP-6b** A regenerated snapshot is compared with the file on disk **ignoring `generated`,
+  `generated_by`, `generator` and `source`**. When only those differ, nothing is written. This is
+  what makes a scheduled or CI refresh free of commits when the backlog did not move (ADR-014).
 - **R-SNAP-7** Snapshot commits are written with a dedicated message prefix
   (`chore(pmngr): refresh <KEY> index snapshot`) and SHOULD contain nothing else, so they are easy to
   filter out of history and easy to auto-resolve.
@@ -886,6 +1001,13 @@ bb-dc   https://git.acme.example/projects/ACME/repos/legacy/browse/docs/.pmngr/s
 
 ## 8. Sprints — `.pmngr/sprints/<SPRINT-ID>.md`
 
+**Status: implemented (GIT-US-0018).** `internal/core/sprint.go` parses, validates, allocates and
+emits a sprint file; `internal/core/sprintview.go` renders one — the header, the planning view and
+the closing report. `internal/vault/sprint.go` answers `sprint.list`, `sprint.get`,
+`sprint.create`, `sprint.update`, `sprint.start` and `sprint.close` for a workspace, and
+`internal/server/sprints.go` serves them over HTTP ([doc 07 §5.5](./07-cli-and-api.md)).
+Burndown is Phase 6 (GIT-US-0028).
+
 ### 8.1 Identity
 
 ```
@@ -931,6 +1053,22 @@ maximum number, ignore any counter, and take the next. Collisions are far rarer 
   repo). No bulk write happens implicitly.
 - **R-SPR-4** An item MAY appear in two sprints (it was carried over). Metrics attribute completion
   to the sprint that was `active` at the moment `closed` was set.
+- **R-SPR-5** Starting a sprint copies `items` into `committed` and points its board's `sprint:` at
+  it. Both are writes in the team repository, and both are refused once — with
+  `sprint_already_active` — when that board already runs a sprint; confirming with `force` goes
+  through, because two active sprints are a warning (`W-SPRINT-TWO-ACTIVE`) and not an impossibility.
+- **R-SPR-6** A create or a date change that would make two sprints of one board share a day is
+  refused with `sprint_overlap` and a sentence naming the other sprint and its dates. The same
+  condition in a file that is already on disk stays the warning `W-SPRINT-OVERLAP`: validation
+  describes, a write decides.
+- **R-SPR-7** `committed` is what the sprint promised at its start. A sprint that has not started
+  has no commitment, so nothing counts as an addition; once it has, every reference outside
+  `committed` is reported as added mid-sprint.
+- **R-SPR-8** Sending an unfinished item back to the backlog on closing writes the first `todo`
+  status of *that project's* workflow, in that project's repository, and is refused for a project
+  nobody cloned (`repo_not_cloned`, R-REM-1). Carrying one into another sprint writes only the
+  target sprint file. A decision that cannot be applied is reported on its own line of the closing
+  report; the rest of the closing still goes through.
 
 ### 8.3 Complete example
 
@@ -1308,7 +1446,7 @@ MCP tools implied by this document (doc 05 specifies them fully): `list_projects
 |---|---|
 | Phase 1 | Nothing: single project, no team repo. |
 | Phase 2 | `team.yaml` parsing in the core (read-only), project resolution from local paths. |
-| Phase 3 | Team repo end to end: `team.yaml`, `knowledge/`, boards (kanban + scrum), sprints, remote references, index snapshots. |
+| Phase 3 | Team repo end to end: `team.yaml` (§3.6, done), `knowledge/` (done), multi-repository workspace and reference resolution (§3.6, done), kanban boards (§5, done), scrum boards and sprints (§§5.5, 8, done), remote references and index snapshots (§§6, 7, done). |
 | Phase 4 | Multi-repo sync, per-repo push results, conflict handling for `order` and snapshots. |
 | Phase 5 | MCP tools of §12; agents reading snapshots for cross-project questions. |
 | Phase 6 | Retrospectives with voting and promotion, metrics (velocity, burndown, cumulative flow) computed from sprints plus project data. |
@@ -1317,10 +1455,11 @@ MCP tools implied by this document (doc 05 specifies them fully): `list_projects
 
 ## 14. Open questions
 
-1. **Snapshot churn.** Even with `merge=ours` and dedicated commits, active teams will generate many
-   snapshot commits. Alternatives to evaluate in Phase 3: writing snapshots on a dedicated
-   `pmngr-index` branch (keeps `main` clean, costs a second working tree), or only on a schedule
-   (hourly) rather than on every sync.
+1. ~~**Snapshot churn.**~~ **Settled in Phase 3 by [ADR-014](./adr/ADR-014-snapshots-stay-on-the-main-branch.md):**
+   snapshots stay on the main branch in dedicated commits, and the writer compares content rather
+   than timestamps, so a refresh that finds nothing new writes nothing at all. A dedicated
+   `pmngr-index` branch was rejected: it costs a second working tree and breaks "one clone, one
+   truth" for a churn problem the content comparison already removes.
 2. **Board ownership of order across swimlanes.** Storing a single order per column is the simplest
    thing that works; teams that reorder heavily inside swimlanes may want per-lane order. Deferred
    until someone actually asks.

@@ -1,0 +1,139 @@
+{
+  "schema": 1,
+  "project": {
+    "key": "WEB",
+    "name": "Marketing Website",
+    "repo": "https://gitlab.com/example/website.git",
+    "default_branch": "main",
+    "docs_path": "documentation"
+  },
+  "generated": "2026-09-03T06:00:00Z",
+  "generated_by": "marta",
+  "generator": "gintrack-core",
+  "source": {
+    "commit": "9c1f0a2e8d3b41c05f77a2e1b9d4c6a80f3e2b11",
+    "branch": "main",
+    "dirty": false
+  },
+  "workflow": [
+    {
+      "id": "backlog",
+      "name": "Backlog",
+      "category": "todo"
+    },
+    {
+      "id": "next",
+      "name": "Next",
+      "category": "todo"
+    },
+    {
+      "id": "doing",
+      "name": "Doing",
+      "category": "in_progress"
+    },
+    {
+      "id": "review",
+      "name": "In Review",
+      "category": "in_progress"
+    },
+    {
+      "id": "shipped",
+      "name": "Shipped",
+      "category": "done",
+      "terminal": true
+    }
+  ],
+  "labels": [
+    {
+      "name": "content",
+      "color": "#7c3aed"
+    },
+    {
+      "name": "performance",
+      "color": "#0891b2"
+    }
+  ],
+  "counts": {
+    "epic": 1,
+    "story": 2,
+    "task": 1
+  },
+  "items": [
+    {
+      "id": "WEB-EP-0002",
+      "type": "epic",
+      "title": "Marketing site refresh",
+      "status": "doing",
+      "category": "in_progress",
+      "priority": "medium",
+      "due": null,
+      "updated": "2026-09-02T11:00:00Z",
+      "path": "documentation/.pmngr/epics/WEB-EP-0002-marketing-site-refresh.md",
+      "rev": "sha256:aaaa0000bbbb1111"
+    },
+    {
+      "id": "WEB-T-0007",
+      "type": "task",
+      "title": "Compress the hero video",
+      "status": "doing",
+      "category": "in_progress",
+      "priority": "high",
+      "parent": "WEB-US-0031",
+      "assignees": [
+        "marta"
+      ],
+      "labels": [
+        "performance"
+      ],
+      "due": null,
+      "updated": "2026-09-02T15:10:00Z",
+      "path": "documentation/.pmngr/tasks/WEB-T-0007-compress-the-hero-video.md",
+      "rev": "sha256:cccc2222dddd3333"
+    },
+    {
+      "id": "WEB-US-0031",
+      "type": "story",
+      "title": "Rewrite the hero section",
+      "status": "next",
+      "category": "todo",
+      "priority": "high",
+      "parent": "WEB-EP-0002",
+      "assignees": [
+        "marta",
+        "jose"
+      ],
+      "labels": [
+        "content"
+      ],
+      "estimate": 5,
+      "due": "2026-09-20",
+      "updated": "2026-09-01T08:30:00Z",
+      "path": "documentation/.pmngr/stories/WEB-US-0031-rewrite-the-hero-section.md",
+      "rev": "sha256:eeee4444ffff5555",
+      "ac": {
+        "total": 4,
+        "done": 1
+      }
+    },
+    {
+      "id": "WEB-US-0032",
+      "type": "story",
+      "title": "Pricing page copy",
+      "status": "shipped",
+      "category": "done",
+      "priority": "medium",
+      "parent": "WEB-EP-0002",
+      "assignees": [
+        "jose"
+      ],
+      "labels": [
+        "content"
+      ],
+      "estimate": 3,
+      "due": null,
+      "updated": "2026-08-29T09:15:00Z",
+      "path": "documentation/.pmngr/stories/WEB-US-0032-pricing-page-copy.md",
+      "rev": "sha256:6666aaaa7777bbbb"
+    }
+  ]
+}

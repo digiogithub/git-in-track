@@ -2,9 +2,9 @@
 id: GIT-US-0018
 type: story
 title: Plan and run sprints on a Scrum board
-status: backlog
+status: in_review
 created: 2026-09-03T00:00:00Z
-updated: 2026-09-03T00:00:00Z
+updated: 2026-09-04
 author: team
 priority: high
 parent: GIT-EP-0004
@@ -31,11 +31,27 @@ back to the backlog by explicit choice, and leaves an auditable record in git.
 
 ## Acceptance Criteria
 
-- [ ] A sprint file is created with id, board, dates, goal and item references.
-- [ ] A Scrum board shows only the active sprint's items, with the goal and dates.
-- [ ] Planning view moves items in and out of the sprint and shows committed points.
-- [ ] Overlapping sprints on the same board are rejected with a clear message.
-- [ ] Closing a sprint summarises completed versus incomplete work.
-- [ ] Unfinished items are carried over or returned to the backlog by explicit choice.
-- [ ] Sprint changes are one file write per affected file and merge cleanly.
-- [ ] Past sprints remain browsable and are the input for metrics (GIT-US-0028).
+- [x] A sprint file is created with id, board, dates, goal and item references.
+- [x] A Scrum board shows only the active sprint's items, with the goal and dates.
+- [x] Planning view moves items in and out of the sprint and shows committed points.
+- [x] Overlapping sprints on the same board are rejected with a clear message.
+- [x] Closing a sprint summarises completed versus incomplete work.
+- [x] Unfinished items are carried over or returned to the backlog by explicit choice.
+- [x] Sprint changes are one file write per affected file and merge cleanly.
+- [x] Past sprints remain browsable and are the input for metrics (GIT-US-0028).
+
+## Notes
+
+Implemented across `internal/core` (`sprint.go`, `sprintview.go`, the sprint
+scoping of `boardview.go`), `internal/vault/sprint.go`, `internal/server/sprints.go`
+and `web/src/features/boards/SprintPanel.tsx`, with the fixture team repository
+gaining `.pmngr/boards/demo-scrum.md` and `.pmngr/sprints/DEMO-TEAM-S-0001.md`.
+
+`PATCH /api/v1/boards/{slug}` is implemented here as `board.update`: title,
+description, projects, columns and their WIP limits, filters, swimlanes, the
+card display and — on a scrum board — the sprint it is scoped to. The card order
+is never patched there; it moves one card at a time.
+
+Past sprints stay browsable through `sprint.list`/`sprint.get`, which carry the
+metrics GIT-US-0028 will chart; the burndown endpoint itself still answers
+`not_implemented`.

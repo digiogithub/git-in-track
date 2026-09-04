@@ -26,6 +26,11 @@
 import { resolveCompanionBaseUrl } from '@/api/detect';
 import type {
   BatchResult,
+  BoardMoveResult,
+  BoardSummary,
+  BoardPatch,
+  BoardView,
+  CardMove,
   Capabilities,
   ChangeEvent,
   Comment,
@@ -46,9 +51,20 @@ import type {
   Priority,
   ProjectSummary,
   ProviderErrorCode,
+  RefResolution,
   RepoInfo,
   SearchHit,
   SearchQuery,
+  SnapshotRefresh,
+  SnapshotResult,
+  SprintCarry,
+  SprintDraft,
+  SprintFilter,
+  SprintPatch,
+  SprintResult,
+  SprintSummary,
+  SprintView,
+  TeamSummary,
   Unsubscribe,
   UpdateOp,
 } from '@/api/provider';
@@ -173,6 +189,7 @@ const PROBLEM_CODES: Record<string, ProviderErrorCode> = {
   git_dirty: 'git_conflict',
   git_auth_failed: 'git_auth_failed',
   repo_not_cloned: 'repo_not_cloned',
+  wip_limit_exceeded: 'wip_limit_exceeded',
   index_unavailable: 'internal',
   rate_limited: 'internal',
   internal: 'internal',
@@ -560,6 +577,10 @@ export function toSearchHits(value: unknown): SearchHit[] {
         score: asNumber(hit['score']) ?? 0,
       };
       put(mapped, 'id', asString(hit['id']));
+      // A workspace-wide search says which project — and which repository —
+      // answered, so the UI can label every row (GIT-US-0016).
+      put(mapped, 'project', asString(hit['project']));
+      put(mapped, 'vaultId', asString(hit['vaultId']));
       return mapped;
     })
     .filter((entry): entry is SearchHit => entry !== null);
@@ -759,6 +780,24 @@ export class CompanionProvider implements DataProvider {
     return entries.map(toProjectSummary);
   }
 
+  /**
+   * The team repository of the workspace. The companion serves one at most, so
+   * an empty list means "no team repository is registered", which is a normal
+   * state rather than an error.
+   */
+  async getTeam(): Promise<TeamSummary | null> {
+    const body = await this.#json(`${API_PREFIX}/teams`);
+    const record = asRecord(body);
+    const entries = record ? asArray(record['teams'] ?? record['items']) : asArray(body);
+    const first = entries[0];
+    return first === undefined ? null : (first as TeamSummary);
+  }
+
+  async resolveRef(ref: string): Promise<RefResolution> {
+    const body = await this.#json(`${API_PREFIX}/refs${buildQuery({ ref })}`);
+    return body as RefResolution;
+  }
+
   async mountRepo(input: MountInput): Promise<RepoInfo> {
     const body = await this.#json(`${API_PREFIX}/repos`, {
       method: 'POST',
@@ -897,6 +936,128 @@ export class CompanionProvider implements DataProvider {
       body: { status },
     });
     return this.#hydrate(body, id);
+  }
+
+  // -------------------------------------------------------------------- boards
+
+  async listBoards(): Promise<BoardSummary[]> {
+    const body = await this.#json(`${API_PREFIX}/boards`);
+    const record = asRecord(body);
+    const entries = record ? asArray(record['boards'] ?? record['items']) : asArray(body);
+    return entries as BoardSummary[];
+  }
+
+  async getBoard(slug: string): Promise<BoardView> {
+    return (await this.#json(`${API_PREFIX}/boards/${encodeURIComponent(slug)}`)) as BoardView;
+  }
+
+  /**
+   * `If-Match` carries the board revision; `itemRev` carries the item's,
+   * because the two live in different repositories and therefore hold two
+   * independent optimistic locks.
+   */
+  async moveCard(move: CardMove): Promise<BoardMoveResult> {
+    const body = await this.#json(
+      `${API_PREFIX}/boards/${encodeURIComponent(move.board)}/cards/move`,
+      {
+        method: 'POST',
+        rev: move.rev ?? '*',
+        body: {
+          ref: move.ref,
+          toColumn: move.toColumn,
+          position: move.position,
+          ...(move.status === undefined ? {} : { status: move.status }),
+          ...(move.itemRev === undefined ? {} : { itemRev: move.itemRev }),
+          ...(move.force === undefined ? {} : { force: move.force }),
+        },
+      },
+    );
+    return body as BoardMoveResult;
+  }
+
+  /** `If-Match` carries the board revision; `*` overwrites unconditionally. */
+  async updateBoard(slug: string, patch: BoardPatch, rev?: string): Promise<BoardView> {
+    const body = await this.#json(`${API_PREFIX}/boards/${encodeURIComponent(slug)}`, {
+      method: 'PATCH',
+      rev: rev ?? '*',
+      body: patch,
+    });
+    const record = asRecord(body);
+    return (record ? record['board'] : body) as BoardView;
+  }
+
+  // ------------------------------------------------------------------- sprints
+
+  async listSprints(filter: SprintFilter = {}): Promise<SprintSummary[]> {
+    const query = new URLSearchParams();
+    if (filter.board) query.set('board', filter.board);
+    if (filter.state) query.set('state', filter.state);
+    const suffix = query.size > 0 ? `?${query.toString()}` : '';
+    const body = await this.#json(`${API_PREFIX}/sprints${suffix}`);
+    const record = asRecord(body);
+    return asArray(record ? record['sprints'] : body) as SprintSummary[];
+  }
+
+  async getSprint(id: string): Promise<SprintView> {
+    return (await this.#json(`${API_PREFIX}/sprints/${encodeURIComponent(id)}`)) as SprintView;
+  }
+
+  async createSprint(input: SprintDraft): Promise<SprintResult> {
+    return (await this.#json(`${API_PREFIX}/sprints`, {
+      method: 'POST',
+      body: input,
+    })) as SprintResult;
+  }
+
+  async updateSprint(id: string, patch: SprintPatch, rev?: string): Promise<SprintResult> {
+    return (await this.#json(`${API_PREFIX}/sprints/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      rev: rev ?? '*',
+      body: patch,
+    })) as SprintResult;
+  }
+
+  async startSprint(id: string, rev?: string, force?: boolean): Promise<SprintResult> {
+    return (await this.#json(`${API_PREFIX}/sprints/${encodeURIComponent(id)}/start`, {
+      method: 'POST',
+      rev: rev ?? '*',
+      body: { ...(force === undefined ? {} : { force }) },
+    })) as SprintResult;
+  }
+
+  async closeSprint(id: string, carry?: SprintCarry[], rev?: string): Promise<SprintResult> {
+    return (await this.#json(`${API_PREFIX}/sprints/${encodeURIComponent(id)}/close`, {
+      method: 'POST',
+      rev: rev ?? '*',
+      body: { carry: carry ?? [] },
+    })) as SprintResult;
+  }
+
+  // ----------------------------------------------------------------- snapshots
+
+  async listSnapshots(): Promise<SnapshotResult[]> {
+    const body = await this.#json(`${API_PREFIX}/snapshots`);
+    const record = asRecord(body);
+    return asArray(record ? record['snapshots'] : body) as SnapshotResult[];
+  }
+
+  /**
+   * Regenerating a snapshot writes into the team repository, so it is a POST
+   * with no optimistic lock: the file is derived data the core rewrites whole,
+   * and an unchanged one is not written at all.
+   */
+  async refreshSnapshots(input: SnapshotRefresh = {}): Promise<SnapshotResult[]> {
+    const body = await this.#json(`${API_PREFIX}/snapshots`, {
+      method: 'POST',
+      body: {
+        ...(input.projects === undefined ? {} : { projects: input.projects }),
+        ...(input.generatedBy === undefined ? {} : { generatedBy: input.generatedBy }),
+        ...(input.includeClosed === undefined ? {} : { includeClosed: input.includeClosed }),
+        ...(input.dryRun === undefined ? {} : { dryRun: input.dryRun }),
+      },
+    });
+    const record = asRecord(body);
+    return asArray(record ? record['snapshots'] : body) as SnapshotResult[];
   }
 
   /** Sequential, so one rejected rev does not abort the rest of the batch. */

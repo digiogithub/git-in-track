@@ -29,6 +29,7 @@ func (s *Server) mountAPI(api chi.Router) {
 		p.Get("/events", s.handleEvents)
 
 		// Workspaces and repositories.
+		p.Get("/workspace", s.handleWorkspaceTree)
 		p.Get("/workspaces", s.handleWorkspaces)
 		p.Get("/workspaces/{name}", s.handleWorkspace)
 		p.Post("/workspaces", s.notImplemented("Creating a workspace is a configuration change; use `gintrack config`."))
@@ -43,7 +44,16 @@ func (s *Server) mountAPI(api chi.Router) {
 		p.Get("/projects/{key}", s.handleProject)
 		p.Patch("/projects/{key}", s.notImplemented("Editing project.yaml over the API arrives with Phase 3."))
 		p.Route("/projects/{key}/kb", s.mountKB)
+
+		// Team repositories: team.yaml, its members and its project list.
+		p.Get("/teams", s.handleTeams)
+		p.Get("/teams/{key}", s.handleTeam)
 		p.Route("/teams/{key}/kb", s.mountKB)
+		p.Get("/refs", s.handleResolveRef)
+		// Committed index snapshots: what a board renders for a project this
+		// machine has not cloned (docs/04 section 6).
+		p.Get("/snapshots", s.handleSnapshotList)
+		p.Post("/snapshots", s.handleSnapshotRefresh)
 		// The flat form addresses the knowledge base by vault path, with an
 		// optional ?project= to disambiguate a multi-project repository.
 		p.Route("/kb", s.mountKB)
@@ -56,8 +66,9 @@ func (s *Server) mountAPI(api chi.Router) {
 
 		// Phases 3 and 4. The routes exist so that a client learns "not yet"
 		// from the problem code instead of guessing from a 404.
-		s.deferRoute(p, "/boards", "Boards arrive with Phase 3.")
-		s.deferRoute(p, "/sprints", "Sprints arrive with Phase 3.")
+		// Team boards and the sprints a scrum board runs.
+		p.Route("/boards", s.mountBoards)
+		p.Route("/sprints", s.mountSprints)
 		s.deferRoute(p, "/retros", "Retrospectives arrive with Phase 3.")
 		s.deferRoute(p, "/sync", "Git synchronization arrives with Phase 4.")
 		s.deferRoute(p, "/git", "Git inspection arrives with Phase 4.")
@@ -65,6 +76,17 @@ func (s *Server) mountAPI(api chi.Router) {
 
 	api.NotFound(s.handleAPINotFound)
 	api.MethodNotAllowed(s.handleAPINotFound)
+}
+
+// mustJSON encodes call parameters. The values are always plain maps built in
+// this package, so an encoding failure is impossible; nil keeps the call
+// parameter-less rather than sending invalid JSON.
+func mustJSON(params any) []byte {
+	raw, err := json.Marshal(params)
+	if err != nil {
+		return nil
+	}
+	return raw
 }
 
 // deferRoute mounts a whole subtree that answers 501 with a stable code.

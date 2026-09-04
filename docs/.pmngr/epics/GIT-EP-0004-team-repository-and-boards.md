@@ -2,9 +2,9 @@
 id: GIT-EP-0004
 type: epic
 title: Team repository and boards
-status: backlog
+status: in_progress
 created: 2026-09-03T00:00:00Z
-updated: 2026-09-03T00:00:00Z
+updated: 2026-09-04
 author: team
 priority: high
 milestone: GIT-M-0004

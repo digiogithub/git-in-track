@@ -103,9 +103,12 @@ both providers validate identically.
 - `Board`, `Sprint`, `Retro` — team-repo artifacts.
 - `rev` — content hash returned by the provider, never stored in the file. Used
   for optimistic concurrency on every write (see doc 06 §9).
-- `RemoteRef` — a board card whose project repo is not available locally; carries
-  `{ ref, title, status, updated, url, snapshotAt }` from
-  `.pmngr/index/<projectKey>.json`.
+- `RemoteRef` — a board card whose project repo is not available locally: a
+  `BoardCard` with `remote: true`, `source: "snapshot"`, `snapshotAt`, `stale`
+  and `remoteUrl`, filled from `.pmngr/index/<projectKey>.json`.
+- `SnapshotInfo` — the state of one committed snapshot: `present`, `generated`,
+  `generatedBy`, `items`, `freshness` (`fresh | ageing | stale | unknown`) and
+  `error`. It hangs off every project of `TeamSummary` and off `RefResolution`.
 
 ---
 
@@ -153,7 +156,21 @@ state is shareable by URL and survives reloads.
 **WorkspaceHome (`/`)** — Landing surface. Cards for every mounted repository
 (project or team) with: name, project key, branch, ahead/behind counters, dirty
 file count, last index time, and mode badge (Browser / Companion). Empty state
-launches the Add Repository wizard. Below the repos: "Recently edited" (from the
+launches the Add Repository wizard.
+
+When a team repository is open, a **Team panel** (`features/workspace/TeamPanel.tsx`,
+story GIT-US-0016) sits above the repository list: the team name and key, a link
+into the team knowledge base (`/p/<TEAMKEY>/kb/`), the members with their role and
+whether they are active, and every project `team.yaml` declares. A project the
+workspace has open is marked *cloned* and links to its backlog; one nobody cloned
+is marked *not cloned* and shows the `git clone` URL — it is listed, never hidden
+(doc 04 §7). Each project also carries its `snapshot` state, so the panel can say
+when the file its cards come from was last generated (GIT-US-0019). The provider
+exposes `listSnapshots()` and `refreshSnapshots()` in both modes.
+
+A **workspace search panel** (`features/workspace/WorkspaceSearch.tsx`) queries every
+open repository at once and labels each row with the project it came from, because in
+a workspace the same title can exist in two repositories. Below the repos: "Recently edited" (from the
 index, `updated desc`, limit 20), "Assigned to me" (matching `team.yaml` identity
 or the configured git author email), and a sync health strip.
 
@@ -171,7 +188,9 @@ or the configured git author email), and a sync health strip.
 4. *Confirm*: shows what will be written, then runs the initial index with a
    progress bar (files scanned / items found / errors).
 
-**KbViewer (`/p/$projectKey/kb/*`, `/team/$teamId/kb/*`)** — Two panes. Left: a
+**KbViewer (`/p/$projectKey/kb/*`)** — Two panes. The team knowledge base uses the
+same route with the team key in place of a project key, because the core indexes
+`knowledge/` as a scope keyed by the team key (doc 04 §3.6). Left: a
 virtualised file tree of the docs folder (or `knowledge/` for teams) with fuzzy
 filter, folder collapse state persisted per repo, and an outline toggle showing
 the current page's headings. Right: the rendered Markdown page (§7) with a sticky
@@ -271,6 +290,9 @@ export interface DataProvider {
 
   // workspace
   listRepos(): Promise<RepoInfo[]>;
+  listProjects(): Promise<ProjectSummary[]>;
+  getTeam(): Promise<TeamSummary | null>;          // team.yaml of the open team repo, or null
+  resolveRef(ref: string): Promise<RefResolution>; // "<KEY>/<ITEM-ID>" across every open repo
   mountRepo(input: MountInput): Promise<RepoInfo>;
   unmountRepo(repoId: string): Promise<void>;
   reindex(repoId: string, opts?: { full?: boolean }): Promise<IndexStats>;
@@ -293,10 +315,13 @@ export interface DataProvider {
   addComment(ref: ItemRef, body: string): Promise<Comment>;
   writeKbPage(scope: KbScope, path: string, content: string, rev?: string): Promise<KbPage>;
 
-  // boards / sprints / retros
-  listBoards(teamId: string): Promise<Board[]>;
-  getBoard(teamId: string, slug: string): Promise<BoardView>;
-  moveCard(teamId: string, slug: string, move: CardMove, rev: string): Promise<BoardView>;
+  // boards (implemented) / sprints / retros
+  // A workspace holds at most one team repository, so no teamId is needed.
+  listBoards(): Promise<BoardSummary[]>;
+  getBoard(slug: string): Promise<BoardView>;
+  // CardMove carries `board`, `ref`, `toColumn`, `position` and the two
+  // revisions (`rev` for the board, `itemRev` for the item), plus `force`.
+  moveCard(move: CardMove): Promise<BoardMoveResult>;
   getSprint(teamId: string, id: string): Promise<Sprint>;
   updateSprint(teamId: string, id: string, patch: SprintPatch, rev: string): Promise<Sprint>;
   getRetro(teamId: string, id: string): Promise<Retro>;
@@ -416,7 +441,7 @@ Three layers, deliberately separated:
 ['items', projectKey, queryHash]
 ['item', projectKey, itemId]
 ['kb', scope, path]
-['board', teamId, slug]
+['boards', 'detail', slug]  // ['boards','list'] for the index
 ['git', 'status', repoId]
 ```
 
@@ -438,7 +463,9 @@ explicit `persist` partialize:
   saved views, density. Persisted to `localStorage`.
 - `useEditorStore` — open buffers, dirty flags, autosave timers, last saved rev.
   Not persisted (drafts are persisted separately, see §8).
-- `useBoardStore` — drag session state, optimistic card positions, WIP warnings.
+- ~~`useBoardStore`~~ — not needed: the drag session lives in `DndContext`, the
+  optimistic card position in the TanStack Query cache (`applyMoveToView`), and
+  the WIP condition is recomputed from the columns rather than stored.
   Ephemeral.
 - `useSyncStore` — in-flight sync operations, per-repo progress, conflict list.
   Ephemeral.
@@ -714,33 +741,85 @@ CodeMirror 6, wrapped in `src/editor/`.
 
 ## 9. Boards UX
 
+**Status: boards are implemented** — kanban (GIT-US-0017), snapshot-backed
+remote cards (GIT-US-0019) and scrum with sprint planning (GIT-US-0018) — at
+`/boards` (the index) and `/boards/$slug` (the board).
+Code: `features/boards/` — `BoardList`, `BoardView` (the route plus the
+`BoardCanvas` a test renders directly), `BoardColumnPanel`, `BoardCardTile`,
+`SprintPanel`, and the `queries.ts` and `sprint-queries.ts` hooks.
+
 - **Library:** `dnd-kit` (`@dnd-kit/core`, `sortable`, `modifiers`). Keyboard
   sensor enabled, so cards can be moved with Space + arrows; a live region
-  announces "Moved ACME-US-0042 to In progress, position 2 of 7".
+  announces "Moved ACME-US-0042 to In progress, position 2 of 7". Every card
+  also carries a "Move to…" menu, so a move needs neither a pointer nor a
+  memorised gesture.
 - **Data:** column definitions and card order come from the board Markdown file;
-  card content comes from the per-project indexes. A card whose project is not
-  mounted renders as a `RemoteRefCard`: muted styling, a "remote" badge, title and
-  status from `.pmngr/index/<projectKey>.json`, a "snapshot from <relative time>"
-  tooltip, and an external link to the file on the git host. Drag is disabled for
-  remote cards with an explanatory tooltip ("Clone the project repository to move
-  this item").
+  card content comes from the per-project indexes.
+- **Remote cards, as built:** a card whose project is not mounted is rendered by
+  `BoardCardTile` from the committed `.pmngr/index/<projectKey>.json` of the team
+  repository: muted dashed styling, a "remote" badge, the title, status,
+  priority, assignees, labels and estimate the snapshot published, a
+  "Snapshot from 6 hours ago" caption (amber "Stale snapshot, 9 days ago" past
+  `snapshots.max_age_days`), the one-sentence reason it cannot be edited, and an
+  "Open on the host" link built from `web_url` and `default_branch`
+  (doc 04 §7.3). The card carries `source: "snapshot"`, `snapshotAt`, `stale`
+  and `remoteUrl`; `features/boards/snapshot-age.ts` turns the timestamp into
+  the caption. A project with no snapshot, an unreadable one or an item the
+  snapshot omits degrades to the reference alone plus the reason — never a
+  crash and never a card that pretends to be live. Cloning the project makes
+  the same ref render live on the next board read, with no board edit at all.
+- **Remote cards are read-only:** a remote card offers neither the drag handle
+  nor the "Move to…" menu, and a client that asks anyway is refused with
+  `repo_not_cloned` and a message saying to clone the project. What lives in the
+  team repository stays editable: re-ordering a remote card inside its column
+  writes the board file only (doc 04 R-REM-1).
 - **Move semantics:** dropping in a different column maps to a status change in
   the item's project repo (using the column's `statuses` mapping — if a column
   maps several statuses, a small popover asks which one), plus an update to the
   board file's `order:` list. Both writes happen in one provider `moveCard` call
   so they can be one commit.
-- **Optimistic update:** the card moves instantly; `useBoardStore` keeps the
-  optimistic position and TanStack Query holds the previous board snapshot for
-  rollback. On failure the card animates back and a toast explains why. On
-  `RevConflict` (someone else reordered the board) we refetch, re-apply the local
-  move on top of the new order when the target column still exists, and only
-  surface a dialog if that fails.
-- **WIP limits:** a column over its limit shows a coloured header and a count
-  badge; dragging into a full column shows a warning drop state and, on drop, a
-  confirm dialog ("In progress is at its WIP limit of 3. Move anyway?"). Limits
-  are advisory, never blocking, and the choice is remembered for the session.
-- **Scrum extras:** sprint selector, sprint goal banner, points totals per column
-  and per assignee, and a collapsible backlog drawer that is a drop target.
+- **Move semantics, as built:** a move sends both revisions — the board's and
+  the item's — because the two files live in different repositories. A re-order
+  inside one column sends no status at all and writes the board file only.
+- **Optimistic update:** the card moves instantly (`applyMoveToView` in
+  `features/boards/queries.ts` recomputes the columns *and* the WIP flags, so
+  the header turns red at the same moment the card lands) and TanStack Query
+  holds the previous board snapshot for rollback. On failure the snapshot is
+  restored and a toast explains why.
+- **WIP limits:** a column over its limit shows a coloured header, a
+  `count / limit` badge and a status line. Dropping into a full column shows a
+  warning drop state and, on drop, the move is refused once with
+  `wip_limit_exceeded` and a confirm dialog ("In progress is at its WIP limit of
+  3. Move anyway?") repeats it with `force`. Limits are advisory, never
+  blocking, and never silently exceeded.
+- **Nothing is hidden:** items whose status maps to no column are listed under
+  the board with their status and the reason, and a ref into an undeclared
+  project renders as inert text with an "unknown project" badge.
+- **Read-only workspaces** (the `webkitdirectory` fallback) render the board
+  with no drag handles and no move menus, and say so once at the top.
+- **Scrum extras, as built:** a `kind: scrum` board renders `SprintPanel` above
+  the columns: the sprint title and state, the goal (editable in place, one
+  write to the sprint file), the date range, "5 of 14 days left", and the
+  metrics — committed points, completed against total points, items done, and
+  how many references were added after the start. The working columns hold the
+  sprint's scope; the `backlog_column` also offers the candidates the sprint
+  does not list, and each card says which it is (doc 04 R-SCRUM-1 to R-SCRUM-3).
+  Dragging a candidate out of the backlog commits it to the sprint.
+- **Planning:** "Plan sprint" opens two lists — the scope and the candidates —
+  with Add and Remove on each row. Both write the sprint file in the team
+  repository and nothing else, so a card whose project nobody cloned moves in
+  and out exactly like a local one (doc 04 R-SPR-2).
+- **Starting and closing:** "Start sprint" freezes the commitment and points the
+  board at the sprint; a board already running one is refused with
+  `sprint_already_active`. "Close sprint" shows completed against incomplete
+  work and a per-item choice — leave it, carry it to the next sprint, or send it
+  back to the backlog — because closing writes nothing by itself (R-SPR-3). A
+  decision that could not be applied (a project nobody cloned) is reported in a
+  toast, and the rest of the closing still lands.
+- **A new sprint** is created from the board with a title, a start, an end and a
+  goal; the id is allocated by the core, and dates that overlap another sprint
+  of the same board are refused with `sprint_overlap` and the offending sprint
+  named.
 - **Performance:** columns virtualise beyond 100 cards; cards are memoised on
   `(ref, rev, position)`; drag overlays use `transform` only.
 

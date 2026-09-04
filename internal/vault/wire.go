@@ -162,6 +162,10 @@ type projectSummary struct {
 	Writable    bool              `json:"writable"`
 	Diagnostics []core.Diagnostic `json:"diagnostics,omitempty"`
 
+	// VaultID names the repository the project was discovered in. It is empty
+	// for a single-repository answer and set by a workspace-wide one.
+	VaultID string `json:"vaultId,omitempty"`
+
 	Workflow     *workflowSummary     `json:"workflow,omitempty"`
 	Estimation   *estimationSummary   `json:"estimation,omitempty"`
 	CustomFields []customFieldSummary `json:"customFields,omitempty"`
@@ -340,4 +344,7 @@ type searchHit struct {
 	Score   float64 `json:"score"`
 
 	Project string `json:"project,omitempty"`
+	// VaultID names the repository the hit came from, so that a workspace-wide
+	// search can say which project — and which clone — answered.
+	VaultID string `json:"vaultId,omitempty"`
 }

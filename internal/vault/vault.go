@@ -48,6 +48,7 @@ type Vault struct {
 	mem       *core.MemFS
 	fs        *trackingFS
 	projects  []core.ProjectRef
+	team      *core.TeamRef
 	index     *core.Index
 	stores    map[core.ProjectKey]*core.FileStore
 	rootLabel string
@@ -161,12 +162,33 @@ func (v *Vault) Root() string {
 }
 
 // Projects returns the projects discovered in the vault, in discovery order.
+// The team knowledge-base scope is not one of them: it is reported by Team.
 func (v *Vault) Projects() []core.ProjectRef {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	out := make([]core.ProjectRef, len(v.projects))
-	copy(out, v.projects)
+	out := make([]core.ProjectRef, 0, len(v.projects))
+	for _, p := range v.projects {
+		if !p.Team {
+			out = append(out, p)
+		}
+	}
 	return out
+}
+
+// BaseFS returns the file system the vault is mounted on, untracked. It is what
+// a caller reads with when the read must not show up in the next WriteSet.
+func (v *Vault) BaseFS() core.FS {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.base
+}
+
+// Team returns the team repository this vault is, or nil when its root holds no
+// team.yaml.
+func (v *Vault) Team() *core.TeamRef {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.team
 }
 
 // Stats reports the current state of the index.
@@ -275,6 +297,21 @@ func (v *Vault) Dispatch(ctx context.Context, method string, raw []byte) (any, e
 	case "project.list":
 		return v.projectList(), nil
 
+	case "team.get":
+		return v.teamGet()
+	case "ref.resolve":
+		return v.refResolve(raw)
+
+	case "board.list":
+		return v.boardList(ctx)
+	case "board.get":
+		return v.boardGet(ctx, raw)
+	case "board.move", "board.update",
+		"sprint.list", "sprint.get", "sprint.create", "sprint.update",
+		"sprint.start", "sprint.close":
+		return nil, failf("invalid_request",
+			"%s needs the workspace: the sprint and its items live in different repositories", method)
+
 	case "item.list":
 		return v.itemList(ctx, raw)
 	case "item.get":
@@ -334,13 +371,28 @@ func (v *Vault) mount(fsys core.FS) {
 // rediscover walks the vault again and rebuilds the per-project stores. It
 // reports whether the set of projects changed, which is what forces a full
 // rebuild instead of an incremental pass.
+//
+// A team.yaml at the vault root turns the vault into a team repository: its
+// `knowledge/` folder joins the scan as a pseudo-project so that the team
+// knowledge base is indexed, searched and linked exactly like a project's
+// (docs/04 section 4).
 func (v *Vault) rediscover() (bool, error) {
 	found, err := core.DiscoverProjects(v.fs, ".")
 	if err != nil {
 		return false, fmt.Errorf("discover projects: %w", err)
 	}
-	changed := !sameProjects(v.projects, found)
-	v.projects = found
+	team, hasTeam, err := core.DiscoverTeam(v.fs, ".")
+	if err != nil {
+		return false, fmt.Errorf("discover team: %w", err)
+	}
+	scopes := found
+	v.team = nil
+	if hasTeam {
+		v.team = team
+		scopes = append(append([]core.ProjectRef{}, found...), team.KBScope())
+	}
+	changed := !sameProjects(v.projects, scopes)
+	v.projects = scopes
 	v.stores = make(map[core.ProjectKey]*core.FileStore, len(found))
 	for _, p := range found {
 		if p.Config == nil || p.Key == "" {
@@ -453,7 +505,7 @@ func (v *Vault) vaultApply(ctx context.Context, raw []byte) (any, error) {
 func (v *Vault) applyEvents(ctx context.Context, events []core.FileEvent) (core.IndexDelta, bool, error) {
 	configTouched := false
 	for _, ev := range events {
-		if isProjectFile(ev.Path) || isProjectFile(ev.OldPath) {
+		if isConfigFile(ev.Path) || isConfigFile(ev.OldPath) {
 			configTouched = true
 			break
 		}
@@ -531,12 +583,17 @@ func fileEventKind(op string) (core.FileEventKind, error) {
 	}
 }
 
-// isProjectFile reports whether a path is a project.yaml inside a backlog.
-func isProjectFile(p string) bool {
+// isConfigFile reports whether a path is a project.yaml inside a backlog or the
+// team.yaml at the vault root: either one changes what the vault holds, so it
+// forces a rediscovery instead of an incremental pass.
+func isConfigFile(p string) bool {
 	if p == "" {
 		return false
 	}
 	clean := path.Clean(p)
+	if clean == core.TeamFileName {
+		return true
+	}
 	return path.Base(clean) == core.ProjectFileName &&
 		path.Base(path.Dir(clean)) == core.BacklogDirName
 }
@@ -582,6 +639,11 @@ func (v *Vault) projectList() []projectSummary {
 	counts := v.index.ProjectCounts()
 	out := make([]projectSummary, 0, len(v.projects))
 	for _, p := range v.projects {
+		if p.Team {
+			// The team knowledge base is a scope of the index, not a project:
+			// it has no backlog, no workflow and no id allocation.
+			continue
+		}
 		_, writable := v.stores[p.Key]
 		summary := projectSummary{
 			Key:         string(p.Key),

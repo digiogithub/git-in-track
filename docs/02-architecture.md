@@ -866,8 +866,10 @@ Each of these becomes an ADR when decided; none blocks Phase 0.
    parties has a real maintenance cost; defer until after 1.0.
 4. **CORS proxy story.** Document third-party proxies only, or ship
    `gintrack proxy` for teams whose remotes lack CORS headers.
-5. **Board ordering conflicts.** `order:` lists are the most merge-prone structure
-   in the system. Investigate a fractional-index scheme before Phase 3 hardens the
-   format.
+5. ~~**Board ordering conflicts.**~~ **Decided** in
+   [ADR-013](./adr/ADR-013-board-card-ordering.md): `order:` stays a plain
+   ordered list written one reference per line. A fractional index would move
+   the conflict rather than remove it, and would cost the readability ADR-001
+   exists to protect.
 6. **Search backend escalation.** Threshold at which an optional native bleve
    backend earns its keep behind the `core/search` interface.

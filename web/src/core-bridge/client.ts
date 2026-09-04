@@ -77,9 +77,13 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_CHUNK_BYTES = 4 * 1024 * 1024;
 const DEFAULT_CHUNK_FILES = 256;
 
-/** Methods whose params are `undefined`: they are called without arguments. */
+/**
+ * Methods that can be called without arguments: their params are `undefined`,
+ * or optional because the only field they carry names a repository of the
+ * workspace and omitting it means "the default one".
+ */
 type NoParamMethod = {
-  [M in CoreMethodName]: CoreApi[M]['params'] extends undefined ? M : never;
+  [M in CoreMethodName]: undefined extends CoreApi[M]['params'] ? M : never;
 }[CoreMethodName];
 
 function defaultWorker(): WorkerLike {
@@ -100,6 +104,8 @@ export type LoadProgress = {
 export type LoadVaultOptions = {
   rootLabel?: string;
   onProgress?: (progress: LoadProgress) => void;
+  /** Repository inside the workspace; omit for the default one. */
+  vaultId?: string;
 };
 
 /**
@@ -184,11 +190,12 @@ export class CoreClient {
       options.onProgress?.({ files: sentFiles, totalFiles, bytes: sentBytes, totalBytes });
     };
 
+    const target = options.vaultId === undefined ? {} : { vaultId: options.vaultId };
     const head = batches[0] ?? [];
     const loadParams =
       options.rootLabel === undefined
-        ? { files: head }
-        : { files: head, rootLabel: options.rootLabel };
+        ? { files: head, ...target }
+        : { files: head, rootLabel: options.rootLabel, ...target };
     let stats = await this.call('vault.load', loadParams);
     report(head);
 
@@ -198,26 +205,26 @@ export class CoreClient {
         path: file.path,
         text: file.text,
       }));
-      stats = await this.call('vault.apply', { events });
+      stats = await this.call('vault.apply', { events, ...target });
       report(batch);
     }
     return stats;
   }
 
-  applyEvents(events: FileEvent[]): Promise<IndexStats> {
-    return this.call('vault.apply', { events });
+  applyEvents(events: FileEvent[], vaultId?: string): Promise<IndexStats> {
+    return this.call('vault.apply', { events, ...(vaultId === undefined ? {} : { vaultId }) });
   }
 
-  stats(): Promise<IndexStats> {
-    return this.call('vault.stats');
+  stats(vaultId?: string): Promise<IndexStats> {
+    return this.call('vault.stats', vaultId === undefined ? undefined : { vaultId });
   }
 
-  exportSnapshot(): Promise<SnapshotBlob> {
-    return this.call('snapshot.export');
+  exportSnapshot(vaultId?: string): Promise<SnapshotBlob> {
+    return this.call('snapshot.export', vaultId === undefined ? undefined : { vaultId });
   }
 
-  loadSnapshot(blob: SnapshotBlob): Promise<IndexStats> {
-    return this.call('snapshot.load', blob);
+  loadSnapshot(blob: SnapshotBlob, vaultId?: string): Promise<IndexStats> {
+    return this.call('snapshot.load', vaultId === undefined ? blob : { ...blob, vaultId });
   }
 
   // -------------------------------------------------------------- queries --

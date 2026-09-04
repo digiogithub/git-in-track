@@ -1,7 +1,18 @@
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Link } from '@tanstack/react-router';
+import { Columns3 } from 'lucide-react';
 
-/** Board index. Kanban and scrum boards arrive with the team repository (Phase 3). */
+import { Badge } from '@/components/ui/badge';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { useBoards } from '@/features/boards/queries';
+
+/**
+ * Board index (docs/04-team-repository.md §5). Boards live in the team
+ * repository; without one open there is nothing to list, which is a state and
+ * not an error.
+ */
 export function BoardList() {
+  const boards = useBoards();
+
   return (
     <div className="space-y-6">
       <header className="space-y-1">
@@ -11,14 +22,58 @@ export function BoardList() {
         </p>
       </header>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>No team repository mounted</CardTitle>
-        </CardHeader>
-        <CardContent className="text-sm text-muted-foreground">
-          Mount a team repository to see its boards, sprints and retrospectives.
-        </CardContent>
-      </Card>
+      {boards.isPending ? <p className="text-sm text-muted-foreground">Loading boards…</p> : null}
+
+      {!boards.isPending && (boards.data ?? []).length === 0 ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>No board to show</CardTitle>
+          </CardHeader>
+          <CardContent className="text-sm text-muted-foreground">
+            Mount a team repository with <code>.pmngr/boards/</code> to see its boards, sprints and
+            retrospectives.
+          </CardContent>
+        </Card>
+      ) : null}
+
+      <ul className="grid gap-3 sm:grid-cols-2">
+        {(boards.data ?? []).map((board) => (
+          <li key={board.id}>
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex flex-wrap items-center gap-2 text-base">
+                  <Columns3 aria-hidden="true" className="h-4 w-4" />
+                  <Link
+                    to="/boards/$slug"
+                    params={{ slug: board.id }}
+                    className="text-accent underline-offset-4 hover:underline"
+                  >
+                    {board.title}
+                  </Link>
+                  <Badge variant="outline" size="sm" className="font-normal">
+                    {board.kind}
+                  </Badge>
+                  {board.sprint ? (
+                    <Badge variant="outline" size="sm" className="font-normal">
+                      {board.sprint}
+                    </Badge>
+                  ) : null}
+                </CardTitle>
+                <CardDescription>
+                  {board.description ?? `${board.columns} columns`}
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="flex flex-wrap gap-1 text-xs">
+                {board.projects.map((key) => (
+                  <Badge key={key} variant="outline" size="sm" className="font-normal">
+                    {key}
+                  </Badge>
+                ))}
+              </CardContent>
+            </Card>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
