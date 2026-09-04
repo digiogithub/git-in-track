@@ -133,8 +133,8 @@ jobs:
           # pkg/tool/*/covdata fails the coverage run with `no such tool
           # "covdata"`, which is otherwise indistinguishable from a test failure.
           echo "GOROOT=$(go env GOROOT)"
-          ls "$(go env GOROOT)/pkg/tool/$(go env GOOS)_$(go env GOARCH)" |
-            tr '\n' ' '
+          find "$(go env GOROOT)/pkg/tool/$(go env GOOS)_$(go env GOARCH)" \
+            -maxdepth 1 -type f -printf '%f ' 2>/dev/null || true
           echo
           # wasm/ and web/ hold no tests: wasm/ is built and smoke-tested by the
           # `wasm` job and web/ only embeds web/dist. Covering a package with no
