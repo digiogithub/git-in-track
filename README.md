@@ -145,8 +145,11 @@ Tasks live in `.pmngr/tasks/` with `parent` pointing at a story; comments live i
 
 ## Installation
 
-> Until the first `v*` tag is pushed, none of these channels exist yet: build from
-> source with `make build`.
+> **1.0 is prepared but not yet tagged.** The release pipeline is complete and verified
+> end to end against a snapshot build, but no `v*` tag has been pushed, so these channels
+> hold nothing yet. Until a maintainer tags `v1.0.0`, build from source with `make build`.
+> What is left to do, and by whom, is in
+> [docs/12-release-readiness-1-0.md](docs/12-release-readiness-1-0.md) §6.
 
 Every channel is published from the same tag by the release workflow
 ([docs/09-ci-cd-and-releases.md](docs/09-ci-cd-and-releases.md) §10). Releases are
@@ -189,14 +192,14 @@ shasum -a 256 -c checksums.txt --ignore-missing    # macOS
 
 ## Quick start
 
-> **Early development.** Phases 0 to 5 are implemented: the shared Go core, the
-> `gintrack` binary with the embedded web app, the browser-only workflow (open a
-> folder, browse the knowledge base, browse and edit the backlog), the companion
-> CLI (`gintrack serve` with the REST API, live file watching and the event
-> stream), team boards and sprints, git sync (`gintrack sync`, commit on save,
-> conflict resolution) and the MCP server (`gintrack mcp`). Retrospectives,
-> metrics and 1.0 arrive in Phase 6. Until the first release is tagged, build
-> from source with `make build`.
+> **All seven phases are implemented.** The shared Go core, the `gintrack` binary
+> with the embedded web app, browser-only mode, the companion CLI (`gintrack
+> serve` with the REST API, live file watching and the event stream), team boards
+> and sprints, git sync (`gintrack sync`, commit on save, conflict resolution),
+> the MCP server (`gintrack mcp`), retrospectives, sprint metrics and the
+> distribution channels all ship. The 1.0 release itself is **prepared but not
+> tagged**: read [CHANGELOG.md](CHANGELOG.md) for what the release does and does
+> not do, and build from source with `make build` in the meantime.
 
 ```bash
 # 1. Install gintrack (see Installation above) and put it on PATH
@@ -215,11 +218,13 @@ browsers get a read-only fallback.
 
 ## Project status
 
-**Phase 4 (git sync) delivered; Phase 5 (MCP server and agent workflows) in
-review.** Delivery is organized in seven phases (Phase 0 Foundations → Phase 6
-Retrospectives, metrics and 1.0); see [docs/11-roadmap.md](docs/11-roadmap.md).
-The live status of every epic and story is in [docs/.pmngr/](docs/.pmngr/),
-this repository's own backlog.
+**Feature-complete for 1.0; the release is prepared and awaiting its tag.** All
+seven phases (Phase 0 Foundations → Phase 6 Retrospectives, metrics and 1.0) are
+implemented; see [docs/11-roadmap.md](docs/11-roadmap.md) for the plan and
+[docs/12-release-readiness-1-0.md](docs/12-release-readiness-1-0.md) for the
+evidence behind each claim below, including the criteria that are **not** met.
+The live status of every epic and story is in [docs/.pmngr/](docs/.pmngr/), this
+repository's own backlog.
 
 | Phase | Milestone | Status |
 |-------|-----------|--------|
@@ -229,7 +234,14 @@ this repository's own backlog.
 | 3 | Team repository and boards (kanban, scrum, sprints, remote references) | done, in review |
 | 4 | Git sync (commit on save, fetch/rebase/push, conflicts, credentials) | done, in review |
 | 5 | MCP server and agent workflows (12 tools, stdio + HTTP, `rev` locking) | done, in review |
-| 6 | Retrospectives, metrics and 1.0 | planned |
+| 6 | Retrospectives, sprint metrics, distribution channels, 1.0 release prep | done, in review — the `v1.0.0` tag is the maintainer's remaining step |
+
+Known limitations are not hidden: the full list, with a file or a test behind
+every line, is [CHANGELOG.md](CHANGELOG.md) "Known limitations" and
+[docs/12-release-readiness-1-0.md](docs/12-release-readiness-1-0.md) §5. The
+short version: commit on save does not work in browser-only mode, browser git
+needs a CORS proxy, metrics are rewritten by a rebase or a squash, and `brew
+install` is macOS-only.
 
 ## Repository layout
 
@@ -262,6 +274,8 @@ Makefile, go.mod, .goreleaser.yaml, Dockerfile
 | [docs/09-ci-cd-and-releases.md](docs/09-ci-cd-and-releases.md) | CI pipelines, GoReleaser, build matrix, release artifacts. |
 | [docs/10-development-guidelines.md](docs/10-development-guidelines.md) | Coding standards, testing, commit conventions, review process. |
 | [docs/11-roadmap.md](docs/11-roadmap.md) | Phases 0–6 with scope and exit criteria for each. |
+| [docs/12-release-readiness-1-0.md](docs/12-release-readiness-1-0.md) | Evidence for every 1.0 criterion: what is proven, what is partial, what is not done. |
+| [CHANGELOG.md](CHANGELOG.md) | Release notes, the compatibility promise, known limitations and operational notes. |
 | [docs/adr/](docs/adr/) | Architecture decision records. |
 | [docs/.pmngr/](docs/.pmngr/) | This project's own backlog, dogfooding the format. |
 | [AGENTS.md](AGENTS.md) | Working instructions for AI coding agents on this repository. |

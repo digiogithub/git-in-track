@@ -351,13 +351,33 @@ git-in-track follows [Semantic Versioning 2.0.0](https://semver.org/).
 - **Pre-releases** are `vX.Y.Z-rc.N` (for example `v1.0.0-rc.1`). GoReleaser's
   `prerelease: auto` marks any tag containing a hyphen as a GitHub pre-release, so no
   configuration change is needed per release.
-- **Before 1.0.0** (Phases 0–5) the project is `v0.Y.Z`. The `0.` major means the data
-  model may still change; every breaking change to `.pmngr/` bumps the MINOR and is
-  documented with a migration note in `CHANGELOG.md`.
-- **Data model version**: `project.yaml` and `team.yaml` carry a `schemaVersion` field so
-  the tool can detect and migrate older vaults independently of the binary version.
+- **Before 1.0.0** the project would have been `v0.Y.Z`. In practice **no 0.x tag was ever
+  pushed**: Phases 0–6 were developed on `main` without a release, and `v1.0.0` is the
+  first tag the repository will carry. There is therefore no 0.x layout in the field, and
+  the compatibility promise starts at 1.0.
+- **Data model version**: `project.yaml` and `team.yaml` carry a **`schema`** field (not
+  `schemaVersion`; the constant is `core.SupportedSchema`) so the tool can detect and
+  migrate older vaults independently of the binary version. 1.0 freezes it at `schema: 1`.
+  The evolution rules are `docs/03-data-model.md` §19; `gintrack migrate` (R-EVO-4) is
+  specified but not yet implemented, which is acceptable only while `schema: 1` is the
+  only version ever published.
 - The binary reports its version through `gintrack version`, populated by the ldflags
-  `main.version`, `main.commit`, `main.date`.
+  `main.version`, `main.commit`, `main.date` and `main.builtBy`, and it also prints
+  whether the web UI is embedded and which `schema` the core supports:
+
+  ```
+  gintrack 1.0.0
+  commit:   <full sha>
+  built:    <commit date>
+  by:       goreleaser
+  go:       go1.24 linux/amd64
+  ui:       embedded
+  core:     schema v1
+  ```
+
+- **`CHANGELOG.md`** at the repository root is the hand-written companion to the generated
+  release notes: migrations, deprecations, the compatibility promise and known limitations
+  live there, because a list of commit subjects cannot express them.
 
 ---
 
@@ -429,8 +449,7 @@ by the pipeline; the rest are the maintainer's responsibility.
       `HOMEBREW_TAP_TOKEN` and `SCOOP_BUCKET_TOKEN` secrets are set and unexpired (§10).
 - [ ] The snapshot binary runs: `./dist/gintrack_linux_amd64_v1/gintrack version`,
       `gintrack serve` starts and the embedded web app loads at `http://127.0.0.1:7317`.
-- [ ] Data model changes, if any, are accompanied by a migration and a `schemaVersion`
-      bump.
+- [ ] Data model changes, if any, are accompanied by a migration and a `schema` bump.
 - [ ] `CHANGELOG.md` "Unreleased" section is reviewed; anything the generated changelog
       cannot express (migrations, deprecations, known issues) is written by hand.
 - [ ] Documentation under `docs/` reflects the release; screenshots regenerated if the UI
@@ -470,9 +489,18 @@ by the pipeline; the rest are the maintainer's responsibility.
 
 ## 10. Distribution channels
 
-Phases 0–5 shipped the GitHub Release only. Phase 6 (GIT-US-0029) added the three
-package channels below; all of them are produced by the **same GoReleaser run**
-from the same tag, so there is no second workflow and no manual publishing step.
+Phases 0–5 configured the GitHub Release only. Phase 6 (GIT-US-0029) added the
+three package channels below; all of them are produced by the **same GoReleaser
+run** from the same tag, so there is no second workflow and no manual publishing
+step.
+
+> **Nothing is published yet.** No tag has ever been pushed, so every channel in
+> the table below is empty until a maintainer cuts `v1.0.0`. The pipeline itself
+> is verified: `goreleaser check` passes and a `--snapshot --skip=publish` run
+> produces all six archives, `checksums.txt`, the cask, the Scoop manifest and
+> the amd64 image locally. See
+> [12-release-readiness-1-0.md](./12-release-readiness-1-0.md) §1 for the run and
+> §6 for the maintainer's remaining steps.
 
 | Channel        | Where it is published                    | Configured in            | Credential            |
 | -------------- | ---------------------------------------- | ------------------------ | --------------------- |

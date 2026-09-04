@@ -1,6 +1,6 @@
 # git-in-track — Vision and Scope
 
-Status: draft (Phase 0 planning)
+Status: current — describes the 1.0 product. See [12-release-readiness-1-0.md](12-release-readiness-1-0.md) §3 for the verified status of each goal below.
 Audience: contributors, early adopters, and anyone evaluating the project
 Related: [02-architecture.md](02-architecture.md), [Architecture Decision Records](adr/README.md)
 
@@ -165,6 +165,12 @@ correctly:
 | G8 | Support the full agile loop | Sprints, retrospectives, improvement actions, burndown and cumulative flow (Phase 6) |
 | G9 | Never lock in data | Every artifact is a readable Markdown file; the schema is documented in this repo |
 | G10 | Be installable in one step | Single static binary per platform via GoReleaser; archives + checksums on the GitHub Release |
+
+At 1.0, G1, G2, G4, G5, G7, G9 and G10 are met, and G3, G6 and G8 are met only in part —
+browser-only mode is read-only outside Chromium and cannot commit on save, browser git
+needs a CORS proxy, and metrics are per sprint. The evidence for every one of those
+verdicts, including what is missing, is
+[12-release-readiness-1-0.md](12-release-readiness-1-0.md) §3.
 
 ---
 

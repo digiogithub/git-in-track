@@ -2,9 +2,9 @@
 id: GIT-EP-0007
 type: epic
 title: Retrospectives, metrics and 1.0
-status: backlog
+status: in_progress
 created: 2026-09-03T00:00:00Z
-updated: 2026-09-03T00:00:00Z
+updated: 2026-09-04
 author: team
 priority: high
 milestone: GIT-M-0007
@@ -34,7 +34,7 @@ compatibility promise.
 
 - [ ] A full sprint is planned, run, closed and retrospected inside the tool by this
       project's own team, using `docs/.pmngr/`.
-- [ ] Burndown and cumulative flow match a hand-computed reference for a fixture sprint.
+- [x] Burndown and cumulative flow match a hand-computed reference for a fixture sprint.
 - [ ] Primary flows pass WCAG 2.1 AA checks.
 - [ ] `brew install`, `scoop install`, `docker run` and `go install` each yield a working
       `gintrack` on a clean machine.
