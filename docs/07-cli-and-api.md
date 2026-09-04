@@ -407,8 +407,8 @@ run `gintrack doctor` for the details
 
 The positional argument limits the run to one registered repository. `--watch` (stay
 running and re-index on file changes) belongs to `gintrack serve`, which drives the same
-indexer behind the file watcher; `--out`, `--snapshot` and the persisted index cache
-arrive with the cache and the team boards.
+indexer behind the file watcher. Publishing a project's index to the team repository is
+`gintrack snapshot` (§4.13); `--out` and the persisted index cache arrive with the cache.
 
 ### 4.5 `gintrack item …`
 
@@ -586,9 +586,10 @@ warning: column "In review" is at its WIP limit (3/3)
 
 Cards are `ref: <projectKey>/<itemId>` references, never copies. When the referenced
 project repo is not registered locally, the card is resolved from
-`.pmngr/index/<projectKey>.json` and marked `remote: true`; `board move` on a remote card
-updates the board order but refuses to change the item status (exit 4 with a problem
-detail explaining the repo is not cloned).
+`.pmngr/index/<projectKey>.json` and marked `remote: true`, carrying `source: "snapshot"`,
+`snapshotAt`, `stale` and `remoteUrl`; `board move` on a remote card updates the board
+order but refuses to change the item status (exit 4 with a problem detail explaining the
+repo is not cloned). Refresh those snapshots with `gintrack snapshot` (§4.13).
 
 ### 4.7 `gintrack sync [--dry-run]`
 
@@ -747,6 +748,46 @@ version: 1
 defaultWorkspace: work
 workspaces:
 ```
+
+### 4.13 `gintrack snapshot [KEY...]`
+
+Refreshes the committed index snapshots of the team repository (doc 04 §6), so that team
+boards can render the cards of projects other people have not cloned.
+
+```
+gintrack snapshot [KEY...] [flags]
+  --team string           Id of the registered team repository (default: the only one)
+  --generated-by string   Handle recorded in the file (default: the configured author)
+  --include-closed        Keep closed items regardless of their age
+  --max-age-days int      How long a closed item stays in the snapshot (default 30)
+  --dry-run               Report what would change; write nothing
+  --json                  Machine-readable output
+```
+
+```
+$ gintrack snapshot
+DEMO     .pmngr/index/DEMO.json       written     (5 items)
+WEB      —                            skipped     (not cloned in this workspace)
+1 written, 0 unchanged, 1 skipped
+commit them with `git -C ~/code/acme-team commit -m "chore(pmngr): refresh index snapshots"`
+
+$ gintrack snapshot
+DEMO     .pmngr/index/DEMO.json       unchanged   (5 items)
+WEB      —                            skipped     (not cloned in this workspace)
+0 written, 1 unchanged, 1 skipped
+```
+
+- The file carries front-matter-derived fields only — never a body, never a comment
+  (R-SNAP-1) — with items sorted by id, two-space indentation and a trailing newline
+  (R-SNAP-2).
+- A project no registered repository serves is **skipped with a reason**, never guessed at.
+- A regenerated file whose content matches the one on disk is **not written**: the run
+  reports `unchanged` and the git history is left alone (ADR-014). This is what makes the
+  command safe to run in CI on every push, or on a schedule.
+- The command writes files; it does not commit or push them. Committing is `gintrack sync`
+  (§4.7) or git itself, with the message prefix of R-SNAP-7.
+- Exit codes: 4 when no team repository is registered or a named key is not declared, 2
+  for a malformed key.
 
 ---
 
@@ -1128,6 +1169,9 @@ POST /api/v1/items/ACME-T-0311/comments
 Boards are served since GIT-US-0017; sprints and retrospectives still answer `not_implemented`.
 
 ```http
+GET  /api/v1/snapshots                      committed index snapshots, with their age
+POST /api/v1/snapshots                      refresh them; body {projects?, generatedBy?,
+                                            includeClosed?, dryRun?}
 GET  /api/v1/boards                         list the boards of the team repository
 GET  /api/v1/boards/{slug}                  always resolved against the open repositories
 POST /api/v1/boards/{slug}/cards/move       If-Match: <board rev>; body carries itemRev
@@ -1140,6 +1184,30 @@ GET  /api/v1/retros
 GET  /api/v1/retros/{id}
 POST /api/v1/retros/{id}/actions/promote    {"action":2,"project":"ACME","type":"task"}
 ```
+
+```json
+POST /api/v1/snapshots
+{"generatedBy":"jose"}
+
+200
+{ "snapshots":[
+    {"project":"ACME","path":".pmngr/index/ACME.json","status":"written","items":151,
+     "info":{"project":"ACME","path":".pmngr/index/ACME.json","present":true,
+             "enabled":true,"generated":"2026-09-04T10:00:00Z","generatedBy":"jose",
+             "items":151,"freshness":"fresh","stale":false}},
+    {"project":"AWEB","path":".pmngr/index/AWEB.json","status":"skipped","items":0,
+     "reason":"no open repository serves this project; clone it to refresh its snapshot",
+     "info":{"project":"AWEB","path":".pmngr/index/AWEB.json","present":true,
+             "enabled":true,"generated":"2026-09-01T18:00:00Z","items":88,
+             "freshness":"ageing","stale":false}}
+  ],
+  "writes":[{"vaultId":"acme-team",
+             "written":[{"path":".pmngr/index/ACME.json","text":"…"}],"removed":[]}] }
+```
+
+A `status` of `written` means the file changed; `unchanged` means the regenerated document
+matched the one on disk and nothing was written (ADR-014); `skipped` means no open
+repository serves that project. `dryRun: true` computes everything and writes nothing.
 
 ```json
 GET /api/v1/boards/platform-kanban?resolve=true
@@ -1602,12 +1670,28 @@ type Store interface {
 type Index interface {
     Build(ctx context.Context, full bool) (IndexStats, error)
     ApplyFileEvents(ctx context.Context, events []FileEvent) (IndexDelta, error)
-    Snapshot() Snapshot                    // serializable to .pmngr/index/<key>.json
+    Snapshot() Snapshot                    // the whole index, for the local cache
     Load(snap Snapshot) error
+    // ProjectSnapshot builds the committed, reduced form of one project:
+    // .pmngr/index/<KEY>.json in the team repository (doc 04 §6).
+    ProjectSnapshot(key ProjectKey, opts ProjectSnapshotOptions) (ProjectSnapshot, error)
     LinkGraph() Graph                      // parent/child, typed links, wikilinks, backlinks
     Stats() IndexStats
     Warnings() []Warning
 }
+
+// The reader side of the committed snapshots is a set of plain functions, because
+// it needs no state beyond the files it is given (doc 04 §§6 and 7):
+//
+//   func ReadSnapshots(fs FS, teamDir string, keys []ProjectKey,
+//       policy SnapshotPolicy, now time.Time) *SnapshotSet
+//   func (s *SnapshotSet) Item(key ProjectKey, id ItemID) (ProjectSnapshotItem, bool)
+//   func (s *SnapshotSet) Info(key ProjectKey) SnapshotInfo   // age, staleness, errors
+//   func SameSnapshotContent(a, b ProjectSnapshot) bool       // ADR-014
+//   func (p TeamProject) FileURL(path string) string          // doc 04 §7.3
+//
+// BuildBoardView takes the set on its BoardInput and renders the cards of the
+// projects nobody cloned from it.
 
 // Query is the read side used by the CLI, HTTP handlers, MCP tools and the WASM bridge.
 type Query interface {

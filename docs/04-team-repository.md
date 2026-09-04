@@ -844,9 +844,18 @@ Rules:
 
 - **R-SNAP-6** The snapshot for project `K` is refreshed when: (a) `gintrack sync` runs and `K` is
   resolvable locally; (b) the companion server's watcher sees a change under `K`'s `.pmngr/` and
-  `snapshots.enabled` is true (debounced, default 30 s); (c) `gintrack index --snapshot K` is run
-  explicitly; (d) CI in the *project* repo runs `gintrack snapshot --push-to-team` (optional
-  workflow, useful for projects few people clone).
+  `snapshots.enabled` is true (debounced, default 30 s); (c) `gintrack snapshot [K]` is run
+  explicitly, which is also how CI in the *project* repo publishes for a project few people clone;
+  (d) a client calls `POST /api/v1/snapshots` (companion) or `snapshot.refresh` (browser).
+- **R-SNAP-6a** *(as built, GIT-US-0019)* (a) and (b) arrive with the git and watcher phases. What
+  exists today is (c) and (d): `gintrack snapshot [KEY...]` in the CLI, and the `snapshot.list` /
+  `snapshot.refresh` pair of the core contract, served over HTTP as `GET` and `POST
+  /api/v1/snapshots`. All three generate from the same `(*Index).ProjectSnapshot`, write only into
+  the team repository, and skip — with a reason — every project no open repository serves. The
+  `source` block is left out until the git backend of Phase 4 can fill it honestly.
+- **R-SNAP-6b** A regenerated snapshot is compared with the file on disk **ignoring `generated`,
+  `generated_by`, `generator` and `source`**. When only those differ, nothing is written. This is
+  what makes a scheduled or CI refresh free of commits when the backlog did not move (ADR-014).
 - **R-SNAP-7** Snapshot commits are written with a dedicated message prefix
   (`chore(pmngr): refresh <KEY> index snapshot`) and SHOULD contain nothing else, so they are easy to
   filter out of history and easy to auto-resolve.
@@ -1399,10 +1408,11 @@ MCP tools implied by this document (doc 05 specifies them fully): `list_projects
 
 ## 14. Open questions
 
-1. **Snapshot churn.** Even with `merge=ours` and dedicated commits, active teams will generate many
-   snapshot commits. Alternatives to evaluate in Phase 3: writing snapshots on a dedicated
-   `pmngr-index` branch (keeps `main` clean, costs a second working tree), or only on a schedule
-   (hourly) rather than on every sync.
+1. ~~**Snapshot churn.**~~ **Settled in Phase 3 by [ADR-014](./adr/ADR-014-snapshots-stay-on-the-main-branch.md):**
+   snapshots stay on the main branch in dedicated commits, and the writer compares content rather
+   than timestamps, so a refresh that finds nothing new writes nothing at all. A dedicated
+   `pmngr-index` branch was rejected: it costs a second working tree and breaks "one clone, one
+   truth" for a churn problem the content comparison already removes.
 2. **Board ownership of order across swimlanes.** Storing a single order per column is the simplest
    thing that works; teams that reorder heavily inside swimlanes may want per-lane order. Deferred
    until someone actually asks.

@@ -103,9 +103,12 @@ both providers validate identically.
 - `Board`, `Sprint`, `Retro` — team-repo artifacts.
 - `rev` — content hash returned by the provider, never stored in the file. Used
   for optimistic concurrency on every write (see doc 06 §9).
-- `RemoteRef` — a board card whose project repo is not available locally; carries
-  `{ ref, title, status, updated, url, snapshotAt }` from
-  `.pmngr/index/<projectKey>.json`.
+- `RemoteRef` — a board card whose project repo is not available locally: a
+  `BoardCard` with `remote: true`, `source: "snapshot"`, `snapshotAt`, `stale`
+  and `remoteUrl`, filled from `.pmngr/index/<projectKey>.json`.
+- `SnapshotInfo` — the state of one committed snapshot: `present`, `generated`,
+  `generatedBy`, `items`, `freshness` (`fresh | ageing | stale | unknown`) and
+  `error`. It hangs off every project of `TeamSummary` and off `RefResolution`.
 
 ---
 
@@ -161,7 +164,9 @@ into the team knowledge base (`/p/<TEAMKEY>/kb/`), the members with their role a
 whether they are active, and every project `team.yaml` declares. A project the
 workspace has open is marked *cloned* and links to its backlog; one nobody cloned
 is marked *not cloned* and shows the `git clone` URL — it is listed, never hidden
-(doc 04 §7). Rendering its cards from a committed snapshot is GIT-US-0019.
+(doc 04 §7). Each project also carries its `snapshot` state, so the panel can say
+when the file its cards come from was last generated (GIT-US-0019). The provider
+exposes `listSnapshots()` and `refreshSnapshots()` in both modes.
 
 A **workspace search panel** (`features/workspace/WorkspaceSearch.tsx`) queries every
 open repository at once and labels each row with the project it came from, because in
@@ -736,9 +741,9 @@ CodeMirror 6, wrapped in `src/editor/`.
 
 ## 9. Boards UX
 
-**Status: the kanban board is implemented (GIT-US-0017)**, at
-`/boards` (the index) and `/boards/$slug` (the board). The scrum extras below
-arrive with GIT-US-0018 and the snapshot-backed remote card with GIT-US-0019.
+**Status: the kanban board is implemented (GIT-US-0017)** and its
+snapshot-backed remote cards with it (GIT-US-0019), at `/boards` (the index) and
+`/boards/$slug` (the board). The scrum extras below arrive with GIT-US-0018.
 Code: `features/boards/` — `BoardList`, `BoardView` (the route plus the
 `BoardCanvas` a test renders directly), `BoardColumnPanel`, `BoardCardTile`,
 and the `queries.ts` hooks.
@@ -749,12 +754,25 @@ and the `queries.ts` hooks.
   also carries a "Move to…" menu, so a move needs neither a pointer nor a
   memorised gesture.
 - **Data:** column definitions and card order come from the board Markdown file;
-  card content comes from the per-project indexes. A card whose project is not
-  mounted renders as a `RemoteRefCard`: muted styling, a "remote" badge, title and
-  status from `.pmngr/index/<projectKey>.json`, a "snapshot from <relative time>"
-  tooltip, and an external link to the file on the git host. Drag is disabled for
-  remote cards with an explanatory tooltip ("Clone the project repository to move
-  this item").
+  card content comes from the per-project indexes.
+- **Remote cards, as built:** a card whose project is not mounted is rendered by
+  `BoardCardTile` from the committed `.pmngr/index/<projectKey>.json` of the team
+  repository: muted dashed styling, a "remote" badge, the title, status,
+  priority, assignees, labels and estimate the snapshot published, a
+  "Snapshot from 6 hours ago" caption (amber "Stale snapshot, 9 days ago" past
+  `snapshots.max_age_days`), the one-sentence reason it cannot be edited, and an
+  "Open on the host" link built from `web_url` and `default_branch`
+  (doc 04 §7.3). The card carries `source: "snapshot"`, `snapshotAt`, `stale`
+  and `remoteUrl`; `features/boards/snapshot-age.ts` turns the timestamp into
+  the caption. A project with no snapshot, an unreadable one or an item the
+  snapshot omits degrades to the reference alone plus the reason — never a
+  crash and never a card that pretends to be live. Cloning the project makes
+  the same ref render live on the next board read, with no board edit at all.
+- **Remote cards are read-only:** a remote card offers neither the drag handle
+  nor the "Move to…" menu, and a client that asks anyway is refused with
+  `repo_not_cloned` and a message saying to clone the project. What lives in the
+  team repository stays editable: re-ordering a remote card inside its column
+  writes the board file only (doc 04 R-REM-1).
 - **Move semantics:** dropping in a different column maps to a status change in
   the item's project repo (using the column's `statuses` mapping — if a column
   maps several statuses, a small popover asks which one), plus an update to the

@@ -47,6 +47,7 @@ Every ADR uses the same sections:
 | [ADR-011](ADR-011-goreleaser-unsigned-artifacts.md) | GoReleaser with unsigned release artifacts in v1 | Accepted | 6 |
 | [ADR-012](ADR-012-comments-as-separate-files.md) | Comments are separate files, not inline in the item | Accepted | 1 |
 | [ADR-013](ADR-013-board-card-ordering.md) | Card order as a plain ordered list, not a fractional index | Accepted | 3 |
+| [ADR-014](ADR-014-snapshots-stay-on-the-main-branch.md) | Index snapshots stay on the main branch, written only when their content changes | Accepted | 3 |
 
 ## Related documents
 
