@@ -115,12 +115,12 @@ assignees: [john.roe]
 labels: [auth, security]
 priority: high
 parent: ACME-EP-0003
-milestone: ACME-MS-0001
+milestone: ACME-M-0001
 estimate: 5
 due: 2026-03-01
 links:
-  - type: blocked_by
-    ref: ACME-US-0031
+  - kind: blocked_by
+    target: ACME-US-0031
 ---
 
 ## Description
@@ -145,12 +145,14 @@ Tasks live in `.pmngr/tasks/` with `parent` pointing at a story; comments live i
 
 ## Quick start
 
-> **Early development.** Phases 0 to 2 are implemented: the shared Go core, the
+> **Early development.** Phases 0 to 5 are implemented: the shared Go core, the
 > `gintrack` binary with the embedded web app, the browser-only workflow (open a
-> folder, browse the knowledge base, browse and edit the backlog) and the
-> companion CLI (`gintrack serve` with the REST API, live file watching and the
-> event stream). Git sync, team boards and the MCP server arrive in later
-> phases. Until the first release is tagged, build from source with `make build`.
+> folder, browse the knowledge base, browse and edit the backlog), the companion
+> CLI (`gintrack serve` with the REST API, live file watching and the event
+> stream), team boards and sprints, git sync (`gintrack sync`, commit on save,
+> conflict resolution) and the MCP server (`gintrack mcp`). Retrospectives,
+> metrics and 1.0 arrive in Phase 6. Until the first release is tagged, build
+> from source with `make build`.
 
 ```bash
 # 1. Download the gintrack release binary for your platform and put it on PATH
@@ -170,8 +172,8 @@ browsers get a read-only fallback.
 
 ## Project status
 
-**Phase 3 (team repository and boards) delivered; Phase 4 (git sync) next.**
-Delivery is organized in seven phases (Phase 0 Foundations → Phase 6
+**Phase 4 (git sync) delivered; Phase 5 (MCP server and agent workflows) in
+review.** Delivery is organized in seven phases (Phase 0 Foundations → Phase 6
 Retrospectives, metrics and 1.0); see [docs/11-roadmap.md](docs/11-roadmap.md).
 The live status of every epic and story is in [docs/.pmngr/](docs/.pmngr/),
 this repository's own backlog.
@@ -182,8 +184,9 @@ this repository's own backlog.
 | 1 | Browser-only MVP (folder access, WASM index, KB viewer, backlog, editor) | done, one story in review |
 | 2 | Companion CLI (`gintrack serve`, watcher, native index, REST/WS) | done |
 | 3 | Team repository and boards (kanban, scrum, sprints, remote references) | done, in review |
-| 4 | Git sync (commit on save, fetch/rebase/push, conflicts, credentials) | next |
-| 5–6 | MCP server, retrospectives, metrics and 1.0 | planned |
+| 4 | Git sync (commit on save, fetch/rebase/push, conflicts, credentials) | done, in review |
+| 5 | MCP server and agent workflows (12 tools, stdio + HTTP, `rev` locking) | done, in review |
+| 6 | Retrospectives, metrics and 1.0 | planned |
 
 ## Repository layout
 

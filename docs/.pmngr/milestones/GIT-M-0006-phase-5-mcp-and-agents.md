@@ -2,9 +2,9 @@
 id: GIT-M-0006
 type: milestone
 title: Phase 5 — MCP server and agent workflows
-status: backlog
+status: in_progress
 created: 2026-09-03T00:00:00Z
-updated: 2026-09-03T00:00:00Z
+updated: 2026-09-04
 author: team
 labels: [mcp, docs]
 links:

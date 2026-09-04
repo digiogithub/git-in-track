@@ -1017,7 +1017,7 @@ created: 2026-09-03T10:02:00Z
 updated: 2026-09-03T10:02:00Z
 author: jose
 links:
-  - relation: blocked_by
+  - kind: blocked_by
     target: ACME-T-0300
 ---
 
@@ -1101,6 +1101,9 @@ This repository uses git-in-track. The backlog lives in `docs/.pmngr/`.
 - Read `docs/.pmngr/project.yaml` for the status workflow and labels. Never invent a status.
 - Prefer the `gintrack` CLI (`gintrack item list --json`) or the MCP server over editing files.
 - Item IDs (e.g. `ACME-T-0311`) are permanent. Never renumber or reuse them.
+- Every MCP write quotes the `rev` of the read it is based on. On `stale_revision`, read
+  `conflicts[]` (empty means your change already happened), then retry once with
+  `currentRev`. Never escape a conflict with `rev: "*"`.
 - Editing by hand: change only the fields you own, bump `updated`, keep LF endings,
   and keep the diff minimal.
 - Comments go in `docs/.pmngr/comments/<ITEM-ID>/<YYYYMMDDTHHMMSSZ>-<author>.md` (comment ref: `<ITEM-ID>#<file-stem>`), never in the item body.
