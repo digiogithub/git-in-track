@@ -145,11 +145,12 @@ Tasks live in `.pmngr/tasks/` with `parent` pointing at a story; comments live i
 
 ## Quick start
 
-> **Early development.** Phases 0 and 1 are implemented: the shared Go core, the
-> `gintrack` binary with the embedded web app, and the browser-only workflow
-> (open a folder, browse the knowledge base, browse and edit the backlog). Git
-> sync, team boards and the MCP server arrive in later phases. Until the first
-> release is tagged, build from source with `make build`.
+> **Early development.** Phases 0 to 2 are implemented: the shared Go core, the
+> `gintrack` binary with the embedded web app, the browser-only workflow (open a
+> folder, browse the knowledge base, browse and edit the backlog) and the
+> companion CLI (`gintrack serve` with the REST API, live file watching and the
+> event stream). Git sync, team boards and the MCP server arrive in later
+> phases. Until the first release is tagged, build from source with `make build`.
 
 ```bash
 # 1. Download the gintrack release binary for your platform and put it on PATH
@@ -169,7 +170,7 @@ browsers get a read-only fallback.
 
 ## Project status
 
-**Phase 1 (browser-only MVP) delivered; Phase 2 (companion CLI) next.**
+**Phase 2 (companion CLI) delivered; Phase 3 (team repository and boards) next.**
 Delivery is organized in seven phases (Phase 0 Foundations → Phase 6
 Retrospectives, metrics and 1.0); see [docs/11-roadmap.md](docs/11-roadmap.md).
 The live status of every epic and story is in [docs/.pmngr/](docs/.pmngr/),
@@ -179,8 +180,9 @@ this repository's own backlog.
 |-------|-----------|--------|
 | 0 | Foundations (core model, parser, validation, IDs, CI, WASM build) | done |
 | 1 | Browser-only MVP (folder access, WASM index, KB viewer, backlog, editor) | done, one story in review |
-| 2 | Companion CLI (`gintrack serve`, watcher, native index, REST/WS) | next |
-| 3–6 | Team repository and boards, git sync, MCP server, retrospectives and 1.0 | planned |
+| 2 | Companion CLI (`gintrack serve`, watcher, native index, REST/WS) | done |
+| 3 | Team repository and boards (kanban, scrum, sprints, remote references) | next |
+| 4–6 | Git sync, MCP server, retrospectives, metrics and 1.0 | planned |
 
 ## Repository layout
 
