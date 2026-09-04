@@ -1,0 +1,92 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.24"
+  NODE_VERSION: "22"
+
+jobs:
+  preflight:
+    # The Phase 0 scaffold has landed. This job no longer skips the release: it
+    # asserts the layout GoReleaser needs and fails the tag build if it is gone.
+    name: Preflight (repository layout)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check the expected layout
+        run: |
+          missing=0
+          for path in go.mod go.sum .goreleaser.yaml cmd/gintrack wasm \
+                      web/package.json web/package-lock.json web/dist/.gitkeep; do
+            if [ ! -e "$path" ]; then
+              echo "::error::missing $path"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+  release:
+    name: Build and publish release
+    runs-on: ubuntu-latest
+    needs: [preflight]
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout (full history for changelog)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # GoReleaser's before.hooks rebuild these too, so this is belt and braces:
+      # it lets the smoke test below run before a single binary is cross-built.
+      - name: Build WASM core
+        run: make wasm
+
+      - name: WASM smoke test
+        run: node scripts/wasm-smoke.mjs
+
+      - name: Build web bundle
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+      - name: Verify embedded assets exist
+        run: |
+          test -f web/dist/index.html
+          test -f web/dist/core.wasm || test -f web/public/core.wasm
+
+      - name: Validate the GoReleaser configuration
+        run: go run github.com/goreleaser/goreleaser/v2@latest check
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

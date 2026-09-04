@@ -1,0 +1,74 @@
+# Fixture project used by the internal/core tests.
+# Field reference: docs/03-data-model.md, section 6.
+schema: 1
+key: DEMO
+name: Demo Shop
+description: Fixture project for the git-in-track core tests.
+timezone: UTC
+
+docs:
+  path: docs
+  wikilinks: true
+  mermaid: true
+  math: false
+  footnotes: true
+  callouts: true
+  attachments_dir: .pmngr/attachments
+
+workflow:
+  initial: backlog
+  statuses:
+    - { id: backlog,     name: Backlog,     category: todo }
+    - { id: todo,        name: To Do,       category: todo }
+    - { id: in_progress, name: In Progress, category: in_progress, wip: 3 }
+    - { id: in_review,   name: In Review,   category: in_progress, wip: 4 }
+    - { id: done,        name: Done,        category: done,      terminal: true }
+    - { id: cancelled,   name: Cancelled,   category: cancelled, terminal: true }
+  transitions:
+    backlog:     [todo, cancelled]
+    todo:        [in_progress, backlog, cancelled]
+    in_progress: [in_review, todo, cancelled]
+    in_review:   [done, in_progress, cancelled]
+    done:        [in_progress]
+    cancelled:   [backlog]
+
+id_allocation:
+  strategy: scan
+  write_counters: true
+  counters:
+    epic: 1
+    story: 2
+    task: 1
+    milestone: 1
+
+priorities: [critical, high, medium, low]
+
+estimation:
+  scale: fibonacci
+  values: [1, 2, 3, 5, 8, 13, 21]
+  track_hours: true
+
+labels:
+  - { name: frontend, color: "#7c3aed", description: Storefront work }
+  - { name: backend,  color: "#2563eb", description: API work }
+  - { name: payments, color: "#0891b2" }
+
+defaults:
+  story:
+    status: backlog
+    priority: medium
+  task:
+    status: todo
+    priority: medium
+
+custom_fields:
+  - { key: risk,     type: enum,   values: [low, medium, high], applies_to: [epic, story] }
+  - { key: customer, type: string, applies_to: [story] }
+
+people:
+  - { handle: jose,  name: Jose Ruiz,    email: jose@example.com }
+  - { handle: marta, name: Marta Alonso, email: marta@example.com }
+
+links:
+  host: github
+  web_url: https://github.com/example/demo-shop

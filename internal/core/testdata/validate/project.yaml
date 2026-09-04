@@ -1,0 +1,45 @@
+# Fixture project for the validator tests (internal/core/validate_test.go).
+# Field reference: docs/03-data-model.md, section 6.
+schema: 1
+key: TEST
+name: Validator fixtures
+description: Minimal project used to exercise every rule of docs/03 section 16.
+timezone: UTC
+
+workflow:
+  initial: backlog
+  statuses:
+    - { id: backlog,     name: Backlog,     category: todo }
+    - { id: todo,        name: To Do,       category: todo }
+    - { id: in_progress, name: In Progress, category: in_progress }
+    - { id: done,        name: Done,        category: done,      terminal: true }
+    # Declared but unreachable on purpose: it triggers W-WORKFLOW-TRANSITION.
+    - { id: archived,    name: Archived,    category: cancelled, terminal: true }
+  transitions:
+    backlog:     [todo]
+    todo:        [in_progress, backlog]
+    in_progress: [done, todo]
+    done:        [in_progress]
+
+priorities: [critical, high, medium, low]
+
+estimation:
+  scale: fibonacci
+  values: [1, 2, 3, 5, 8, 13, 21]
+  track_hours: true
+
+labels:
+  - { name: core, color: "#4f46e5" }
+  - { name: docs, color: "#65a30d" }
+
+defaults:
+  story:
+    status: backlog
+    priority: medium
+
+custom_fields:
+  - { key: risk,  type: enum,   values: [low, medium, high], applies_to: [epic, story] }
+  - { key: phase, type: number, applies_to: [milestone] }
+
+people:
+  - { handle: jose, name: Jose Ruiz, email: jose@example.com }

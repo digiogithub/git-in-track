@@ -1,0 +1,9 @@
+dist
+coverage
+node_modules
+public/core.wasm
+public/wasm_exec.js
+package-lock.json
+
+# Golden Markdown output: byte-exact by design (src/markdown/golden.test.ts).
+src/markdown/fixtures/kitchen-sink.golden.html

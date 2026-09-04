@@ -1,0 +1,50 @@
+# Fixture project for the store, allocator and doctor tests.
+# The comments in this file are load-bearing: writing a counter or a redirect
+# must not destroy them (docs/03 section 6).
+schema: 1
+key: ACME
+name: ACME Platform
+timezone: UTC
+
+workflow:
+  initial: backlog
+  statuses:
+    - { id: backlog,     name: Backlog,     category: todo }
+    - { id: todo,        name: To Do,       category: todo }
+    - { id: in_progress, name: In Progress, category: in_progress }
+    - { id: in_review,   name: In Review,   category: in_progress }
+    - { id: done,        name: Done,        category: done,      terminal: true }
+    - { id: cancelled,   name: Cancelled,   category: cancelled, terminal: true }
+  transitions:
+    backlog:     [todo, cancelled]
+    todo:        [in_progress, backlog, cancelled]
+    in_progress: [in_review, todo, cancelled]
+    in_review:   [done, in_progress, cancelled]
+    done:        [in_progress]
+    cancelled:   [backlog]
+
+id_allocation:
+  strategy: scan          # scan | ranges
+  write_counters: true
+  counters:               # hints only, NOT authoritative
+    epic: 1
+    story: 43
+    task: 107
+
+priorities: [critical, high, medium, low]
+
+labels:
+  - { name: auth, color: "#2563eb" }
+
+defaults:
+  story:
+    status: backlog
+    priority: medium
+    labels: [auth]
+  task:
+    status: todo
+    priority: high
+
+people:
+  - { handle: jose,  name: Jose Ruiz }
+  - { handle: marta, name: Marta Alonso }

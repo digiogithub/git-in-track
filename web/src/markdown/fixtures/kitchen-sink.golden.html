@@ -1,0 +1,72 @@
+<h1 id="kitchen-sink" class="heading">Kitchen sink<a href="#kitchen-sink" class="heading-anchor" aria-hidden="true" tabindex="-1">#</a></h1>
+<p>Prose with <strong>bold</strong>, <em>italic</em>, <del>struck</del> text, an autolink to <a href="http://www.example.com" rel="noopener noreferrer" target="_blank" data-external="true">www.example.com</a>,
+an external link to <a href="https://example.com/spec" rel="noopener noreferrer" target="_blank" data-external="true">the spec</a> and an inline <code>code</code>
+span holding a literal <code>[[wikilink]]</code>.</p>
+<h2 id="wikilinks" class="heading">Wikilinks<a href="#wikilinks" class="heading-anchor" aria-hidden="true" tabindex="-1">#</a></h2>
+<ul>
+<li>Page: <a href="/p/ACME/kb/docs/architecture/overview.md" class="wikilink wikilink-page" data-wikilink="architecture/overview" data-kind="page">architecture/overview</a></li>
+<li>Page with an alias: <a href="/p/ACME/kb/docs/architecture/overview.md" class="wikilink wikilink-page" data-wikilink="architecture/overview" data-kind="page">the design</a></li>
+<li>Page with an anchor: <a href="/p/ACME/kb/docs/architecture/overview.md#session-revocation" class="wikilink wikilink-page" data-wikilink="architecture/overview" data-kind="page">architecture/overview › Session revocation</a></li>
+<li>Item: <a href="/p/ACME/items/ACME-US-0042" class="wikilink wikilink-item" data-wikilink="ACME-US-0042" data-kind="item" data-item-ref="ACME-US-0042">ACME-US-0042</a></li>
+<li>Cross-project item: <a href="/p/WEB/items/WEB-US-0031" class="wikilink wikilink-item" data-wikilink="WEB-US-0031" data-kind="item" data-item-ref="WEB-US-0031">WEB-US-0031</a></li>
+<li>Cross-project page: <a href="/p/WEB/kb/docs/architecture/overview.md" class="wikilink wikilink-page" data-wikilink="architecture/overview" data-kind="page">architecture/overview</a></li>
+<li>Unwritten page: <a href="/p/ACME/kb/docs/architecture/not-yet.md" class="wikilink wikilink-missing" data-wikilink="architecture/not-yet" data-kind="missing" data-unresolved="true">architecture/not-yet</a></li>
+</ul>
+<h2 id="task-list" class="heading">Task list<a href="#task-list" class="heading-anchor" aria-hidden="true" tabindex="-1">#</a></h2>
+<ul class="contains-task-list">
+<li class="task-list-item"><input type="checkbox" checked disabled> Ship the parser</li>
+<li class="task-list-item"><input type="checkbox" disabled> Ship the editor</li>
+</ul>
+<h2 id="table" class="heading">Table<a href="#table" class="heading-anchor" aria-hidden="true" tabindex="-1">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>id</code></td>
+<td>string</td>
+<td>Immutable</td>
+</tr>
+<tr>
+<td><code>status</code></td>
+<td>string</td>
+<td>From <code>project.yaml</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="callouts" class="heading">Callouts<a href="#callouts" class="heading-anchor" aria-hidden="true" tabindex="-1">#</a></h2>
+<div class="callout callout-note" data-callout="note">
+<div class="callout-title">Note</div>
+<div class="callout-body">
+<p>GitHub alerts and Obsidian callouts share one renderer.</p>
+</div>
+</div>
+<details class="callout callout-warning" data-callout="warning">
+<summary class="callout-title">Folded by default</summary>
+<div class="callout-body">
+<p>The body only appears when the reader opens it.</p>
+</div>
+</details>
+<h2 id="code" class="heading">Code<a href="#code" class="heading-anchor" aria-hidden="true" tabindex="-1">#</a></h2>
+<pre style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" class="shiki shiki-themes github-light github-dark" tabindex="0"><code><span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583">func</span><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0"> Slug</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">(</span><span style="--shiki-light:#E36209;--shiki-dark:#FFAB70">title</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583"> string</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">) </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583">string</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8"> {</span></span>
+<span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583">	return</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8"> strings.</span><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">ToLower</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">(title)</span></span>
+<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">}</span></span></code></pre>
+<pre class="mermaid" data-mermaid="true">graph TD;
+  A-->B;</pre>
+<h2 id="assets" class="heading">Assets<a href="#assets" class="heading-anchor" aria-hidden="true" tabindex="-1">#</a></h2>
+<p><img alt="Flow diagram" data-asset-path="docs/assets/flow.png"></p>
+<p>A relative link to <a href="/p/ACME/kb/docs/architecture/sso.md#session-revocation" data-kb-link="docs/architecture/sso.md" data-kind="page">the sibling page</a>.</p>
+<h2 id="footnotes" class="heading">Footnotes<a href="#footnotes" class="heading-anchor" aria-hidden="true" tabindex="-1">#</a></h2>
+<p>Front matter is bounded<sup><a href="#user-content-fn-1" id="user-content-fnref-1" data-footnote-ref aria-describedby="footnote-label">1</a></sup>; bodies are not.</p>
+<section data-footnotes class="footnotes"><h2 class="sr-only heading" id="footnote-label">Footnotes<a href="#footnote-label" class="heading-anchor" aria-hidden="true" tabindex="-1">#</a></h2>
+<ol>
+<li id="user-content-fn-1">
+<p>See docs/03-data-model.md §3.2. <a href="#user-content-fnref-1" data-footnote-backref="" aria-label="Back to reference 1" class="data-footnote-backref">↩</a></p>
+</li>
+</ol>
+</section>

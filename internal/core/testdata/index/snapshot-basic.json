@@ -1,0 +1,341 @@
+{
+  "schema": 1,
+  "generated": "2026-09-01T12:00:00Z",
+  "generator": "gintrack-core",
+  "fingerprint": "sha256:53ff2514a97cfc2f",
+  "projects": [
+    {
+      "key": "DEMO",
+      "name": "Demo Shop",
+      "docs_path": "docs",
+      "backlog_path": "docs/.pmngr",
+      "config_path": "docs/.pmngr/project.yaml"
+    }
+  ],
+  "counts": {
+    "epic": 1,
+    "milestone": 1,
+    "story": 2,
+    "task": 1
+  },
+  "max_ids": {
+    "DEMO": {
+      "epic": 1,
+      "milestone": 1,
+      "story": 2,
+      "task": 1
+    }
+  },
+  "items": [
+    {
+      "id": "DEMO-EP-0001",
+      "type": "epic",
+      "project": "DEMO",
+      "title": "Checkout revamp",
+      "status": "in_progress",
+      "category": "in_progress",
+      "priority": "high",
+      "milestone": "DEMO-M-0001",
+      "assignees": [
+        "jose"
+      ],
+      "author": "jose",
+      "labels": [
+        "frontend",
+        "payments"
+      ],
+      "estimate": 13,
+      "created": "2026-07-14T08:02:11Z",
+      "updated": "2026-09-01T10:12:44Z",
+      "started": "2026-08-04T07:31:00Z",
+      "closed": null,
+      "start": null,
+      "due": "2026-10-31",
+      "links": [
+        {
+          "kind": "relates_to",
+          "target": "DEMO-M-0001",
+          "note": "the beta cannot ship without it"
+        }
+      ],
+      "refs": [
+        {
+          "raw": "architecture/overview",
+          "target": "architecture/overview"
+        }
+      ],
+      "path": "docs/.pmngr/epics/DEMO-EP-0001-checkout-revamp.md",
+      "rev": "sha256:4c10c35321a74524"
+    },
+    {
+      "id": "DEMO-M-0001",
+      "type": "milestone",
+      "project": "DEMO",
+      "title": "Public beta",
+      "status": "in_progress",
+      "category": "in_progress",
+      "author": "jose",
+      "owner": "jose",
+      "labels": [
+        "frontend",
+        "payments"
+      ],
+      "created": "2026-06-30T10:00:00Z",
+      "updated": "2026-09-01T08:00:00Z",
+      "started": null,
+      "closed": null,
+      "start": "2026-09-01",
+      "due": "2026-11-15",
+      "links": [
+        {
+          "kind": "relates_to",
+          "target": "DEMO-EP-0001"
+        }
+      ],
+      "ac": {
+        "total": 2,
+        "done": 0
+      },
+      "path": "docs/.pmngr/milestones/DEMO-M-0001-public-beta.md",
+      "rev": "sha256:056de122b63bd06d"
+    },
+    {
+      "id": "DEMO-T-0001",
+      "type": "task",
+      "project": "DEMO",
+      "title": "Add address validation",
+      "status": "in_review",
+      "category": "in_progress",
+      "priority": "high",
+      "parent": "DEMO-US-0001",
+      "assignees": [
+        "jose"
+      ],
+      "author": "marta",
+      "labels": [
+        "backend"
+      ],
+      "effort": 6,
+      "spent": 5,
+      "created": "2026-08-27T11:20:40Z",
+      "updated": "2026-09-02T16:03:19Z",
+      "started": "2026-08-29T07:55:00Z",
+      "closed": null,
+      "start": null,
+      "due": null,
+      "links": [
+        {
+          "kind": "blocks",
+          "target": "DEMO-US-0001"
+        }
+      ],
+      "ac": {
+        "total": 2,
+        "done": 1
+      },
+      "path": "docs/.pmngr/tasks/DEMO-T-0001-add-address-validation.md",
+      "rev": "sha256:dee79a796130b1de"
+    },
+    {
+      "id": "DEMO-US-0001",
+      "type": "story",
+      "project": "DEMO",
+      "title": "Guest checkout",
+      "status": "in_progress",
+      "category": "in_progress",
+      "priority": "high",
+      "parent": "DEMO-EP-0001",
+      "milestone": "DEMO-M-0001",
+      "assignees": [
+        "marta",
+        "jose"
+      ],
+      "author": "jose",
+      "labels": [
+        "frontend"
+      ],
+      "estimate": 8,
+      "effort": 20,
+      "spent": 11.5,
+      "created": "2026-08-19T09:04:02Z",
+      "updated": "2026-09-01T10:45:12Z",
+      "started": "2026-08-28T08:10:00Z",
+      "closed": null,
+      "start": null,
+      "due": "2026-09-15",
+      "links": [
+        {
+          "kind": "blocked_by",
+          "target": "DEMO-T-0001"
+        },
+        {
+          "kind": "relates_to",
+          "target": "DEMO-US-0002"
+        }
+      ],
+      "ac": {
+        "total": 4,
+        "done": 2
+      },
+      "comments": 1,
+      "path": "docs/.pmngr/stories/DEMO-US-0001-guest-checkout.md",
+      "rev": "sha256:b029c7303b7bc207"
+    },
+    {
+      "id": "DEMO-US-0002",
+      "type": "story",
+      "project": "DEMO",
+      "title": "Save payment methods",
+      "status": "todo",
+      "category": "todo",
+      "priority": "medium",
+      "parent": "DEMO-EP-0001",
+      "milestone": "DEMO-M-0001",
+      "assignees": [
+        "marta"
+      ],
+      "author": "marta",
+      "labels": [
+        "backend",
+        "payments"
+      ],
+      "estimate": 5,
+      "created": "2026-08-20T11:15:00Z",
+      "updated": "2026-08-30T16:20:10Z",
+      "started": null,
+      "closed": null,
+      "start": null,
+      "due": null,
+      "links": [
+        {
+          "kind": "relates_to",
+          "target": "DEMO-US-0001"
+        }
+      ],
+      "ac": {
+        "total": 3,
+        "done": 0
+      },
+      "path": "docs/.pmngr/stories/DEMO-US-0002-save-payment-methods.md",
+      "rev": "sha256:6af38f854f08a9c3"
+    }
+  ],
+  "comments": [
+    {
+      "item": "DEMO-US-0001",
+      "author": "marta",
+      "created": "2026-09-01T10:45:12Z",
+      "updated": null,
+      "in_reply_to": "DEMO-US-0001#20260901T093300Z-jose",
+      "kind": "comment",
+      "path": "docs/.pmngr/comments/DEMO-US-0001/20260901T104512Z-marta.md",
+      "rev": "sha256:e8586d07e63ebdf1"
+    }
+  ],
+  "pages": [
+    {
+      "path": "docs/architecture/overview.md",
+      "rel_path": "architecture/overview.md",
+      "project": "DEMO",
+      "title": "Architecture overview",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Architecture overview",
+          "anchor": "architecture-overview"
+        },
+        {
+          "level": 2,
+          "text": "Components",
+          "anchor": "components"
+        },
+        {
+          "level": 2,
+          "text": "Notes",
+          "anchor": "notes"
+        }
+      ],
+      "links": [
+        {
+          "raw": "DEMO-US-0002",
+          "target": "DEMO-US-0002",
+          "project": "DEMO",
+          "item": "DEMO-US-0002"
+        }
+      ],
+      "updated": "2026-09-01T12:00:00Z",
+      "size": 528,
+      "rev": "sha256:66ce61c9b6f22200"
+    },
+    {
+      "path": "docs/index.md",
+      "rel_path": "index.md",
+      "project": "DEMO",
+      "title": "Demo Shop knowledge base",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Demo Shop knowledge base",
+          "anchor": "demo-shop-knowledge-base"
+        }
+      ],
+      "links": [
+        {
+          "raw": "DEMO-EP-0001",
+          "target": "DEMO-EP-0001",
+          "project": "DEMO",
+          "item": "DEMO-EP-0001"
+        }
+      ],
+      "updated": "2026-09-01T12:00:00Z",
+      "size": 366,
+      "rev": "sha256:f9ade72835df4b52"
+    }
+  ],
+  "files": {
+    "docs/.pmngr/comments/DEMO-US-0001/20260901T104512Z-marta.md": {
+      "size": 399,
+      "mtime": "2026-09-01T12:00:00Z",
+      "rev": "sha256:e8586d07e63ebdf1"
+    },
+    "docs/.pmngr/epics/DEMO-EP-0001-checkout-revamp.md": {
+      "size": 807,
+      "mtime": "2026-09-01T12:00:00Z",
+      "rev": "sha256:4c10c35321a74524"
+    },
+    "docs/.pmngr/milestones/DEMO-M-0001-public-beta.md": {
+      "size": 596,
+      "mtime": "2026-09-01T12:00:00Z",
+      "rev": "sha256:056de122b63bd06d"
+    },
+    "docs/.pmngr/project.yaml": {
+      "size": 2013,
+      "mtime": "2026-09-01T12:00:00Z"
+    },
+    "docs/.pmngr/stories/DEMO-US-0001-guest-checkout.md": {
+      "size": 1130,
+      "mtime": "2026-09-01T12:00:00Z",
+      "rev": "sha256:b029c7303b7bc207"
+    },
+    "docs/.pmngr/stories/DEMO-US-0002-save-payment-methods.md": {
+      "size": 769,
+      "mtime": "2026-09-01T12:00:00Z",
+      "rev": "sha256:6af38f854f08a9c3"
+    },
+    "docs/.pmngr/tasks/DEMO-T-0001-add-address-validation.md": {
+      "size": 677,
+      "mtime": "2026-09-01T12:00:00Z",
+      "rev": "sha256:dee79a796130b1de"
+    },
+    "docs/architecture/overview.md": {
+      "size": 528,
+      "mtime": "2026-09-01T12:00:00Z",
+      "rev": "sha256:66ce61c9b6f22200"
+    },
+    "docs/index.md": {
+      "size": 366,
+      "mtime": "2026-09-01T12:00:00Z",
+      "rev": "sha256:f9ade72835df4b52"
+    }
+  }
+}

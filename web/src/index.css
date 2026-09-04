@@ -1,0 +1,108 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Design tokens.
+ *
+ * Three theme states: light, dark and system. `system` stamps no attribute and
+ * relies on `prefers-color-scheme`; an explicit choice stamps `data-theme` on
+ * <html>, so the toggle wins in both directions.
+ */
+@layer base {
+  :root {
+    --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, 'JetBrains Mono', Menlo, monospace;
+    --radius: 0.5rem;
+
+    --background: 0 0% 100%;
+    --foreground: 222 47% 11%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+    --primary: 222 47% 21%;
+    --primary-foreground: 210 40% 98%;
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222 47% 11%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%;
+    --accent: 199 89% 48%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 199 89% 48%;
+
+    /* Semantic status and priority tokens (mapped from project.yaml). */
+    --status-backlog: 215 16% 47%;
+    --status-todo: 199 89% 48%;
+    --status-in-progress: 38 92% 50%;
+    --status-in-review: 271 81% 56%;
+    --status-done: 142 71% 45%;
+    --status-cancelled: 215 14% 60%;
+    --priority-critical: 0 72% 51%;
+    --priority-high: 25 95% 53%;
+    --priority-medium: 38 92% 50%;
+    --priority-low: 215 16% 47%;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme='light']) {
+      --background: 222 47% 8%;
+      --foreground: 210 40% 96%;
+      --card: 222 45% 11%;
+      --card-foreground: 210 40% 96%;
+      --popover: 222 45% 11%;
+      --popover-foreground: 210 40% 96%;
+      --primary: 210 40% 96%;
+      --primary-foreground: 222 47% 11%;
+      --secondary: 217 33% 17%;
+      --secondary-foreground: 210 40% 96%;
+      --muted: 217 33% 17%;
+      --muted-foreground: 215 20% 65%;
+      --accent: 199 89% 48%;
+      --accent-foreground: 222 47% 11%;
+      --destructive: 0 63% 41%;
+      --destructive-foreground: 210 40% 96%;
+      --border: 217 33% 20%;
+      --input: 217 33% 20%;
+      --ring: 199 89% 48%;
+    }
+  }
+
+  :root[data-theme='dark'] {
+    --background: 222 47% 8%;
+    --foreground: 210 40% 96%;
+    --card: 222 45% 11%;
+    --card-foreground: 210 40% 96%;
+    --popover: 222 45% 11%;
+    --popover-foreground: 210 40% 96%;
+    --primary: 210 40% 96%;
+    --primary-foreground: 222 47% 11%;
+    --secondary: 217 33% 17%;
+    --secondary-foreground: 210 40% 96%;
+    --muted: 217 33% 17%;
+    --muted-foreground: 215 20% 65%;
+    --accent: 199 89% 48%;
+    --accent-foreground: 222 47% 11%;
+    --destructive: 0 63% 41%;
+    --destructive-foreground: 210 40% 96%;
+    --border: 217 33% 20%;
+    --input: 217 33% 20%;
+    --ring: 199 89% 48%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background font-sans text-foreground antialiased;
+  }
+
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-ring;
+  }
+}
