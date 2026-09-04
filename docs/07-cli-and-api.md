@@ -904,13 +904,19 @@ Field notes: `code` is a stable machine string (clients switch on it, not on `ty
 Catalog of `code` values: `unauthorized`, `forbidden`, `not_found`, `invalid_request`,
 `validation_failed`, `invalid_front_matter`, `precondition_required`, `stale_revision`,
 `conflict`, `duplicate_id`, `workflow_transition_denied`, `read_only`,
-`repo_not_registered`, `repo_not_cloned`, `wip_limit_exceeded`, `git_dirty`, `git_auth_failed`,
+`repo_not_registered`, `repo_not_cloned`, `wip_limit_exceeded`, `sprint_overlap`,
+`sprint_already_active`, `git_dirty`, `git_auth_failed`,
 `git_conflict`, `index_unavailable`, `rate_limited`, `not_implemented`, `internal`.
 
 `wip_limit_exceeded` (HTTP 409) is a *refusal the caller may repeat*: a board's WIP limit is
 advisory (doc 04 R-COL-5), so the move is declined once with the column and the limit in `detail`,
 and the same request with `force` goes through. It exists so that a limit is never exceeded
 silently, and never blocks a team that has decided to exceed it.
+
+`sprint_overlap` and `sprint_already_active` (HTTP 409) have the same shape: two sprints of one
+board sharing a day, and a second active sprint on one board, are refused once with the other
+sprint named in `detail`. `sprint_already_active` is repeatable with `force`; `sprint_overlap` is
+not — the caller has to change the dates.
 
 `not_implemented` (HTTP 501) is what a route of a later phase answers: the path exists so
 that a client learns "not yet" from the code instead of guessing from a 404.
@@ -1166,7 +1172,8 @@ POST /api/v1/items/ACME-T-0311/comments
 
 #### Boards, sprints, retrospectives
 
-Boards are served since GIT-US-0017; sprints and retrospectives still answer `not_implemented`.
+Boards are served since GIT-US-0017 and sprints since GIT-US-0018; retrospectives still answer
+`not_implemented`, and so does a sprint's burndown until the metrics of GIT-US-0028.
 
 ```http
 GET  /api/v1/snapshots                      committed index snapshots, with their age
@@ -1175,11 +1182,14 @@ POST /api/v1/snapshots                      refresh them; body {projects?, gener
 GET  /api/v1/boards                         list the boards of the team repository
 GET  /api/v1/boards/{slug}                  always resolved against the open repositories
 POST /api/v1/boards/{slug}/cards/move       If-Match: <board rev>; body carries itemRev
-PATCH /api/v1/boards/{slug}                 If-Match (columns, wip, filters) — GIT-US-0018
+PATCH /api/v1/boards/{slug}                 If-Match (title, columns, wip, filters, sprint)
 GET  /api/v1/sprints                        ?board=platform-scrum&state=active
-GET  /api/v1/sprints/{id}
-GET  /api/v1/sprints/{id}/burndown
-POST /api/v1/sprints                        create a sprint
+GET  /api/v1/sprints/{id}                   scope, candidates and metrics; ETag: <sprint rev>
+POST /api/v1/sprints                        create a sprint; the core allocates the id
+PATCH /api/v1/sprints/{id}                  If-Match (goal, dates, addItems, removeItems)
+POST /api/v1/sprints/{id}/start             If-Match; {force?} to run two at once
+POST /api/v1/sprints/{id}/close             If-Match; {carry:[{ref,action,sprint?,status?}]}
+GET  /api/v1/sprints/{id}/burndown          not_implemented until GIT-US-0028
 GET  /api/v1/retros
 GET  /api/v1/retros/{id}
 POST /api/v1/retros/{id}/actions/promote    {"action":2,"project":"ACME","type":"task"}
@@ -1266,6 +1276,63 @@ Notes on the move:
   holds it, but nothing here can write its status.
 - `writes[]` is what a host without a file system of its own must persist — the browser build
   writes each set into the folder its `vaultId` names.
+- On a scrum board, a move out of the `backlog_column` also commits the card to the sprint: the
+  answer carries `move.sprint` and `move.sprintAdd`, and `writes[]` holds the sprint file as well
+  (doc 04 R-SCRUM-4).
+
+```json
+GET /api/v1/sprints/ACME-TEAM-S-0007
+200
+ETag: "sha256:c1d2…"
+{ "sprint": {"id":"ACME-TEAM-S-0007","title":"Sprint 7 — SSO end to end","board":"platform-scrum",
+             "state":"active","start":"2026-08-24","end":"2026-09-06","goal":"…",
+             "items":["ACME/ACME-US-0042","WEB/WEB-US-0031"],
+             "committed":["ACME/ACME-US-0042","WEB/WEB-US-0031"],
+             "totalDays":14,"remainingDays":5,
+             "metrics":{"items":2,"resolved":2,"done":0,"points":13,"committedPoints":13,
+                        "donePoints":0,"added":0,"unresolved":0},
+             "rev":"sha256:c1d2…"},
+  "cards":[ …the scope, live or snapshot-resolved, in the order of the file… ],
+  "backlog":[ …what the board shows that the sprint does not list… ],
+  "diagnostics":[] }
+
+PATCH /api/v1/sprints/ACME-TEAM-S-0007
+If-Match: "sha256:c1d2…"
+{"goal":"Ship SSO to staging","addItems":["ACME/ACME-T-0108"],"removeItems":["WEB/WEB-US-0031"]}
+
+POST /api/v1/sprints/ACME-TEAM-S-0007/close
+If-Match: "sha256:c1d2…"
+{"carry":[{"ref":"ACME/ACME-T-0108","action":"next","sprint":"ACME-TEAM-S-0008"},
+          {"ref":"ACME/ACME-US-0042","action":"backlog"}]}
+
+200
+{ "sprint": { …the sprint, now closed… },
+  "report": {"sprint":"ACME-TEAM-S-0007","board":"platform-scrum",
+             "completed":[…],"incomplete":[…],"unresolved":[],
+             "completedPoints":8,"incompletePoints":5,
+             "carried":[{"ref":"ACME/ACME-T-0108","action":"next","sprint":"ACME-TEAM-S-0008"},
+                        {"ref":"ACME/ACME-US-0042","action":"backlog","status":"backlog"}]},
+  "writes":[ …one set per repository written… ] }
+```
+
+Notes on sprints:
+
+- Every write carries `If-Match` with the *sprint's* revision (`*` to overwrite unconditionally).
+  A sprint edit writes the sprint file only: membership, the goal and the dates are team-repository
+  state, so they stay editable for a project nobody cloned (doc 04 R-SPR-2).
+- `addItems` and `removeItems` edit the scope without resending it, which keeps a planning drag a
+  one-line diff. `items` replaces the whole list when a client really means to.
+- `POST /sprints` allocates the id from the team key and the sprints already on disk; the body
+  never carries one. Dates overlapping another sprint of the same board are refused with
+  `sprint_overlap` (409) naming the other sprint.
+- `POST /sprints/{id}/start` copies `items` into `committed` and points the board at the sprint,
+  answering with the re-rendered board. A board already running a sprint answers
+  `sprint_already_active` (409); `{"force":true}` runs two at once.
+- `POST /sprints/{id}/close` writes nothing but the sprint file unless `carry` says so: `leave`
+  changes nothing, `next` appends the reference to another sprint of the same board (the earliest
+  planned one when `sprint` is absent), and `backlog` writes the first `todo` status of that
+  project's workflow into the item's own repository. A decision that could not be applied comes
+  back with `error` on its `carried` entry, and the closing still goes through.
 
 #### Search
 

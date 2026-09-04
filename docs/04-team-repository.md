@@ -399,9 +399,8 @@ Recommended structure (convention, not enforced): `ways-of-working/`, `decisions
 
 ## 5. Boards — `.pmngr/boards/<slug>.md`
 
-**Status: kanban boards are implemented (GIT-US-0017).** Scrum boards ([§5.5](#55-scrum-boards))
-parse and validate but render as kanban until GIT-US-0018; a remote card shows its reference and
-nothing else until GIT-US-0019 reads the snapshots.
+**Status: boards are implemented — kanban (GIT-US-0017), scrum ([§5.5](#55-scrum-boards),
+GIT-US-0018) and snapshot-backed remote cards (GIT-US-0019).**
 
 A board is a *view*: columns, ordering, filters, swimlanes. It holds no work item state. Moving a
 card between columns changes the **status of the referenced item in its own project repository**,
@@ -412,9 +411,10 @@ holding the board — a fact the UI must surface ([§5.7](#57-what-happens-when-
 `internal/core/boardview.go` turns a board plus the items of the open repositories into the
 columns the UI renders and decides what a move implies. `internal/vault/board.go` is the plumbing
 — read the files, hand the pieces to the core, write the answer back — and answers `board.list`,
-`board.get` and `board.move` for a workspace. `internal/server/boards.go` serves the same three
-calls over HTTP ([doc 07 §9](./07-cli-and-api.md)). The fixture is
-`testdata/fixtures/team-basic/.pmngr/boards/delivery.md`.
+`board.get`, `board.move` and `board.update` for a workspace. `internal/server/boards.go` and
+`internal/server/sprints.go` serve the same calls over HTTP ([doc 07 §5.5](./07-cli-and-api.md)).
+The fixtures are `testdata/fixtures/team-basic/.pmngr/boards/delivery.md` (kanban) and
+`demo-scrum.md` with `.pmngr/sprints/DEMO-TEAM-S-0001.md` (scrum).
 
 ### 5.1 Front matter
 
@@ -512,7 +512,31 @@ A scrum board differs from a kanban board in three ways:
 3. The board renders sprint metrics: committed vs. completed points, remaining days, burndown
    (Phase 6).
 
-`kind: kanban` boards ignore `sprint`/`backlog_column`.
+`kind: kanban` boards ignore `sprint`/`backlog_column`, and `sprint` on a kanban board is
+`E-BOARD-SPRINT-KIND`.
+
+**As built (GIT-US-0018).** `BuildBoardView` takes the sprint the board's `sprint:` names and:
+
+- **R-SCRUM-1** The working columns hold the references the sprint lists, and nothing else. A
+  reference the sprint dropped disappears from the board even while `order:` still names it — the
+  order list is a position, never a membership.
+- **R-SCRUM-2** A candidate appears in `backlog_column` when the board's filters keep it, it is not
+  in a terminal status, and *that column's own* status mapping claims it. Mapping the backlog column
+  to `categories: [todo]` therefore offers exactly the unstarted work, whatever each project's
+  workflow calls it. A board that declares no `backlog_column` shows no candidates at all.
+- **R-SCRUM-3** A column may be both: in [§5.9](#59-complete-example--scrum-board-for-one-project)
+  `sprint_backlog` holds the sprint's own `todo` items *and* the candidates. Cards say which they
+  are — `inSprint`, `committed` and `backlog` on the rendered card.
+- **R-SCRUM-4** Dragging a candidate out of the backlog column commits it to the sprint: the
+  reference is appended to the sprint file, and the status change and the order write follow as for
+  any move (R-MOVE-1). Dragging a card *into* the backlog column changes no membership — leaving a
+  sprint is an explicit act in the planning view, never a side effect of a drop.
+- **R-SCRUM-5** A remote candidate may join the sprint (team-repo state, R-REM-1) but keeps its
+  status, so it renders in whatever column its snapshot status maps to rather than where it was
+  dropped.
+- **R-SCRUM-6** The rendered board carries `sprintInfo`: the goal, the dates, the days remaining
+  (both ends inclusive, 0 once the end has passed), and the metrics — items, resolved, done,
+  points, committed points, done points, and how many references were added after the start.
 
 ### 5.6 Card order
 
@@ -977,6 +1001,13 @@ bb-dc   https://git.acme.example/projects/ACME/repos/legacy/browse/docs/.pmngr/s
 
 ## 8. Sprints — `.pmngr/sprints/<SPRINT-ID>.md`
 
+**Status: implemented (GIT-US-0018).** `internal/core/sprint.go` parses, validates, allocates and
+emits a sprint file; `internal/core/sprintview.go` renders one — the header, the planning view and
+the closing report. `internal/vault/sprint.go` answers `sprint.list`, `sprint.get`,
+`sprint.create`, `sprint.update`, `sprint.start` and `sprint.close` for a workspace, and
+`internal/server/sprints.go` serves them over HTTP ([doc 07 §5.5](./07-cli-and-api.md)).
+Burndown is Phase 6 (GIT-US-0028).
+
 ### 8.1 Identity
 
 ```
@@ -1022,6 +1053,22 @@ maximum number, ignore any counter, and take the next. Collisions are far rarer 
   repo). No bulk write happens implicitly.
 - **R-SPR-4** An item MAY appear in two sprints (it was carried over). Metrics attribute completion
   to the sprint that was `active` at the moment `closed` was set.
+- **R-SPR-5** Starting a sprint copies `items` into `committed` and points its board's `sprint:` at
+  it. Both are writes in the team repository, and both are refused once — with
+  `sprint_already_active` — when that board already runs a sprint; confirming with `force` goes
+  through, because two active sprints are a warning (`W-SPRINT-TWO-ACTIVE`) and not an impossibility.
+- **R-SPR-6** A create or a date change that would make two sprints of one board share a day is
+  refused with `sprint_overlap` and a sentence naming the other sprint and its dates. The same
+  condition in a file that is already on disk stays the warning `W-SPRINT-OVERLAP`: validation
+  describes, a write decides.
+- **R-SPR-7** `committed` is what the sprint promised at its start. A sprint that has not started
+  has no commitment, so nothing counts as an addition; once it has, every reference outside
+  `committed` is reported as added mid-sprint.
+- **R-SPR-8** Sending an unfinished item back to the backlog on closing writes the first `todo`
+  status of *that project's* workflow, in that project's repository, and is refused for a project
+  nobody cloned (`repo_not_cloned`, R-REM-1). Carrying one into another sprint writes only the
+  target sprint file. A decision that cannot be applied is reported on its own line of the closing
+  report; the rest of the closing still goes through.
 
 ### 8.3 Complete example
 
@@ -1399,7 +1446,7 @@ MCP tools implied by this document (doc 05 specifies them fully): `list_projects
 |---|---|
 | Phase 1 | Nothing: single project, no team repo. |
 | Phase 2 | `team.yaml` parsing in the core (read-only), project resolution from local paths. |
-| Phase 3 | Team repo end to end: `team.yaml` (§3.6, done), `knowledge/` (done), multi-repository workspace and reference resolution (§3.6, done), kanban boards (§5, done), scrum boards, sprints, remote references, index snapshots. |
+| Phase 3 | Team repo end to end: `team.yaml` (§3.6, done), `knowledge/` (done), multi-repository workspace and reference resolution (§3.6, done), kanban boards (§5, done), scrum boards and sprints (§§5.5, 8, done), remote references and index snapshots (§§6, 7, done). |
 | Phase 4 | Multi-repo sync, per-repo push results, conflict handling for `order` and snapshots. |
 | Phase 5 | MCP tools of §12; agents reading snapshots for cross-project questions. |
 | Phase 6 | Retrospectives with voting and promotion, metrics (velocity, burndown, cumulative flow) computed from sprints plus project data. |

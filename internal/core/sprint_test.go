@@ -3,6 +3,8 @@ package core
 import (
 	"context"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -421,5 +423,96 @@ func TestSprintStore(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) { tc.check(t, seed(t)) })
+	}
+}
+
+// TestConcurrentSprintEditsMerge is the sprint half of the milestone-4 exit
+// criterion: two people planning the same sprint — one adding an item, one
+// changing the goal — must produce diffs git merges without a conflict. It
+// drives a real `git merge-file`, so it measures the emitter and not a model of
+// it (docs/04 R-SPR-1).
+func TestConcurrentSprintEditsMerge(t *testing.T) {
+	base := readFixtureSprint(t)
+	baseBytes, err := SerializeSprint(base)
+	if err != nil {
+		t.Fatalf("SerializeSprint: %v", err)
+	}
+
+	after := func(edit func(*Sprint)) []byte {
+		s, err := ParseSprint(base.Path, baseBytes)
+		if err != nil {
+			t.Fatalf("reparse: %v", err)
+		}
+		edit(s)
+		out, err := SerializeSprint(s)
+		if err != nil {
+			t.Fatalf("SerializeSprint: %v", err)
+		}
+		return out
+	}
+
+	tests := []struct {
+		name        string
+		mine, yours func(*Sprint)
+		check       func(t *testing.T, merged *Sprint)
+	}{
+		{
+			name:  "one adds an item, the other changes the goal",
+			mine:  func(s *Sprint) { s.AddItem("DEMO/DEMO-US-0002") },
+			yours: func(s *Sprint) { s.Goal = "Ship guest checkout to staging" },
+			check: func(t *testing.T, merged *Sprint) {
+				if !merged.Has("DEMO/DEMO-US-0002") {
+					t.Fatalf("items = %v", merged.Items)
+				}
+				if merged.Goal != "Ship guest checkout to staging" {
+					t.Fatalf("goal = %q", merged.Goal)
+				}
+			},
+		},
+		{
+			name:  "one adds an item, the other removes a different one",
+			mine:  func(s *Sprint) { s.AddItem("DEMO/DEMO-US-0002") },
+			yours: func(s *Sprint) { s.RemoveItem("DEMO/DEMO-US-0001") },
+			check: func(t *testing.T, merged *Sprint) {
+				if !merged.Has("DEMO/DEMO-US-0002") || merged.Has("DEMO/DEMO-US-0001") {
+					t.Fatalf("items = %v", merged.Items)
+				}
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			write := func(name string, data []byte) string {
+				p := filepath.Join(dir, name)
+				if err := os.WriteFile(p, data, 0o600); err != nil {
+					t.Fatalf("write %s: %v", name, err)
+				}
+				return p
+			}
+			minePath := write("mine.md", after(tc.mine))
+			basePath := write("base.md", baseBytes)
+			yoursPath := write("yours.md", after(tc.yours))
+
+			cmd := exec.Command("git", "merge-file", "-L", "mine", "-L", "base", "-L", "yours",
+				minePath, basePath, yoursPath)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("git merge-file reported a conflict: %v\n%s", err, out)
+			}
+			merged, err := os.ReadFile(minePath)
+			if err != nil {
+				t.Fatalf("read merged: %v", err)
+			}
+			if strings.Contains(string(merged), "<<<<<<<") {
+				t.Fatalf("the merge left conflict markers:\n%s", merged)
+			}
+			sprint, err := ParseSprint(base.Path, merged)
+			if err != nil {
+				t.Fatalf("the merged sprint does not parse: %v\n%s", err, merged)
+			}
+			tc.check(t, sprint)
+		})
 	}
 }

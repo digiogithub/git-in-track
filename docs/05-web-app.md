@@ -741,12 +741,12 @@ CodeMirror 6, wrapped in `src/editor/`.
 
 ## 9. Boards UX
 
-**Status: the kanban board is implemented (GIT-US-0017)** and its
-snapshot-backed remote cards with it (GIT-US-0019), at `/boards` (the index) and
-`/boards/$slug` (the board). The scrum extras below arrive with GIT-US-0018.
+**Status: boards are implemented** — kanban (GIT-US-0017), snapshot-backed
+remote cards (GIT-US-0019) and scrum with sprint planning (GIT-US-0018) — at
+`/boards` (the index) and `/boards/$slug` (the board).
 Code: `features/boards/` — `BoardList`, `BoardView` (the route plus the
 `BoardCanvas` a test renders directly), `BoardColumnPanel`, `BoardCardTile`,
-and the `queries.ts` hooks.
+`SprintPanel`, and the `queries.ts` and `sprint-queries.ts` hooks.
 
 - **Library:** `dnd-kit` (`@dnd-kit/core`, `sortable`, `modifiers`). Keyboard
   sensor enabled, so cards can be moved with Space + arrows; a live region
@@ -797,8 +797,29 @@ and the `queries.ts` hooks.
   project renders as inert text with an "unknown project" badge.
 - **Read-only workspaces** (the `webkitdirectory` fallback) render the board
   with no drag handles and no move menus, and say so once at the top.
-- **Scrum extras:** sprint selector, sprint goal banner, points totals per column
-  and per assignee, and a collapsible backlog drawer that is a drop target.
+- **Scrum extras, as built:** a `kind: scrum` board renders `SprintPanel` above
+  the columns: the sprint title and state, the goal (editable in place, one
+  write to the sprint file), the date range, "5 of 14 days left", and the
+  metrics — committed points, completed against total points, items done, and
+  how many references were added after the start. The working columns hold the
+  sprint's scope; the `backlog_column` also offers the candidates the sprint
+  does not list, and each card says which it is (doc 04 R-SCRUM-1 to R-SCRUM-3).
+  Dragging a candidate out of the backlog commits it to the sprint.
+- **Planning:** "Plan sprint" opens two lists — the scope and the candidates —
+  with Add and Remove on each row. Both write the sprint file in the team
+  repository and nothing else, so a card whose project nobody cloned moves in
+  and out exactly like a local one (doc 04 R-SPR-2).
+- **Starting and closing:** "Start sprint" freezes the commitment and points the
+  board at the sprint; a board already running one is refused with
+  `sprint_already_active`. "Close sprint" shows completed against incomplete
+  work and a per-item choice — leave it, carry it to the next sprint, or send it
+  back to the backlog — because closing writes nothing by itself (R-SPR-3). A
+  decision that could not be applied (a project nobody cloned) is reported in a
+  toast, and the rest of the closing still lands.
+- **A new sprint** is created from the board with a title, a start, an end and a
+  goal; the id is allocated by the core, and dates that overlap another sprint
+  of the same board are refused with `sprint_overlap` and the offending sprint
+  named.
 - **Performance:** columns virtualise beyond 100 cards; cards are memoised on
   `(ref, rev, position)`; drag overlays use `transform` only.
 
