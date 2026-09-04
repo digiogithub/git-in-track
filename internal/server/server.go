@@ -35,6 +35,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/digiogithub/git-in-track/internal/config"
+	"github.com/digiogithub/git-in-track/internal/mcp"
 )
 
 // DefaultPort is the loopback port the companion listens on.
@@ -110,6 +111,16 @@ type Options struct {
 	// PATCH /api/v1/git/settings is persisted to. Empty keeps such a change in
 	// this process only, which is what a test and `serve --repo` want.
 	ConfigPath string
+
+	// MCPHTTP mounts the Model Context Protocol server at POST /mcp, behind the
+	// same bearer token as the REST API (docs/08-mcp-server.md section 2.2).
+	MCPHTTP bool
+	// MCPAllowWrite advertises the write tools of that server. Without it the
+	// endpoint is read-only and the write tools are absent from tools/list.
+	MCPAllowWrite bool
+	// MCPAgent is the name agent-authored comments are attributed to. Empty
+	// means the default the MCP package picks.
+	MCPAgent string
 }
 
 // Server owns the router and the HTTP listener.
@@ -128,6 +139,9 @@ type Server struct {
 	watch watchState
 	// git owns the commit-on-save committer and the per-repository backends.
 	git *gitState
+	// mcp is the Model Context Protocol server mounted at /mcp, nil when the
+	// endpoint is disabled.
+	mcp *mcp.Server
 
 	// mu guards addr, which changes once when the listener resolves a
 	// wildcard port and is read concurrently by callers printing the URL.
@@ -184,6 +198,7 @@ func New(opts Options) (*Server, error) {
 			s.log.Warn("repository mounted with errors", "repo", m.id, "path", m.path, "error", m.err)
 		}
 	}
+	s.mcp = s.newMCPServer(opts)
 	s.router = s.routes()
 	return s, nil
 }
@@ -303,6 +318,9 @@ func (s *Server) routes() chi.Router {
 	r.Use(s.timeoutExceptStream)
 
 	r.Route(apiPrefix, s.mountAPI)
+	// The MCP endpoint lives outside the REST prefix: /mcp is the path every
+	// client configuration expects, and it speaks JSON-RPC, not REST.
+	s.mountMCP(r)
 
 	r.NotFound(s.spaHandler())
 	r.MethodNotAllowed(s.spaHandler())
@@ -314,7 +332,9 @@ func (s *Server) routes() chi.Router {
 func (s *Server) timeoutExceptStream(next http.Handler) http.Handler {
 	bounded := middleware.Timeout(requestTimeout)(next)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == apiPrefix+"/events" {
+		// The event stream and the MCP endpoint are long-lived connections, not
+		// requests that must finish inside the deadline.
+		if r.URL.Path == apiPrefix+"/events" || r.URL.Path == mcpPath || strings.HasPrefix(r.URL.Path, mcpPath+"/") {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -359,7 +379,9 @@ func (s *Server) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 			"gitVersion":   s.git.version,
 			"commitOnSave": s.git.enabled(),
 			"gitSync":      false,
-			"mcpHttp":      false,
+			"mcpHttp":      s.mcp != nil,
+			"mcpWrite":     s.opts.MCPAllowWrite && s.mcp != nil,
+			"mcpTools":     s.mcpTools(),
 			"boards":       true,
 		},
 		"limits": map[string]int{

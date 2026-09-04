@@ -84,6 +84,7 @@ Start with:
 
 	cmd.AddCommand(
 		newServeCommand(build),
+		newMCPCommand(build, flags),
 		newVersionCommand(build),
 		newCompletionCommand(),
 		newAddCommand(flags),
