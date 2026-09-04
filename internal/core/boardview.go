@@ -585,7 +585,7 @@ func (b *Board) columnClaims(status Status, cfg *ProjectConfig) bool {
 	return false
 }
 
-// matchBoardAssignees applies the `assignees` filter, honouring the
+// matchBoardAssignees applies the `assignees` filter, honoring the
 // `unassigned` pseudo-handle of docs/04 section 5.3.
 func matchBoardAssignees(assignees, want []string) bool {
 	for _, w := range want {

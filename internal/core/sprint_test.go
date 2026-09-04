@@ -495,7 +495,7 @@ func TestConcurrentSprintEditsMerge(t *testing.T) {
 			basePath := write("base.md", baseBytes)
 			yoursPath := write("yours.md", after(tc.yours))
 
-			cmd := exec.Command("git", "merge-file", "-L", "mine", "-L", "base", "-L", "yours",
+			cmd := exec.CommandContext(context.Background(), "git", "merge-file", "-L", "mine", "-L", "base", "-L", "yours",
 				minePath, basePath, yoursPath)
 			out, err := cmd.CombinedOutput()
 			if err != nil {

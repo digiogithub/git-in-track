@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"net/url"
@@ -400,7 +401,7 @@ func plural(n int, unit string) string {
 
 // ---------------------------------------------------------------- links ---
 
-// Git hosting flavours, as declared by `host:` in team.yaml (docs/04 §7.3).
+// Git hosting flavors, as declared by `host:` in team.yaml (docs/04 §7.3).
 const (
 	HostGitHub          = "github"
 	HostGitLab          = "gitlab"
@@ -410,7 +411,7 @@ const (
 	HostGeneric         = "generic"
 )
 
-// HostKind returns the hosting flavour of a project, inferring it from the URLs
+// HostKind returns the hosting flavor of a project, inferring it from the URLs
 // when team.yaml declares none (R-URL-2).
 func (p TeamProject) HostKind() string {
 	declared := strings.ToLower(strings.TrimSpace(p.Host))
@@ -526,7 +527,7 @@ func SameSnapshotContent(a, b ProjectSnapshot) bool {
 	if errLeft != nil || errRight != nil {
 		return false
 	}
-	return string(left) == string(right)
+	return bytes.Equal(left, right)
 }
 
 // SnapshotKeys returns the project keys a team declares, in declaration order.

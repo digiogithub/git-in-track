@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -176,8 +177,8 @@ func TestParseBoardErrors(t *testing.T) {
 			if err == nil {
 				t.Fatal("want an error")
 			}
-			pe, ok := err.(*ParseError)
-			if !ok {
+			var pe *ParseError
+			if !errors.As(err, &pe) {
 				t.Fatalf("want *ParseError, got %T", err)
 			}
 			if pe.Code != tc.code {

@@ -87,7 +87,7 @@ func DiscoverTeam(fs FS, root string) (*TeamRef, bool, error) {
 }
 
 // teamLayoutDiagnostics enforces R-TEAM-LOC-2: the team `.pmngr/` holds team
-// artefacts only, never a backlog.
+// artifacts only, never a backlog.
 func teamLayoutDiagnostics(fs FS, ref *TeamRef) []Diagnostic {
 	var out []Diagnostic
 	for _, dir := range teamBacklogDirs {

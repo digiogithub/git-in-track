@@ -161,7 +161,7 @@ type SnapshotResult struct {
 // SnapshotRefreshResult is the answer of "snapshot.refresh".
 type SnapshotRefreshResult struct {
 	Snapshots []SnapshotResult `json:"snapshots"`
-	Writes    []VaultWriteSet  `json:"writes"`
+	Writes    []RepoWriteSet   `json:"writes"`
 	DryRun    bool             `json:"dryRun,omitempty"`
 }
 
@@ -172,7 +172,7 @@ func (w *Workspace) SnapshotList() (SnapshotRefreshResult, error) {
 	if err != nil {
 		return SnapshotRefreshResult{}, err
 	}
-	out := SnapshotRefreshResult{Snapshots: []SnapshotResult{}, Writes: []VaultWriteSet{}}
+	out := SnapshotRefreshResult{Snapshots: []SnapshotResult{}, Writes: []RepoWriteSet{}}
 	for _, key := range c.declared {
 		info := c.snapshots.Info(key)
 		row := SnapshotResult{
@@ -212,7 +212,7 @@ func (w *Workspace) RefreshSnapshots(
 		includeClosed = *p.IncludeClosed
 	}
 
-	out := SnapshotRefreshResult{Snapshots: []SnapshotResult{}, Writes: []VaultWriteSet{}, DryRun: p.DryRun}
+	out := SnapshotRefreshResult{Snapshots: []SnapshotResult{}, Writes: []RepoWriteSet{}, DryRun: p.DryRun}
 	for _, key := range c.declared {
 		if len(wanted) > 0 && !wanted[key] {
 			continue
@@ -260,7 +260,7 @@ func (w *Workspace) RefreshSnapshots(
 		row.Status = SnapshotUnchanged
 		if written {
 			row.Status = SnapshotWritten
-			out.Writes = append(out.Writes, VaultWriteSet{
+			out.Writes = append(out.Writes, RepoWriteSet{
 				VaultID: c.team.ID, Written: writes.Written, Removed: writes.Removed,
 			})
 		}
