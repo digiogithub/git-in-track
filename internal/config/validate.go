@@ -61,6 +61,9 @@ func (c *Config) Validate() error {
 	if !c.Git.Backend.Valid() {
 		add("git.backend", "unknown backend %q: use auto, go-git or system", c.Git.Backend)
 	}
+	if c.Git.CommitDebounce < 0 {
+		add("git.commitDebounce", "must not be negative")
+	}
 	if c.Index.Debounce < 0 {
 		add("index.debounce", "must not be negative")
 	}

@@ -37,6 +37,11 @@ const DefaultCommitMessageTemplate = `pmngr: update {{.ItemID}} "{{.Title}}"`
 // DefaultDebounce is how long the watcher coalesces file events for.
 const DefaultDebounce = 250 * time.Millisecond
 
+// DefaultCommitDebounce is how long commit-on-save coalesces rapid saves of the
+// same item for, so a burst of keystrokes becomes one commit
+// (docs/06-git-sync.md section 3.3, `commitDebounceMs`).
+const DefaultCommitDebounce = 2 * time.Second
+
 // Role is what a registered repository holds.
 type Role string
 
@@ -119,11 +124,18 @@ type Server struct {
 
 // Git is the git backend section.
 type Git struct {
-	Backend         Backend `json:"backend"              yaml:"backend"`
-	CommitOnSave    bool    `json:"commitOnSave"         yaml:"commitOnSave"`
-	MessageTemplate string  `json:"messageTemplate"      yaml:"messageTemplate"`
-	AuthorName      string  `json:"authorName,omitempty" yaml:"authorName,omitempty"`
-	AuthorEmail     string  `json:"authorEmail,omitempty" yaml:"authorEmail,omitempty"`
+	Backend      Backend `json:"backend"      yaml:"backend"`
+	CommitOnSave bool    `json:"commitOnSave" yaml:"commitOnSave"`
+	// CommitDebounce coalesces rapid saves of the same item into one commit.
+	// The configuration file spells it as a Go duration (`2s`), which is the
+	// `commitDebounceMs: 2000` of docs/06 section 13 in this file's units.
+	CommitDebounce  time.Duration `json:"commitDebounce"        yaml:"commitDebounce"`
+	MessageTemplate string        `json:"messageTemplate"       yaml:"messageTemplate"`
+	AuthorName      string        `json:"authorName,omitempty"  yaml:"authorName,omitempty"`
+	AuthorEmail     string        `json:"authorEmail,omitempty" yaml:"authorEmail,omitempty"`
+	// SignCommits asks for gpg or ssh signed commits. It is honoured by the
+	// system backend only; go-git refuses it with git_unsupported.
+	SignCommits bool `json:"signCommits" yaml:"signCommits"`
 }
 
 // Index is the indexer and watcher section.
@@ -161,6 +173,7 @@ func Default() *Config {
 		},
 		Git: Git{
 			Backend:         BackendAuto,
+			CommitDebounce:  DefaultCommitDebounce,
 			MessageTemplate: DefaultCommitMessageTemplate,
 		},
 		Index: Index{
