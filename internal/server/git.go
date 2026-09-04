@@ -574,7 +574,7 @@ func (s *Server) commitPageWrite(m *mount, result any, path string) {
 // wrote. A card move touches the item in its project clone and the board in the
 // team repository: two repositories, therefore two commits, each in its own
 // repository (docs/06 section 9.4).
-func (s *Server) commitWriteSets(sets []vault.VaultWriteSet, fields gitops.Fields) {
+func (s *Server) commitWriteSets(sets []vault.RepoWriteSet, fields gitops.Fields) {
 	if s.git == nil || !s.git.enabled() {
 		return
 	}
