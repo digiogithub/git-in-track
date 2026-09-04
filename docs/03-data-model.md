@@ -1429,4 +1429,4 @@ validation, and produce the `E-STATUS-UNKNOWN`, `W-LABEL-UNDECLARED`, and `E-CF-
 | Phase 3 | Cross-project references, project keys consumed by the team repo (doc 04) |
 | Phase 4 | `rev`-based conflict detection surfaced in the sync UI; `--renumber` after merges |
 | Phase 5 | MCP surface of §17.4, `AGENTS.md` generation |
-| Phase 6 | Metrics derived from `category`, dates, and estimates (burndown, cumulative flow) |
+| Phase 6 | Metrics derived from `category`, dates and estimates as they stood at each point in the **git history of the item files** — burndown, cumulative flow, cycle time, lead time, throughput. No new field, no stored time series: see [ADR-017](./adr/ADR-017-metrics-history-from-git-not-a-stored-time-series.md) and [doc 04 §12](./04-team-repository.md). |

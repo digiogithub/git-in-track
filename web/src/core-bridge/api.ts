@@ -413,6 +413,106 @@ export type SprintView = {
   diagnostics: Diagnostic[];
 };
 
+/**
+ * Where the observations behind a metric came from (docs/04 §12, ADR-017).
+ *
+ * `git` is the real thing: every revision of every item file, reconstructed
+ * from the commits. `updated` is the approximation a host without git falls
+ * back to — each item is assumed to have held its current status since its
+ * `updated` stamp, and nothing is claimed about the time before that. `none`
+ * is no history at all.
+ */
+export type MetricsSource = 'git' | 'updated' | 'none';
+
+/** The honesty half of a metric: where it came from and what it may not be asked. */
+export type MetricsProvenance = {
+  source: MetricsSource;
+  /** True for anything but a complete git reconstruction. */
+  approximate: boolean;
+  /** The earliest day the history can speak for, `YYYY-MM-DD`. */
+  from?: string | null;
+  commits?: number;
+  truncated?: boolean;
+  /** The size of the scope, and how many of it the history covers. */
+  items: number;
+  covered: number;
+  /** One sentence for the UI. Always present, always shown. */
+  note: string;
+};
+
+/** One band of a cumulative flow diagram, in stacking order, bottom first. */
+export type FlowBand = 'done' | 'cancelled' | 'in_progress' | 'todo' | 'unknown';
+
+/** One day of a burndown. Only an observed day carries measurements. */
+export type BurndownPoint = {
+  date: string;
+  /** 1-based: day 1 is the first day of the sprint. */
+  day: number;
+  /** The straight line from the commitment to zero; it exists for every day. */
+  ideal: number;
+  /** A day on or before today: the only kind a chart may plot. */
+  observed: boolean;
+  remaining: number;
+  scope: number;
+  done: number;
+  items: number;
+  completed: number;
+  /** References whose state that day the history cannot state. */
+  unknown: number;
+};
+
+/** The remaining work of a sprint per day against the ideal line. */
+export type Burndown = {
+  sprint: string;
+  start?: string | null;
+  end?: string | null;
+  committedPoints: number;
+  points: BurndownPoint[];
+};
+
+/** One day of a cumulative flow diagram. */
+export type FlowPoint = {
+  date: string;
+  day: number;
+  observed: boolean;
+  counts: Record<FlowBand, number>;
+  total: number;
+};
+
+/** Item counts by status band over the sprint window. */
+export type CumulativeFlow = { bands: FlowBand[]; days: FlowPoint[] };
+
+/** A sample of durations in days. */
+export type MetricStat = {
+  count: number;
+  mean: number;
+  median: number;
+  p85: number;
+  min: number;
+  max: number;
+};
+
+/** Cycle time, lead time and throughput, each with the sample behind it. */
+export type FlowStats = {
+  throughput: number;
+  throughputPerWeek: number;
+  cycleTime: MetricStat;
+  leadTime: MetricStat;
+  /** Finished references no duration could be measured for. */
+  excluded: number;
+};
+
+/** One sprint's metrics: both charts, the flow numbers and their provenance. */
+export type SprintMetricsView = {
+  sprint: SprintSummary;
+  burndown: Burndown;
+  flow: CumulativeFlow;
+  stats: FlowStats;
+  provenance: MetricsProvenance;
+  /** The scope, so every chart has its data table without a second call. */
+  items: BoardCard[];
+};
+
 /** What happens to one unfinished item when a sprint closes (R-SPR-3). */
 export type SprintCarryAction = 'leave' | 'next' | 'backlog';
 
@@ -1017,6 +1117,12 @@ export type CoreApi = {
     params: { id: string; rev?: string; carry?: SprintCarry[] };
     result: SprintResult;
   };
+  /**
+   * The burndown, the cumulative flow diagram and the flow statistics of one
+   * sprint, with the provenance of the history behind them. The three come
+   * back together because they are one reconstruction of one window.
+   */
+  'sprint.metrics': { params: { id: string }; result: SprintMetricsView };
 
   /**
    * The retros of the team repository, newest first, with every improvement

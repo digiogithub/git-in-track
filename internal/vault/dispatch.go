@@ -132,6 +132,12 @@ func (w *Workspace) Dispatch(ctx context.Context, method string, raw []byte) (an
 			return nil, err
 		}
 		return w.StartSprint(ctx, p)
+	case "sprint.metrics":
+		p, err := decodeParams[SprintParams](raw)
+		if err != nil {
+			return nil, err
+		}
+		return w.SprintMetrics(ctx, p.ID)
 	case "sprint.close":
 		p, err := decodeParams[SprintCloseParams](raw)
 		if err != nil {

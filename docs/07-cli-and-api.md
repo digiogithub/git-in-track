@@ -1242,8 +1242,8 @@ POST /api/v1/items/ACME-T-0311/comments
 
 #### Boards, sprints, retrospectives
 
-Boards are served since GIT-US-0017, sprints since GIT-US-0018 and retrospectives since
-GIT-US-0027; a sprint's burndown still answers `not_implemented` until the metrics of GIT-US-0028.
+Boards are served since GIT-US-0017, sprints since GIT-US-0018, retrospectives since GIT-US-0027
+and sprint metrics since GIT-US-0028. Nothing on this surface is deferred any more.
 
 ```http
 GET  /api/v1/snapshots                      committed index snapshots, with their age
@@ -1259,13 +1259,54 @@ POST /api/v1/sprints                        create a sprint; the core allocates 
 PATCH /api/v1/sprints/{id}                  If-Match (goal, dates, addItems, removeItems)
 POST /api/v1/sprints/{id}/start             If-Match; {force?} to run two at once
 POST /api/v1/sprints/{id}/close             If-Match; {carry:[{ref,action,sprint?,status?}]}
-GET  /api/v1/sprints/{id}/burndown          not_implemented until GIT-US-0028
+GET  /api/v1/sprints/{id}/burndown          burndown, cumulative flow, flow times, provenance
 GET  /api/v1/retros                         ?sprint=&board=&state=; carries the open actions
 GET  /api/v1/retros/{id}                    notes, themes by votes, actions; ETag: <retro rev>
 POST /api/v1/retros                         create a retro; the core allocates the id
 PATCH /api/v1/retros/{id}                   If-Match (notes, themes, votes, actions)
 POST /api/v1/retros/{id}/actions/promote    If-Match; {"action":"a1","project":"ACME"}
 ```
+
+**Sprint metrics.** `GET /api/v1/sprints/{id}/burndown` answers with the burndown, the cumulative
+flow diagram, the flow statistics and the **provenance** of the history all three were reconstructed
+from ([doc 04 §12](./04-team-repository.md), [ADR-017](./adr/ADR-017-metrics-history-from-git-not-a-stored-time-series.md)).
+The three come back together because they are one reconstruction of one window; splitting them
+across routes would walk the git history twice.
+
+```json
+GET /api/v1/sprints/ACME-TEAM-S-0007/burndown
+
+200
+{ "sprint": { "id":"ACME-TEAM-S-0007", "…": "the same header GET /api/v1/sprints/{id} returns" },
+  "burndown": {
+    "sprint":"ACME-TEAM-S-0007", "start":"2026-08-24", "end":"2026-09-06",
+    "committedPoints": 34,
+    "points":[
+      {"date":"2026-08-24","day":1,"ideal":34,"observed":true,
+       "remaining":34,"scope":34,"done":0,"items":4,"completed":0,"unknown":0},
+      {"date":"2026-09-06","day":14,"ideal":0,"observed":false,
+       "remaining":0,"scope":0,"done":0,"items":0,"completed":0,"unknown":0}]},
+  "flow": {
+    "bands":["done","cancelled","in_progress","todo","unknown"],
+    "days":[{"date":"2026-08-24","day":1,"observed":true,
+             "counts":{"done":0,"cancelled":0,"in_progress":1,"todo":3,"unknown":0},"total":4}]},
+  "stats": {
+    "throughput": 3, "throughputPerWeek": 1.5,
+    "cycleTime": {"count":3,"mean":2.4,"median":2.1,"p85":3.8,"min":1.2,"max":3.8},
+    "leadTime":  {"count":3,"mean":9.1,"median":8.0,"p85":12.4,"min":6.0,"max":12.4},
+    "excluded": 0},
+  "provenance": {
+    "source":"git", "approximate": false, "from":"2026-07-30",
+    "commits": 41, "items": 4, "covered": 3,
+    "note":"Reconstructed from the git history of the item files, back to 2026-07-30."},
+  "items": [ "…the scope, so every chart has its data table without a second call…" ] }
+```
+
+`observed: false` marks a day that has not happened yet: it carries the ideal value and **no
+measurement**, and a client must not plot it. `unknown` counts the references whose state that day
+the history cannot state — a card resolved from a committed snapshot, or a day before the oldest
+commit read. `provenance.source` is `git` where the host can read a repository and `updated` where
+it cannot (browser-only mode), and `approximate` is the single flag a UI should branch on.
 
 ```json
 POST /api/v1/snapshots

@@ -110,6 +110,19 @@ const retroRoute = createRoute({
   component: lazyRouteComponent(() => import('@/features/retros/RetroBoard'), 'RetroBoard'),
 });
 
+/** Sprint metrics (docs/05 §16, docs/04 §12, story GIT-US-0028). */
+const metricsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/metrics',
+  component: lazyRouteComponent(() => import('@/features/metrics/SprintMetrics'), 'MetricsIndex'),
+});
+
+const sprintMetricsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/metrics/$sprintId',
+  component: lazyRouteComponent(() => import('@/features/metrics/SprintMetrics'), 'SprintMetrics'),
+});
+
 /** The sync panel (docs/05 §5, story GIT-US-0021). */
 const syncRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -139,6 +152,8 @@ export const routeTree = rootRoute.addChildren([
   boardRoute,
   retrosRoute,
   retroRoute,
+  metricsRoute,
+  sprintMetricsRoute,
   syncRoute,
   settingsRoute,
 ]);

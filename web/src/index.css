@@ -46,6 +46,25 @@
     --priority-high: 25 95% 53%;
     --priority-medium: 38 92% 50%;
     --priority-low: 215 16% 47%;
+
+    /*
+     * Chart tokens (docs/05 section 12).
+     *
+     * These are deliberately not the badge tokens above. A badge is read on its
+     * own; a chart series is read against its neighbours, so the steps here are
+     * re-chosen until adjacent series stay separable under protanopia,
+     * deuteranopia and tritanopia, and until each one clears the chart surface.
+     * Changing one means re-validating the set, not eyeballing it.
+     */
+    --chart-todo: 201 98% 39%;
+    --chart-progress: 38 92% 50%;
+    --chart-done: 143 72% 29%;
+    /* Cancelled and unknown are context, not series: neutral by design.
+       Unknown is additionally hatched, so it never depends on colour alone. */
+    --chart-cancelled: 215 16% 47%;
+    --chart-unknown: 214 20% 69%;
+    --chart-grid: 214 32% 91%;
+    --chart-ideal: 215 16% 47%;
   }
 
   @media (prefers-color-scheme: dark) {
@@ -69,6 +88,16 @@
       --border: 217 33% 20%;
       --input: 217 33% 20%;
       --ring: 199 89% 48%;
+      
+      /* Dark is chosen, not flipped: each step is re-picked for the dark chart
+         surface and re-validated, which is why these are not the light values. */
+      --chart-todo: 201 98% 39%;
+      --chart-progress: 32 95% 44%;
+      --chart-done: 142 76% 36%;
+      --chart-cancelled: 215 20% 65%;
+      --chart-unknown: 217 20% 45%;
+      --chart-grid: 217 33% 20%;
+      --chart-ideal: 215 20% 65%;
     }
   }
 
@@ -92,6 +121,16 @@
     --border: 217 33% 20%;
     --input: 217 33% 20%;
     --ring: 199 89% 48%;
+    
+    /* Dark is chosen, not flipped: each step is re-picked for the dark chart
+       surface and re-validated, which is why these are not the light values. */
+    --chart-todo: 201 98% 39%;
+    --chart-progress: 32 95% 44%;
+    --chart-done: 142 76% 36%;
+    --chart-cancelled: 215 20% 65%;
+    --chart-unknown: 217 20% 45%;
+    --chart-grid: 217 33% 20%;
+    --chart-ideal: 215 20% 65%;
   }
 
   * {

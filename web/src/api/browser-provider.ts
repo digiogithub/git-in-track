@@ -60,6 +60,7 @@ import type {
   SprintDraft,
   SprintFilter,
   SprintPatch,
+  SprintMetricsView,
   SprintResult,
   SprintSummary,
   SprintView,
@@ -607,6 +608,11 @@ export class BrowserProvider implements DataProvider {
   async getSprint(id: string): Promise<SprintView> {
     await this.#ensureActive();
     return this.#call('sprint.get', { id });
+  }
+
+  async getSprintMetrics(id: string): Promise<SprintMetricsView> {
+    await this.#ensureActive();
+    return this.#call('sprint.metrics', { id });
   }
 
   async createSprint(input: SprintDraft): Promise<SprintResult> {

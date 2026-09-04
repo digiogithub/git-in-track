@@ -58,11 +58,21 @@ import type {
   SnapshotInfo,
   SnapshotItemSummary,
   SnapshotResult,
+  Burndown,
+  BurndownPoint,
+  CumulativeFlow,
+  FlowBand,
+  FlowPoint,
+  FlowStats,
+  MetricsProvenance,
+  MetricsSource,
+  MetricStat,
   SprintCarry,
   SprintCarryAction,
   SprintCarryResult,
   SprintCloseReport,
   SprintMetrics,
+  SprintMetricsView,
   SprintResult,
   SprintState,
   SprintSummary,
@@ -120,11 +130,21 @@ export type {
   SnapshotInfo,
   SnapshotItemSummary,
   SnapshotResult,
+  Burndown,
+  BurndownPoint,
+  CumulativeFlow,
+  FlowBand,
+  FlowPoint,
+  FlowStats,
+  MetricsProvenance,
+  MetricsSource,
+  MetricStat,
   SprintCarry,
   SprintCarryAction,
   SprintCarryResult,
   SprintCloseReport,
   SprintMetrics,
+  SprintMetricsView,
   SprintResult,
   SprintState,
   SprintSummary,
@@ -669,6 +689,14 @@ export interface DataProvider {
    * unfinished item (R-SPR-3).
    */
   closeSprint(id: string, carry?: SprintCarry[], rev?: string): Promise<SprintResult>;
+  /**
+   * One sprint's burndown, cumulative flow diagram and flow statistics, with
+   * the provenance of the history behind them (docs/04 §12). The provenance is
+   * part of the answer, not decoration: the companion reconstructs the series
+   * from git, and a host without git says so and shows the approximation it
+   * can draw from the `updated` stamps instead of inventing a curve.
+   */
+  getSprintMetrics(id: string): Promise<SprintMetricsView>;
 
   // retrospectives (docs/04-team-repository.md §9)
   /**

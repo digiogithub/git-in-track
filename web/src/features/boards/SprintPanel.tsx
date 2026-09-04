@@ -1,3 +1,4 @@
+import { Link } from '@tanstack/react-router';
 import { useMemo, useState } from 'react';
 
 import type { BoardCard, BoardView, SprintCarry, SprintCarryAction } from '@/api/provider';
@@ -92,6 +93,13 @@ export function SprintPanel({ view }: { view: BoardView }) {
               ? 'Sprint closed'
               : `${info.remainingDays} of ${info.totalDays} days left`}
           </span>
+          <Link
+            to="/metrics/$sprintId"
+            params={{ sprintId: info.id }}
+            className="text-xs font-normal text-muted-foreground underline underline-offset-2 hover:text-foreground"
+          >
+            Metrics
+          </Link>
         </CardTitle>
         <p className="text-sm text-muted-foreground">
           {editingGoal ? null : (info.goal ?? 'No sprint goal yet.')}

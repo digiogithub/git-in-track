@@ -60,6 +60,9 @@ type Workspace struct {
 	mounts  map[string]*Mount
 	now     func() time.Time
 	version string
+	// history reads the past of a repository's files, for the metrics of
+	// GIT-US-0028. It is nil in the browser, where there is no git to walk.
+	history HistorySource
 }
 
 // NewWorkspace returns an empty workspace.

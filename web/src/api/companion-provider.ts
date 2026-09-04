@@ -75,6 +75,7 @@ import type {
   SprintDraft,
   SprintFilter,
   SprintPatch,
+  SprintMetricsView,
   SprintResult,
   SprintSummary,
   SprintView,
@@ -1094,6 +1095,12 @@ export class CompanionProvider implements DataProvider {
 
   async getSprint(id: string): Promise<SprintView> {
     return (await this.#json(`${API_PREFIX}/sprints/${encodeURIComponent(id)}`)) as SprintView;
+  }
+
+  async getSprintMetrics(id: string): Promise<SprintMetricsView> {
+    return (await this.#json(
+      `${API_PREFIX}/sprints/${encodeURIComponent(id)}/burndown`,
+    )) as SprintMetricsView;
   }
 
   async createSprint(input: SprintDraft): Promise<SprintResult> {

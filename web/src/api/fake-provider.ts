@@ -66,6 +66,9 @@ import type {
   SprintDraft,
   SprintFilter,
   SprintPatch,
+  BurndownPoint,
+  FlowPoint,
+  SprintMetricsView,
   SprintResult,
   SprintState,
   SprintSummary,
@@ -1413,6 +1416,83 @@ export class FakeProvider implements DataProvider {
     const sprint = this.sprints.get(id);
     if (!sprint) return Promise.reject(new ProviderError('not_found', `No sprint ${id}`));
     return Promise.resolve(this.renderSprint(sprint));
+  }
+
+  /**
+   * A deterministic metrics fixture for the demo and for the tests. The fake
+   * provider fabricates data by definition, so this hand-rolls a plausible
+   * series rather than reimplementing the core's reconstruction: the real
+   * numbers come from `internal/core` in both shipping providers.
+   */
+  getSprintMetrics(id: string): Promise<SprintMetricsView> {
+    const sprint = this.sprints.get(id);
+    if (!sprint) return Promise.reject(new ProviderError('not_found', `No sprint ${id}`));
+    const view = this.renderSprint(sprint);
+    const summary = view.sprint;
+    const days = summary.totalDays > 0 ? summary.totalDays : 1;
+    const committed = summary.metrics.committedPoints || summary.metrics.points;
+    const start = new Date(`${summary.start ?? '2026-01-01'}T00:00:00Z`);
+    const total = view.cards.length;
+    const points: BurndownPoint[] = [];
+    const flow: FlowPoint[] = [];
+    for (let i = 0; i < days; i += 1) {
+      const date = new Date(start.getTime() + i * 86_400_000).toISOString().slice(0, 10);
+      const observed = i < Math.max(1, days - 2);
+      const ideal = Math.round(committed * (1 - i / Math.max(1, days - 1)) * 100) / 100;
+      const done = observed ? Math.min(committed, Math.round((committed * i) / days)) : 0;
+      const finished = observed ? Math.min(total, Math.floor((total * i) / days)) : 0;
+      points.push({
+        date,
+        day: i + 1,
+        ideal,
+        observed,
+        remaining: observed ? committed - done : 0,
+        scope: observed ? committed : 0,
+        done,
+        items: observed ? total : 0,
+        completed: finished,
+        unknown: 0,
+      });
+      flow.push({
+        date,
+        day: i + 1,
+        observed,
+        counts: {
+          done: finished,
+          cancelled: 0,
+          in_progress: observed ? Math.min(1, total - finished) : 0,
+          todo: observed ? Math.max(0, total - finished - 1) : 0,
+          unknown: 0,
+        },
+        total: observed ? total : 0,
+      });
+    }
+    return Promise.resolve({
+      sprint: summary,
+      burndown: {
+        sprint: summary.id,
+        ...(summary.start === undefined ? {} : { start: summary.start }),
+        ...(summary.end === undefined ? {} : { end: summary.end }),
+        committedPoints: committed,
+        points,
+      },
+      flow: { bands: ['done', 'cancelled', 'in_progress', 'todo', 'unknown'], days: flow },
+      stats: {
+        throughput: summary.metrics.done,
+        throughputPerWeek: Math.round(((summary.metrics.done * 7) / days) * 100) / 100,
+        cycleTime: { count: 2, mean: 2.5, median: 2, p85: 3.5, min: 1, max: 3.5 },
+        leadTime: { count: 2, mean: 6.5, median: 6, p85: 8, min: 5, max: 8 },
+        excluded: 0,
+      },
+      provenance: {
+        source: 'git',
+        approximate: false,
+        items: view.cards.length,
+        covered: view.cards.length,
+        note: 'Demo data: this provider fabricates a plausible series.',
+      },
+      items: structuredClone(view.cards),
+    });
   }
 
   createSprint(input: SprintDraft): Promise<SprintResult> {
