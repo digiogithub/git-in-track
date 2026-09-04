@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 )
 
 // This file turns a parsed Board and the items of the repositories that happen
@@ -27,19 +28,24 @@ type BoardCard struct {
 	// VaultID is the repository the item was read from.
 	VaultID string `json:"vaultId,omitempty"`
 
-	Title     string    `json:"title,omitempty"`
-	Type      ItemType  `json:"type,omitempty"`
-	Status    Status    `json:"status,omitempty"`
-	Priority  Priority  `json:"priority,omitempty"`
-	Assignees []string  `json:"assignees,omitempty"`
-	Labels    []string  `json:"labels,omitempty"`
-	Estimate  *float64  `json:"estimate,omitempty"`
-	Milestone ItemID    `json:"milestone,omitempty"`
-	Parent    ItemID    `json:"parent,omitempty"`
-	Due       Date      `json:"due,omitempty"`
-	Updated   Timestamp `json:"updated,omitempty"`
-	Path      string    `json:"path,omitempty"`
-	Rev       Rev       `json:"rev,omitempty"`
+	Title  string   `json:"title,omitempty"`
+	Type   ItemType `json:"type,omitempty"`
+	Status Status   `json:"status,omitempty"`
+	// Category is the coarse bucket of Status in the card's own project
+	// workflow. It is what tells a finished card from an open one without
+	// knowing that project's statuses, and it is empty when no workflow — live
+	// or published by a snapshot — could be read.
+	Category  StatusCategory `json:"category,omitempty"`
+	Priority  Priority       `json:"priority,omitempty"`
+	Assignees []string       `json:"assignees,omitempty"`
+	Labels    []string       `json:"labels,omitempty"`
+	Estimate  *float64       `json:"estimate,omitempty"`
+	Milestone ItemID         `json:"milestone,omitempty"`
+	Parent    ItemID         `json:"parent,omitempty"`
+	Due       Date           `json:"due,omitempty"`
+	Updated   Timestamp      `json:"updated,omitempty"`
+	Path      string         `json:"path,omitempty"`
+	Rev       Rev            `json:"rev,omitempty"`
 
 	// Source is where the card was read from: "live" for a local clone,
 	// "snapshot" for a committed `.pmngr/index/<KEY>.json` (docs/04 section 6).
@@ -55,8 +61,31 @@ type BoardCard struct {
 	// be built.
 	RemoteURL string `json:"remoteUrl,omitempty"`
 
+	// InSprint reports a card the scrum board's sprint lists (docs/04 8.2).
+	InSprint bool `json:"inSprint,omitempty"`
+	// Committed reports a card the sprint committed to when it started, as
+	// opposed to one added mid-sprint (R-SPR-1).
+	Committed bool `json:"committed,omitempty"`
+	// Backlog reports a sprint candidate: an item the board's filters match
+	// that the sprint does not list, shown in the board's `backlog_column`
+	// (docs/04 section 5.5).
+	Backlog bool `json:"backlog,omitempty"`
+
 	// Reason explains, in one sentence, why a card cannot be edited here.
 	Reason string `json:"reason,omitempty"`
+}
+
+// Done reports whether the card's status is terminal in its own project.
+func (c BoardCard) Done() bool {
+	return c.Category == CategoryDone || c.Category == CategoryCancelled
+}
+
+// Points is the card's estimate, 0 when it carries none.
+func (c BoardCard) Points() float64 {
+	if c.Estimate == nil {
+		return 0
+	}
+	return *c.Estimate
 }
 
 // cardOf projects an item onto a card.
@@ -125,20 +154,24 @@ type BoardColumnView struct {
 
 // BoardView is a board plus the cards it currently shows.
 type BoardView struct {
-	ID            string            `json:"id"`
-	Kind          BoardKind         `json:"kind"`
-	Title         string            `json:"title"`
-	Description   string            `json:"description,omitempty"`
-	Path          string            `json:"path"`
-	Rev           Rev               `json:"rev"`
-	TeamVaultID   string            `json:"teamVaultId,omitempty"`
-	Projects      []ProjectKey      `json:"projects"`
-	Filters       BoardFilters      `json:"filters"`
-	Swimlanes     BoardSwimlanes    `json:"swimlanes"`
-	Card          BoardCardDisplay  `json:"card"`
-	Sprint        string            `json:"sprint,omitempty"`
-	BacklogColumn string            `json:"backlogColumn,omitempty"`
-	Columns       []BoardColumnView `json:"columns"`
+	ID            string           `json:"id"`
+	Kind          BoardKind        `json:"kind"`
+	Title         string           `json:"title"`
+	Description   string           `json:"description,omitempty"`
+	Path          string           `json:"path"`
+	Rev           Rev              `json:"rev"`
+	TeamVaultID   string           `json:"teamVaultId,omitempty"`
+	Projects      []ProjectKey     `json:"projects"`
+	Filters       BoardFilters     `json:"filters"`
+	Swimlanes     BoardSwimlanes   `json:"swimlanes"`
+	Card          BoardCardDisplay `json:"card"`
+	Sprint        string           `json:"sprint,omitempty"`
+	BacklogColumn string           `json:"backlogColumn,omitempty"`
+	// SprintInfo is the goal, the dates and the metrics of the sprint a scrum
+	// board is scoped to; nil on a kanban board, and on a scrum board whose
+	// sprint file could not be read (docs/04 section 5.5).
+	SprintInfo *SprintSummary    `json:"sprintInfo,omitempty"`
+	Columns    []BoardColumnView `json:"columns"`
 	// Unmapped holds the items that match the filters but whose status maps to
 	// no column. They are surfaced, never hidden (R-COL-4).
 	Unmapped    []BoardCard  `json:"unmapped"`
@@ -172,6 +205,18 @@ type BoardInput struct {
 	// renders those cards as the bare reference, which is what a team with
 	// `snapshots.enabled: false` sees (R-SNAP-10).
 	Snapshots *SnapshotSet
+	// Sprint is the sprint a scrum board is scoped to, read from the team
+	// repository. A nil sprint — or a kanban board — shows everything the
+	// filters match, exactly as before (docs/04 section 5.5).
+	Sprint *Sprint
+	// Now is the instant the sprint's remaining days are counted from. The zero
+	// time leaves them uncounted.
+	Now time.Time
+}
+
+// scoped reports whether this render is limited to a sprint's scope.
+func (in BoardInput) scoped(b *Board) bool {
+	return b.Kind == BoardScrum && in.Sprint != nil
 }
 
 // project returns the team.yaml declaration of a key.
@@ -221,74 +266,62 @@ func BuildBoardView(b *Board, in BoardInput) BoardView {
 		})
 	}
 
+	// Every candidate the open repositories and the committed snapshots supply,
+	// live cards first. `known` marks the references a snapshot resolved, even
+	// the ones the filters — or the sprint scope — dropped, so that they never
+	// come back as bare placeholders in the order pass below.
 	placed := map[string]bool{}
-	for _, key := range scope {
-		source, cloned := sources[key]
-		if !cloned {
-			continue
-		}
-		for i := range source.Items {
-			it := &source.Items[i]
-			if !b.matches(it, source.Config) {
-				continue
-			}
-			card := cardOf(key, source.VaultID, it)
-			index := -1
-			for ci, c := range b.Columns {
-				if c.Shows(key, source.Config, it.Status) {
-					index = ci
-					break
-				}
-			}
-			if index < 0 {
-				card.Reason = fmt.Sprintf("status %s maps to no column of this board", it.Status)
-				view.Unmapped = append(view.Unmapped, card)
-				continue
-			}
-			buckets[index] = append(buckets[index], card)
-			placed[card.Ref] = true
-		}
-	}
-
-	// Projects nobody cloned: their cards come from the committed snapshot,
-	// read-only, stale-dated and mapped to a column by the status the snapshot
-	// published (docs/04 sections 6 and 7).
 	known := map[string]bool{}
-	for _, key := range scope {
-		if _, cloned := sources[key]; cloned {
-			continue
-		}
-		snap, ok := in.Snapshots.Snapshot(key)
-		if !ok {
-			continue
-		}
-		cfg := in.Snapshots.Config(key)
-		info := in.Snapshots.Info(key)
-		project := in.project(key)
-		for _, entry := range snap.Items {
-			card := snapshotCardOf(key, entry, info, project)
-			card.Declared = containsKey(in.Declared, key)
-			known[card.Ref] = true
-			it := entry.Item()
-			if !b.matches(&it, cfg) {
-				continue
-			}
-			index := -1
-			for ci, c := range b.Columns {
-				if c.Shows(key, cfg, entry.Status) {
-					index = ci
-					break
-				}
-			}
-			if index < 0 {
-				card.Reason = fmt.Sprintf("status %s maps to no column of this board", entry.Status)
-				view.Unmapped = append(view.Unmapped, card)
-				continue
-			}
-			buckets[index] = append(buckets[index], card)
-			placed[card.Ref] = true
-		}
+	scoped := in.scoped(b)
+	var members map[string]bool
+	if scoped {
+		members = in.Sprint.Members()
 	}
+	walkCards(b, in, func(c cardCandidate) {
+		if c.Remote {
+			known[c.Card.Ref] = true
+		}
+		if !c.Matched {
+			return
+		}
+		card := c.Card
+		index := -1
+		for ci, column := range b.Columns {
+			if column.Shows(card.Project, c.Config, card.Status) {
+				index = ci
+				break
+			}
+		}
+		if scoped {
+			// A scrum board shows the sprint's scope, plus — in the backlog
+			// column — the candidates the sprint does not list yet
+			// (docs/04 section 5.5).
+			if !members[card.Ref] {
+				backlog := -1
+				for ci, column := range b.Columns {
+					if column.ID == b.BacklogColumn {
+						backlog = ci
+					}
+				}
+				if backlog < 0 || !isSprintCandidate(b, c) {
+					return
+				}
+				card.Backlog = true
+				buckets[backlog] = append(buckets[backlog], card)
+				placed[card.Ref] = true
+				return
+			}
+			card.InSprint = true
+			card.Committed = containsString(in.Sprint.Committed, card.Ref)
+		}
+		if index < 0 {
+			card.Reason = fmt.Sprintf("status %s maps to no column of this board", card.Status)
+			view.Unmapped = append(view.Unmapped, card)
+			return
+		}
+		buckets[index] = append(buckets[index], card)
+		placed[card.Ref] = true
+	})
 
 	// Refs the order list carries for projects nobody cloned. They keep the
 	// position the board gives them, because nothing else can tell where they
@@ -304,6 +337,11 @@ func BuildBoardView(b *Board, in BoardInput) BoardView {
 				continue
 			}
 			if placed[ref.String()] {
+				continue
+			}
+			if scoped && !members[ref.String()] {
+				// The board is scoped to a sprint and the order list still
+				// names a reference the sprint dropped: it is not on the board.
 				continue
 			}
 			declared := containsKey(in.Declared, ref.Project)
@@ -367,7 +405,81 @@ func BuildBoardView(b *Board, in BoardInput) BoardView {
 	}
 	view.Columns = columns
 	sortBoardCardsByRank(view.Unmapped)
+	if scoped {
+		summary := SummarizeSprint(in.Sprint, boardCards(view), in.Now)
+		view.SprintInfo = &summary
+	}
 	return view
+}
+
+// boardCards returns every card of a rendered view, columns and unmapped items
+// alike, which is what the sprint metrics are counted over.
+func boardCards(view BoardView) []BoardCard {
+	var out []BoardCard
+	for _, column := range view.Columns {
+		out = append(out, column.Cards...)
+	}
+	return append(out, view.Unmapped...)
+}
+
+// cardCandidate is one card a board could show, before the board decided where
+// it goes: the card itself, the workflow of its project, whether the board's
+// filters keep it and whether it came from a committed snapshot.
+type cardCandidate struct {
+	Card    BoardCard
+	Config  *ProjectConfig
+	Matched bool
+	Remote  bool
+}
+
+// walkCards yields every card the open repositories and the committed snapshots
+// can supply for a board's project scope, live cards first. It is the one place
+// that turns items into cards, so that a board render and a sprint render never
+// disagree about what a card carries.
+func walkCards(b *Board, in BoardInput, fn func(cardCandidate)) {
+	scope := b.Scope(in.Declared)
+	sources := map[ProjectKey]BoardSource{}
+	for _, s := range in.Sources {
+		sources[s.Project] = s
+	}
+	for _, key := range scope {
+		source, cloned := sources[key]
+		if !cloned {
+			continue
+		}
+		for i := range source.Items {
+			it := &source.Items[i]
+			card := cardOf(key, source.VaultID, it)
+			if source.Config != nil {
+				card.Category = source.Config.CategoryOf(it.Status)
+			}
+			fn(cardCandidate{Card: card, Config: source.Config, Matched: b.matches(it, source.Config)})
+		}
+	}
+	// Projects nobody cloned: their cards come from the committed snapshot,
+	// read-only and stale-dated (docs/04 sections 6 and 7).
+	for _, key := range scope {
+		if _, cloned := sources[key]; cloned {
+			continue
+		}
+		snap, ok := in.Snapshots.Snapshot(key)
+		if !ok {
+			continue
+		}
+		cfg := in.Snapshots.Config(key)
+		info := in.Snapshots.Info(key)
+		project := in.project(key)
+		for _, entry := range snap.Items {
+			card := snapshotCardOf(key, entry, info, project)
+			card.Declared = containsKey(in.Declared, key)
+			card.Category = entry.Category
+			if card.Category == "" && cfg != nil {
+				card.Category = cfg.CategoryOf(entry.Status)
+			}
+			it := entry.Item()
+			fn(cardCandidate{Card: card, Config: cfg, Matched: b.matches(&it, cfg), Remote: true})
+		}
+	}
 }
 
 // sortBoardCards puts the cards the order list names first, in that order, and
@@ -547,6 +659,12 @@ type BoardMovePlan struct {
 	// WIPExceeded reports that the move puts the column over its limit. The
 	// limit is advisory: the caller decides whether to confirm (R-COL-5).
 	WIPExceeded bool
+	// SprintAdd reports that the move pulls the card out of the backlog column
+	// of a scrum board and into the sprint, which appends its reference to the
+	// sprint file in the team repository (docs/04 section 5.5).
+	SprintAdd bool
+	// Sprint is the sprint the board is scoped to, when there is one.
+	Sprint string
 }
 
 // PlanMove computes what moving a card implies, without writing anything. view
@@ -555,6 +673,17 @@ type BoardMovePlan struct {
 //
 // cfg is the workflow of the card's project, nil for a project nobody cloned.
 func PlanMove(b *Board, view BoardView, move BoardMove, cfg *ProjectConfig) (BoardMovePlan, error) {
+	return PlanMoveInSprint(b, view, move, cfg, nil)
+}
+
+// PlanMoveInSprint is PlanMove on a scrum board: dragging a card out of the
+// backlog column commits it to the sprint, which appends its reference to the
+// sprint file (docs/04 section 5.5). Sprint membership is team-repository
+// state, so it is allowed even for a card whose project nobody cloned — what a
+// remote card still cannot do is change its own status (R-REM-1).
+func PlanMoveInSprint(
+	b *Board, view BoardView, move BoardMove, cfg *ProjectConfig, sprint *Sprint,
+) (BoardMovePlan, error) {
 	column, ok := b.Column(move.ToColumn)
 	if !ok {
 		return BoardMovePlan{}, fmt.Errorf("board %s has no column %q", b.ID, move.ToColumn)
@@ -585,6 +714,19 @@ func PlanMove(b *Board, view BoardView, move BoardMove, cfg *ProjectConfig) (Boa
 	}
 	if !found {
 		return BoardMovePlan{}, fmt.Errorf("board %s does not show %s", b.ID, ref)
+	}
+	if sprint != nil && b.Kind == BoardScrum {
+		plan.Sprint = sprint.ID
+		plan.SprintAdd = !sprint.Has(ref) && column.ID != b.BacklogColumn
+	}
+	if current.Remote && plan.SprintAdd && plan.FromColumn == b.BacklogColumn {
+		// A remote candidate joins the sprint — team-repo state — but its
+		// status stays where it is, because the item lives elsewhere.
+		plan.Choices = column.StatusesFor(move.Ref.Project, cfg)
+		plan.Status = current.Status
+		plan.WIPUsed++
+		plan.WIPExceeded = column.WIP > 0 && plan.WIPUsed > column.WIP
+		return plan, nil
 	}
 	if current.Remote && plan.FromColumn != column.ID {
 		// Everything whose state lives in the project repository is read-only

@@ -88,6 +88,17 @@ const (
 	CodeBoardWipExceeded     Code = "W-BOARD-WIP-EXCEEDED"
 	CodeBoardUnmappedStatus  Code = "W-BOARD-UNMAPPED-STATUS"
 
+	// Sprint codes (docs/04 section 8.4). A sprint is team-repo state, so a
+	// reference into a project nobody cloned is never an error.
+	CodeSprintID                Code = "E-SPRINT-ID"
+	CodeSprintDates             Code = "E-SPRINT-DATES"
+	CodeSprintBoard             Code = "E-SPRINT-BOARD"
+	CodeSprintState             Code = "E-SPRINT-STATE"
+	CodeSprintTwoActive         Code = "W-SPRINT-TWO-ACTIVE"
+	CodeSprintOverlap           Code = "W-SPRINT-OVERLAP"
+	CodeSprintRefDead           Code = "W-SPRINT-REF-DEAD"
+	CodeSprintRefUnknownProject Code = "W-SPRINT-REF-UNKNOWN-PROJECT"
+
 	// Index-snapshot codes (docs/04 section 6). A snapshot is a cache, so only
 	// a file that cannot be used at all is an error; the rest is advisory.
 	CodeSnapMalformed   Code = "E-SNAP-MALFORMED"

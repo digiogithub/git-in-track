@@ -466,15 +466,6 @@ func boardAfter(t *testing.T, data []byte, move BoardMove) []byte {
 	return out
 }
 
-func containsString(list []string, want string) bool {
-	for _, s := range list {
-		if s == want {
-			return true
-		}
-	}
-	return false
-}
-
 func TestOrderFromView(t *testing.T) {
 	board := readFixtureBoard(t)
 	view := BuildBoardView(board, fixtureInput())
