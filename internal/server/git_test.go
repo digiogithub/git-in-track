@@ -407,6 +407,32 @@ func TestCommitOnSaveThroughTheAPI(t *testing.T) {
 			t.Errorf("%d commits, want 1", made)
 		}
 	})
+
+	t.Run("an explicit commit leaves nothing writing behind it", func(t *testing.T) {
+		// A window short enough that the debounce timer and the explicit commit
+		// race for the same batch. Whoever wins, exactly one commit is made and
+		// POST /api/v1/git/commit must not answer while git is still writing:
+		// removing the working tree right afterwards is what proves it, and it
+		// is the same thing a process that exits after an explicit commit does.
+		// The window itself is pinned deterministically by
+		// TestFlushWaitsForACommitTheTimerAlreadyStarted in internal/gitops.
+		racy := settings
+		racy.CommitDebounce = time.Millisecond
+		for round := range 5 {
+			s, root := newGitServer(t, racy)
+			before := len(gitLog(t, root))
+			createFixtureItem(t, s, "Raced with the debounce")
+			decode(t, send(t, s, request{method: http.MethodPost, target: "/api/v1/git/commit"}),
+				http.StatusOK, nil)
+
+			if made := len(gitLog(t, root)) - before; made != 1 {
+				t.Fatalf("round %d: %d commits, want exactly 1", round, made)
+			}
+			if err := os.RemoveAll(root); err != nil {
+				t.Fatalf("round %d: the repository was still being written to: %v", round, err)
+			}
+		}
+	})
 }
 
 func TestCommitOnSaveNeverLosesContent(t *testing.T) {

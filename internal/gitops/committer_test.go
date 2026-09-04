@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -271,5 +272,93 @@ func TestCommitterCloseIsIdempotent(t *testing.T) {
 	c.Enqueue(t.Context(), Change{Repo: "repo", Paths: []string{"docs/a.md"}, Fields: Fields{ItemID: "ACME-T-1"}})
 	if c.Pending() != 0 {
 		t.Error("a closed committer must accept nothing")
+	}
+}
+
+// blockingBackend holds a commit open until it is released, which is how the
+// window between "the debounce timer fired" and "the commit finished writing"
+// is made observable instead of being a matter of luck.
+type blockingBackend struct {
+	stubBackend
+	started chan struct{}
+	release chan struct{}
+	writing atomic.Bool
+}
+
+// Commit reports that it is writing, then blocks until it is released.
+func (b *blockingBackend) Commit(context.Context, CommitRequest) (CommitResult, error) {
+	b.writing.Store(true)
+	defer b.writing.Store(false)
+	close(b.started)
+	<-b.release
+	return CommitResult{SHA: "0123456789abcdef", Subject: "committed"}, nil
+}
+
+// TestFlushWaitsForACommitTheTimerAlreadyStarted pins the contract of Flush: a
+// batch whose timer fired just before the flush is no longer pending, so Flush
+// cannot commit it — but it is still writing into .git, so Flush must not
+// return until it is done. Without that wait, an explicit commit (POST
+// /api/v1/git/commit) or a sync PREFLIGHT reports "done" while git is still
+// writing, and whatever the caller does next — exit, remove the working tree —
+// races the commit.
+func TestFlushWaitsForACommitTheTimerAlreadyStarted(t *testing.T) {
+	backend := &blockingBackend{started: make(chan struct{}), release: make(chan struct{})}
+	c := NewCommitter(CommitterOptions{
+		Debounce: time.Millisecond,
+		Backend:  func(string) (Backend, bool) { return backend, true },
+	})
+	c.Enqueue(t.Context(), Change{
+		Repo:   "repo",
+		Paths:  []string{"docs/a.md"},
+		Fields: Fields{ItemID: "ACME-T-1", Title: "A"},
+	})
+	// The timer has fired and the commit it started is inside the backend.
+	<-backend.started
+
+	flushed := make(chan []Outcome, 1)
+	go func() { flushed <- c.Flush(context.Background()) }()
+	select {
+	case out := <-flushed:
+		t.Fatalf("Flush returned %+v while a commit was still writing", out)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(backend.release)
+	out := <-flushed
+	if len(out) != 0 {
+		t.Errorf("Flush committed %+v, want nothing: the timer already took the batch", out)
+	}
+	if backend.writing.Load() {
+		t.Error("Flush returned while the backend was still writing")
+	}
+	c.Close(context.Background())
+}
+
+// TestCloseWaitsForACommitInFlight is the same contract for a shutdown, and for
+// the second Close of an already closed committer.
+func TestCloseWaitsForACommitInFlight(t *testing.T) {
+	backend := &blockingBackend{started: make(chan struct{}), release: make(chan struct{})}
+	c := NewCommitter(CommitterOptions{
+		Debounce: time.Millisecond,
+		Backend:  func(string) (Backend, bool) { return backend, true },
+	})
+	c.Enqueue(t.Context(), Change{
+		Repo:   "repo",
+		Paths:  []string{"docs/a.md"},
+		Fields: Fields{ItemID: "ACME-T-1", Title: "A"},
+	})
+	<-backend.started
+
+	closed := make(chan struct{})
+	go func() { c.Close(context.Background()); close(closed) }()
+	select {
+	case <-closed:
+		t.Fatal("Close returned while a commit was still writing")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(backend.release)
+	<-closed
+	if backend.writing.Load() {
+		t.Error("Close returned while the backend was still writing")
 	}
 }

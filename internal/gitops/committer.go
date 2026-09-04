@@ -56,7 +56,8 @@ type CommitterOptions struct {
 	// Sign asks for signed commits; honored by the system backend only.
 	Sign bool
 	// OnResult is called for every batch that was committed or failed. It runs
-	// on the committer's own goroutine, so it must not block for long.
+	// on the committer's own goroutine, so it must not block for long and must
+	// never call Flush or Close: both wait for the commit it is reporting.
 	OnResult func(Outcome)
 	// Now is the clock. Nil means time.Now.
 	Now func() time.Time
@@ -79,6 +80,13 @@ type Committer struct {
 	pending map[string]*batch
 	closed  bool
 	wg      sync.WaitGroup
+	// inflight counts the batches that have already left pending and are being
+	// written to their repository. A batch is counted in the very same critical
+	// section that removes it, so it is never invisible: a batch is either
+	// pending, or in flight, or committed.
+	inflight int
+	// idle is broadcast when inflight falls back to zero.
+	idle sync.Cond
 }
 
 // batch is the accumulated state of one coalescing key.
@@ -103,7 +111,41 @@ func NewCommitter(opts CommitterOptions) *Committer {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
-	return &Committer{opts: opts, pending: map[string]*batch{}}
+	c := &Committer{opts: opts, pending: map[string]*batch{}}
+	c.idle.L = &c.mu
+	return c
+}
+
+// startCommit records that a batch is about to be written. It must be called
+// with mu held, in the same critical section that took the batch out of
+// pending: a batch that is in neither place is a batch a concurrent Flush would
+// return without waiting for.
+func (c *Committer) startCommit() { c.inflight++ }
+
+// finishCommit records that a batch has finished being written.
+func (c *Committer) finishCommit() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.inflight--
+	if c.inflight == 0 {
+		c.idle.Broadcast()
+	}
+}
+
+// waitIdle blocks until nothing is being written to a repository any more.
+func (c *Committer) waitIdle() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for c.inflight > 0 {
+		c.idle.Wait()
+	}
+}
+
+// commitTracked commits one batch and clears its in-flight mark, which the
+// caller must have set.
+func (c *Committer) commitTracked(ctx context.Context, b *batch) Outcome {
+	defer c.finishCommit()
+	return c.commit(ctx, b)
 }
 
 // Enqueue records a write. It returns immediately; the commit happens once the
@@ -120,7 +162,10 @@ func (c *Committer) Enqueue(ctx context.Context, change Change) {
 		return
 	}
 	if c.opts.Debounce < 0 {
-		c.commit(ctx, newBatch(change))
+		c.mu.Lock()
+		c.startCommit()
+		c.mu.Unlock()
+		c.commitTracked(ctx, newBatch(change))
 		return
 	}
 	ctx = context.WithoutCancel(ctx)
@@ -169,17 +214,29 @@ func (c *Committer) fire(ctx context.Context, key string) {
 	b, ok := c.pending[key]
 	if ok {
 		delete(c.pending, key)
+		c.startCommit()
 	}
 	c.mu.Unlock()
 	if !ok {
 		return
 	}
-	c.commit(ctx, b)
+	c.commitTracked(ctx, b)
 }
 
 // Flush commits everything pending right now and waits for it. It is what a
 // sync run calls in PREFLIGHT (docs/06 section 4.1) and what a shutdown calls
 // so that no edit is left uncommitted.
+//
+// When it returns, nothing is being written to a repository any more, and that
+// includes a batch whose debounce timer fired just before this call: that
+// commit is already out of pending and running on the timer's goroutine, so
+// Flush cannot commit it, but it still waits for it. Anything else would let a
+// caller that flushes and then exits — the "Commit N changes" button followed
+// by a shutdown, a sync run's PREFLIGHT — race a commit that is still writing
+// into .git.
+//
+// The outcomes returned are the batches this call committed itself; a batch
+// committed by a timer that won the race is reported through OnResult only.
 func (c *Committer) Flush(ctx context.Context) []Outcome {
 	c.mu.Lock()
 	batches := make([]*batch, 0, len(c.pending))
@@ -190,13 +247,15 @@ func (c *Committer) Flush(ctx context.Context) []Outcome {
 		}
 		batches = append(batches, b)
 		delete(c.pending, key)
+		c.startCommit()
 	}
 	c.mu.Unlock()
 
 	out := make([]Outcome, 0, len(batches))
 	for _, b := range batches {
-		out = append(out, c.commit(ctx, b))
+		out = append(out, c.commitTracked(ctx, b))
 	}
+	c.waitIdle()
 	return out
 }
 
@@ -208,11 +267,17 @@ func (c *Committer) Pending() int {
 	return len(c.pending)
 }
 
-// Close flushes and refuses further writes. It is idempotent.
+// Close flushes and refuses further writes. It is idempotent. When it returns,
+// no commit is in flight and no timer is left armed, so the process may exit or
+// the repository may be removed.
 func (c *Committer) Close(ctx context.Context) []Outcome {
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
+		// A second Close must not report "closed" while the first one is still
+		// committing what it took.
+		c.waitIdle()
+		c.wg.Wait()
 		return nil
 	}
 	c.closed = true

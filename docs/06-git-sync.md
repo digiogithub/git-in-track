@@ -162,6 +162,17 @@ write left it and is reported as a `git.commit` event and by
 `GET /api/v1/git/status`, with the hook's own output when there is one. Because
 the commit is debounced it is not part of the write response.
 
+**A flush waits for every commit it is responsible for.** `Committer.Flush` —
+what `POST /api/v1/git/commit` calls, what PREFLIGHT calls in §4.1 and what a
+shutdown calls through `Committer.Close` — returns only once nothing is being
+written to a repository any more. That includes a batch whose debounce window
+elapsed a moment earlier: such a batch has already left the pending set and is
+being committed on the timer's own goroutine, so the flush cannot commit it, but
+it still waits for it before answering. Otherwise "Commit N changes" could
+report success while `git` was still writing into `.git`, and a process that
+exits — or a sync run that carries on — right after an explicit commit would
+race it.
+
 Author selection: empty `authorName`/`authorEmail` uses the repo's
 `user.name`/`user.email`
 (companion: resolved by go-git's config chain; browser: read from
