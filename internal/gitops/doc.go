@@ -11,7 +11,7 @@
 //   - render a commit message from a configurable text/template with the
 //     placeholders and the machine-readable trailers of docs/06-git-sync.md
 //     section 3.3;
-//   - stage exactly the paths a write touched and commit them, honouring hooks
+//   - stage exactly the paths a write touched and commit them, honoring hooks
 //     and signing in system-git mode;
 //   - batch rapid writes with a Committer, so one logical edit is one commit
 //     even when the editor saves on every keystroke.

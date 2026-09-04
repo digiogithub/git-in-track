@@ -220,7 +220,7 @@ func isMissingEntry(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "entry not found")
 }
 
-// ensure the clock default is honoured even when Options came in zero-valued.
+// ensure the clock default is honored even when Options came in zero-valued.
 func (o Options) clock() func() time.Time {
 	if o.Now == nil {
 		return time.Now

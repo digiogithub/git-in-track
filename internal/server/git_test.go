@@ -63,7 +63,7 @@ func initGitRepo(t *testing.T, dir string) {
 	}
 	run := func(args ...string) {
 		t.Helper()
-		cmd := exec.Command(bin, args...)
+		cmd := exec.CommandContext(t.Context(), bin, args...)
 		cmd.Dir = dir
 		cmd.Env = append(os.Environ(),
 			"GIT_CONFIG_GLOBAL="+filepath.Join(t.TempDir(), "absent"),
@@ -85,7 +85,7 @@ func initGitRepo(t *testing.T, dir string) {
 // gitLog returns the commit subjects of a repository, newest first.
 func gitLog(t *testing.T, dir string) []string {
 	t.Helper()
-	out, err := exec.Command("git", "-C", dir, "log", "--format=%s").Output()
+	out, err := exec.CommandContext(t.Context(), "git", "-C", dir, "log", "--format=%s").Output()
 	if err != nil {
 		t.Fatalf("git log: %v", err)
 	}
@@ -99,7 +99,7 @@ func gitLog(t *testing.T, dir string) []string {
 // gitBody returns the body of the newest commit.
 func gitBody(t *testing.T, dir string) string {
 	t.Helper()
-	out, err := exec.Command("git", "-C", dir, "log", "-1", "--format=%b").Output()
+	out, err := exec.CommandContext(t.Context(), "git", "-C", dir, "log", "-1", "--format=%b").Output()
 	if err != nil {
 		t.Fatalf("git log: %v", err)
 	}
@@ -383,7 +383,7 @@ func TestCommitOnSaveThroughTheAPI(t *testing.T) {
 		createFixtureItem(t, s, "Only mine")
 		s.git.flush(t.Context())
 
-		out, err := exec.Command("git", "-C", root, "status", "--porcelain").Output()
+		out, err := exec.CommandContext(t.Context(), "git", "-C", root, "status", "--porcelain").Output()
 		if err != nil {
 			t.Fatalf("git status: %v", err)
 		}

@@ -274,7 +274,7 @@ func (s *Server) publishWrite(r *http.Request, m *mount, result any, id, op stri
 	}
 	s.publishIndexUpdated(m, counts, requestID)
 	m.touch(s.now())
-	s.commitItemWrite(m, result, id, op)
+	s.commitItemWrite(r.Context(), m, result, id, op)
 }
 
 // publishPageWrite announces a knowledge-base write. A page is not an item, so
@@ -297,7 +297,7 @@ func (s *Server) publishPageWrite(r *http.Request, m *mount, result any) {
 	s.publishIndexUpdated(m, indexCounts{Updated: 1}, requestID)
 	m.touch(s.now())
 	if writes, ok := writesOf(result); ok && len(writes.Written) > 0 {
-		s.commitPageWrite(m, result, writes.Written[0].Path)
+		s.commitPageWrite(r.Context(), m, result, writes.Written[0].Path)
 	}
 }
 
@@ -311,7 +311,7 @@ func (s *Server) publishBoardMove(r *http.Request, result any) {
 	}
 	requestID := requestIDOf(r)
 	s.publishWriteSets(r, moved.Writes)
-	s.commitWriteSets(moved.Writes, moveFields(moved))
+	s.commitWriteSets(r.Context(), moved.Writes, moveFields(moved))
 	if moved.Item == nil || string(moved.Item.ID) == "" {
 		return
 	}

@@ -169,7 +169,7 @@ func (s *Server) handleBoardUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	if updated, ok := result.(vault.BoardUpdateResult); ok {
 		s.publishWriteSets(r, updated.Writes)
-		s.commitWriteSets(updated.Writes, sprintFields(updated.Board.ID, "board", gitops.ActionUpdate))
+		s.commitWriteSets(r.Context(), updated.Writes, sprintFields(updated.Board.ID, "board", gitops.ActionUpdate))
 		writeEntity(w, r, http.StatusOK, result, string(updated.Board.Rev))
 		return
 	}
@@ -181,6 +181,6 @@ func (s *Server) handleBoardUpdate(w http.ResponseWriter, r *http.Request) {
 func (s *Server) publishSprintWrite(r *http.Request, result any) {
 	if written, ok := result.(vault.SprintResult); ok {
 		s.publishWriteSets(r, written.Writes)
-		s.commitWriteSets(written.Writes, sprintFields(written.Sprint.Sprint.ID, "sprint", gitops.ActionUpdate))
+		s.commitWriteSets(r.Context(), written.Writes, sprintFields(written.Sprint.Sprint.ID, "sprint", gitops.ActionUpdate))
 	}
 }

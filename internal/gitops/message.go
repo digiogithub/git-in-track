@@ -127,7 +127,7 @@ func aliasFuncs(f Fields) template.FuncMap {
 		"project":    func() string { return f.ProjectKey },
 		"board":      func() string { return f.Board },
 		"action":     func() string { return f.Action.String() },
-		"count":      func() int { return f.count() },
+		"count":      f.count,
 		"user":       func() string { return f.User },
 		"date":       func() string { return f.Date },
 	}

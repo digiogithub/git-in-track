@@ -53,7 +53,7 @@ type CommitterOptions struct {
 	// (a mount that is not a git working tree) is dropped silently: not being a
 	// repository is a normal state, not a failure.
 	Backend func(repo string) (Backend, bool)
-	// Sign asks for signed commits; honoured by the system backend only.
+	// Sign asks for signed commits; honored by the system backend only.
 	Sign bool
 	// OnResult is called for every batch that was committed or failed. It runs
 	// on the committer's own goroutine, so it must not block for long.
@@ -111,14 +111,19 @@ func NewCommitter(opts CommitterOptions) *Committer {
 // Flush is called.
 //
 // A negative Debounce commits inline, which keeps tests free of sleeps.
-func (c *Committer) Enqueue(change Change) {
+//
+// ctx is the caller's context. The deferred commit outlives the call that
+// enqueued it, so the timer path carries a cancellation-free copy of it: an
+// HTTP response being written must not cancel the commit of what it wrote.
+func (c *Committer) Enqueue(ctx context.Context, change Change) {
 	if change.Repo == "" || len(change.Paths) == 0 {
 		return
 	}
 	if c.opts.Debounce < 0 {
-		c.commit(context.Background(), newBatch(change))
+		c.commit(ctx, newBatch(change))
 		return
 	}
+	ctx = context.WithoutCancel(ctx)
 
 	key := change.Repo + "\x00" + coalesceKey(change.Fields)
 	c.mu.Lock()
@@ -134,12 +139,12 @@ func (c *Committer) Enqueue(change Change) {
 	} else {
 		b.merge(change)
 	}
-	c.arm(key, b)
+	c.arm(ctx, key, b)
 }
 
 // arm (re)starts the timer of a batch, without letting a steady stream of edits
 // postpone it past its deadline.
-func (c *Committer) arm(key string, b *batch) {
+func (c *Committer) arm(ctx context.Context, key string, b *batch) {
 	wait := c.opts.Debounce
 	if left := b.deadline.Sub(c.opts.Now()); left < wait {
 		wait = left
@@ -154,12 +159,12 @@ func (c *Committer) arm(key string, b *batch) {
 	c.wg.Add(1)
 	b.timer = time.AfterFunc(wait, func() {
 		defer c.wg.Done()
-		c.fire(key)
+		c.fire(ctx, key)
 	})
 }
 
 // fire commits the batch registered under key, if it is still there.
-func (c *Committer) fire(key string) {
+func (c *Committer) fire(ctx context.Context, key string) {
 	c.mu.Lock()
 	b, ok := c.pending[key]
 	if ok {
@@ -169,7 +174,7 @@ func (c *Committer) fire(key string) {
 	if !ok {
 		return
 	}
-	c.commit(context.Background(), b)
+	c.commit(ctx, b)
 }
 
 // Flush commits everything pending right now and waits for it. It is what a

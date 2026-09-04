@@ -105,7 +105,7 @@ type CommitRequest struct {
 	// Author overrides the identity resolved from the git configuration. Both
 	// halves must be set for the override to apply.
 	Author Identity
-	// Sign asks for a signed commit. It is honoured by the system backend only
+	// Sign asks for a signed commit. It is honored by the system backend only
 	// and reported as unsupported by go-git.
 	Sign bool
 	// AllowEmpty commits even when the staged paths changed nothing.

@@ -65,7 +65,7 @@ func TestCommitterCoalescesRapidEdits(t *testing.T) {
 				item := i % tc.items
 				path := "docs/.pmngr/stories/ACME-US-000" + itoa(item) + "-story.md"
 				write(t, repo, path, "revision "+itoa(i)+"\n")
-				c.Enqueue(Change{
+				c.Enqueue(t.Context(), Change{
 					Repo:  "repo",
 					Paths: []string{path},
 					Fields: Fields{
@@ -103,7 +103,7 @@ func TestCommitterDebounceFires(t *testing.T) {
 
 	for i := range 5 {
 		write(t, repo, "docs/.pmngr/stories/ACME-US-0001-a.md", "revision "+itoa(i)+"\n")
-		c.Enqueue(Change{
+		c.Enqueue(t.Context(), Change{
 			Repo:   "repo",
 			Paths:  []string{"docs/.pmngr/stories/ACME-US-0001-a.md"},
 			Fields: Fields{ItemID: "ACME-US-0001", Title: "A", Type: "story"},
@@ -180,9 +180,9 @@ func TestCommitterMessages(t *testing.T) {
 			for _, p := range tc.change.Paths {
 				write(t, repo, p, "body\n")
 			}
-			c.Enqueue(tc.change)
+			c.Enqueue(t.Context(), tc.change)
 			// A second identical enqueue must not change the outcome.
-			c.Enqueue(tc.change)
+			c.Enqueue(t.Context(), tc.change)
 			c.Flush(context.Background())
 
 			if got := log(t, repo)[0]; got != tc.want {
@@ -207,7 +207,7 @@ func TestCommitterReportsFailures(t *testing.T) {
 			dir := newRepo(t)
 			c, outcomes := committerFor(t, dir, -1, "")
 			write(t, dir, "docs/a.md", "a\n")
-			c.Enqueue(Change{
+			c.Enqueue(t.Context(), Change{
 				Repo:   tc.repo,
 				Paths:  []string{"docs/a.md"},
 				Fields: Fields{ItemID: "ACME-T-0001", Title: "A"},
@@ -238,7 +238,7 @@ func TestCommitterSurfacesAnActionableFailure(t *testing.T) {
 		OnResult: func(out Outcome) { seen = append(seen, out) },
 	})
 	write(t, dir, "docs/a.md", "a\n")
-	c.Enqueue(Change{Repo: "repo", Paths: []string{"docs/a.md"}, Fields: Fields{ItemID: "ACME-T-1"}})
+	c.Enqueue(t.Context(), Change{Repo: "repo", Paths: []string{"docs/a.md"}, Fields: Fields{ItemID: "ACME-T-1"}})
 
 	if len(seen) != 1 || seen[0].Err == nil {
 		t.Fatalf("outcomes = %+v, want one failure", seen)
@@ -258,7 +258,7 @@ func TestCommitterCloseIsIdempotent(t *testing.T) {
 	dir := newRepo(t)
 	c, _ := committerFor(t, dir, time.Hour, "")
 	write(t, dir, "docs/a.md", "a\n")
-	c.Enqueue(Change{Repo: "repo", Paths: []string{"docs/a.md"}, Fields: Fields{ItemID: "ACME-T-1", Title: "A"}})
+	c.Enqueue(t.Context(), Change{Repo: "repo", Paths: []string{"docs/a.md"}, Fields: Fields{ItemID: "ACME-T-1", Title: "A"}})
 
 	ctx := context.Background()
 	if out := c.Close(ctx); len(out) != 1 {
@@ -268,7 +268,7 @@ func TestCommitterCloseIsIdempotent(t *testing.T) {
 		t.Fatalf("the second Close committed %d batches, want none", len(out))
 	}
 	// A write after Close is dropped rather than queued forever.
-	c.Enqueue(Change{Repo: "repo", Paths: []string{"docs/a.md"}, Fields: Fields{ItemID: "ACME-T-1"}})
+	c.Enqueue(t.Context(), Change{Repo: "repo", Paths: []string{"docs/a.md"}, Fields: Fields{ItemID: "ACME-T-1"}})
 	if c.Pending() != 0 {
 		t.Error("a closed committer must accept nothing")
 	}

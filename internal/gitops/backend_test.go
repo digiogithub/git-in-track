@@ -24,7 +24,7 @@ func backends(t *testing.T) []Kind {
 	return kinds
 }
 
-// newRepo creates an initialised working tree with a configured identity and
+// newRepo creates an initialized working tree with a configured identity and
 // one commit, and returns its path.
 func newRepo(t *testing.T) string {
 	t.Helper()
@@ -49,7 +49,7 @@ func gitRunner(t *testing.T, dir string) func(args ...string) {
 	}
 	return func(args ...string) {
 		t.Helper()
-		cmd := exec.Command(bin, args...)
+		cmd := exec.CommandContext(t.Context(), bin, args...)
 		cmd.Dir = dir
 		cmd.Env = append(os.Environ(),
 			"GIT_CONFIG_GLOBAL="+filepath.Join(dir, ".gitconfig-absent"),
@@ -93,7 +93,7 @@ func log(t *testing.T, dir string) []string {
 	if err != nil {
 		t.Skipf("no git binary: %v", err)
 	}
-	cmd := exec.Command(bin, "log", "--format=%s")
+	cmd := exec.CommandContext(t.Context(), bin, "log", "--format=%s")
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {

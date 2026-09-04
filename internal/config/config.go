@@ -133,7 +133,7 @@ type Git struct {
 	MessageTemplate string        `json:"messageTemplate"       yaml:"messageTemplate"`
 	AuthorName      string        `json:"authorName,omitempty"  yaml:"authorName,omitempty"`
 	AuthorEmail     string        `json:"authorEmail,omitempty" yaml:"authorEmail,omitempty"`
-	// SignCommits asks for gpg or ssh signed commits. It is honoured by the
+	// SignCommits asks for gpg or ssh signed commits. It is honored by the
 	// system backend only; go-git refuses it with git_unsupported.
 	SignCommits bool `json:"signCommits" yaml:"signCommits"`
 }

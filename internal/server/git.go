@@ -197,13 +197,14 @@ func (g *gitState) current() (config.Git, *gitops.Committer) {
 
 // enqueue records a write for commit-on-save. It is a no-op when the feature is
 // off, which is what keeps the write path free of git when nobody asked for it.
-func (g *gitState) enqueue(change gitops.Change) {
+// ctx is the context of the call that made the write.
+func (g *gitState) enqueue(ctx context.Context, change gitops.Change) {
 	settings, committer := g.current()
 	if !settings.CommitOnSave || committer == nil {
 		return
 	}
 	change.Fields.Tool = g.tool
-	committer.Enqueue(change)
+	committer.Enqueue(ctx, change)
 }
 
 // flush commits everything pending right now.
@@ -371,7 +372,7 @@ func (s *Server) handleGitSettingsPatch(w http.ResponseWriter, r *http.Request) 
 	}
 	persisted, err := s.git.persist()
 	if err != nil {
-		// The running process already honours the change; only the file did
+		// The running process already honors the change; only the file did
 		// not take it, and the user has to know which of the two happened.
 		s.log.Warn("could not persist the git settings", "error", err)
 	}
@@ -538,7 +539,7 @@ func writeGitError(w http.ResponseWriter, r *http.Request, err error) {
 
 // commitItemWrite queues the commit of one item write. It is called after the
 // write has already reached disk, so it can never fail a save.
-func (s *Server) commitItemWrite(m *mount, result any, id, op string) {
+func (s *Server) commitItemWrite(ctx context.Context, m *mount, result any, id, op string) {
 	if s.git == nil || !s.git.enabled() || m == nil {
 		return
 	}
@@ -547,7 +548,7 @@ func (s *Server) commitItemWrite(m *mount, result any, id, op string) {
 		return
 	}
 	item, _ := field(result, "item").(*core.Item)
-	s.git.enqueue(gitops.Change{
+	s.git.enqueue(ctx, gitops.Change{
 		Repo:   m.id,
 		Paths:  pathsOf(writes),
 		Fields: itemFields(id, op, item),
@@ -555,7 +556,7 @@ func (s *Server) commitItemWrite(m *mount, result any, id, op string) {
 }
 
 // commitPageWrite queues the commit of a knowledge-base page write.
-func (s *Server) commitPageWrite(m *mount, result any, path string) {
+func (s *Server) commitPageWrite(ctx context.Context, m *mount, result any, path string) {
 	if s.git == nil || !s.git.enabled() || m == nil {
 		return
 	}
@@ -563,7 +564,7 @@ func (s *Server) commitPageWrite(m *mount, result any, path string) {
 	if !ok {
 		return
 	}
-	s.git.enqueue(gitops.Change{
+	s.git.enqueue(ctx, gitops.Change{
 		Repo:   m.id,
 		Paths:  pathsOf(writes),
 		Fields: gitops.Fields{ItemID: path, Title: path, Type: "page", Action: gitops.ActionUpdate},
@@ -574,7 +575,7 @@ func (s *Server) commitPageWrite(m *mount, result any, path string) {
 // wrote. A card move touches the item in its project clone and the board in the
 // team repository: two repositories, therefore two commits, each in its own
 // repository (docs/06 section 9.4).
-func (s *Server) commitWriteSets(sets []vault.RepoWriteSet, fields gitops.Fields) {
+func (s *Server) commitWriteSets(ctx context.Context, sets []vault.RepoWriteSet, fields gitops.Fields) {
 	if s.git == nil || !s.git.enabled() {
 		return
 	}
@@ -587,7 +588,7 @@ func (s *Server) commitWriteSets(sets []vault.RepoWriteSet, fields gitops.Fields
 		if len(paths) == 0 {
 			continue
 		}
-		s.git.enqueue(gitops.Change{Repo: set.VaultID, Paths: paths, Fields: fields})
+		s.git.enqueue(ctx, gitops.Change{Repo: set.VaultID, Paths: paths, Fields: fields})
 	}
 }
 
