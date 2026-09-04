@@ -6,10 +6,16 @@
  * present in a clean checkout, so loading is lazy and failure is not fatal:
  * `ping` simply reports `wasm: false` and core-backed methods answer with
  * `core_unavailable`.
+ *
+ * Every method of the `CoreApi` contract other than `ping` and `version` is
+ * forwarded verbatim to `globalThis.gintrackCore.call(method, paramsJSON)`,
+ * whose JSON envelope is unwrapped into the worker's own response envelope.
  */
 import {
   CORE_PROTOCOL_VERSION,
+  isCoreEnvelope,
   type CoreErrorCode,
+  type CoreErrorPayload,
   type CoreRequest,
   type CoreResponse,
   type PingResult,
@@ -34,6 +40,7 @@ type GoConstructor = new () => GoRuntime;
 /** The surface `wasm/main_js.go` registers on `globalThis`. */
 type GintrackCore = {
   version?: () => string;
+  parseItem?: (path: string, text: string) => string;
   call?: (method: string, params: string) => string;
 };
 
@@ -102,8 +109,53 @@ function respond(response: CoreResponse): void {
   ctx.postMessage(response);
 }
 
-function fail(id: number, code: CoreErrorCode, message: string): void {
-  respond({ id, ok: false, error: { code, message } });
+function fail(id: number, code: CoreErrorCode, message: string, path?: string): void {
+  const error: CoreErrorPayload = path === undefined ? { code, message } : { code, message, path };
+  respond({ id, ok: false, error });
+}
+
+/**
+ * Reads the build version out of `gintrackCore.version()`, which answers with
+ * its own `{ ok, data }` envelope rather than a bare string.
+ */
+function coreVersion(loaded: GintrackCore | null): string | null {
+  const raw = loaded?.version?.();
+  if (typeof raw !== 'string') return null;
+  try {
+    const parsed = JSON.parse(raw) as { ok?: boolean; data?: { version?: unknown } };
+    const value = parsed.ok === true ? parsed.data?.version : undefined;
+    return typeof value === 'string' ? value : raw;
+  } catch {
+    return raw;
+  }
+}
+
+/** Forwards one method to the Go core and unwraps its envelope. */
+function forward(request: CoreRequest, call: (method: string, params: string) => string): void {
+  let raw: string;
+  try {
+    raw = call(request.method, JSON.stringify(request.params ?? null));
+  } catch (error) {
+    fail(request.id, 'internal', error instanceof Error ? error.message : String(error));
+    return;
+  }
+
+  let envelope: unknown;
+  try {
+    envelope = JSON.parse(raw);
+  } catch {
+    fail(request.id, 'internal', `the core returned invalid JSON for "${request.method}"`);
+    return;
+  }
+  if (!isCoreEnvelope(envelope)) {
+    fail(request.id, 'internal', `the core returned an unknown envelope for "${request.method}"`);
+    return;
+  }
+  if (envelope.ok) {
+    respond({ id: request.id, ok: true, result: envelope.result });
+    return;
+  }
+  respond({ id: request.id, ok: false, error: envelope.error });
 }
 
 async function handle(request: CoreRequest): Promise<void> {
@@ -118,7 +170,7 @@ async function handle(request: CoreRequest): Promise<void> {
     case 'version': {
       const result: VersionResult = {
         protocol: CORE_PROTOCOL_VERSION,
-        core: loaded?.version?.() ?? null,
+        core: coreVersion(loaded),
       };
       respond({ id: request.id, ok: true, result });
       return;
@@ -132,12 +184,7 @@ async function handle(request: CoreRequest): Promise<void> {
         );
         return;
       }
-      try {
-        const raw = loaded.call(request.method, JSON.stringify(request.params ?? null));
-        respond({ id: request.id, ok: true, result: JSON.parse(raw) as unknown });
-      } catch (error) {
-        fail(request.id, 'internal', error instanceof Error ? error.message : String(error));
-      }
+      forward(request, loaded.call);
     }
   }
 }

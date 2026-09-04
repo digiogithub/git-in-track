@@ -11,21 +11,26 @@ import (
 	"github.com/digiogithub/git-in-track/internal/core"
 )
 
-// version, commit and date are set with -ldflags by the release build, exactly
-// as they are for the CLI binary.
-var (
-	version = "dev"
-	commit  = "none"
-	date    = "unknown"
-)
-
 // namespace is the global object the Web Worker talks to.
 const namespace = "gintrackCore"
+
+// commit and date are set with -ldflags by the release build; version lives in
+// bridge.go because the "version" method of the bridge answers with it.
+var (
+	commit = "none"
+	date   = "unknown"
+)
+
+// vault is the single Bridge the worker drives. One worker owns one vault, so a
+// package-level value is the whole lifecycle: it is created when the module
+// starts and lives until the worker is terminated.
+var vault = NewBridge()
 
 func main() {
 	ns := js.Global().Get("Object").New()
 	ns.Set("version", js.FuncOf(jsVersion))
 	ns.Set("parseItem", js.FuncOf(jsParseItem))
+	ns.Set("call", js.FuncOf(jsCall))
 	js.Global().Set(namespace, ns)
 
 	// Keep the Go runtime alive for the lifetime of the worker: every exported
@@ -33,9 +38,26 @@ func main() {
 	select {}
 }
 
+// jsCall is the whole CoreApi surface behind one entry point. The worker passes
+// the method name and the JSON-encoded params and gets the JSON envelope back.
+//
+//	gintrackCore.call("item.list", '{"type":"story"}')
+//	  -> {"ok": true,  "result": {...}}
+//	  -> {"ok": false, "error": {"code": "...", "message": "...", "path": "..."}}
+func jsCall(_ js.Value, args []js.Value) any {
+	if len(args) < 1 {
+		return failure("invalid_request", "call(method, paramsJSON) needs a method name")
+	}
+	params := "null"
+	if len(args) > 1 && args[1].Type() == js.TypeString {
+		params = args[1].String()
+	}
+	return vault.Call(args[0].String(), params)
+}
+
 // jsVersion reports the build and the data-model schema this module implements.
 //
-//	gintrackCore.version() -> {"version": "...", "commit": "...", "date": "...", "schema": 1}
+//	gintrackCore.version() -> {"ok": true, "data": {"version": "...", "schema": 1}}
 func jsVersion(js.Value, []js.Value) any {
 	return result(map[string]any{
 		"version": version,

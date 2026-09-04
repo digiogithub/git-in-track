@@ -33,11 +33,11 @@ Recently opened projects are listed on the start screen. Nothing ever leaves the
 
 ## Acceptance Criteria
 
-- [ ] `showDirectoryPicker` obtains a read/write handle in a Chromium browser.
-- [ ] The handle is persisted in IndexedDB and restored on the next visit.
-- [ ] Expired permission triggers a single, clearly explained re-prompt.
-- [ ] `project.yaml` is read and its key, name and workflow drive the UI.
+- [x] `showDirectoryPicker` obtains a read/write handle in a Chromium browser.
+- [x] The handle is persisted in IndexedDB and restored on the next visit.
+- [x] Expired permission triggers a single, clearly explained re-prompt.
+- [x] `project.yaml` is read and its key, name and workflow drive the UI.
 - [ ] A folder without `.pmngr/` offers to initialise one instead of failing.
-- [ ] A recent-projects list allows reopening with one click.
-- [ ] The UI states explicitly that files never leave the device.
-- [ ] Unsupported browsers are detected before the picker is offered (see GIT-US-0011).
+- [x] A recent-projects list allows reopening with one click.
+- [x] The UI states explicitly that files never leave the device.
+- [x] Unsupported browsers are detected before the picker is offered (see GIT-US-0011).

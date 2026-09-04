@@ -1,10 +1,14 @@
-import { createRoute, createRouter } from '@tanstack/react-router';
+import { createRoute, createRouter, lazyRouteComponent } from '@tanstack/react-router';
 
 import { NotFound } from '@/app/layout/NotFound';
 import { rootRoute } from '@/app/rootRoute';
+import { EpicTree } from '@/features/backlog/EpicTree';
 import { ItemDetail } from '@/features/backlog/ItemDetail';
 import { ItemTable } from '@/features/backlog/ItemTable';
+import { MilestoneList } from '@/features/backlog/MilestoneList';
+import { validateItemSearch } from '@/features/backlog/search';
 import { BoardList } from '@/features/boards/BoardList';
+import { validateNewItemSearch } from '@/features/editor/search';
 import { KbViewer } from '@/features/kb/KbViewer';
 import { SettingsPage } from '@/features/settings/SettingsPage';
 import { AddRepositoryPage } from '@/features/workspace/AddRepositoryPage';
@@ -39,9 +43,11 @@ const kbRoute = createRoute({
   component: KbViewer,
 });
 
+/** Filters, search and sort live in the search params, validated with zod. */
 const itemsRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: 'items',
+  validateSearch: validateItemSearch,
   component: ItemTable,
 });
 
@@ -49,6 +55,38 @@ const itemDetailRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: 'items/$id',
   component: ItemDetail,
+});
+
+/** The editor pulls in CodeMirror, so both routes load it as a lazy chunk. */
+const newItemRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: 'items/new',
+  validateSearch: validateNewItemSearch,
+  component: lazyRouteComponent(
+    () => import('@/features/editor/NewItemPage'),
+    'NewItemPage',
+  ),
+});
+
+const itemEditorRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: 'items/$id/edit',
+  component: lazyRouteComponent(
+    () => import('@/features/editor/ItemEditorPage'),
+    'ItemEditorPage',
+  ),
+});
+
+const epicsRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: 'epics',
+  component: EpicTree,
+});
+
+const milestonesRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: 'milestones',
+  component: MilestoneList,
 });
 
 const boardsRoute = createRoute({
@@ -66,7 +104,15 @@ const settingsRoute = createRoute({
 export const routeTree = rootRoute.addChildren([
   indexRoute,
   addRepositoryRoute,
-  projectRoute.addChildren([kbRoute, itemsRoute, itemDetailRoute]),
+  projectRoute.addChildren([
+    kbRoute,
+    itemsRoute,
+    newItemRoute,
+    itemDetailRoute,
+    itemEditorRoute,
+    epicsRoute,
+    milestonesRoute,
+  ]),
   boardsRoute,
   settingsRoute,
 ]);

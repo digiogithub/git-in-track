@@ -887,3 +887,40 @@ func containsFold(list []string, want string) bool {
 	}
 	return false
 }
+
+// ProjectCounts returns, per project, how many items of each type the index
+// holds, with the comment files of that project's items under TypeComment.
+//
+// It exists because the browser bridge renders a per-project badge for every
+// item type and would otherwise have to page through every item to count them
+// (docs/05 section 6.4).
+func (ix *Index) ProjectCounts() map[ProjectKey]map[ItemType]int {
+	ix.mu.RLock()
+	defer ix.mu.RUnlock()
+
+	out := make(map[ProjectKey]map[ItemType]int, len(ix.projects))
+	bump := func(key ProjectKey, t ItemType) {
+		if out[key] == nil {
+			out[key] = make(map[ItemType]int, len(ItemTypes()))
+		}
+		out[key][t]++
+	}
+	for _, p := range ix.projects {
+		if out[p.Key] == nil {
+			out[p.Key] = make(map[ItemType]int, len(ItemTypes()))
+		}
+	}
+	for _, id := range sortedIDs(ix.byID) {
+		it := ix.byID[id]
+		bump(ix.projectOf(it), it.Type)
+	}
+	for _, p := range sortedPaths(ix.commentsByPath) {
+		c := ix.commentsByPath[p]
+		key, _, _, err := ParseItemID(string(c.Item))
+		if err != nil {
+			key = ix.fileProject[c.Path]
+		}
+		bump(key, TypeComment)
+	}
+	return out
+}

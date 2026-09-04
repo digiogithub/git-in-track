@@ -100,6 +100,7 @@ export default tseslint.config(
     rules: {
       // Vendored primitives are generic wrappers; content comes from the caller.
       'jsx-a11y/heading-has-content': 'off',
+      'jsx-a11y/label-has-associated-control': 'off',
       // shadcn/ui keeps a component and its `cva` variants in the same file.
       'react-refresh/only-export-components': 'off',
     },

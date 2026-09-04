@@ -185,7 +185,9 @@ parent, updated. Features: column visibility + order persisted per project;
 multi-sort; grouping by status/epic/milestone; row virtualisation (target: 10k
 rows at 60fps); saved views stored in the workspace store and shareable as URLs.
 Filters live entirely in search params:
-`?q=&status=todo,in_progress&labels=auth&assignee=jose&priority=high&milestone=M2&updatedAfter=2026-08-01`.
+`?q=&status=todo,in_progress&label=auth&assignee=jose&category=in_progress&milestone=M2&parent=ACME-EP-0001`
+(the names match the provider's `ItemFilter` fields; `priority` and `updatedAfter` arrive with the
+matching filter fields in the core query API).
 Bulk actions (change status, add label, set milestone, assign) issue one provider
 `updateMany` call which becomes one commit when commit-on-save is on.
 
@@ -511,45 +513,57 @@ go.run(instance);                    // registers globalThis.gintrackCore
   `instantiateStreaming` needs `Content-Type: application/wasm`; the companion
   sets it, and static hosts are documented in the deployment notes. A fallback
   path uses `WebAssembly.instantiate(await (await fetch(...)).arrayBuffer(), ...)`.
-- Message protocol — envelope with request ids and cancellation:
+- Method map: the authoritative contract is `CoreApi` in
+  `web/src/core-bridge/api.ts` — one entry per method with its params and its
+  result. `wasm/bridge.go` implements exactly those methods and nothing else, and
+  the Go tests in `wasm/bridge_test.go` exercise them against the fixture vault
+  in `testdata/fixtures/project-basic`.
+- Message protocol — one envelope, request ids on both sides:
 
 ```ts
-type Req =
-  | { id: number; op: 'index'; repoId: string; files: FileChunk[] }
-  | { id: number; op: 'reindex'; repoId: string; changed: string[]; deleted: string[] }
-  | { id: number; op: 'query'; repoId: string; query: ItemQuery }
-  | { id: number; op: 'parse'; path: string; bytes: ArrayBuffer }
-  | { id: number; op: 'serialize'; item: Item; body: string }
-  | { id: number; op: 'validate'; item: Item }
-  | { id: number; op: 'allocateId'; repoId: string; type: ItemType }
-  | { id: number; op: 'linkGraph'; repoId: string }
-  | { id: number; op: 'cancel'; target: number };
+type CoreRequest = { id: number; method: CoreMethodName; params?: unknown };
 
-type Res =
-  | { id: number; ok: true; result: unknown; transfer?: Transferable[] }
-  | { id: number; ok: false; error: { code: string; message: string; path?: string } }
-  | { id: number; progress: { done: number; total: number; phase: string } };
+type CoreResponse =
+  | { id: number; ok: true; result: unknown }
+  | { id: number; ok: false; error: { code: CoreErrorCode; message: string; path?: string } };
 ```
 
-  `client.ts` keeps a `Map<number, Deferred>`, applies a per-op timeout, and
+  Inside the worker the same shape crosses into Go as a pair of strings:
+  `globalThis.gintrackCore.call(method, paramsJSON)` returns
+  `{"ok":true,"result":…}` or `{"ok":false,"error":{code,message,path}}`.
+  `ping` and `version` are answered by the worker itself, so the app boots and
+  reports `wasm: false` when `core.wasm` is missing instead of failing; every
+  other method answers `core_unavailable` in that state.
+
+  `client.ts` keeps a `Map<number, Deferred>`, applies a per-call timeout, and
   rejects everything on worker crash then respawns the worker and replays the
-  index from the IndexedDB snapshot.
-- Transfers: file contents cross as `ArrayBuffer` in the `transfer` list, never as
-  strings, so there is no structured-clone copy. Query results come back as one
-  UTF-8 encoded JSON `ArrayBuffer` decoded on the main thread (measurably cheaper
-  than deep object cloning for thousands of rows).
-- Batching: the FS crawler emits chunks of up to 256 files or 4 MB, whichever
-  comes first, and the worker parses each chunk before requesting the next
-  (back-pressure via awaiting the response). Progress messages drive the wizard's
-  progress bar.
-- Incremental reindex: after a write, only the touched paths are sent with
-  `op: 'reindex'`; the Go core patches its in-memory index and returns the set of
-  affected item ids, which the provider turns into precise query invalidations.
-  The full index is snapshotted to IndexedDB (one record per repo, MessagePack or
-  JSON) with the repo's file-mtime/size digest; on next boot, if the digest of a
-  cheap metadata-only crawl matches, the snapshot is trusted and only differing
-  files are re-parsed. Cold index target: 5k files in under 3 s on a mid-range
-  laptop; warm boot under 400 ms.
+  index from the IndexedDB snapshot. `CoreClient.call` is typed against
+  `CoreApi`, so a wrong method name, wrong params or a mistyped result is a
+  compile error.
+- Pushing files in: the core cannot call an asynchronous browser API, so the main
+  thread pushes file contents into the worker with `vault.load` (full) and
+  `vault.apply` (incremental events carrying the new text). The core keeps them in
+  a `core.MemFS`; every mutating method returns the `WriteSet` — the files it
+  wrote and removed — which the host persists through the File System Access API.
+  Nothing is acknowledged back: the in-memory copy is already up to date.
+- Batching: `CoreClient.loadVault` sends one structured clone per message, capped
+  at 256 files or 4 MB. A vault over the cap is split: the first message carries
+  every `.pmngr/project.yaml`, because project discovery runs on it and a file
+  that belongs to no known project would be indexed as a stray; the rest follow as
+  `vault.apply` batches of `create` events, awaited one at a time so the worker
+  applies back-pressure. `onProgress` drives the wizard's progress bar.
+- Incremental reindex: after a write, only the touched paths are re-parsed. The
+  core patches its in-memory index and `vault.apply` returns an `IndexStats` whose
+  `delta` names exactly the items, pages and comment threads that changed, which
+  the provider turns into precise query invalidations.
+  The full index is snapshotted to IndexedDB by `web/src/cache/index-cache.ts`
+  (one record per vault: `{ vaultId, fingerprint, snapshotJson, savedAt }`, raw
+  IndexedDB, no extra dependency). `hydrateOrBuild` loads the cached snapshot
+  first — `snapshot.load` hydrates the index without any files, so the UI paints
+  the structure at once — then pushes the real files and rewrites the record only
+  when the fingerprint moved. A snapshot the core refuses is dropped, never
+  retried: the vault still opens, just cold. Cold index target: 5k files in under
+  3 s on a mid-range laptop; warm boot under 400 ms.
 - Memory: Go's WASM runtime grows its heap monotonically. The worker is
   terminated and respawned when the index is dropped (repo unmounted) or after a
   configurable idle period, to release memory back to the browser.

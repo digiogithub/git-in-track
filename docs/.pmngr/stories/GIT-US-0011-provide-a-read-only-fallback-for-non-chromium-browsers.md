@@ -33,10 +33,10 @@ This is the honest answer to risk R1: no pretending, no nagging.
 
 ## Acceptance Criteria
 
-- [ ] Capability detection runs before any picker is offered; no error is thrown.
-- [ ] `<input webkitdirectory>` loads a folder and the vault indexes normally.
+- [x] Capability detection runs before any picker is offered; no error is thrown.
+- [x] `<input webkitdirectory>` loads a folder and the vault indexes normally.
 - [ ] Every create, edit and delete affordance is hidden or disabled with an explanation.
-- [ ] One banner explains the limitation and links to the companion download.
-- [ ] The banner is dismissible and stays dismissed for the session.
+- [x] One banner explains the limitation and links to the companion download.
+- [x] The banner is dismissible and stays dismissed for the session.
 - [ ] Knowledge-base rendering, browsing, filtering and search all work read-only.
-- [ ] The fallback is covered by a test that stubs the API as unavailable.
+- [x] The fallback is covered by a test that stubs the API as unavailable.
