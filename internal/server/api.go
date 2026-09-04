@@ -70,8 +70,9 @@ func (s *Server) mountAPI(api chi.Router) {
 		p.Route("/boards", s.mountBoards)
 		p.Route("/sprints", s.mountSprints)
 		s.deferRoute(p, "/retros", "Retrospectives arrive with Phase 3.")
-		s.deferRoute(p, "/sync", "Git synchronization arrives with Phase 4.")
-		s.deferRoute(p, "/git", "Git inspection arrives with Phase 4.")
+		s.deferRoute(p, "/sync", "The sync pipeline arrives with GIT-US-0021.")
+		// Commit-on-save and the git settings (GIT-US-0020).
+		p.Route("/git", s.mountGit)
 	})
 
 	api.NotFound(s.handleAPINotFound)

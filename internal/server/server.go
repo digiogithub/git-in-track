@@ -101,6 +101,15 @@ type Options struct {
 	// Now is the clock stamping events and index timestamps. Nil means
 	// time.Now.
 	Now func() time.Time
+
+	// Git is the git section of the configuration: the backend, whether
+	// commit-on-save is on, the message template and the debounce window
+	// (docs/06-git-sync.md section 3.3).
+	Git config.Git
+	// ConfigPath is the configuration file a settings change made through
+	// PATCH /api/v1/git/settings is persisted to. Empty keeps such a change in
+	// this process only, which is what a test and `serve --repo` want.
+	ConfigPath string
 }
 
 // Server owns the router and the HTTP listener.
@@ -117,6 +126,8 @@ type Server struct {
 	hub *Hub
 	// watch owns the file watcher, when there is one.
 	watch watchState
+	// git owns the commit-on-save committer and the per-repository backends.
+	git *gitState
 
 	// mu guards addr, which changes once when the listener resolves a
 	// wildcard port and is read concurrently by callers printing the URL.
@@ -167,6 +178,7 @@ func New(opts Options) (*Server, error) {
 	}
 	s.repos = newRegistry(opts.Repos, now)
 	s.hub = newHub(opts.Workspace, now)
+	s.git = newGitState(opts, s.repos, s.log, s.publishCommit)
 	for _, m := range s.repos.all() {
 		if m.err != nil {
 			s.log.Warn("repository mounted with errors", "repo", m.id, "path", m.path, "error", m.err)
@@ -239,6 +251,9 @@ func (s *Server) Start(ctx context.Context) error {
 
 	s.startWatch(ctx)
 	defer s.stopWatch()
+	// A shutdown must not drop an edit that was still inside the debounce
+	// window, so the committer is flushed before the listener closes.
+	defer s.git.close(context.WithoutCancel(ctx))
 
 	srv := &http.Server{
 		Handler:           s.router,
@@ -337,10 +352,15 @@ func (s *Server) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 			"search":       "core",
 			"renderer":     "client",
 			"openInEditor": false,
-			// Phases 3 and 4.
-			"git":     false,
-			"mcpHttp": false,
-			"boards":  false,
+			// Git: commit-on-save ships with GIT-US-0020; the sync pipeline
+			// follows with GIT-US-0021.
+			"git":          len(s.git.backends) > 0,
+			"gitBackend":   s.git.resolved,
+			"gitVersion":   s.git.version,
+			"commitOnSave": s.git.enabled(),
+			"gitSync":      false,
+			"mcpHttp":      false,
+			"boards":       true,
 		},
 		"limits": map[string]int{
 			"maxItemsPerPage": maxItemsPerPage,
