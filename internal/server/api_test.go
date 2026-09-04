@@ -669,11 +669,11 @@ func TestDeferredRoutesAnswerNotImplemented(t *testing.T) {
 	t.Parallel()
 
 	s, _ := newAPIServer(t)
-	// Boards are served since GIT-US-0017 and sprints since GIT-US-0018; both
-	// are covered by boards_test.go and sprints_test.go.
+	// Boards are served since GIT-US-0017, sprints since GIT-US-0018, the git
+	// surface since GIT-US-0020 and the sync pipeline since GIT-US-0021; each
+	// has its own test file. What is left deferred is retrospectives.
 	for _, target := range []string{
 		"/api/v1/retros",
-		"/api/v1/sync/status", "/api/v1/git/status?repo=demo",
 	} {
 		var doc problemBody
 		decode(t, send(t, s, request{method: http.MethodGet, target: target}), http.StatusNotImplemented, &doc)

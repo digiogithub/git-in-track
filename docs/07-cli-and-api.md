@@ -183,13 +183,16 @@ server:
 
 git:
   backend: auto          # auto | go-git | system
-  commitOnSave: false
+  commitOnSave: false    # commit every save (06-git-sync.md §3.3)
+  commitDebounce: 2s     # Go duration; coalesce rapid saves of the same item
   # The shipped default is the `pmngr:` form of 06-git-sync.md; teams whose docs
   # folder sits next to code often prefer the conventional-commits variant
-  # "docs({{.ProjectKey}}): update {{.ItemID}} — {{.Title}}".
+  # "docs({{.ProjectKey}}): update {{.ItemID}} — {{.Title}}". Both the field
+  # form ({{.ItemID}}) and the short form ({{action}} {{id}}: {{title}}) work.
   messageTemplate: 'pmngr: update {{.ItemID}} "{{.Title}}"'
   authorName: ""         # empty -> read from the repo/global git config
   authorEmail: ""
+  signCommits: false     # gpg/ssh signing; the system backend only
 
 index:
   cacheDir: ""           # empty -> the directory the configuration file is in
@@ -208,8 +211,12 @@ log:
 The file is written with `gintrack config init` or by the first `gintrack add`,
 always with mode `0600`. Keys this build does not know are ignored rather than
 rejected, so a file written by a newer binary still opens: the later phases add
-`server.extraOrigins`, `git.signCommits`, `git.pushOnSync`, `git.pullStrategy`,
-`index.ignore`, `index.maxFileSizeKB` and `log.file` to the same sections.
+`server.extraOrigins`, `git.pushOnSync`, `git.pullStrategy`, `index.ignore`,
+`index.maxFileSizeKB` and `log.file` to the same sections.
+
+`PATCH /api/v1/git/settings` writes the `git:` section back to this file, so a
+change made in the web UI survives a restart. It is the only route that edits
+the configuration; everything else remains a `gintrack config` operation.
 
 ### 3.3 Precedence and environment variables
 
@@ -223,6 +230,7 @@ Effective value = flag > environment variable > config file > built-in default.
 | `GINTRACK_BIND`          | `server.bind`       |
 | `GINTRACK_TOKEN`         | `server.token`      |
 | `GINTRACK_GIT_BACKEND`   | `git.backend`       |
+| `GINTRACK_GIT_COMMIT_ON_SAVE` | `git.commitOnSave` |
 | `GINTRACK_LOG_LEVEL`     | `log.level`         |
 | `GINTRACK_LOG_FORMAT`    | `log.format`        |
 | `NO_COLOR`               | disables ANSI color |
@@ -236,10 +244,18 @@ never offers it where it would mean nothing.
 ### 3.4 Git backend selection
 
 `git.backend: auto` resolves at startup: if a `git` executable ≥ 2.20 is on `PATH`, use
-`system` (better credential-helper, SSH agent, LFS, hook and signing support); otherwise
+`system` (better credential-helper, SSH agent, LFS, hook and signing support; every
+invocation is pinned non-interactive so a missing credential fails with
+`git_auth_required` instead of waiting on a prompt — doc 06 §8.1); otherwise
 fall back to `go-git` (pure Go, no external dependency, no hooks, limited credential
 handling). The resolved backend is reported by `gintrack doctor` and by
-`GET /api/v1/capabilities`.
+`GET /api/v1/capabilities` (`features.gitBackend`, `features.gitVersion`), and
+per repository by `GET /api/v1/git/status`.
+
+`system` is not merely faster: hooks, gpg/ssh signing, credential helpers and a
+commit limited to a pathspec exist only there. `Capabilities()` reports each of
+them, and asking for one the resolved backend lacks fails with
+`git_unsupported` rather than silently doing something else.
 
 ---
 
@@ -624,6 +640,15 @@ nothing was changed (--dry-run)
 Conflicts are surfaced, not auto-resolved. For board `order:` lists and other list-shaped
 YAML the sync engine offers a union merge assist in the web UI; the CLI reports the
 conflicting paths and exits 5.
+
+*As built (GIT-US-0021).* The flags above all work, plus `--no-snapshot` (skip the index
+snapshot refresh a run that pulled work would do, rule R-SNAP-6(a) of doc 04 §6) and
+`--json` (the machine-readable report). `--repo` is repeatable, `--continue` and `--abort`
+are mutually exclusive, and so are `--dry-run` and `--commit-all`. Exit codes: 5 for a
+conflict, 6 for any other git failure, 4 for an unregistered `--repo`, 2 for an unknown
+`--strategy`. A repository that is registered but is not a git working tree is skipped with
+its reason rather than failing the run. `--dry-run` fetches — which is read-only — and
+changes nothing else.
 
 ### 4.8 `gintrack doctor [--fix] [--renumber]`
 
@@ -1138,8 +1163,7 @@ Idempotency-Key: 4f1e-…
 Location: /api/v1/items/ACME-T-0311
 ETag: "sha256:11c3…5de"
 { "id": "ACME-T-0311", "path": "docs/.pmngr/tasks/ACME-T-0311-wire-oidc-discovery-endpoint.md",
-  "rev": "sha256:11c3…5de", "created": "2026-09-03T10:02:00Z",
-  "commit": { "made": false, "reason": "commitOnSave disabled" } }
+  "rev": "sha256:11c3…5de", "created": "2026-09-03T10:02:00Z" }
 ```
 
 ```json
@@ -1363,15 +1387,97 @@ exposing that key is searched, and an unknown key is a `404`.
 #### Sync and git
 
 ```http
+GET   /api/v1/git/settings                   effective commit-on-save settings
+PATCH /api/v1/git/settings                   {"commitOnSave":true,"messageTemplate":"…"}
+GET   /api/v1/git/status?repo=ACME           backend, identity, branch, dirty set
+POST  /api/v1/git/commit                     {} flushes what is batched, or
+                                             {"repo":"ACME","paths":[…],"message":"…"}
+
 GET  /api/v1/sync/status                    per-repo ahead/behind/dirty
 POST /api/v1/sync/run                       {"repos":["ACME"],"dryRun":false,"push":true}
 GET  /api/v1/sync/conflicts
-POST /api/v1/sync/conflicts/resolve         {"repo":"TEAM","path":"…","resolution":"ours|theirs|merged","content":"…"}
+GET  /api/v1/sync/conflicts/file?repo=TEAM&path=…   base/ours/theirs + the proposed merge
+POST /api/v1/sync/conflicts/resolve         {"repo":"TEAM","path":"…",
+                                             "resolution":"ours|theirs|merged|manual",
+                                             "content":"…","fields":{…},"hunks":{…},
+                                             "hunkText":{…},"continue":true}
 POST /api/v1/sync/abort
-GET  /api/v1/git/status?repo=ACME
 GET  /api/v1/git/log?item=ACME-T-0311&limit=20
-POST /api/v1/git/commit                     {"repo":"ACME","paths":[…],"message":"…"}
 ```
+
+The `/git` routes are served since GIT-US-0020 and the `/sync` routes since GIT-US-0021,
+which also adds `PATCH /api/v1/sync/settings` (`pullStrategy`, `pushOnSync`,
+`maxPushRetries`). `/git/log` still answers `not_implemented`. The conflict resolver of
+GIT-US-0022 serves the last two: `GET /api/v1/sync/conflicts/file` returns the three
+versions of one conflicted path (base, ours and theirs, read from the index stages, with
+the sides swapped back into the user's frame during a rebase) plus the merge the core
+proposes — the per-field decisions, the body hunks and the canonical merged file — and
+`POST /api/v1/sync/conflicts/resolve` applies a resolution, stages it and continues the
+rebase or merge unless `"continue": false`. `resolution` is `ours` or `theirs` (keep one
+whole side), `manual` (write `content` verbatim) or `merged` (the automatic merge plus the
+`fields` and `hunks` overrides the user flipped). A resolution that would still leave a
+conflicted hunk is refused with `validation_failed` before anything is written; a path that
+is no longer conflicted answers `404 not_found`, because the integration moved on while
+the resolver was open. Applying a resolution needs the system-git backend: go-git cannot
+finish a rebase, so it answers `git_unsupported` (docs/06 §5.7).
+
+```json
+GET /api/v1/git/settings
+200
+{ "commitOnSave": false, "commitDebounceMs": 2000,
+  "messageTemplate": "pmngr: update {{.ItemID}} \"{{.Title}}\"",
+  "backend": "auto", "resolvedBackend": "system", "gitVersion": "2.45.2",
+  "signCommits": false, "pending": 0, "persisted": false }
+```
+
+```json
+PATCH /api/v1/git/settings
+{"commitOnSave": true, "messageTemplate": "{{action}} {{id}}: {{title}}"}
+
+200
+{ …, "commitOnSave": true, "persisted": true }
+```
+
+An invalid template is refused with `400 invalid_request` **before** anything is
+applied, so neither the running process nor the configuration file can end up
+with a template that cannot render. A settings change first commits whatever is
+already batched, so a new template never rewrites the message of an edit that
+was already made.
+
+```json
+GET /api/v1/git/status
+200
+{ "repos": [
+    { "repo": "acme-api", "path": "/home/jose/code/acme-api", "git": true,
+      "backend": "system", "identity": "Jose <jose@digio.es>",
+      "status": { "branch": "main", "clean": false, "staged": [],
+                  "modified": ["docs/.pmngr/stories/ACME-US-0042-login-with-sso.md"],
+                  "untracked": [] },
+      "capabilities": { "backend": "system", "version": "2.45.2", "hooks": true,
+                        "signing": true, "credentialHelpers": true,
+                        "pathspecCommit": true } } ],
+  "settings": { "commitOnSave": true, "pending": 1, … } }
+```
+
+A repository that is not a git working tree answers `"git": false` with a
+`reason`, which is a normal state for a folder someone opened without cloning
+it, not an error.
+
+Commit-on-save is **debounced**, so a commit cannot be part of the write
+response that triggered it. The write responses therefore carry no `commit`
+field; the outcome arrives on the event stream as `git.commit`:
+
+```json
+{ "type": "git.commit", "seq": 412, "ts": "2026-09-04T10:31:55Z",
+  "data": { "repo": "acme-api", "sha": "4e5f1c2…",
+            "subject": "pmngr: update ACME-US-0042 \"Login with SSO\"",
+            "empty": false,
+            "paths": ["docs/.pmngr/stories/ACME-US-0042-login-with-sso.md"] } }
+```
+
+A failed commit publishes the same event with `code` and `message` instead of a
+`sha` (`git_hook_failed`, `git_no_identity`, `git_commit_failed`). The write
+itself already reached disk, so nothing is lost.
 
 ```json
 GET /api/v1/git/log?item=ACME-T-0311&limit=3
@@ -1389,13 +1495,52 @@ GET /api/v1/git/log?item=ACME-T-0311&limit=3
 }
 ```
 
-`POST /api/v1/sync/run` is asynchronous: it returns `202 Accepted` with an operation id and
-streams progress over the WebSocket as `sync.progress` events.
+`POST /api/v1/sync/run` streams progress over the WebSocket as `sync.progress` events while
+it works.
 
 ```json
 202 Accepted
 {"operationId":"sync-01J9Z7","repos":["ACME","AWEB","TEAM"],"startedAt":"2026-09-03T11:00:00Z"}
 ```
+
+*As built (GIT-US-0021).* The call answers `200 OK` with the finished report rather than
+`202` with a handle to poll: a sync of a backlog repository is a bounded operation, the web
+client needs the `SyncResult` to render the panel, and cancelling the HTTP request cancels
+the run through its context — which is the cancellation the story asks for. The response
+still carries `operationId` and `startedAt`, and every `sync.progress` event carries the
+same id, so nothing about the event contract changes when a resumable `202` form is added
+for long-running multi-repository runs.
+
+```json
+POST /api/v1/sync/run   {"repos":["ACME"],"dryRun":true}
+200
+{ "operationId":"sync-3", "startedAt":"2026-09-04T11:00:00Z", "dryRun":true,
+  "results":[
+    { "repo":"ACME", "dryRun":true, "strategy":"rebase", "phase":"done",
+      "before":{ "…":"SyncStatus" }, "after":{ "…":"SyncStatus" },
+      "pulled":0, "pushed":0, "retries":0, "durationMs":184,
+      "incoming":[{"sha":"9f2c1ab…","subject":"docs: teammate work"}],
+      "outgoing":[{"sha":"4e5f1c2…","subject":"pmngr: update ACME-US-0042"}] }
+  ] }
+```
+
+A failure is reported in the result, not as a problem document: the run is non-destructive
+at every step, so `phase` (`done` | `conflicts` | `failed`), `code` and `message` say what
+happened and what to do next. The codes are the `git_*` set of doc 06 §12:
+`git_dirty_tree`, `git_no_remote`, `git_no_upstream`, `git_unexpected_branch`,
+`git_operation_in_progress`, `git_auth_required`, `git_network_unavailable`,
+`git_host_key_unverified`, `git_conflict`, `git_push_rejected`, `git_cancelled`.
+`POST /api/v1/sync/abort` undoes a half-finished rebase or merge and answers with the
+repository's fresh status.
+
+`git_auth_required` is the credential case (GIT-US-0023, doc 06 §8.1). The
+companion never prompts for or stores a secret: it delegates to the user's
+credential helper and ssh-agent, so the message names the repository, the remote,
+the host and the command that fixes it, and distinguishes "no helper answered"
+from "the host refused what the helper supplied". No credential ever reaches a
+response, an event or a log line: URL userinfo, `token=`/`password=` parameters
+and `Authorization` headers are redacted out of everything git prints before it
+is reported.
 
 ### 5.6 WebSocket event stream
 
@@ -1452,6 +1597,15 @@ Event types and `data` schemas:
             "origin":"api|watcher|mcp",
             "actor":"jose" } }
 
+// git.commit — commit-on-save produced (or refused) a commit. Commits are
+// debounced, so this is where a write learns what git did with it.
+{ "type":"git.commit",
+  "data": { "repo":"ACME", "sha":"4e5f1c2…",
+            "subject":"pmngr: update ACME-T-0311 \"Wire OIDC discovery\"",
+            "empty":false,
+            "paths":["docs/.pmngr/tasks/ACME-T-0311-wire-oidc-discovery-endpoint.md"],
+            "code":"", "message":"" } }
+
 // sync.progress — long-running sync operation
 { "type":"sync.progress",
   "data": { "operationId":"sync-01J9Z7", "repo":"ACME",
@@ -1465,7 +1619,12 @@ Event types and `data` schemas:
             "paths":[".pmngr/boards/platform-kanban.md"],
             "kind":"content|order|delete-modify",
             "resolvable":"assisted",
-            "ours":"sha256:88fa…101","theirs":"sha256:aa02…44c" } }
+            "operation":"rebase|merge", "status": { /* SyncStatus */ } } }
+
+// conflict.resolved — one conflicted path was written, staged and (maybe) continued
+{ "type":"conflict.resolved",
+  "data": { "repo":"TEAM", "path":".pmngr/boards/platform-kanban.md",
+            "resolution":"merged", "continued":true, "remaining":0 } }
 ```
 
 Client→server frames: `subscribe`, `unsubscribe`, `resume`, `ping`. The server sends a
@@ -1652,41 +1811,96 @@ Implementation notes:
 
 ### 6.4 `internal/gitops`
 
+A `Backend` is bound to one working tree at construction, because that is what
+the caller has — a mounted repository — and it removes a repository argument
+from every call:
+
 ```go
 package gitops
 
+// Open binds a backend to a working tree; Kind is auto | go-git | system.
+func Open(path string, opts Options) (Backend, error)
+
 type Backend interface {
     Name() string                                     // "go-git" | "system"
-    Status(ctx context.Context, repo string) (Status, error)
-    Log(ctx context.Context, repo, path string, limit int) ([]Commit, error)
-    Commit(ctx context.Context, repo string, paths []string, msg string, opt CommitOptions) (string, error)
-    Fetch(ctx context.Context, repo string) error
-    Integrate(ctx context.Context, repo string, strategy Strategy) (IntegrateResult, error)
-    Push(ctx context.Context, repo string) error
-    Conflicts(ctx context.Context, repo string) ([]Conflict, error)
-    ResolvePath(ctx context.Context, repo, path string, res Resolution) error
-    Abort(ctx context.Context, repo string) error
+    Path() string
+    Capabilities() Capabilities
+    Identity(ctx context.Context) (Identity, error)
+    Status(ctx context.Context) (Status, error)
+    Commit(ctx context.Context, req CommitRequest) (CommitResult, error)
+    // Fetch, Integrate, Push, Abort, Continue and Commits are added by
+    // GIT-US-0021; ConflictFile and ResolvePath by GIT-US-0022.
 }
 
-type CommitOptions struct {
-    AuthorName, AuthorEmail string
-    Trailers                map[string]string // e.g. {"Agent": "claude-code"}
-    Sign                    bool              // system backend only
-    AllowEmpty              bool
+type CommitRequest struct {
+    Paths      []string // repo-relative; a path that is gone stages a deletion
+    Message    Message  // Subject + Body (the trailers)
+    Author     Identity // empty -> resolved from the git configuration chain
+    Sign       bool     // system backend only; go-git fails with git_unsupported
+    AllowEmpty bool
+}
+
+type CommitResult struct {
+    SHA     string
+    Empty   bool // nothing had changed; a no-op write is not an error
+    Subject string
+    Author  Identity
+    Paths   []string
+}
+
+type Capabilities struct {
+    Backend, Version                                   string
+    Hooks, Signing, CredentialHelpers, PathspecCommit  bool
 }
 
 type Status struct {
-    Branch          string
-    Clean           bool
-    Ahead, Behind   int
+    Branch                      string
+    Detached, Clean             bool
     Staged, Modified, Untracked []string
-    Remote          string
-    Detached        bool
 }
+
+// SyncStatus is the status indicator: everything a repository row shows.
+type SyncStatus struct {
+    Branch, Remote, RemoteURL, Upstream string      // RemoteURL is credential-free
+    Detached, Clean, Tracked            bool
+    Dirty                               []string
+    Ahead, Behind                       int
+    Conflicted                          []Conflict
+    Operation                           string      // "" | "rebase" | "merge"
+    State                               State       // up_to_date | ahead | behind |
+}                                                   // diverged | dirty | conflicted | …
+
+// The sync half of the Backend interface (GIT-US-0021).
+SyncStatus(ctx) (SyncStatus, error)
+Fetch(ctx, FetchRequest) (FetchResult, error)
+Integrate(ctx, IntegrateRequest) (IntegrateResult, error)   // rebase or merge
+Push(ctx, PushRequest) (PushResult, error)
+Abort(ctx) error                                            // system backend only
+Continue(ctx) (IntegrateResult, error)                      // system backend only
+Commits(ctx, LogRequest) ([]Commit, error)                  // dry-run previews
+
+// The structured conflict surface (GIT-US-0022, doc 06 section 5.7).
+ConflictFile(ctx, path string) (ConflictVersions, error)    // index stages 1/2/3
+ResolvePath(ctx, ResolveRequest) (ResolveResult, error)     // write, stage, continue
+
+// The pipeline over them: preflight, fetch, integrate, push, with the
+// non-fast-forward retry ladder of doc 06 section 4.2.
+func Sync(ctx context.Context, b Backend, opts SyncOptions) (SyncResult, error)
+
+// Committer batches writes so one logical edit is one commit.
+func NewCommitter(opts CommitterOptions) *Committer
+func (c *Committer) Enqueue(change Change)
+func (c *Committer) Flush(ctx context.Context) []Outcome
+func (c *Committer) Close(ctx context.Context) []Outcome
+func (c *Committer) Pending() int
 ```
 
-Two implementations (`goGitBackend`, `systemBackend`) plus `autoBackend` which picks at
-construction. Credentials: the system backend inherits credential helpers, SSH agent and
+Two implementations (`goGitBackend`, `systemBackend`); `auto` picks between them
+at construction and falls back to go-git when no usable `git` is on `PATH`.
+
+Failures carry a machine code that the API and the web provider pass through
+unchanged: `git_not_a_repository`, `git_no_identity`, `git_hook_failed`,
+`git_commit_failed`, `git_unsupported`, `git_template_invalid`. Credentials: the system backend inherits credential helpers, SSH agent and
 `GIT_ASKPASS`; the go-git backend supports SSH agent and token-in-URL only, and reports
 `git_auth_failed` with an actionable message when it cannot authenticate. The
 `git.backend` setting exists precisely because these differ.
@@ -1695,7 +1909,9 @@ Commit message templating uses `text/template` against the context defined in
 `06-git-sync.md` (`.ItemID`, `.Title`, `.Type`, `.Status`, `.PrevStatus`, `.ProjectKey`,
 `.Board`, `.Action`, `.Count`, `.User`, `.Date`). Commits also carry the machine-readable
 trailers specified there (`Item:`, `Type:`, `Status:`, `Tool:`), plus `Agent:` when the
-change originated from the MCP server.
+change originated from the MCP server. Every placeholder also has a short
+lowercase spelling (`{{action}} {{id}}: {{title}}`), bound as a niladic template
+function over the same fields, so both forms render identically.
 
 ### 6.5 `internal/core` public interfaces
 

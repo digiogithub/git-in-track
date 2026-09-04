@@ -637,6 +637,60 @@ export type IndexStats = {
 
 export type SnapshotBlob = { fingerprint: string; json: string };
 
+/**
+ * One front-matter field the conflict merge decided (GIT-US-0022). The shapes
+ * below mirror `internal/core/merge.go`, which is the one implementation both
+ * runtimes call.
+ */
+export type ConflictFieldDecision = {
+  field: string;
+  kind: string;
+  base?: unknown;
+  ours?: unknown;
+  theirs?: unknown;
+  merged?: unknown;
+  choice: string;
+  review: boolean;
+  note?: string;
+};
+
+/** One body region the two sides did not both leave alone. */
+export type ConflictHunk = {
+  index: number;
+  section?: string;
+  base: string;
+  ours: string;
+  theirs: string;
+  merged: string;
+  choice: string;
+  conflicted: boolean;
+  suggestion?: string;
+  note?: string;
+};
+
+/** What the core proposes for one conflicted file. */
+export type ConflictMergeResult = {
+  path: string;
+  structured: boolean;
+  fields?: ConflictFieldDecision[];
+  hunks?: ConflictHunk[];
+  content: string;
+  conflicted: number;
+  review: number;
+  clean: boolean;
+  warnings?: string[];
+};
+
+/** What the user decided; every field is optional. */
+export type ConflictResolutionParams = {
+  take?: string;
+  content?: string;
+  body?: string;
+  fields?: Record<string, string>;
+  hunks?: Record<string, string>;
+  hunkText?: Record<string, string>;
+};
+
 /** Method map: request method name → { params, result }. */
 export type CoreApi = {
   ping: { params: undefined; result: { pong: true; wasm: boolean } };
@@ -822,6 +876,23 @@ export type CoreApi = {
   };
 
   search: { params: { q: string; limit?: number; project?: string }; result: SearchHit[] };
+
+  /**
+   * Merge the three versions of one conflicted file, applying the user's
+   * resolution when there is one. It needs no vault: it is a pure function of
+   * the three blobs, which is what lets browser-only mode resolve a conflict
+   * with the same rules as the companion (docs/06 §5).
+   */
+  'conflict.merge': {
+    params: {
+      path: string;
+      base?: string;
+      ours?: string;
+      theirs?: string;
+      resolution?: ConflictResolutionParams;
+    };
+    result: ConflictMergeResult;
+  };
 };
 
 export type CoreMethodName = keyof CoreApi;

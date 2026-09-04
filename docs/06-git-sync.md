@@ -84,22 +84,47 @@ Off by default in Phase 1–3; the setting becomes meaningful in Phase 4.
 Settings live in the `git:` section of the companion config (doc 07 §3.2); the
 browser stores the same keys per workspace in IndexedDB.
 
+**Implemented in GIT-US-0020** for companion mode; browser mode is §6.5.
+
 ```yaml
 git:
   commitOnSave: true                # false = leave changes in the working tree
-  commitDebounceMs: 2000            # coalesce rapid saves of the same file (extends doc 07)
-  commitMessageTemplate: 'pmngr: update {{.ItemID}} "{{.Title}}"'
+  commitDebounce: 2s                # coalesce rapid saves of the same item
+  messageTemplate: 'pmngr: update {{.ItemID}} "{{.Title}}"'
   authorName: ""                    # empty -> repo/global git config
   authorEmail: ""
   signCommits: false                # gpg/ssh signing, system backend only
   pushAfterCommit: false            # push immediately, or wait for an explicit sync
 ```
 
+Two spellings that this document used to give differently, settled by the
+implementation:
+
+- the key is `commitDebounce` and its value is a Go duration (`2s`), matching
+  `index.debounce` in the same file; `commitDebounceMs` is the same setting in
+  milliseconds and is what the REST and provider surfaces use, because JSON has
+  no duration type;
+- the key is `messageTemplate`, as doc 07 §3.2 already spelled it.
+
 The template is Go `text/template`, evaluated against a struct with
 `.ItemID`, `.Title`, `.Type`, `.Status`, `.PrevStatus`, `.ProjectKey`, `.Board`,
 `.Action` (create|update|delete|move|comment), `.Count` (for batches), `.User`,
-`.Date`. Rendering strips newlines; the subject is truncated to 72 characters with
-the full title kept in the body. The shipped default is the `pmngr:` form above;
+`.Date`. Every one of them also has a short lowercase spelling bound as a
+template function, so `{{action}} {{id}}: {{title}}` and
+`{{.Action}} {{.ItemID}}: {{.Title}}` render identically: `id`, `title`, `type`,
+`status`, `prevStatus`, `project`, `board`, `action`, `count`, `user`, `date`.
+A template naming anything else is refused when it is configured, not when a
+commit is attempted. Rendering strips newlines; the subject is truncated to 72
+characters with the full title kept in the body.
+
+**Batching.** The coalescing key is the repository plus the item the write is
+about. A burst of saves of one item is one commit; two items edited in the same
+window are two commits; and one call that writes many files — `updateMany`, a
+card move, a sprint edit — is one commit per repository whatever the file count.
+A pending batch is never postponed by more than 15 seconds, so steady typing
+still produces commits. A batch that covers several items has no single id to
+interpolate, so the subject falls back to the built-in `pmngr: <action> N items`
+and the body carries `Items: N`. The shipped default is the `pmngr:` form above;
 doc 07 §3.2 shows a conventional-commits variant
 (`docs({{.ProjectKey}}): update {{.ItemID}} — {{.Title}}`) that teams whose docs
 folder sits next to code often prefer. Rendered examples per action:
@@ -124,6 +149,18 @@ Type: story
 Status: todo -> in_progress
 Tool: gintrack 0.4.1 (companion)
 ```
+
+**Cross-repository writes.** Moving a card writes the item in its project clone
+and the board in the team repository. Those are two repositories, so they are two
+commits, one in each, and never one commit spanning both — which is also why they
+are not atomic (§9.4).
+
+**A failed commit never loses content.** The commit runs after the write has
+already reached disk, so it cannot fail a save. A refused commit — a hook, a
+missing identity, a broken template — leaves the working tree exactly as the
+write left it and is reported as a `git.commit` event and by
+`GET /api/v1/git/status`, with the hook's own output when there is one. Because
+the commit is debounced it is not part of the write response.
 
 Author selection: empty `authorName`/`authorEmail` uses the repo's
 `user.name`/`user.email`
@@ -176,6 +213,35 @@ PREFLIGHT → FETCH → INTEGRATE (rebase|merge) → [CONFLICTS] → REINDEX →
 
 `SyncResult` reports per-repo: commits pulled, commits pushed, files changed,
 items changed (ids), conflicts encountered/resolved, duration, and any warnings.
+
+**As built (GIT-US-0021).** The pipeline is `gitops.Sync`, driven by
+`POST /api/v1/sync/run` and by `gintrack sync`. What ships:
+
+- PREFLIGHT commits what commit-on-save batched (`Committer.Flush`) and then
+  refuses a run whose tree still has uncommitted changes to *tracked* files,
+  with a message naming the two ways out ("Commit changes" in the panel, or
+  `gintrack sync --commit-all`). Untracked files never block a run. It also
+  refuses a detached HEAD, a repository with no remote, a branch with no
+  upstream and a half-finished rebase or merge, each with its own code. This is
+  `dirtyPolicy: commit` made explicit and `abort` as the default fallback; the
+  `stash` and `ask` policies are not implemented, and the key is not read yet.
+- FETCH, INTEGRATE and PUSH are as described, with the retry ladder of §4.2.
+- REINDEX needs no step of its own in companion mode: the watcher sees the
+  files the integration wrote. In browser mode the provider re-reads the vault
+  after a run that pulled anything.
+- SNAPSHOT runs after a run that pulled work, in both the CLI (`gintrack sync`,
+  rule R-SNAP-6(a) of doc 04 §6) and the companion (`snapshot.refresh`).
+- CONFLICTS is detection and reporting only: the paths are named, the rebase or
+  merge is left in progress and resumable, and `POST /api/v1/sync/abort` or
+  `gintrack sync --abort` restores the tree. The structured resolver is
+  GIT-US-0022.
+- Branch policy (§4.3) is not implemented: every repository syncs the branch it
+  has checked out against its own upstream. `user-branch` mode, `autoPr` and the
+  host URL templates arrive with the branch-policy work.
+
+`SyncResult` is filled on failure too — `phase`, `code` and `message` — so the
+CLI and the panel report what happened without inspecting an exception. Every
+failure leaves a recoverable tree, which is the milestone-5 exit criterion.
 
 ### 4.2 Retry on non-fast-forward
 
@@ -340,9 +406,100 @@ to a plain "keep ours / keep theirs / open externally" choice. `project.yaml`,
 `team.yaml` and board headers get the same front-matter-aware treatment as items,
 since they are YAML documents with a known schema.
 
+### 5.7 As built (GIT-US-0022)
+
+The resolver is three layers, and the merge itself is in **one** of them.
+
+**The merge — `internal/core/merge.go` and `merge_text.go`.** `MergeFiles(path,
+{base, ours, theirs}, resolution)` returns the merged file plus everything the UI
+needs to explain it: one `FieldDecision` per front-matter field a decision was
+made for (with the rule that was applied and whether it needs review) and one
+`MergeHunk` per body region the two sides did not both leave alone (with the
+Markdown heading it falls under, the three versions, the choice, and whether it is
+still conflicted). The rules are §5.2, §5.3 and §5.4 exactly: immutable fields
+keep the base value and flag the difference, set-like lists union additions and
+honor deletions, ordered lists and board `order:` mappings merge per §5.4,
+scalars fall back to the newest `updated` and are marked for review, a
+checkbox-only difference resolves to checked, and `## Notes` and
+`## Acceptance Criteria` suggest "take both". The result is put back through the
+parser and the emitter of the type the file declares (`SerializeItem`,
+`SerializeBoard`, `SerializeSprint`, `SerializeComment`), so a resolved file is
+byte-identical in shape to one the editor saves — and never contains a conflict
+marker. The package is WASM-safe, so browser mode runs the same code through
+`conflict.merge` on the core bridge.
+
+**The git plumbing — `internal/gitops`.** `Backend` gained
+`ConflictFile(ctx, path)`, which reads stages 1, 2 and 3 of a conflicted path out
+of the index (base, ours, theirs) plus the working copy and a binary flag, and
+`ResolvePath(ctx, req)`, which writes one resolution, stages it and — once no
+conflicted path is left and the caller asked for it — continues the rebase or
+merge. **Sides are normalised to the user's frame of reference**: during a rebase
+git replays local commits onto the upstream, so its stage 2 is the *remote* work;
+`ConflictFile` swaps them back and sets `rebased: true`, so "keep mine" always
+means the commit this user made. Reading works on both backends; applying a
+resolution is system-git only, for the same reason `Abort` and `Continue` are
+(go-git has no rebase), and go-git says so with `git_unsupported` instead of
+half-resolving. Abort remains available at every step.
+
+**The API — `internal/server/conflicts.go`.**
+`GET /api/v1/sync/conflicts/file?repo=&path=` serves the three versions and the
+proposed merge; `POST /api/v1/sync/conflicts/resolve` takes
+`ours | theirs | merged | manual` plus optional per-field and per-hunk overrides,
+merges in the core, writes, stages and continues, and publishes
+`conflict.resolved`. A resolution that would still leave a conflicted hunk is
+refused before anything is written.
+
+**Browser mode.** `isomorphic-git` rolls a conflicting merge back rather than
+leaving markers on disk, so browser mode plugs a **merge driver** into
+`git.merge`: it sees the base, ours and theirs blobs of every conflicting file,
+hands them to the core, and records what it could not resolve in memory for the
+resolver. The working tree is untouched while a conflict is open — which makes
+"abort restores the pre-sync state" trivially true — and accepting a resolution
+replays the merge with that text supplied to the driver, so the merge completes
+and the merge commit is written. A reload discards a pending conflict and loses
+nothing: nothing had been written.
+
 ---
 
 ## 6. Browser-only mode: `isomorphic-git`
+
+### 6.0 What ships when
+
+Browser-mode git lands with **GIT-US-0021**, which owns the isomorphic-git
+integration and the CORS-proxy handling. GIT-US-0020 ships the parts of
+commit-on-save that are runtime-independent: the settings are stored per
+workspace, the message format is implemented a second time in
+`web/src/git/message.ts` against the same cases as the Go renderer, and the
+settings UI reports that this runtime cannot commit yet instead of offering a
+switch that would do nothing. Nothing about the format has to be revisited when
+the commits themselves start happening.
+
+**As built (GIT-US-0021).** What ships in the browser is the *sync* half:
+`web/src/git/fsa-fs.ts` is the `fs` adapter over the File System Access handles
+(§6.1) and `web/src/git/browser-sync.ts` reads the status and runs fetch, merge
+and push over it. The debounced commit-on-save of §3.3 still belongs to the
+companion in this build — the settings card says so — because it needs the
+write path to enqueue through the git worker rather than the vault. The
+integration strategy is forced to `merge` (§6.2) and reported as such, and a
+workspace with no configured CORS proxy reports `git_cors_proxy_required`
+with the reason instead of attempting a request that a git host will refuse
+(§6.3). SSH remotes are refused with their own message. The dedicated git Web
+Worker of §6.4 is not split out yet: the operations run on the main thread with
+the same abort semantics, which is enough for a backlog-sized repository and is
+the next thing to move when it is not.
+
+**As built (GIT-US-0023).** The credential half is `web/src/git/credentials.ts`
+plus the prompt in `web/src/features/sync/CredentialPrompt.tsx`. A token is
+asked for only when `onAuth` fires — that is, when a host actually refuses an
+anonymous request — and what the user types goes back to that call and into a
+module-level `Map` keyed by the remote's origin. That map is the only place it
+exists: there is no code path from it to `localStorage`, `sessionStorage`,
+IndexedDB, a cookie, a URL or a file, and `credentials.test.ts` spies on those
+APIs and fails if one is touched. The dialog names the configured CORS proxy
+before the token is typed, because that proxy sees the `Authorization` header
+(§6.3). A refused token is dropped through `onAuthFailure` instead of being
+replayed, and "Forget tokens" in the sync panel, unmounting a repository and
+closing the tab all clear the map.
 
 ### 6.1 What works
 
@@ -361,7 +518,7 @@ no-ops). Supported operations: `clone`, `fetch`, `pull` (as fetch + merge),
 | **No SSH** | `git@host:org/repo.git` remotes cannot be used | Detect SSH remotes at mount time and either ask for an HTTPS remote URL (stored as a per-repo "sync URL" override, since the on-disk `origin` stays SSH) or require the companion |
 | **CORS** | Git HTTP endpoints of GitHub/GitLab/Bitbucket do not send CORS headers, so the browser cannot talk to them directly | A CORS proxy is required (§6.3) |
 | **No rebase** | `isomorphic-git` has no rebase implementation | Browser mode uses **merge** as the integration strategy, always. The setting is forced and the UI explains why |
-| Merge driver is limited | `isomorphic-git`'s merge handles fast-forward and non-conflicting three-way merges; conflicting content merges are limited | We run our own three-way merge (§5.2/§5.3) on the blobs we fetch (`base`, `ours`, `theirs` via `readBlob` at the merge bases), so conflict resolution quality does not depend on the library |
+| Merge driver is limited | `isomorphic-git`'s merge handles fast-forward and non-conflicting three-way merges; conflicting content merges are limited | We plug our own merge driver into `git.merge` (`mergeDriver`), which hands us the `base`, `ours` and `theirs` blobs of every conflicting file and takes our merged text back, so conflict resolution quality is the core's (§5.2/§5.3/§5.7) and not the library's |
 | Performance | Pack negotiation and object inflation in JS; large repos are slow | Shallow clone (`depth: 50`) and `singleBranch: true` by default; index/status via `statusMatrix` scoped to the docs folder, not the whole repo; long operations run in the git worker with progress events |
 | Shallow history | `git log` beyond the shallow boundary is unavailable; some merges need a deeper base | On "merge base not found", deepen automatically (`depth *= 4`, up to a cap) and retry once, then tell the user to use the companion |
 | No signing, no hooks, no submodules, no LFS | Signed commits and LFS assets are unsupported in browser mode | Documented; the companion covers all of them (LFS via system git) |
@@ -414,6 +571,31 @@ operation (`git` object writes are content-addressed, so partial state is inert)
 `git.backend` selects between them: `auto` (the default — use system git when a
 compatible binary is on `PATH`, else go-git), `go-git`, or `system`.
 
+`internal/gitops` binds one `Backend` to one working tree, so the caller passes
+no repository path per call. It exposes `Name`, `Path`, `Capabilities`,
+`Identity`, `Status` and `Commit` (GIT-US-0020), the sync half added by
+GIT-US-0021 (`SyncStatus`, `Fetch`, `Integrate`, `Push`, `Abort`, `Continue`
+and `Commits`) and the structured conflict surface added by GIT-US-0022
+(`ConflictFile` and `ResolvePath`, §5.7).
+
+A third go-git gap matters to sync, on top of the two below: **go-git has no
+rebase, and its merge is fast-forward only.** The go-git backend therefore
+fast-forwards when it can and fails with `git_unsupported` and an actionable
+message when it cannot, rather than half-applying an integration; `Abort` and
+`Continue` are likewise system-only. With the default `auto` backend a machine
+that has git never lands there.
+
+Two go-git gaps that matter to commit-on-save, both invisible with the default
+`auto` backend on a machine that has git:
+
+- **no hooks and no signing.** `signCommits: true` with the go-git backend fails
+  with `git_unsupported` instead of writing an unsigned commit that pretends to
+  be signed;
+- **no pathspec commit.** go-git commits the whole index, so a change the user
+  staged by hand before the debounce window elapsed is swept into our commit.
+  The system backend uses `git commit --only -- <paths>` and does not have this
+  problem.
+
 `auto` matters because system git brings things go-git does not: credential
 helpers, `~/.gitconfig` includes, `insteadOf` rewrites, LFS, sparse checkout,
 commit signing with the user's existing gpg/ssh setup, hooks, and battle-tested
@@ -436,6 +618,15 @@ go-git uses `golang.org/x/crypto/ssh`:
   unknown host fails with the fingerprint shown and a CLI command to accept it;
   we never auto-accept.
 
+**As built (GIT-US-0023).** The system backend appends `-o BatchMode=yes` to
+whatever `GIT_SSH_COMMAND` the user already configured (rather than replacing
+it, so a custom ssh binary or `-F` config keeps working), which turns a
+passphrase question or an unknown host key into an immediate, classified
+failure instead of a hang. The go-git backend offers `SSH_AUTH_SOCK` and
+nothing else: if the agent has no key the host accepts, we fail with
+`git_auth_required` naming the host and the `ssh-add` that fixes it. We never
+read a private key file ourselves and never ask for a passphrase.
+
 ### 7.3 HTTPS and credential helpers
 
 With the `system` backend, credentials come from the configured `credential.helper`
@@ -444,7 +635,15 @@ read the same helpers ourselves by invoking `git credential fill` when a git
 binary exists; otherwise we fall back to our own keychain storage (§8.1). Tokens
 are always sent as HTTP basic (`x-access-token:<token>` for GitHub-style hosts,
 `oauth2:<token>` for GitLab); the exact username shape is per-host and lives in
-`internal/gitops/hosts.go`.
+`internal/gitops/credentials.go`.
+
+**As built (GIT-US-0023).** The system backend needs nothing from us: `git`
+itself runs the helper. The go-git backend calls `git credential fill` over
+stdin and stdout when a git binary exists — the helper is told the protocol,
+host and path and nothing else — and the answer is used for one fetch or push
+and then dropped. There is no `hosts.go`: the two username shapes above live
+next to the rest of the credential code. We never fall back to a keychain of our
+own (§8.1).
 
 ---
 
@@ -454,18 +653,35 @@ are always sent as HTTP basic (`x-access-token:<token>` for GitHub-style hosts,
 
 Order of preference:
 
-1. `git credential fill` (the user's existing helper) — nothing new is stored.
-2. OS keychain via `go-keyring` (macOS Keychain, Windows Credential Manager,
-   libsecret/kwallet on Linux) under service `gintrack`, account
-   `<scheme>://<host>/<owner>`.
-3. Environment variables (`GINTRACK_TOKEN`, `GITHUB_TOKEN`, …) for CI and
-   headless use.
-4. Prompt on the terminal, with an explicit "save to keychain?" question.
+1. The user's own credential helper — `git` runs it itself with the `system`
+   backend, and `git credential fill` does it for the `go-git` backend. Nothing
+   new is stored.
+2. The SSH agent (`SSH_AUTH_SOCK`) for SSH remotes, §7.2.
+3. Environment variables (`GINTRACK_TOKEN`, and `GITHUB_TOKEN`/`GITLAB_TOKEN`
+   for those hosts) for CI and headless use, HTTPS only. They are read per call
+   and never copied anywhere.
 
-On Linux without a secret service, we refuse to write a plaintext credentials file
-by default; `--allow-plaintext-credentials` writes `~/.config/gintrack/credentials`
-with mode 0600 and a loud warning. Tokens are never logged, never included in
-error messages, and are redacted from remote URLs before display.
+**As built (GIT-US-0023), this list is the whole of it.** There is no keychain
+of our own, no terminal prompt and no plaintext credentials file: the keychain,
+prompt and `--allow-plaintext-credentials` steps this document used to give are
+deliberately not implemented. Each of them would make gintrack a place a
+credential can leak from, and the user's helper already solves the problem.
+
+Every git invocation is pinned non-interactive — `GIT_TERMINAL_PROMPT=0`, an
+empty `GIT_ASKPASS` and `SSH_ASKPASS` (which also neutralizes a GUI askpass the
+user configured), `GCM_INTERACTIVE=never` and ssh in batch mode — so a missing
+credential fails in milliseconds with `git_auth_required` instead of hanging a
+background process on a terminal nobody is watching. The message names the
+repository, the remote, the host and the next command to run, and it
+distinguishes "no helper answered" from "the helper answered and the host said
+no", because those need different reactions.
+
+Tokens are never logged, never included in error messages, and are redacted from
+remote URLs before display. Redaction is applied to everything git prints, not
+only to URLs we format ourselves: userinfo, `token=`/`password=` parameters and
+`Authorization` headers are masked in the `Detail` of every error, which is what
+the CLI shows, what the API returns in its problem document, what a
+`sync.progress` event carries and what the companion logs.
 
 ### 8.2 Browser
 
@@ -474,7 +690,11 @@ Two modes, chosen by the user at first git operation:
 - **Session only** (default): the token lives in memory for the tab's lifetime,
   in a closure inside the git worker, never in `localStorage`/`sessionStorage`.
   Reloading asks again.
-- **Encrypted at rest**: the token is encrypted with AES-GCM using a key derived
+  *(As built in GIT-US-0023: this is the mode that ships, and the token lives in
+  the closure of `web/src/git/credentials.ts` rather than in a worker, because
+  the worker of §6.4 is not split out yet. It is keyed by the remote's origin,
+  so a token entered for one host is never offered to another.)*
+- **Encrypted at rest** *(not implemented)*: the token would be encrypted with AES-GCM using a key derived
   from a user passphrase via PBKDF2-SHA-256 (≥ 600 000 iterations) or Argon2id
   (WASM) with a random 16-byte salt, and stored in IndexedDB as
   `{ salt, iv, ciphertext, kdf, iterations, createdAt }`. The passphrase is asked
@@ -488,8 +708,10 @@ Two modes, chosen by the user at first git operation:
 - Tokens are scoped as narrowly as the host allows (repo-scoped fine-grained PAT
   on GitHub, project access token on GitLab) — the docs tell the user exactly
   which scopes are needed (`contents: read/write` only).
-- "Forget credentials" clears both the in-memory copy and the IndexedDB record,
-  and is also triggered by unmounting the repo.
+- "Forget credentials" clears the in-memory copy (and, once the encrypted mode
+  exists, its IndexedDB record). It is also triggered by unmounting the repo, by
+  a reload and by closing the tab. In the shipped build it is the "Forget
+  tokens" button of the sync panel, which appears only while a token is held.
 
 ---
 
@@ -761,7 +983,7 @@ sequenceDiagram
 | 3 | Unknown SSH host key | go-git host key callback | Fingerprint shown, sync aborted | User accepts explicitly (CLI command shown); never auto-accepted |
 | 4 | Push rejected, non-fast-forward | Remote rejection | Automatic fetch+integrate+retry ×3 | Manual retry; local commits are intact |
 | 5 | Push rejected, protected branch | Remote rejection with a policy message | Suggest switching this repo to `user-branch` mode | Change branch policy; existing commits are cherry-picked to the user branch |
-| 6 | Rebase conflict | Git stops with conflicted paths | Conflict UI (§5), sync paused in `CONFLICTS` | Resolve and continue, or abort (tree restored, stash reapplied) |
+| 6 | Rebase conflict | Git stops with conflicted paths | Conflict UI (§5, §5.7), sync paused in `CONFLICTS` | Resolve and continue, or abort (tree restored, stash reapplied) |
 | 7 | Conflict in a file we cannot merge (binary/broken YAML) | Structured merge fails | "Keep ours / keep theirs / open externally" | Manual choice; the raw conflicted file is available |
 | 8 | Interrupted rebase (crash, power loss) | `.git/rebase-merge` present at startup | Repo enters "rebase in progress" state, editing disabled | "Continue" or "Abort" from the sync panel; both are plain git operations |
 | 9 | Dirty tree at sync time | `status` before fetch | Per `git.dirtyPolicy`: commit, stash, ask, or abort | Auto-stash is restored after integration; a failed restore leaves the stash listed with its ref |
@@ -798,26 +1020,37 @@ git:
   pullStrategy: rebase          # rebase | merge (forced to merge in browser-only mode)
   pushOnSync: true
   commitOnSave: false
-  commitMessageTemplate: 'pmngr: update {{.ItemID}} "{{.Title}}"'
+  messageTemplate: 'pmngr: update {{.ItemID}} "{{.Title}}"'
   authorName: ""                # empty -> repo/global git config
   authorEmail: ""
   signCommits: false            # system backend only
+  commitDebounce: 2s            # coalesce rapid saves of the same item
 
   # --- new in this document ---
-  commitDebounceMs: 2000        # (new) coalesce rapid saves of the same file
   pushAfterCommit: false        # (new) push right after a commit-on-save
+  # pullStrategy, pushOnSync and maxPushRetries above are read as built
+  # (GIT-US-0021); the keys below are still declarative unless marked.
   branchMode: default           # (new) default | user-branch
   userBranchTemplate: 'pmngr/{{.User}}'   # (new)
   autoPr: false                 # (new) user-branch mode only
-  dirtyPolicy: commit           # (new) commit | stash | ask | abort
+  dirtyPolicy: commit           # (new) commit | stash | ask | abort — not read yet:
+                                # the effective behaviour is "commit what
+                                # commit-on-save batched, then abort with an
+                                # actionable message" (§4.1)
   maxPushRetries: 3             # (new)
   autoSyncIntervalMinutes: 0    # (new) 0 = manual sync only
   renameOnTitleChange: false    # (new) see §3.1
-  corsProxy: ""                 # (new) required for browser-mode git over HTTPS
+  corsProxy: ""                 # (new) required for browser-mode git over HTTPS.
+                                # The browser stores it per workspace rather
+                                # than in this file, which the companion owns
   cloneDepth: 50                # (new) browser-mode shallow clone depth
 
-credentials:                    # (new section)
-  store: keychain               # keychain | helper | env | prompt | plaintext(unsafe)
+credentials:                    # (new section) — declarative only, not read.
+  store: helper                 # As built (GIT-US-0023) the resolution order is
+                                # fixed: the user's credential helper, then the
+                                # ssh-agent, then a token in the environment.
+                                # `keychain`, `prompt` and `plaintext` are not
+                                # implemented, so there is nothing to configure.
 
 snapshot:                       # (new section, see §10)
   enabled: true
@@ -847,7 +1080,7 @@ on the team repo.
 | 1 | Atomic writes, canonical serialisation, `rev` computation and checks. No git yet |
 | 2 | fsnotify watcher, debounce, WS change events, external-change detection including `.git/HEAD` |
 | 3 | Team-index snapshot generation and its deterministic merge rule; cross-repo operation journal |
-| 4 | Full sync pipeline (fetch/rebase/merge/push, retries, branch policy), commit-on-save, front-matter-aware merge, conflict UI, ID collision repair, isomorphic-git browser mode + CORS proxy guidance, credential storage in both runtimes |
+| 4 | Commit-on-save and the two native backends (GIT-US-0020, done); the sync pipeline — fetch, rebase or merge, push, retries, dry run, status indicator — plus isomorphic-git browser sync and the CORS-proxy handling (GIT-US-0021, done; branch policy §4.3 deferred); front-matter-aware merge and the conflict UI (GIT-US-0022, done — §5.7; ID collision repair §5.5 is still to come); credential handling in both runtimes (GIT-US-0023, done — delegation to the user's helper and ssh-agent natively, a per-session in-memory token in the browser, and redaction everywhere) |
 | 5 | MCP writes go through exactly the same write path and `rev` checks; agent-authored commits carry a `Tool:` trailer identifying the agent |
 | 6 | Auto-sync interval, WebAuthn-protected browser credentials, sync metrics in the dashboard, force-push recovery flow polish |
 

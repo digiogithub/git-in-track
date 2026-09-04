@@ -103,6 +103,344 @@ export type {
 
 export type ProviderKind = 'browser' | 'companion';
 
+/**
+ * Commit-on-save settings (docs/06-git-sync.md §3.3, story GIT-US-0020).
+ *
+ * The same shape in both modes: the companion reads and writes the `git:`
+ * section of its configuration file, the browser keeps it per workspace. What
+ * differs is `supported` — browser-only mode cannot commit until isomorphic-git
+ * arrives with GIT-US-0021 — and the UI branches on that, never on the mode.
+ */
+export type GitSettings = {
+  /** Off by default. */
+  commitOnSave: boolean;
+  /** How long rapid saves of one item are coalesced for. */
+  commitDebounceMs: number;
+  /**
+   * Go `text/template` source. Both the documented field form
+   * (`{{.ItemID}}`) and the short form (`{{action}} {{id}}: {{title}}`) work.
+   */
+  messageTemplate: string;
+  /** What the user configured: `auto`, `go-git` or `system`. */
+  backend: 'auto' | 'go-git' | 'system' | 'isomorphic-git';
+  /** What `auto` actually resolved to. */
+  resolvedBackend: string;
+  /** System git version, when the system backend was resolved. */
+  gitVersion?: string;
+  authorName?: string;
+  authorEmail?: string;
+  /** Signed commits; the system backend only. */
+  signCommits: boolean;
+  /** Batched edits waiting to be committed. */
+  pending: number;
+  /** Whether the last change reached durable storage. */
+  persisted?: boolean;
+  /**
+   * False when this runtime cannot commit at all. `reason` says why, so the UI
+   * explains instead of offering a switch that does nothing.
+   */
+  supported: boolean;
+  reason?: string;
+};
+
+/** The fields a settings change may carry; an absent one is left alone. */
+export type GitSettingsPatch = {
+  commitOnSave?: boolean;
+  commitDebounceMs?: number;
+  messageTemplate?: string;
+  authorName?: string;
+  authorEmail?: string;
+  signCommits?: boolean;
+};
+
+/** One repository's git state (`GET /api/v1/git/status`). */
+export type GitRepoStatus = {
+  repo: string;
+  path: string;
+  /** False when the folder is not a git working tree; `reason` says so. */
+  git: boolean;
+  reason?: string;
+  backend?: string;
+  /** `Name <email>` the commits are attributed to. */
+  identity?: string;
+  /** Set when no identity resolves, which blocks committing entirely. */
+  identityError?: string;
+  status?: {
+    branch: string;
+    detached: boolean;
+    clean: boolean;
+    staged: string[];
+    modified: string[];
+    untracked: string[];
+  };
+  capabilities: {
+    backend: string;
+    version?: string;
+    hooks: boolean;
+    signing: boolean;
+    credentialHelpers: boolean;
+    pathspecCommit: boolean;
+  };
+};
+
+/** One commit made by commit-on-save or by an explicit commit. */
+export type GitCommit = {
+  repo: string;
+  sha?: string;
+  subject?: string;
+  /** True when nothing had changed, so no commit was made. */
+  empty: boolean;
+  paths?: string[];
+  /** Machine code of a failure, for example `git_hook_failed`. */
+  code?: string;
+  message?: string;
+};
+
+/**
+ * The headline state of one repository, in the precedence the companion
+ * resolves it: a blocked repository reads as blocked before it reads as behind
+ * (docs/06-git-sync.md §4, story GIT-US-0021).
+ */
+export type SyncState =
+  | 'conflicted'
+  | 'in_progress'
+  | 'detached'
+  | 'no_remote'
+  | 'no_upstream'
+  | 'diverged'
+  | 'behind'
+  | 'ahead'
+  | 'dirty'
+  | 'up_to_date';
+
+/** One path an integration could not merge on its own. */
+export type SyncConflict = {
+  path: string;
+  /** `content`, `delete-modify`, `add-add` or `unknown`. */
+  kind: string;
+};
+
+/** One commit in a preview or a sync report. */
+export type SyncCommit = {
+  sha: string;
+  subject: string;
+  author?: string;
+  date?: string;
+};
+
+/** One repository's sync state, the row the sync panel renders. */
+export type SyncStatus = {
+  branch: string;
+  detached: boolean;
+  clean: boolean;
+  /** Uncommitted paths: staged, modified and untracked. */
+  dirty?: string[];
+  /** True when any dirty path is tracked, which is what blocks an integration. */
+  trackedChanges: boolean;
+  remote?: string;
+  /** The remote URL with any credential removed; never a token. */
+  remoteUrl?: string;
+  /** The remote-tracking branch, for example `origin/main`. */
+  upstream?: string;
+  ahead: number;
+  behind: number;
+  conflicted?: SyncConflict[];
+  /** `rebase` or `merge` when one is half-finished, else absent. */
+  operation?: string;
+  state: SyncState;
+};
+
+/** One repository in a sync status listing. */
+export type SyncRepoStatus = {
+  repo: string;
+  path: string;
+  /** False when the folder is not a git working tree; `reason` says so. */
+  git: boolean;
+  reason?: string;
+  backend?: string;
+  status?: SyncStatus;
+  /** Edits commit-on-save has batched; a sync commits them before it fetches. */
+  pending: number;
+};
+
+/** How a sync runs. Every field is optional; the defaults come from settings. */
+export type SyncOptions = {
+  /** Preview only: it fetches, which is read-only, and changes nothing else. */
+  dryRun?: boolean;
+  /** Overrides `pushOnSync` for this run. */
+  push?: boolean;
+  /** Overrides `pullStrategy`; browser-only mode is always `merge`. */
+  strategy?: 'rebase' | 'merge';
+};
+
+/** The phase a run ended in. */
+export type SyncPhase = 'preflight' | 'fetch' | 'integrate' | 'push' | 'done' | 'conflicts' | 'failed';
+
+/**
+ * One repository's sync report. It is filled on failure too, so the UI can say
+ * what happened without inspecting an exception: every failure of the pipeline
+ * leaves a recoverable working tree, and `message` says what to do next.
+ */
+export type SyncResult = {
+  repo: string;
+  dryRun: boolean;
+  strategy: 'rebase' | 'merge';
+  phase: SyncPhase;
+  before: SyncStatus;
+  after: SyncStatus;
+  pulled: number;
+  pushed: number;
+  incoming?: SyncCommit[];
+  outgoing?: SyncCommit[];
+  conflicts?: SyncConflict[];
+  retries: number;
+  warnings?: string[];
+  durationMs: number;
+  /** Machine code of a failure, for example `git_push_rejected`. */
+  code?: string;
+  message?: string;
+};
+
+/**
+ * The sync half of the git settings. `supported` is false when this runtime
+ * cannot sync at all — browser-only mode without a CORS proxy — and `reason`
+ * says why, so the UI explains instead of offering a button that fails
+ * (docs/06 §6.3).
+ */
+export type SyncSettings = {
+  pullStrategy: 'rebase' | 'merge';
+  pushOnSync: boolean;
+  maxPushRetries: number;
+  supported: boolean;
+  reason?: string;
+  /** The configured CORS proxy; browser-only mode, never a credential. */
+  corsProxy?: string;
+};
+
+/**
+ * The conflict resolver (docs/06-git-sync.md §5, story GIT-US-0022).
+ *
+ * A conflicted file is never handed over as raw conflict markers: the front
+ * matter is merged field by field on parsed values and the body hunk by hunk,
+ * and every decision the merge made is reported so the user can flip it.
+ */
+export type ConflictFieldDecision = {
+  field: string;
+  /** `immutable`, `set`, `ordered`, `order-map`, `scalar`, `timestamp` or `unknown`. */
+  kind: string;
+  base?: unknown;
+  ours?: unknown;
+  theirs?: unknown;
+  merged?: unknown;
+  /** The side the merged value came from: `base`, `ours`, `theirs` or `merged`. */
+  choice: string;
+  /** True when both sides changed the field, so the decision deserves a look. */
+  review: boolean;
+  note?: string;
+};
+
+/** One region of the body the two sides did not both leave alone. */
+export type ConflictHunk = {
+  index: number;
+  /** The Markdown heading the hunk falls under. */
+  section?: string;
+  base: string;
+  ours: string;
+  theirs: string;
+  merged: string;
+  /** `ours`, `theirs`, `both`, `base`, `merged` or `edited`. */
+  choice: string;
+  /** True when no rule could pick, so the user has to. */
+  conflicted: boolean;
+  suggestion?: string;
+  note?: string;
+};
+
+/** What the core proposes for one conflicted file. */
+export type ConflictMerge = {
+  path: string;
+  /** True when the file has front matter, so the field-level merge applied. */
+  structured: boolean;
+  fields?: ConflictFieldDecision[];
+  hunks?: ConflictHunk[];
+  /** The merged file, canonically serialised. */
+  content: string;
+  conflicted: number;
+  review: number;
+  clean: boolean;
+  warnings?: string[];
+};
+
+/** The three versions of a conflicted path, as the index holds them. */
+export type ConflictVersions = {
+  path: string;
+  kind: string;
+  base?: string;
+  ours?: string;
+  theirs?: string;
+  hasBase: boolean;
+  hasOurs: boolean;
+  hasTheirs: boolean;
+  /** True when the sides were swapped back into the user's frame (a rebase). */
+  rebased?: boolean;
+  /** The working copy, conflict markers included: the manual edit starts here. */
+  working?: string;
+  /** Binary conflicts have no structured resolution: keep mine or keep theirs. */
+  binary: boolean;
+};
+
+/** Everything the resolver needs for one conflicted path. */
+export type ConflictAnalysis = {
+  repo: string;
+  path: string;
+  kind: string;
+  operation?: string;
+  strategy?: 'rebase' | 'merge';
+  versions: ConflictVersions;
+  /** Absent for a binary conflict. */
+  merge?: ConflictMerge;
+};
+
+/** What the user decided for one conflicted path. */
+export type ConflictResolution = {
+  /** `ours` and `theirs` keep one whole side; `manual` writes `content`. */
+  resolution: 'ours' | 'theirs' | 'merged' | 'manual';
+  content?: string;
+  body?: string;
+  /** Field name to `ours`, `theirs` or `base`. */
+  fields?: Record<string, string>;
+  /** Hunk index, as a string, to `ours`, `theirs`, `both`, `base` or `edited`. */
+  hunks?: Record<string, string>;
+  /** The text of an `edited` hunk, keyed by the same index. */
+  hunkText?: Record<string, string>;
+  /** Defaults to true: finish the rebase or merge once nothing is left. */
+  continue?: boolean;
+};
+
+/** What a resolution did. */
+export type ConflictResolveResult = {
+  repo: string;
+  path: string;
+  merge: ConflictMerge;
+  result: {
+    staged: boolean;
+    continued: boolean;
+    remaining?: SyncConflict[];
+    status?: SyncStatus;
+  };
+  /** The repository row after the resolution. */
+  status?: SyncRepoStatus;
+};
+
+/** The sync settings a change may carry; an absent one is left alone. */
+export type SyncSettingsPatch = {
+  pullStrategy?: 'rebase' | 'merge';
+  pushOnSync?: boolean;
+  maxPushRetries?: number;
+  /** Browser-only mode: the proxy that makes git over HTTPS possible at all. */
+  corsProxy?: string;
+};
+
 /** Statuses are configured per project in `project.yaml`; the UI never hardcodes them. */
 export type ItemStatus = string;
 
@@ -304,7 +642,68 @@ export interface DataProvider {
    */
   refreshSnapshots(input?: SnapshotRefresh): Promise<SnapshotResult[]>;
 
-  // events
+  // git (docs/06-git-sync.md §3.3)
+  /** The effective commit-on-save settings of this runtime. */
+  getGitSettings(): Promise<GitSettings>;
+  /**
+   * Changes them. An invalid message template is refused with
+   * `validation_failed` before anything is applied, so a broken template can
+   * never reach a commit.
+   */
+  updateGitSettings(patch: GitSettingsPatch): Promise<GitSettings>;
+  /** Per-repository git state: backend, identity and dirty set. */
+  getGitStatus(repoId?: string): Promise<GitRepoStatus[]>;
+  /**
+   * Commits now. With no `paths` it flushes what commit-on-save has batched,
+   * which is the "Commit N changes" action of the sync panel.
+   */
+  commitNow(input?: { repoId?: string; paths?: string[]; message?: string }): Promise<GitCommit[]>;
+
+  // git — sync (docs/06-git-sync.md §4, story GIT-US-0021)
+  /**
+   * Per-repository sync state: branch, ahead/behind, dirty set, conflicted
+   * paths and any half-finished rebase. It never throws for a folder that is
+   * not a git working tree: that repository comes back `git: false`.
+   */
+  getSyncStatus(repoId?: string): Promise<SyncRepoStatus[]>;
+  /** The strategy and the push policy this runtime syncs with. */
+  getSyncSettings(): Promise<SyncSettings>;
+  /**
+   * Changes them. Browser-only mode accepts only `corsProxy` — its strategy is
+   * forced to `merge` because isomorphic-git has no rebase (docs/06 §6.2) —
+   * and the companion accepts the strategy and the push policy.
+   */
+  updateSyncSettings(patch: SyncSettingsPatch): Promise<SyncSettings>;
+  /**
+   * Fetch, then rebase or merge, then push. With no `repoId` every repository
+   * is synced. A dry run previews the incoming and outgoing commits and
+   * changes nothing. A failure is reported in the result's `code` and
+   * `message`, not thrown, because the tree is always recoverable.
+   */
+  sync(repoId: string | undefined, opts?: SyncOptions): Promise<SyncResult[]>;
+  /** Undo a half-finished rebase or merge, restoring the tree. */
+  abortSync(repoId: string): Promise<SyncRepoStatus>;
+  /** The conflicted paths of every repository whose integration stopped. */
+  listSyncConflicts(repoId?: string): Promise<{ repo: string; paths: string[]; operation?: string }[]>;
+
+  // git — conflict resolution (docs/06 §5, story GIT-US-0022)
+  /**
+   * The three versions of one conflicted path plus the merge the core proposes
+   * for them: the field decisions, the body hunks and the canonical merged
+   * file. It is what the ConflictResolver renders.
+   */
+  readConflict(repoId: string, path: string): Promise<ConflictAnalysis>;
+  /**
+   * Writes a resolution, stages it and — unless `continue` is false — finishes
+   * the rebase or merge. Keep-mine, keep-theirs and a manual edit are always
+   * available, whatever the shape of the conflict.
+   */
+  resolveConflict(
+    repoId: string,
+    path: string,
+    resolution: ConflictResolution,
+  ): Promise<ConflictResolveResult>;
+
   subscribe(handler: (event: ChangeEvent) => void): Unsubscribe;
 }
 

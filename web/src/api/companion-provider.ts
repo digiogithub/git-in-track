@@ -34,6 +34,9 @@ import type {
   Capabilities,
   ChangeEvent,
   Comment,
+  ConflictAnalysis,
+  ConflictResolution,
+  ConflictResolveResult,
   DataProvider,
   Diagnostic,
   IndexStats,
@@ -50,6 +53,10 @@ import type {
   MountInput,
   Priority,
   ProjectSummary,
+  GitCommit,
+  GitRepoStatus,
+  GitSettings,
+  GitSettingsPatch,
   ProviderErrorCode,
   RefResolution,
   RepoInfo,
@@ -64,6 +71,11 @@ import type {
   SprintResult,
   SprintSummary,
   SprintView,
+  SyncOptions,
+  SyncRepoStatus,
+  SyncResult,
+  SyncSettings,
+  SyncSettingsPatch,
   TeamSummary,
   Unsubscribe,
   UpdateOp,
@@ -606,6 +618,38 @@ export function toIndexStats(value: unknown): IndexStats {
   };
 }
 
+/**
+ * `GET|PATCH /git/settings` → the settings the UI shows. The companion always
+ * supports committing, so `supported` is true whenever it answered at all.
+ */
+export function toGitSettings(value: unknown): GitSettings {
+  const record = asRecord(value) ?? {};
+  const backend = asString(record['backend']) ?? 'auto';
+  return {
+    commitOnSave: asBoolean(record['commitOnSave']) ?? false,
+    commitDebounceMs: asNumber(record['commitDebounceMs']) ?? 2000,
+    messageTemplate: asString(record['messageTemplate']) ?? '',
+    backend: backend as GitSettings['backend'],
+    resolvedBackend: asString(record['resolvedBackend']) ?? backend,
+    ...optional('gitVersion', asString(record['gitVersion'])),
+    ...optional('authorName', asString(record['authorName'])),
+    ...optional('authorEmail', asString(record['authorEmail'])),
+    signCommits: asBoolean(record['signCommits']) ?? false,
+    pending: asNumber(record['pending']) ?? 0,
+    ...optional('persisted', asBoolean(record['persisted'])),
+    supported: true,
+  };
+}
+
+/**
+ * Drops a key whose value is undefined, which is what
+ * `exactOptionalPropertyTypes` needs: "absent" and "present but undefined" are
+ * different types, and the wire has only the first.
+ */
+function optional<K extends string, V>(key: K, value: V | undefined): Record<K, V> | object {
+  return value === undefined ? {} : ({ [key]: value });
+}
+
 /** `GET /capabilities` → the object the UI branches on. */
 export function toCapabilities(value: unknown): Capabilities {
   const record = asRecord(value) ?? {};
@@ -1107,6 +1151,155 @@ export class CompanionProvider implements DataProvider {
    * Opens the event socket on the first subscriber and closes it with the
    * last one, so an idle tab holds no connection.
    */
+  // ---------------------------------------------------------------------- git
+
+  /** `GET /api/v1/git/settings` (docs/07 §5.5, story GIT-US-0020). */
+  async getGitSettings(): Promise<GitSettings> {
+    return toGitSettings(await this.#json(`${API_PREFIX}/git/settings`));
+  }
+
+  /**
+   * `PATCH /api/v1/git/settings`. The companion validates the template before
+   * it applies anything, so a rejected patch leaves the running settings and
+   * the configuration file untouched.
+   */
+  async updateGitSettings(patch: GitSettingsPatch): Promise<GitSettings> {
+    return toGitSettings(
+      await this.#json(`${API_PREFIX}/git/settings`, { method: 'PATCH', body: patch }),
+    );
+  }
+
+  /** `GET /api/v1/git/status`. */
+  async getGitStatus(repoId?: string): Promise<GitRepoStatus[]> {
+    const body = await this.#json(`${API_PREFIX}/git/status${buildQuery({ repo: repoId })}`);
+    const record = asRecord(body);
+    return asArray(record ? record['repos'] : body) as GitRepoStatus[];
+  }
+
+  /** `POST /api/v1/git/commit`; with no paths it flushes the batched edits. */
+  async commitNow(input: { repoId?: string; paths?: string[]; message?: string } = {}): Promise<
+    GitCommit[]
+  > {
+    const body = await this.#json(`${API_PREFIX}/git/commit`, {
+      method: 'POST',
+      body: {
+        ...(input.repoId === undefined ? {} : { repo: input.repoId }),
+        ...(input.paths === undefined ? {} : { paths: input.paths }),
+        ...(input.message === undefined ? {} : { message: input.message }),
+      },
+    });
+    const record = asRecord(body);
+    return asArray(record ? record['commits'] : body) as GitCommit[];
+  }
+
+  // --------------------------------------------------------------- git sync
+
+  /** `GET /api/v1/sync/status`. */
+  async getSyncStatus(repoId?: string): Promise<SyncRepoStatus[]> {
+    const body = asRecord(await this.#json(`${API_PREFIX}/sync/status${buildQuery({ repo: repoId })}`));
+    return asArray(body ? body['repos'] : []) as SyncRepoStatus[];
+  }
+
+  /** The sync half of `GET /api/v1/sync/status`. */
+  async getSyncSettings(): Promise<SyncSettings> {
+    const body = asRecord(await this.#json(`${API_PREFIX}/sync/status`));
+    const settings = asRecord(body ? body['settings'] : null);
+    return {
+      pullStrategy: (settings?.['pullStrategy'] as 'rebase' | 'merge') ?? 'rebase',
+      pushOnSync: settings?.['pushOnSync'] !== false,
+      maxPushRetries: typeof settings?.['maxPushRetries'] === 'number' ? settings['maxPushRetries'] : 3,
+      supported: settings?.['supported'] !== false,
+      ...(typeof settings?.['reason'] === 'string' ? { reason: settings['reason'] } : {}),
+    };
+  }
+
+  /** `PATCH /api/v1/sync/settings`. */
+  async updateSyncSettings(patch: SyncSettingsPatch): Promise<SyncSettings> {
+    const settings = asRecord(
+      await this.#json(`${API_PREFIX}/sync/settings`, { method: 'PATCH', body: patch }),
+    );
+    return {
+      pullStrategy: (settings?.['pullStrategy'] as 'rebase' | 'merge') ?? 'rebase',
+      pushOnSync: settings?.['pushOnSync'] !== false,
+      maxPushRetries: typeof settings?.['maxPushRetries'] === 'number' ? settings['maxPushRetries'] : 3,
+      supported: settings?.['supported'] !== false,
+    };
+  }
+
+  /**
+   * `POST /api/v1/sync/run`. The companion commits what commit-on-save batched
+   * before it fetches, so the panel needs no separate "commit first" step.
+   */
+  async sync(repoId: string | undefined, opts: SyncOptions = {}): Promise<SyncResult[]> {
+    const body = asRecord(
+      await this.#json(`${API_PREFIX}/sync/run`, {
+        method: 'POST',
+        body: {
+          ...(repoId === undefined ? {} : { repos: [repoId] }),
+          ...(opts.dryRun === undefined ? {} : { dryRun: opts.dryRun }),
+          ...(opts.push === undefined ? {} : { push: opts.push }),
+          ...(opts.strategy === undefined ? {} : { strategy: opts.strategy }),
+        },
+      }),
+    );
+    return asArray(body ? body['results'] : []) as SyncResult[];
+  }
+
+  /** `POST /api/v1/sync/abort`. */
+  async abortSync(repoId: string): Promise<SyncRepoStatus> {
+    return (await this.#json(`${API_PREFIX}/sync/abort`, {
+      method: 'POST',
+      body: { repo: repoId },
+    })) as SyncRepoStatus;
+  }
+
+  /** `GET /api/v1/sync/conflicts`. */
+  async listSyncConflicts(
+    repoId?: string,
+  ): Promise<{ repo: string; paths: string[]; operation?: string }[]> {
+    const body = asRecord(
+      await this.#json(`${API_PREFIX}/sync/conflicts${buildQuery({ repo: repoId })}`),
+    );
+    return asArray(body ? body['conflicts'] : []) as {
+      repo: string;
+      paths: string[];
+      operation?: string;
+    }[];
+  }
+
+  /** `GET /api/v1/sync/conflicts/file`: the three versions and the merge. */
+  async readConflict(repoId: string, path: string): Promise<ConflictAnalysis> {
+    return (await this.#json(
+      `${API_PREFIX}/sync/conflicts/file${buildQuery({ repo: repoId, path })}`,
+    )) as ConflictAnalysis;
+  }
+
+  /**
+   * `POST /api/v1/sync/conflicts/resolve`: write the resolution, stage it and
+   * finish the rebase or merge. The merge itself runs in the core, so browser
+   * mode and the companion resolve a conflict by exactly the same rules.
+   */
+  async resolveConflict(
+    repoId: string,
+    path: string,
+    resolution: ConflictResolution,
+  ): Promise<ConflictResolveResult> {
+    return (await this.#json(`${API_PREFIX}/sync/conflicts/resolve`, {
+      method: 'POST',
+      body: {
+        repo: repoId,
+        path,
+        resolution: resolution.resolution,
+        ...(resolution.content === undefined ? {} : { content: resolution.content }),
+        ...(resolution.body === undefined ? {} : { body: resolution.body }),
+        ...(resolution.fields === undefined ? {} : { fields: resolution.fields }),
+        ...(resolution.hunks === undefined ? {} : { hunks: resolution.hunks }),
+        ...(resolution.hunkText === undefined ? {} : { hunkText: resolution.hunkText }),
+        ...(resolution.continue === undefined ? {} : { continue: resolution.continue }),
+      },
+    })) as ConflictResolveResult;
+  }
+
   subscribe(handler: (event: ChangeEvent) => void): Unsubscribe {
     this.#handlers.add(handler);
     if (this.#handlers.size === 1) this.#connect();

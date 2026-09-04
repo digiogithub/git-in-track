@@ -109,6 +109,11 @@ func runServe(cmd *cobra.Command, build buildInfo, flags *serveFlags) error {
 		Workspace:   res.Workspace,
 		Watch:       pickBool(cmd, "watch", flags.watch, cfg.Index.Watch),
 		Debounce:    cfg.Index.Debounce,
+		// Commit-on-save and the git backend (docs/06-git-sync.md section 3.3).
+		// ConfigPath is what makes a settings change made in the web UI
+		// survive a restart.
+		Git:        cfg.Git,
+		ConfigPath: res.Path,
 	}
 	srv, err := server.New(opts)
 	if err != nil {

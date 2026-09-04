@@ -37,6 +37,11 @@ const DefaultCommitMessageTemplate = `pmngr: update {{.ItemID}} "{{.Title}}"`
 // DefaultDebounce is how long the watcher coalesces file events for.
 const DefaultDebounce = 250 * time.Millisecond
 
+// DefaultCommitDebounce is how long commit-on-save coalesces rapid saves of the
+// same item for, so a burst of keystrokes becomes one commit
+// (docs/06-git-sync.md section 3.3, `commitDebounceMs`).
+const DefaultCommitDebounce = 2 * time.Second
+
 // Role is what a registered repository holds.
 type Role string
 
@@ -119,12 +124,46 @@ type Server struct {
 
 // Git is the git backend section.
 type Git struct {
-	Backend         Backend `json:"backend"              yaml:"backend"`
-	CommitOnSave    bool    `json:"commitOnSave"         yaml:"commitOnSave"`
-	MessageTemplate string  `json:"messageTemplate"      yaml:"messageTemplate"`
-	AuthorName      string  `json:"authorName,omitempty" yaml:"authorName,omitempty"`
-	AuthorEmail     string  `json:"authorEmail,omitempty" yaml:"authorEmail,omitempty"`
+	Backend      Backend `json:"backend"      yaml:"backend"`
+	CommitOnSave bool    `json:"commitOnSave" yaml:"commitOnSave"`
+	// CommitDebounce coalesces rapid saves of the same item into one commit.
+	// The configuration file spells it as a Go duration (`2s`), which is the
+	// `commitDebounceMs: 2000` of docs/06 section 13 in this file's units.
+	CommitDebounce  time.Duration `json:"commitDebounce"        yaml:"commitDebounce"`
+	MessageTemplate string        `json:"messageTemplate"       yaml:"messageTemplate"`
+	AuthorName      string        `json:"authorName,omitempty"  yaml:"authorName,omitempty"`
+	AuthorEmail     string        `json:"authorEmail,omitempty" yaml:"authorEmail,omitempty"`
+	// SignCommits asks for gpg or ssh signed commits. It is honored by the
+	// system backend only; go-git refuses it with git_unsupported.
+	SignCommits bool `json:"signCommits" yaml:"signCommits"`
+
+	// PullStrategy is how a sync integrates remote work: rebase, which keeps
+	// the history of a backlog linear, or merge (docs/06 section 4.3).
+	PullStrategy PullStrategy `json:"pullStrategy" yaml:"pullStrategy"`
+	// PushOnSync reports whether a sync ends with a push. False leaves a
+	// local-only workflow that still pulls.
+	PushOnSync bool `json:"pushOnSync" yaml:"pushOnSync"`
+	// MaxPushRetries is how many times a non-fast-forward rejection is answered
+	// with a fresh fetch, integrate and push (docs/06 section 4.2).
+	MaxPushRetries int `json:"maxPushRetries" yaml:"maxPushRetries"`
 }
+
+// PullStrategy selects how remote work is integrated.
+type PullStrategy string
+
+// The two strategies of `git.pullStrategy`.
+const (
+	// PullRebase replays local commits on top of the remote branch.
+	PullRebase PullStrategy = "rebase"
+	// PullMerge merges the remote branch into the local one.
+	PullMerge PullStrategy = "merge"
+)
+
+// Valid reports whether the strategy is one this build knows.
+func (p PullStrategy) Valid() bool { return p == PullRebase || p == PullMerge }
+
+// DefaultMaxPushRetries is the shipped `git.maxPushRetries`.
+const DefaultMaxPushRetries = 3
 
 // Index is the indexer and watcher section.
 type Index struct {
@@ -161,7 +200,11 @@ func Default() *Config {
 		},
 		Git: Git{
 			Backend:         BackendAuto,
+			CommitDebounce:  DefaultCommitDebounce,
 			MessageTemplate: DefaultCommitMessageTemplate,
+			PullStrategy:    PullRebase,
+			PushOnSync:      true,
+			MaxPushRetries:  DefaultMaxPushRetries,
 		},
 		Index: Index{
 			Watch:    true,

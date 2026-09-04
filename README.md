@@ -170,7 +170,7 @@ browsers get a read-only fallback.
 
 ## Project status
 
-**Phase 2 (companion CLI) delivered; Phase 3 (team repository and boards) next.**
+**Phase 3 (team repository and boards) delivered; Phase 4 (git sync) next.**
 Delivery is organized in seven phases (Phase 0 Foundations → Phase 6
 Retrospectives, metrics and 1.0); see [docs/11-roadmap.md](docs/11-roadmap.md).
 The live status of every epic and story is in [docs/.pmngr/](docs/.pmngr/),
@@ -181,8 +181,9 @@ this repository's own backlog.
 | 0 | Foundations (core model, parser, validation, IDs, CI, WASM build) | done |
 | 1 | Browser-only MVP (folder access, WASM index, KB viewer, backlog, editor) | done, one story in review |
 | 2 | Companion CLI (`gintrack serve`, watcher, native index, REST/WS) | done |
-| 3 | Team repository and boards (kanban, scrum, sprints, remote references) | next |
-| 4–6 | Git sync, MCP server, retrospectives, metrics and 1.0 | planned |
+| 3 | Team repository and boards (kanban, scrum, sprints, remote references) | done, in review |
+| 4 | Git sync (commit on save, fetch/rebase/push, conflicts, credentials) | next |
+| 5–6 | MCP server, retrospectives, metrics and 1.0 | planned |
 
 ## Repository layout
 

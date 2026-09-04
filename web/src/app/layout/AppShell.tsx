@@ -7,6 +7,7 @@ import {
   ListChecks,
   Lock,
   Plug,
+  RefreshCw,
   Settings,
   X,
 } from 'lucide-react';
@@ -26,6 +27,7 @@ type NavItem = {
 const navItems: NavItem[] = [
   { to: '/', label: 'Workspace', icon: <LayoutDashboard aria-hidden="true" className="h-4 w-4" /> },
   { to: '/boards', label: 'Boards', icon: <Boxes aria-hidden="true" className="h-4 w-4" /> },
+  { to: '/sync', label: 'Sync', icon: <RefreshCw aria-hidden="true" className="h-4 w-4" /> },
   { to: '/settings', label: 'Settings', icon: <Settings aria-hidden="true" className="h-4 w-4" /> },
 ];
 

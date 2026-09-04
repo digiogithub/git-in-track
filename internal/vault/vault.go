@@ -345,6 +345,9 @@ func (v *Vault) Dispatch(ctx context.Context, method string, raw []byte) (any, e
 	case "kb.write":
 		return v.kbWrite(ctx, raw)
 
+	case "conflict.merge":
+		return v.conflictMerge(raw)
+
 	case "search":
 		return v.search(raw)
 	default:
@@ -1079,6 +1082,35 @@ func (v *Vault) itemSerialize(raw []byte) (any, error) {
 		return nil, fmt.Errorf("serialize %s: %w", p.Item.ID, err)
 	}
 	return map[string]string{"text": string(data)}, nil
+}
+
+// conflictMerge merges the three versions of one conflicted file, applying the
+// caller's resolution when there is one (GIT-US-0022, docs/06 section 5).
+//
+// It needs no mounted vault: it is a pure function of the three blobs, which is
+// what lets browser-only mode resolve a conflict with the same rules as the
+// companion instead of a second implementation in TypeScript.
+func (v *Vault) conflictMerge(raw []byte) (any, error) {
+	p, err := decodeParams[struct {
+		Path       string           `json:"path"`
+		Base       string           `json:"base"`
+		Ours       string           `json:"ours"`
+		Theirs     string           `json:"theirs"`
+		Resolution *core.Resolution `json:"resolution,omitempty"`
+	}](raw)
+	if err != nil {
+		return nil, err
+	}
+	if p.Path == "" {
+		return nil, failf("invalid_request", "conflict.merge needs the path of the conflicted file")
+	}
+	res, mergeErr := core.MergeFiles(p.Path, core.MergeInput{
+		Base: p.Base, Ours: p.Ours, Theirs: p.Theirs,
+	}, p.Resolution)
+	if mergeErr != nil {
+		return nil, failf("invalid_request", "merge %s: %v", p.Path, mergeErr)
+	}
+	return res, nil
 }
 
 // -------------------------------------------------------------- comments ----

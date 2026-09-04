@@ -274,3 +274,132 @@ func TestSavedFileCarriesAHeader(t *testing.T) {
 		t.Errorf("the file has no header:\n%s", data)
 	}
 }
+
+// TestGitCommitOnSaveDefaults pins the defaults of the commit-on-save settings
+// (docs/06-git-sync.md section 3.3): the feature is off, the window is two
+// seconds and the template is the shipped one.
+func TestGitCommitOnSaveDefaults(t *testing.T) {
+	tests := []struct {
+		name string
+		got  any
+		want any
+	}{
+		{name: "commit on save is off by default", got: Default().Git.CommitOnSave, want: false},
+		{name: "the debounce window is two seconds", got: Default().Git.CommitDebounce, want: DefaultCommitDebounce},
+		{name: "the template is the shipped one", got: Default().Git.MessageTemplate, want: DefaultCommitMessageTemplate},
+		{name: "signing is off by default", got: Default().Git.SignCommits, want: false},
+		{name: "the backend is auto", got: Default().Git.Backend, want: BackendAuto},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.got != tc.want {
+				t.Errorf("got %v, want %v", tc.got, tc.want)
+			}
+		})
+	}
+}
+
+// TestGitSettingsRoundTrip checks that the new keys survive a save and a load,
+// and that a file written before they existed keeps the defaults.
+func TestGitSettingsRoundTrip(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+		want Git
+	}{
+		{
+			name: "a file that predates the keys keeps the defaults",
+			yaml: "version: 1\ngit:\n  backend: system\n",
+			want: Git{
+				Backend:         BackendSystem,
+				CommitDebounce:  DefaultCommitDebounce,
+				MessageTemplate: DefaultCommitMessageTemplate,
+				PullStrategy:    PullRebase,
+				PushOnSync:      true,
+				MaxPushRetries:  DefaultMaxPushRetries,
+			},
+		},
+		{
+			name: "every key is read",
+			yaml: "version: 1\ngit:\n  backend: go-git\n  commitOnSave: true\n" +
+				"  commitDebounce: 500ms\n  messageTemplate: '{{action}} {{id}}'\n" +
+				"  authorName: Marta\n  authorEmail: marta@acme.dev\n  signCommits: true\n" +
+				"  pullStrategy: merge\n  pushOnSync: false\n  maxPushRetries: 5\n",
+			want: Git{
+				Backend:         BackendGoGit,
+				CommitOnSave:    true,
+				CommitDebounce:  500 * time.Millisecond,
+				MessageTemplate: "{{action}} {{id}}",
+				AuthorName:      "Marta",
+				AuthorEmail:     "marta@acme.dev",
+				SignCommits:     true,
+				PullStrategy:    PullMerge,
+				PushOnSync:      false,
+				MaxPushRetries:  5,
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := Parse([]byte(tc.yaml))
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			if cfg.Git != tc.want {
+				t.Fatalf("git = %+v, want %+v", cfg.Git, tc.want)
+			}
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			if err := Save(path, cfg); err != nil {
+				t.Fatalf("Save: %v", err)
+			}
+			reloaded, err := Load(path)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if reloaded.Git != tc.want {
+				t.Errorf("after a round trip git = %+v, want %+v", reloaded.Git, tc.want)
+			}
+		})
+	}
+}
+
+// TestGitCommitOnSaveEnvironment checks the GINTRACK_GIT_COMMIT_ON_SAVE
+// override of docs/07 section 3.3.
+func TestGitCommitOnSaveEnvironment(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		want    bool
+		wantErr bool
+	}{
+		{name: "true turns it on", value: "true", want: true},
+		{name: "1 turns it on", value: "1", want: true},
+		{name: "false turns it off", value: "false", want: false},
+		{name: "a non-boolean is refused", value: "maybe", wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			env := func(key string) string {
+				if key == EnvGitCommitOnSave {
+					return tc.value
+				}
+				return ""
+			}
+			cfg := Default()
+			err := applyEnv(cfg, env)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("applyEnv(%q) = nil error, want a failure", tc.value)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("applyEnv: %v", err)
+			}
+			if cfg.Git.CommitOnSave != tc.want {
+				t.Errorf("commitOnSave = %v, want %v", cfg.Git.CommitOnSave, tc.want)
+			}
+		})
+	}
+}

@@ -19,8 +19,15 @@ import type {
   Capabilities,
   ChangeEvent,
   Comment,
+  ConflictAnalysis,
+  ConflictResolution,
+  ConflictResolveResult,
   DataProvider,
   Diagnostic,
+  GitCommit,
+  GitRepoStatus,
+  GitSettings,
+  GitSettingsPatch,
   IndexStats,
   Item,
   ItemDraft,
@@ -50,11 +57,18 @@ import type {
   SprintSummary,
   SprintView,
   StatusCategory,
+  SyncOptions,
+  SyncRepoStatus,
+  SyncResult,
+  SyncSettings,
+  SyncSettingsPatch,
+  SyncStatus,
   TeamSummary,
   Unsubscribe,
   UpdateOp,
 } from '@/api/provider';
 import { ProviderError, readOnlyCapabilities } from '@/api/provider';
+import { DEFAULT_COMMIT_TEMPLATE, validateCommitTemplate } from '@/git/message';
 
 export type FakeData = {
   projects?: ProjectSummary[];
@@ -524,6 +538,8 @@ export class FakeProvider implements DataProvider {
   private today: string;
   private handlers = new Set<(event: ChangeEvent) => void>();
   private revCounter = 1000;
+  /** Commit-on-save settings, in memory (story GIT-US-0020). */
+  private git: GitSettings;
 
   constructor(data: FakeData = {}, opts: { readOnly?: boolean } = {}) {
     this.capabilities = opts.readOnly ? readOnlyCapabilities : writableCapabilities;
@@ -539,6 +555,17 @@ export class FakeProvider implements DataProvider {
       (data.sprints ?? [sampleSprint]).map((s) => [s.id, structuredClone(s)]),
     );
     this.today = data.today ?? '2026-09-02';
+    this.git = {
+      commitOnSave: false,
+      commitDebounceMs: 2000,
+      messageTemplate: DEFAULT_COMMIT_TEMPLATE,
+      backend: 'auto',
+      resolvedBackend: 'go-git',
+      signCommits: false,
+      pending: 0,
+      supported: !opts.readOnly,
+      ...(opts.readOnly ? { reason: 'This vault is read-only.' } : {}),
+    };
     this.repos = data.repos ?? [
       {
         id: 'repo-1',
@@ -1496,6 +1523,205 @@ export class FakeProvider implements DataProvider {
     this.pages.set(path, page);
     this.emit({ kind: 'kb', repoId: 'repo-1', paths: [path] });
     return Promise.resolve(structuredClone(page));
+  }
+
+  // ---------------------------------------------------------------------- git
+
+  /**
+   * Commit-on-save, in memory. The fake keeps the settings and renders the
+   * subject with the same rules as the runtimes, so a component test can prove
+   * the form works without a git repository anywhere near it.
+   */
+  getGitSettings(): Promise<GitSettings> {
+    return Promise.resolve({ ...this.git });
+  }
+
+  updateGitSettings(patch: GitSettingsPatch): Promise<GitSettings> {
+    const next = { ...this.git, ...patch };
+    if (next.commitDebounceMs < 0) {
+      return Promise.reject(
+        new ProviderError('validation_failed', 'commitDebounceMs must not be negative'),
+      );
+    }
+    try {
+      validateCommitTemplate(next.messageTemplate);
+    } catch (error) {
+      return Promise.reject(
+        new ProviderError(
+          'validation_failed',
+          error instanceof Error ? error.message : String(error),
+        ),
+      );
+    }
+    this.git = { ...next, persisted: true };
+    return Promise.resolve({ ...this.git });
+  }
+
+  getGitStatus(repoId?: string): Promise<GitRepoStatus[]> {
+    return Promise.resolve(
+      this.repos
+        .filter((repo) => repoId === undefined || repo.id === repoId)
+        .map((repo) => ({
+          repo: repo.id,
+          path: repo.location,
+          git: true,
+          backend: 'go-git',
+          identity: 'Test User <test@example.com>',
+          capabilities: {
+            backend: 'go-git',
+            hooks: false,
+            signing: false,
+            credentialHelpers: false,
+            pathspecCommit: false,
+          },
+        })),
+    );
+  }
+
+  commitNow(input: { repoId?: string; paths?: string[]; message?: string } = {}): Promise<
+    GitCommit[]
+  > {
+    const repo = input.repoId ?? this.repos[0]?.id ?? 'default';
+    this.git = { ...this.git, pending: 0 };
+    return Promise.resolve([
+      {
+        repo,
+        sha: 'fake0000',
+        subject: input.message ?? 'pmngr: update 1 item',
+        empty: false,
+        paths: input.paths ?? [],
+      },
+    ]);
+  }
+
+  // --------------------------------------------------------------- git sync
+
+  /**
+   * A clean, up-to-date repository unless a test moves `syncStatuses`. The
+   * sync panel is then rendered from the same shapes both runtimes produce.
+   */
+  syncStatuses: SyncRepoStatus[] | null = null;
+
+  /** The reports the next `sync()` resolves with. */
+  syncResults: SyncResult[] | null = null;
+
+  getSyncStatus(repoId?: string): Promise<SyncRepoStatus[]> {
+    const rows =
+      this.syncStatuses ??
+      this.repos.map((repo) => ({
+        repo: repo.id,
+        path: repo.location,
+        git: true,
+        backend: 'go-git',
+        pending: 0,
+        status: {
+          branch: 'main',
+          detached: false,
+          clean: true,
+          trackedChanges: false,
+          remote: 'origin',
+          upstream: 'origin/main',
+          ahead: 0,
+          behind: 0,
+          state: 'up_to_date' as const,
+        },
+      }));
+    return Promise.resolve(rows.filter((row) => repoId === undefined || row.repo === repoId));
+  }
+
+  /** The sync settings a test may move with `updateSyncSettings`. */
+  syncSettings: SyncSettings = {
+    pullStrategy: 'rebase',
+    pushOnSync: true,
+    maxPushRetries: 3,
+    supported: true,
+  };
+
+  getSyncSettings(): Promise<SyncSettings> {
+    return Promise.resolve({ ...this.syncSettings });
+  }
+
+  updateSyncSettings(patch: SyncSettingsPatch): Promise<SyncSettings> {
+    this.syncSettings = { ...this.syncSettings, ...patch };
+    return Promise.resolve({ ...this.syncSettings });
+  }
+
+  async sync(repoId: string | undefined, opts: SyncOptions = {}): Promise<SyncResult[]> {
+    if (this.syncResults) return this.syncResults;
+    const rows = await this.getSyncStatus(repoId);
+    return rows.map((row) => ({
+      repo: row.repo,
+      dryRun: opts.dryRun === true,
+      strategy: opts.strategy ?? 'rebase',
+      phase: 'done' as const,
+      before: row.status as SyncStatus,
+      after: row.status as SyncStatus,
+      pulled: 0,
+      pushed: 0,
+      retries: 0,
+      durationMs: 1,
+    }));
+  }
+
+  async abortSync(repoId: string): Promise<SyncRepoStatus> {
+    const rows = await this.getSyncStatus(repoId);
+    const row = rows[0];
+    if (!row) throw new ProviderError('not_found', `no repository ${repoId}`);
+    return row;
+  }
+
+  listSyncConflicts(): Promise<{ repo: string; paths: string[]; operation?: string }[]> {
+    const out = [...this.conflicts.values()].map((analysis) => ({
+      repo: analysis.repo,
+      paths: [analysis.path],
+      ...(analysis.operation === undefined ? {} : { operation: analysis.operation }),
+    }));
+    return Promise.resolve(out);
+  }
+
+  /**
+   * Conflicts a test seeded, keyed by `<repo>:<path>`. The fake provider is
+   * what component tests render the ConflictResolver against, so it carries the
+   * same analysis shape the two real providers return.
+   */
+  conflicts = new Map<string, ConflictAnalysis>();
+
+  /** The resolutions the fake recorded, newest last; tests assert on them. */
+  resolutions: { repo: string; path: string; resolution: ConflictResolution }[] = [];
+
+  readConflict(repoId: string, path: string): Promise<ConflictAnalysis> {
+    const analysis = this.conflicts.get(`${repoId}:${path}`);
+    if (!analysis) {
+      return Promise.reject(new ProviderError('not_found', `${path} is not conflicted in ${repoId}`));
+    }
+    return Promise.resolve(analysis);
+  }
+
+  resolveConflict(
+    repoId: string,
+    path: string,
+    resolution: ConflictResolution,
+  ): Promise<ConflictResolveResult> {
+    const analysis = this.conflicts.get(`${repoId}:${path}`);
+    if (!analysis) {
+      return Promise.reject(new ProviderError('not_found', `${path} is not conflicted in ${repoId}`));
+    }
+    this.resolutions.push({ repo: repoId, path, resolution });
+    this.conflicts.delete(`${repoId}:${path}`);
+    const merge = analysis.merge ?? {
+      path,
+      structured: false,
+      content: analysis.versions.ours ?? '',
+      conflicted: 0,
+      review: 0,
+      clean: true,
+    };
+    return Promise.resolve({
+      repo: repoId,
+      path,
+      merge: { ...merge, clean: true, conflicted: 0 },
+      result: { staged: true, continued: resolution.continue !== false, remaining: [] },
+    });
   }
 
   subscribe(handler: (event: ChangeEvent) => void): Unsubscribe {

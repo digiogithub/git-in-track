@@ -16,6 +16,7 @@ import (
 	"github.com/digiogithub/git-in-track/cmd/gintrack/output"
 	"github.com/digiogithub/git-in-track/internal/config"
 	"github.com/digiogithub/git-in-track/internal/core"
+	"github.com/digiogithub/git-in-track/internal/gitops"
 )
 
 // The marks doctor prints in front of a line.
@@ -107,7 +108,7 @@ func runDoctor(cmd *cobra.Command, flags *globalFlags, local *doctorFlags) error
 	if err != nil {
 		return err
 	}
-	payload := doctorPayload{Config: checkConfig(res)}
+	payload := doctorPayload{Config: append(checkConfig(res), checkGit(res.Config)...)}
 
 	repos := res.Config.WorkspaceRepos(res.Workspace)
 	if local.repo != "" {
@@ -144,6 +145,38 @@ func runDoctor(cmd *cobra.Command, flags *globalFlags, local *doctorFlags) error
 		return failf(exitValidation, "%s, %s", plural(payload.Errors, "error", "errors"), plural(payload.Warnings, "warning", "warnings"))
 	}
 	return nil
+}
+
+// checkGit reports the git backend that will actually be used and the state of
+// commit-on-save, which is what docs/07 section 4.8 asks the environment check
+// to show.
+func checkGit(cfg *config.Config) []checkResult {
+	name, version := gitops.Resolve(gitops.Kind(cfg.Git.Backend), "")
+	message := fmt.Sprintf("git backend %s", name)
+	if version != "" {
+		message += " (git " + version + ")"
+	}
+	if cfg.Git.Backend == config.BackendSystem && name != string(gitops.KindSystem) {
+		return []checkResult{{
+			Scope: "git", Severity: string(core.SeverityWarning),
+			Message: "git.backend is system but no usable git executable was found on PATH",
+			Fix:     "install git, or set git.backend to go-git",
+		}}
+	}
+	switch {
+	case !cfg.Git.CommitOnSave:
+		message += ", commit-on-save off"
+	default:
+		message += fmt.Sprintf(", commit-on-save on (debounce %s, template %q)",
+			cfg.Git.CommitDebounce, cfg.Git.MessageTemplate)
+	}
+	result := checkResult{Scope: "git", Severity: "ok", Message: message}
+	if _, err := gitops.ParseTemplate(cfg.Git.MessageTemplate); err != nil {
+		result.Severity = string(core.SeverityError)
+		result.Message = "git.messageTemplate does not parse: " + err.Error()
+		result.Fix = "fix git.messageTemplate in " + "the configuration file"
+	}
+	return []checkResult{result}
 }
 
 // checkConfig inspects the configuration file itself.

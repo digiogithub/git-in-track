@@ -56,6 +56,13 @@ linters:
       # Table-driven tests legitimately ignore some errors in setup helpers.
       - path: _test\.go
         linters: [errcheck, wrapcheck, gocritic]
+      # The gitops fixtures build a repository through helpers that take
+      # *testing.T, and every chain contextcheck reports there bottoms out in
+      # resolveGit or gitops.Open — locating the git binary and binding a
+      # working tree are context-free by design, so the only "fix" would be to
+      # add a context parameter to the package's exported constructor.
+      - path: internal/gitops/.*_test\.go
+        linters: [contextcheck]
       # Generated WASM glue is not ours to style.
       - path: wasm/glue/
         linters: [revive, gocritic]

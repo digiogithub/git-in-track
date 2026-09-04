@@ -91,6 +91,7 @@ Start with:
 		newRmCommand(flags),
 		newIndexCommand(flags),
 		newSnapshotCommand(flags),
+		newSyncCommand(flags),
 		newItemCommand(flags),
 		newDoctorCommand(flags),
 		newConfigCommand(flags),

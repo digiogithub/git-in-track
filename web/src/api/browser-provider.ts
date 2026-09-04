@@ -25,6 +25,10 @@ import type {
   CardMove,
   ChangeEvent,
   Comment,
+  ConflictAnalysis,
+  ConflictMerge,
+  ConflictResolution,
+  ConflictResolveResult,
   DataProvider,
   Diagnostic,
   IndexStats,
@@ -55,10 +59,21 @@ import type {
   TeamSummary,
   Unsubscribe,
   UpdateOp,
+  GitCommit,
+  GitRepoStatus,
+  GitSettings,
+  GitSettingsPatch,
+  SyncOptions,
+  SyncRepoStatus,
+  SyncResult,
+  SyncSettings,
+  SyncSettingsPatch,
+  SyncStatus,
 } from '@/api/provider';
 import { ProviderError } from '@/api/provider';
 import { hydrateOrBuild } from '@/cache/index-cache';
 import type {
+  ConflictResolutionParams,
   CoreMethodName,
   CoreParams,
   CoreResult,
@@ -81,6 +96,19 @@ import {
   type RepoHandleRecord,
   type VaultFS,
 } from '@/fs';
+import type { DirectoryHandleLike } from '@/fs/types';
+import { readSyncStatus, runSync, type BrowserConflict } from '@/git/browser-sync';
+import { createAuthCallback, createAuthFailureCallback, forgetCredentials } from '@/git/credentials';
+import {
+  BROWSER_GIT_REASON,
+  readGitSettings,
+  readSyncSettings,
+  writeGitSettings,
+  writeSyncSettings,
+} from '@/git/settings-store';
+
+/** One conflicted path browser mode is holding for the resolver. */
+type PendingConflict = BrowserConflict & { resolved?: string };
 
 type MountedRepo = {
   id: string;
@@ -95,6 +123,11 @@ type MountedRepo = {
 export type BrowserProviderOptions = {
   /** Injected by tests; production shares the app-wide worker client. */
   client?: CoreClient;
+  /**
+   * Namespaces the per-workspace commit-on-save settings in browser storage
+   * (docs/06-git-sync.md §3.3). Defaults to `default`.
+   */
+  workspace?: string;
 };
 
 /** Core error codes that map onto a provider code; everything else is internal. */
@@ -147,9 +180,21 @@ export class BrowserProvider implements DataProvider {
   readonly #mounts = new Map<string, MountedRepo>();
   readonly #handlers = new Set<(event: ChangeEvent) => void>();
   #activeRepoId: string | null = null;
+  /**
+   * The conflicts of the last stopped merge, per repository and path, with the
+   * three versions the merge driver saw and any resolution the user accepted.
+   * `isomorphic-git` rolls a conflicting merge back, so this in-memory record
+   * is the whole conflicted state: a reload simply loses it and leaves the
+   * working tree exactly as it was, which is what abort would have done
+   * (docs/06 §6.2).
+   */
+  readonly #conflicts = new Map<string, Map<string, PendingConflict>>();
+  /** Namespaces the per-workspace git settings in browser storage. */
+  readonly #workspaceName: string;
 
   constructor(options: BrowserProviderOptions = {}) {
     this.#client = options.client ?? coreClient;
+    this.#workspaceName = options.workspace ?? 'default';
   }
 
   #capabilities: Capabilities | null = null;
@@ -298,6 +343,8 @@ export class BrowserProvider implements DataProvider {
 
   async unmountRepo(repoId: string): Promise<void> {
     this.#mounts.delete(repoId);
+    // Unmounting is one of the "forget credentials" triggers of docs/06 §8.2.
+    forgetCredentials();
     if (this.#activeRepoId === repoId) {
       this.#activeRepoId = [...this.#mounts.keys()][0] ?? null;
     }
@@ -631,6 +678,304 @@ export class BrowserProvider implements DataProvider {
     return result.snapshots;
   }
 
+  // ---------------------------------------------------------------------- git
+
+  /**
+   * The commit-on-save settings of this workspace. Browser-only mode stores
+   * them and renders the message with them, but cannot commit until
+   * isomorphic-git lands with GIT-US-0021, which is what `supported` reports.
+   */
+  async getGitSettings(): Promise<GitSettings> {
+    return Promise.resolve(readGitSettings(this.#workspaceName));
+  }
+
+  async updateGitSettings(patch: GitSettingsPatch): Promise<GitSettings> {
+    try {
+      return await Promise.resolve(writeGitSettings(patch, this.#workspaceName));
+    } catch (error) {
+      throw new ProviderError(
+        'validation_failed',
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  }
+
+  /**
+   * Browser-only mode has no git backend to inspect yet, so every mounted
+   * repository reports why rather than pretending to be a working tree.
+   */
+  async getGitStatus(repoId?: string): Promise<GitRepoStatus[]> {
+    const mounts = [...this.#mounts.values()].filter(
+      (mount) => repoId === undefined || mount.id === repoId,
+    );
+    return Promise.resolve(
+      mounts.map((mount) => ({
+        repo: mount.id,
+        path: mount.name,
+        git: false,
+        reason: BROWSER_GIT_REASON,
+        capabilities: {
+          backend: 'isomorphic-git',
+          hooks: false,
+          signing: false,
+          credentialHelpers: false,
+          pathspecCommit: false,
+        },
+      })),
+    );
+  }
+
+  commitNow(): Promise<GitCommit[]> {
+    return Promise.reject(new ProviderError('read_only', BROWSER_GIT_REASON));
+  }
+
+  // --------------------------------------------------------------- git sync
+
+  /**
+   * Reads each mounted folder's git state with isomorphic-git (docs/06 §6.1).
+   * A folder that is not a working tree, or a vault that has no File System
+   * Access handle (the `webkitdirectory` fallback), reports why instead of
+   * pretending.
+   */
+  async getSyncStatus(repoId?: string): Promise<SyncRepoStatus[]> {
+    const mounts = [...this.#mounts.values()].filter(
+      (mount) => repoId === undefined || mount.id === repoId,
+    );
+    return Promise.all(
+      mounts.map(async (mount) => {
+        const row: SyncRepoStatus = {
+          repo: mount.id,
+          path: mount.name,
+          git: false,
+          backend: 'isomorphic-git',
+          pending: 0,
+        };
+        const handle = handleOf(mount.vault);
+        if (!handle) {
+          row.reason = NO_HANDLE_REASON;
+          return row;
+        }
+        try {
+          row.status = await readSyncStatus(handle);
+          row.git = true;
+        } catch (error) {
+          row.reason = error instanceof Error ? error.message : String(error);
+        }
+        return row;
+      }),
+    );
+  }
+
+  getSyncSettings(): Promise<SyncSettings> {
+    return Promise.resolve(readSyncSettings(this.#workspaceName));
+  }
+
+  updateSyncSettings(patch: SyncSettingsPatch): Promise<SyncSettings> {
+    try {
+      return Promise.resolve(writeSyncSettings(patch, this.#workspaceName));
+    } catch (error) {
+      return Promise.reject(
+        new ProviderError(
+          'validation_failed',
+          error instanceof Error ? error.message : String(error),
+        ),
+      );
+    }
+  }
+
+  /**
+   * Fetch, merge and push over isomorphic-git. The strategy is always `merge`
+   * and a run without a configured CORS proxy reports `git_cors_proxy_required`
+   * rather than failing obscurely against a host that sends no CORS headers
+   * (docs/06 §6.2, §6.3).
+   */
+  async sync(repoId: string | undefined, opts: SyncOptions = {}): Promise<SyncResult[]> {
+    const settings = readSyncSettings(this.#workspaceName);
+    const git = await this.getGitSettings();
+    const author =
+      git.authorName && git.authorEmail
+        ? { name: git.authorName, email: git.authorEmail }
+        : undefined;
+    const mounts = [...this.#mounts.values()].filter(
+      (mount) => repoId === undefined || mount.id === repoId,
+    );
+    const results: SyncResult[] = [];
+    for (const mount of mounts) {
+      const handle = handleOf(mount.vault);
+      if (!handle) {
+        results.push(unsupportedSync(mount.id, NO_HANDLE_REASON));
+        continue;
+      }
+      const resolutions = resolutionsOf(this.#conflicts.get(mount.id));
+      const result = await runSync(handle, mount.id, {
+        ...opts,
+        ...(resolutions ? { resolutions } : {}),
+        push: opts.push ?? settings.pushOnSync,
+        ...(settings.corsProxy ? { corsProxy: settings.corsProxy } : {}),
+        ...(author ? { author } : {}),
+        // The token, when a host asks for one, is prompted for and held in
+        // memory for this tab only (GIT-US-0023, docs/06 §8.2).
+        onAuth: createAuthCallback(settings.corsProxy ? { corsProxy: settings.corsProxy } : {}),
+        onAuthFailure: createAuthFailureCallback(),
+        onConflict: (conflicts) => this.#rememberConflicts(mount.id, conflicts),
+      });
+      if (result.phase === 'done' && !result.dryRun && result.pulled > 0) {
+        // Incoming work changed files under our feet: reload the vault so the
+        // core and every open view see them.
+        await this.reindex(mount.id);
+      }
+      results.push(result);
+    }
+    return results;
+  }
+
+  /**
+   * Browser git rolls a conflicting merge back by itself, so aborting is only
+   * ever about forgetting the conflict this session is holding: the working
+   * tree was never touched, which is exactly the pre-sync state.
+   */
+  async abortSync(repoId: string): Promise<SyncRepoStatus> {
+    this.#conflicts.delete(repoId);
+    const [row] = await this.getSyncStatus(repoId);
+    if (!row) {
+      throw new ProviderError('not_found', `No repository is mounted as ${repoId}.`);
+    }
+    return row;
+  }
+
+  listSyncConflicts(repoId?: string): Promise<{ repo: string; paths: string[]; operation?: string }[]> {
+    const out: { repo: string; paths: string[]; operation?: string }[] = [];
+    for (const [repo, paths] of this.#conflicts) {
+      if (repoId !== undefined && repo !== repoId) continue;
+      if (paths.size === 0) continue;
+      out.push({ repo, paths: [...paths.keys()].sort(), operation: 'merge' });
+    }
+    return Promise.resolve(out);
+  }
+
+  /**
+   * The three versions of one conflicted path and the merge the core proposes
+   * for them. The merge runs in the same Go code the companion calls, so the
+   * two runtimes never drift (docs/06 §5, §6.2).
+   */
+  async readConflict(repoId: string, path: string): Promise<ConflictAnalysis> {
+    const pending = this.#pendingConflict(repoId, path);
+    const merge = await this.#mergeConflict(pending);
+    return {
+      repo: repoId,
+      path,
+      kind: pending.kind,
+      operation: 'merge',
+      strategy: 'merge',
+      versions: {
+        path,
+        kind: pending.kind,
+        base: pending.base,
+        ours: pending.ours,
+        theirs: pending.theirs,
+        hasBase: pending.base !== '',
+        hasOurs: true,
+        hasTheirs: true,
+        binary: false,
+      },
+      merge,
+    };
+  }
+
+  /**
+   * Writes a resolution and, once every conflicted path has one, replays the
+   * merge with those resolutions so that it completes: the merge driver is
+   * handed the resolved text and reports a clean merge, which is how browser
+   * mode finishes an integration it could not finish on its own.
+   */
+  async resolveConflict(
+    repoId: string,
+    path: string,
+    resolution: ConflictResolution,
+  ): Promise<ConflictResolveResult> {
+    const pending = this.#pendingConflict(repoId, path);
+    const merge = await this.#mergeConflict(pending, resolution);
+    if (!merge.clean) {
+      throw new ProviderError(
+        'validation_failed',
+        `The resolution of ${path} still leaves conflicted hunks: decide every hunk, or use ` +
+          'keep mine, keep theirs or a manual edit.',
+      );
+    }
+    pending.resolved = merge.content;
+
+    const repoConflicts = this.#conflicts.get(repoId);
+    const remaining = [...(repoConflicts?.values() ?? [])].filter((c) => c.resolved === undefined);
+    const proceed = resolution.continue !== false && remaining.length === 0;
+    const out: ConflictResolveResult = {
+      repo: repoId,
+      path,
+      merge,
+      result: {
+        staged: true,
+        continued: false,
+        remaining: remaining.map((c) => ({ path: c.path, kind: c.kind })),
+      },
+    };
+    if (!proceed) return out;
+
+    const results = await this.sync(repoId, { push: true });
+    const [result] = results;
+    if (result && (result.phase === 'failed' || result.phase === 'conflicts')) {
+      throw new ProviderError(
+        'git_conflict',
+        result.message ?? `The merge of ${repoId} could not be completed.`,
+      );
+    }
+    this.#conflicts.delete(repoId);
+    out.result.continued = true;
+    if (result) out.result.status = result.after;
+    const [row] = await this.getSyncStatus(repoId);
+    if (row) out.status = row;
+    return out;
+  }
+
+  /** Records the conflicts a stopped merge reported, keeping any resolution. */
+  #rememberConflicts(repoId: string, conflicts: BrowserConflict[]): void {
+    const existing = this.#conflicts.get(repoId);
+    const next = new Map<string, PendingConflict>();
+    for (const conflict of conflicts) {
+      const previous = existing?.get(conflict.path);
+      next.set(conflict.path, {
+        ...conflict,
+        ...(previous?.resolved === undefined ? {} : { resolved: previous.resolved }),
+      });
+    }
+    this.#conflicts.set(repoId, next);
+  }
+
+  /** Looks up one held conflict, or explains that the list is stale. */
+  #pendingConflict(repoId: string, path: string): PendingConflict {
+    const pending = this.#conflicts.get(repoId)?.get(path);
+    if (!pending) {
+      throw new ProviderError(
+        'not_found',
+        `${path} is not conflicted in ${repoId}: run the sync again to see the current conflicts.`,
+      );
+    }
+    return pending;
+  }
+
+  /** Runs the core's three-way merge over one held conflict. */
+  async #mergeConflict(
+    pending: PendingConflict,
+    resolution?: ConflictResolution,
+  ): Promise<ConflictMerge> {
+    const merged = await this.#call('conflict.merge', {
+      path: pending.path,
+      base: pending.base,
+      ours: pending.ours,
+      theirs: pending.theirs,
+      ...(resolution ? { resolution: coreResolution(resolution) } : {}),
+    });
+    return merged satisfies ConflictMerge;
+  }
+
   // ------------------------------------------------------------------- events
 
   subscribe(handler: (event: ChangeEvent) => void): Unsubscribe {
@@ -852,4 +1197,69 @@ export class BrowserProvider implements DataProvider {
     });
     mount.lastIndexedAt = new Date().toISOString();
   }
+}
+
+/** Why a vault with no File System Access handle cannot be driven by git. */
+const NO_HANDLE_REASON =
+  'This folder was opened read-only through the directory-upload fallback, which gives no handle ' +
+  'git can write through. Reopen it with "Open folder" in a Chromium browser, or run the companion.';
+
+/** The directory handle of a vault, when it has one. */
+function handleOf(vault: VaultFS): DirectoryHandleLike | undefined {
+  return vault instanceof FsaVault ? vault.handle : undefined;
+}
+
+/** A report for a repository this runtime cannot sync at all. */
+function unsupportedSync(repo: string, reason: string): SyncResult {
+  const status: SyncStatus = {
+    branch: '',
+    detached: false,
+    clean: true,
+    trackedChanges: false,
+    ahead: 0,
+    behind: 0,
+    state: 'no_remote',
+  };
+  return {
+    repo,
+    dryRun: false,
+    strategy: 'merge',
+    phase: 'failed',
+    before: status,
+    after: status,
+    pulled: 0,
+    pushed: 0,
+    retries: 0,
+    durationMs: 0,
+    code: 'git_unsupported',
+    message: reason,
+  };
+}
+
+/** Maps the provider's resolution onto the core's, which is side-shaped. */
+function coreResolution(resolution: ConflictResolution): ConflictResolutionParams {
+  return {
+    ...(resolution.resolution === 'ours' || resolution.resolution === 'theirs'
+      ? { take: resolution.resolution }
+      : {}),
+    ...(resolution.resolution === 'manual' && resolution.content !== undefined
+      ? { content: resolution.content }
+      : {}),
+    ...(resolution.body === undefined ? {} : { body: resolution.body }),
+    ...(resolution.fields === undefined ? {} : { fields: resolution.fields }),
+    ...(resolution.hunks === undefined ? {} : { hunks: resolution.hunks }),
+    ...(resolution.hunkText === undefined ? {} : { hunkText: resolution.hunkText }),
+  };
+}
+
+/** The resolved texts a replayed merge applies, keyed by path. */
+function resolutionsOf(
+  conflicts: Map<string, PendingConflict> | undefined,
+): Record<string, string> | undefined {
+  if (!conflicts || conflicts.size === 0) return undefined;
+  const out: Record<string, string> = {};
+  for (const [path, conflict] of conflicts) {
+    if (conflict.resolved !== undefined) out[path] = conflict.resolved;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }

@@ -253,16 +253,66 @@ last fetch, and buttons Fetch / Sync / Push. Expanding a row shows the staged
 change set (path, item id, title) and the commit message that will be used.
 Conflicts appear as a list linking to ConflictResolver (doc 06 §5).
 
-**ConflictResolver (`/sync/conflicts/$conflictId`)** — Front matter conflicts
-render as a field-by-field table (ours / theirs / merged, with the auto-merge
-result preselected). Body conflicts render side-by-side with a CodeMirror merge
-view. "Accept merged" writes the resolved file and stages it.
+*As built (GIT-US-0021).* Each row shows the branch, the tracking branch, the
+ahead/behind counters, the uncommitted count and one state word (up to date,
+ahead, behind, diverged, uncommitted changes, conflicts, rebase in progress,
+detached HEAD, no remote, no upstream). Two buttons: **Preview**, a dry run that
+fetches — which is read-only — and lists the incoming and outgoing commits
+without changing anything, and **Sync**, the full run. The report under a row
+explains a failure with the message the pipeline produced and names every
+conflicted file. A runtime that cannot sync (browser-only mode with no CORS
+proxy, doc 06 §6.3) shows the reason and disables both buttons rather than
+offering an action that would fail. Both buttons are disabled while a run is in
+flight; per-row progress from `sync.progress` arrives later.
+
+*As built (GIT-US-0022).* A repository whose integration stopped lists every
+conflicted file with a **Resolve** button, which opens the ConflictResolver
+inline in the panel rather than on its own route — the resolver is addressed by
+repository and path, and a path makes a poor route parameter, so
+`/sync/conflicts/$conflictId` was not created.
+
+*As built (GIT-US-0023).* The panel also owns the credential prompt of
+browser-only mode. It is a modal that opens only when a transport actually asks
+for a credential — never at mount time — and it names the host, shows the
+redacted remote URL, warns which configured CORS proxy the request (and its
+`Authorization` header) will travel through, and takes the token in a password
+field. What the user types goes to the pending `onAuth` call and into memory for
+that origin only; it is never written to `localStorage`, `sessionStorage`,
+IndexedDB, a cookie or a file, which `credentials.test.ts` asserts by spying on
+those APIs. While a token is held, the panel shows how many there are — never
+the value — and a **Forget tokens** button; a reload, a sign-out and unmounting
+a repository forget them too. Native mode never shows the prompt: the companion
+delegates to the user's credential helper and ssh-agent (doc 06 §8.1).
+
+**ConflictResolver (inside `/sync`)** — Front matter conflicts render as a
+field-by-field table (mine / theirs / merged, with the auto-merge result
+preselected). Body conflicts render three ways per hunk, labelled with the
+Markdown heading they fall under. "Accept merged" writes the resolved file,
+stages it and finishes the rebase or merge.
+
+*As built (GIT-US-0022).* The component reads `provider.readConflict(repo, path)`
+and renders what the core proposed (doc 06 §5.7): one row per front-matter field
+a decision was made for, carrying both sides, the merged value, the rule that was
+applied and a **review** badge when both sides changed it — every row can be
+flipped to mine or theirs. Each body hunk shows mine, theirs and base with take
+mine / take theirs / take both / take base and a free-text editor, and a hunk
+both sides changed must be decided before "Accept merged" is enabled. Three
+escape hatches are always present, whatever the shape of the conflict: **Keep
+mine**, **Keep theirs** and **Edit manually** (which hands the merged file to a
+textarea and writes it verbatim). **Abort and restore** undoes the integration at
+any step. A binary conflict says so and offers only the two whole-side choices.
+Nothing is decided silently: an automatic decision is a visible row or a badged
+hunk, never an invisible one.
 
 **SettingsLayout (`/settings/*`)** — Workspace (mounted repos, remove/repair,
 re-index, clear caches), per-repo (docs folder, project key, default branch,
 ignored globs), appearance (§12), sync (branch policy, commit-on-save toggle and
 message template with live preview, author name/email override), credentials
-(§ doc 06 §7 — storage mode, CORS proxy URL, "forget credentials"), agents.
+(§ doc 06 §7 — storage mode, CORS proxy URL, "forget credentials"), agents. As
+built, there is no credentials storage mode to choose: native mode uses the
+user's helper and browser mode keeps a per-session token in memory only
+(GIT-US-0023), so the CORS proxy is the only credential-adjacent setting and it
+lives on the sync settings card.
 
 **Agents / MCP status (`/settings/agents`)** — Companion mode only (Phase 5).
 Shows whether `gintrack mcp` is reachable (stdio child or streamable HTTP),
@@ -327,11 +377,31 @@ export interface DataProvider {
   getRetro(teamId: string, id: string): Promise<Retro>;
   updateRetro(teamId: string, id: string, patch: RetroPatch, rev: string): Promise<Retro>;
 
-  // git (Phase 4)
-  gitStatus(repoId: string): Promise<GitStatus>;
-  sync(repoId: string, opts: SyncOptions): Promise<SyncResult>;
-  listConflicts(repoId: string): Promise<Conflict[]>;
-  resolveConflict(repoId: string, id: string, resolution: Resolution): Promise<void>;
+  // git — commit on save (GIT-US-0020, implemented)
+  getGitSettings(): Promise<GitSettings>;
+  updateGitSettings(patch: GitSettingsPatch): Promise<GitSettings>;
+  getGitStatus(repoId?: string): Promise<GitRepoStatus[]>;
+  commitNow(input?: { repoId?: string; paths?: string[]; message?: string }): Promise<GitCommit[]>;
+
+  // git — sync (GIT-US-0021, implemented)
+  getSyncStatus(repoId?: string): Promise<SyncRepoStatus[]>;
+  getSyncSettings(): Promise<SyncSettings>;
+  updateSyncSettings(patch: SyncSettingsPatch): Promise<SyncSettings>;
+  /** With no repoId every repository is synced. A failure is reported in the
+   *  result's `code`/`message`, not thrown: the tree is always recoverable. */
+  sync(repoId: string | undefined, opts?: SyncOptions): Promise<SyncResult[]>;
+  abortSync(repoId: string): Promise<SyncRepoStatus>;
+  listSyncConflicts(repoId?: string): Promise<{ repo: string; paths: string[] }[]>;
+
+  // git — conflict resolution (GIT-US-0022, implemented)
+  /** The three versions of a conflicted path plus the merge the core proposes. */
+  readConflict(repoId: string, path: string): Promise<ConflictAnalysis>;
+  /** Writes a resolution, stages it and finishes the rebase or merge. */
+  resolveConflict(
+    repoId: string,
+    path: string,
+    resolution: ConflictResolution,
+  ): Promise<ConflictResolveResult>;
 
   // events
   subscribe(handler: (e: ChangeEvent) => void): Unsubscribe;
@@ -352,6 +422,19 @@ interface Capabilities {
   maxBatchWrite: number;
 }
 ```
+
+`GitSettings` carries `commitOnSave`, `commitDebounceMs`, `messageTemplate`,
+the configured and the resolved backend, and a `supported` flag with a `reason`.
+The UI branches on `supported`, never on `kind`: browser-only mode stores the
+settings and renders the preview but cannot commit until `isomorphic-git`
+arrives with GIT-US-0021, and the Settings card says so instead of offering a
+switch that would do nothing.
+
+Message rendering is the one thing implemented twice on purpose. The companion
+renders with Go `text/template` in `internal/gitops`; the browser cannot run that
+code (ADR-006), so `src/git/message.ts` implements the documented format of
+doc 06 §3.3 — the placeholders in both spellings, the 72-character subject, the
+trailers — and both implementations are tested against the same cases.
 
 ### 4.1 BrowserProvider
 
@@ -989,7 +1072,7 @@ and the Chromium e2e project on every PR; the full browser matrix runs nightly.
 | 1 | File System Access mount, WASM worker bridge, KB viewer with the full markdown pipeline, item table/detail/editor, epic tree, milestones, IndexedDB index cache, read-only fallback |
 | 2 | `CompanionProvider`, health probe + upgrade toast, WS-driven invalidation, contract test suite across providers |
 | 3 | Team repo mounting, boards (kanban + scrum) with dnd-kit, sprint planning, remote reference cards, multi-project item table |
-| 4 | Sync panel, conflict resolver UI, commit-on-save settings, credentials screen, git activity strips |
+| 4 | Commit-on-save settings card with a live message preview and per-repository git status (GIT-US-0020, done); sync panel with the status indicator and the dry-run preview, over the companion API and over isomorphic-git in the browser (GIT-US-0021, done); credential prompt in the sync panel, per-session in-memory tokens and the redaction rules (GIT-US-0023, done); conflict resolver UI (GIT-US-0022, done; git activity strips still to come) |
 | 5 | Agent/MCP status screen, call log, agent-oriented empty states and AGENTS.md surfacing in the KB |
 | 6 | Retro board, action promotion, metrics (burndown, CFD), link graph view, PWA polish, visual/a11y test gates, 1.0 |
 

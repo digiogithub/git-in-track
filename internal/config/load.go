@@ -29,8 +29,11 @@ const (
 	EnvBind       = "GINTRACK_BIND"
 	EnvToken      = "GINTRACK_TOKEN"
 	EnvGitBackend = "GINTRACK_GIT_BACKEND"
-	EnvLogLevel   = "GINTRACK_LOG_LEVEL"
-	EnvLogFormat  = "GINTRACK_LOG_FORMAT"
+	// EnvGitCommitOnSave overrides git.commitOnSave; it accepts anything
+	// strconv.ParseBool does.
+	EnvGitCommitOnSave = "GINTRACK_GIT_COMMIT_ON_SAVE"
+	EnvLogLevel        = "GINTRACK_LOG_LEVEL"
+	EnvLogFormat       = "GINTRACK_LOG_FORMAT"
 )
 
 // Env returns a Reader over the process environment.
@@ -200,6 +203,13 @@ func applyEnv(c *Config, env Reader) error {
 	}
 	if v := strings.TrimSpace(env(EnvGitBackend)); v != "" {
 		c.Git.Backend = Backend(v)
+	}
+	if v := strings.TrimSpace(env(EnvGitCommitOnSave)); v != "" {
+		on, err := strconv.ParseBool(v)
+		if err != nil {
+			return FieldErrors{{Field: EnvGitCommitOnSave, Message: fmt.Sprintf("%q is not a boolean", v)}}
+		}
+		c.Git.CommitOnSave = on
 	}
 	if v := strings.TrimSpace(env(EnvLogLevel)); v != "" {
 		c.Log.Level = v

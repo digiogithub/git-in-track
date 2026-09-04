@@ -11,8 +11,10 @@ const (
 	eventFileChanged      = "file.changed"
 	eventIndexUpdated     = "index.updated"
 	eventItemChanged      = "item.changed"
+	eventGitCommit        = "git.commit"
 	eventSyncProgress     = "sync.progress"
 	eventConflictDetected = "conflict.detected"
+	eventConflictResolved = "conflict.resolved"
 	eventResumeGap        = "resume.gap"
 	eventStreamOverflow   = "stream.overflow"
 )
