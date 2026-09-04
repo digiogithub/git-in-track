@@ -19,8 +19,8 @@ type MoveOnBoardInput struct {
 	ToColumn string `json:"toColumn" jsonschema:"Target column id declared by the board"`
 	Position int    `json:"position,omitempty" jsonschema:"0-based index in the target column; -1 appends"`
 	Status   string `json:"status,omitempty" jsonschema:"Status to set when the column maps several"`
-	Rev      string `json:"rev,omitempty" jsonschema:"Board rev from the read this move is based on"`
-	ItemRev  string `json:"itemRev,omitempty" jsonschema:"Item rev from the read this move is based on"`
+	Rev      string `json:"rev" jsonschema:"Required. Board rev from the read this move is based on; \"*\" moves on whatever the board holds now"`
+	ItemRev  string `json:"itemRev" jsonschema:"Required. Item rev from the read this move is based on; \"*\" moves whatever the item holds now"`
 	Force    bool   `json:"force,omitempty" jsonschema:"Confirm a move that exceeds the column's WIP limit"`
 }
 
@@ -46,7 +46,10 @@ func registerBoardTools(s *Server) {
 		Description: "Move one card to another column of a team board. This writes two files in two " +
 			"repositories — the item's status in its project clone and the column order in the team " +
 			"repository — and validates the transition against the project workflow and the column's " +
-			"WIP limit. A card whose project is not cloned cannot be moved.",
+			"WIP limit. A card whose project is not cloned cannot be moved. Both revs are required: " +
+			"rev locks the board file, itemRev locks the item file, and either may be \"*\" to move " +
+			"against whatever is there now. A stale rev is refused with stale_revision and neither " +
+			"file is written.",
 		Write: true,
 	}, moveOnBoard)
 }
@@ -64,10 +67,18 @@ func moveOnBoard(ctx context.Context, s *Server, in MoveOnBoardInput) (MoveResul
 	if strings.TrimSpace(in.ToColumn) == "" {
 		return MoveResult{}, invalidField("toColumn", "move_on_board needs a target column", "in_review")
 	}
+	boardRev, err := requiredRev("rev", in.Rev)
+	if err != nil {
+		return MoveResult{}, err
+	}
+	itemRev, err := requiredRev("itemRev", in.ItemRev)
+	if err != nil {
+		return MoveResult{}, err
+	}
 	result, err := s.dispatchRaw(ctx, "board.move", map[string]any{
 		"board": in.Board, "ref": in.Ref, "toColumn": in.ToColumn,
 		"position": in.Position, "status": in.Status,
-		"rev": in.Rev, "itemRev": in.ItemRev, "force": in.Force,
+		"rev": boardRev, "itemRev": itemRev, "force": in.Force,
 	})
 	if err != nil {
 		return MoveResult{}, err

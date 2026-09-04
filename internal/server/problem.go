@@ -35,16 +35,20 @@ type problemField struct {
 // problem is an RFC 7807 problem document, with the machine-readable `code`
 // clients switch on (docs/07 section 5.4).
 type problem struct {
-	Type       string         `json:"type"`
-	Title      string         `json:"title"`
-	Status     int            `json:"status"`
-	Detail     string         `json:"detail,omitempty"`
-	Instance   string         `json:"instance,omitempty"`
-	Code       string         `json:"code"`
-	RequestID  string         `json:"requestId,omitempty"`
-	Path       string         `json:"path,omitempty"`
-	CurrentRev string         `json:"currentRev,omitempty"`
-	Errors     []problemField `json:"errors,omitempty"`
+	Type       string `json:"type"`
+	Title      string `json:"title"`
+	Status     int    `json:"status"`
+	Detail     string `json:"detail,omitempty"`
+	Instance   string `json:"instance,omitempty"`
+	Code       string `json:"code"`
+	RequestID  string `json:"requestId,omitempty"`
+	Path       string `json:"path,omitempty"`
+	CurrentRev string `json:"currentRev,omitempty"`
+	// Conflicts are the fields a refused conditional write would still have
+	// changed, judged against the content on disk now. They are what lets a
+	// client show a merge prompt instead of a raw error.
+	Conflicts []core.ConflictField `json:"conflicts,omitempty"`
+	Errors    []problemField       `json:"errors,omitempty"`
 }
 
 // statusForCode maps the stable error catalog onto HTTP status codes. Anything
@@ -145,14 +149,20 @@ func writeVaultError(w http.ResponseWriter, r *http.Request, err error) {
 		return
 	}
 	doc := problem{
-		Code:   classified.Code,
-		Detail: classified.Message,
-		Path:   classified.Path,
+		Code:       classified.Code,
+		Detail:     classified.Message,
+		Path:       classified.Path,
+		CurrentRev: classified.Current,
+		Conflicts:  classified.Conflicts,
 	}
 
 	var stale *core.StaleRevisionError
 	if errors.As(err, &stale) {
+		// A board or a sprint reports its conflict as a vault error rather than
+		// a core one, so the classified value above already carries the rev;
+		// this fills it in for the paths that go straight through.
 		doc.CurrentRev = string(stale.Current)
+		doc.Conflicts = stale.Fields
 	}
 	var diag *core.DiagnosticError
 	if errors.As(err, &diag) {

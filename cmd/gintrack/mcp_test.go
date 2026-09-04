@@ -167,7 +167,7 @@ func TestMCPOverStdio(t *testing.T) {
 				Author string `json:"author"`
 			} `json:"comment"`
 		}](ctx, t, session, "add_comment", map[string]any{
-			"id": storyID, "body": "Broke this down into one task.",
+			"id": storyID, "body": "Broke this down into one task.", "rev": storyRev,
 		})
 		if comment.Comment.Author != "test-agent" {
 			t.Errorf("author = %q, want the --agent name", comment.Comment.Author)

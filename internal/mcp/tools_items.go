@@ -93,8 +93,10 @@ type CreateItemInput struct {
 // UpdateItemInput is a sparse patch. Only the keys present are changed, which
 // is what keeps an agent's diff to the lines it meant to touch.
 type UpdateItemInput struct {
-	ID    string `json:"id"`
-	Rev   string `json:"rev,omitempty" jsonschema:"The rev returned by the read this change is based on"`
+	ID string `json:"id"`
+	// Rev is mandatory: a write with no rev is a lost update waiting to happen
+	// (GIT-US-0025). "*" writes over whatever is on disk now and is unsafe.
+	Rev   string `json:"rev" jsonschema:"Required. The rev returned by the read this change is based on; \"*\" overwrites unconditionally"`
 	Title string `json:"title,omitempty"`
 	// Status is applied through the workflow, so an undeclared transition is
 	// refused with the transitions the project does allow.
@@ -121,7 +123,12 @@ type WriteResult struct {
 // AddCommentInput appends one comment to an item's thread. Comments are
 // separate files; nothing is ever appended to an item body.
 type AddCommentInput struct {
-	ID     string `json:"id"`
+	ID string `json:"id"`
+	// Rev is the rev of the item, not of the thread. A comment is a new file
+	// and cannot overwrite anything, so the check is not there to protect the
+	// thread: it is there so that an agent cannot comment on a state of the
+	// world it has not seen.
+	Rev    string `json:"rev" jsonschema:"Required. The rev of the item this comment is about; \"*\" comments on whatever is there now"`
 	Body   string `json:"body" jsonschema:"Markdown text of the comment"`
 	Author string `json:"author,omitempty" jsonschema:"Defaults to the agent name the server was started with"`
 }
@@ -192,7 +199,10 @@ func registerItemTools(s *Server) {
 		Title: "Update a backlog item",
 		Description: "Apply a sparse patch to one item: only the keys you pass are changed, so the " +
 			"diff a human reviews stays small. A status change is validated against the project workflow, " +
-			"which refuses a transition the project does not declare.",
+			"which refuses a transition the project does not declare. rev is required: quote the one the " +
+			"read this change is based on returned. A rev that is no longer current is refused with " +
+			"stale_revision, which carries currentRev and the fields still in conflict, so retry once " +
+			"deliberately instead of overwriting.",
 		Write: true,
 	}, updateItem)
 
@@ -201,7 +211,8 @@ func registerItemTools(s *Server) {
 		Title: "Comment on a backlog item",
 		Description: "Append one comment to an item's thread as a separate file, attributed to the " +
 			"agent. Prefer a comment over editing an item body when you are reporting progress or " +
-			"raising a question.",
+			"raising a question. rev is required and is the rev of the item you are commenting on, so " +
+			"that you cannot report on a state of the item you have not seen.",
 		Write: true,
 	}, addComment)
 }
@@ -373,16 +384,22 @@ func createTool(itemType core.ItemType) func(context.Context, *Server, CreateIte
 	}
 }
 
-// updateItem applies a sparse patch. A status change goes through "item.move"
-// rather than the patch, because that is the method that validates the
-// transition against the project's workflow; doing both in one call keeps the
-// agent's mental model simple and the validation identical to the UI's.
+// updateItem applies a sparse patch. Fields and status travel in the same
+// patch, so the whole change is one conditional write in the core: there is no
+// window between two writes for a third party to slip into, and no second write
+// quoting a rev the caller never saw. The core validates a status change
+// against the project workflow exactly as a move does.
 func updateItem(ctx context.Context, s *Server, in UpdateItemInput) (WriteResult, error) {
 	if strings.TrimSpace(in.ID) == "" {
 		return WriteResult{}, invalidField("id", "update_item needs an item id", "ACME-US-0042")
 	}
+	rev, err := requiredRev("rev", in.Rev)
+	if err != nil {
+		return WriteResult{}, err
+	}
 	set := map[string]any{}
 	putString(set, "title", in.Title)
+	putString(set, "status", in.Status)
 	putString(set, "priority", in.Priority)
 	putString(set, "parent", in.Parent)
 	putString(set, "milestone", in.Milestone)
@@ -399,43 +416,17 @@ func updateItem(ctx context.Context, s *Server, in UpdateItemInput) (WriteResult
 	if in.Effort != nil {
 		set["effort"] = in.Effort
 	}
-	patchEmpty := len(set) == 0 && in.Body == nil && len(in.Unset) == 0
-	if patchEmpty && in.Status == "" {
+	if len(set) == 0 && in.Body == nil && len(in.Unset) == 0 {
 		return WriteResult{}, invalidField("set", "update_item was given nothing to change",
 			map[string]any{"status": "in_progress", "labels": []string{"auth"}})
 	}
 
-	rev := in.Rev
-	var result any
-	var err error
-	if !patchEmpty {
-		patch := map[string]any{"set": set, "unset": in.Unset}
-		if in.Body != nil {
-			patch["body"] = *in.Body
-		}
-		result, err = s.dispatchRaw(ctx, "item.update",
-			map[string]any{"id": in.ID, "rev": rev, "patch": patch})
-		if err != nil {
-			return WriteResult{}, err
-		}
-		out, convErr := writeResultOf(result)
-		if convErr != nil {
-			return WriteResult{}, convErr
-		}
-		// The status move below is a second write, and it has to quote the rev
-		// this one produced rather than the stale one the caller sent.
-		rev = out.Item.Rev
-		s.announce(ctx, WriteEvent{
-			Tool: "update_item", Method: "item.update",
-			ItemID: out.Item.ID, Op: "updated", Result: result,
-		})
-		if in.Status == "" {
-			return out, nil
-		}
+	patch := map[string]any{"set": set, "unset": in.Unset}
+	if in.Body != nil {
+		patch["body"] = *in.Body
 	}
-
-	result, err = s.dispatchRaw(ctx, "item.move",
-		map[string]any{"id": in.ID, "status": in.Status, "rev": rev})
+	result, err := s.dispatchRaw(ctx, "item.update",
+		map[string]any{"id": in.ID, "rev": rev, "patch": patch})
 	if err != nil {
 		return WriteResult{}, err
 	}
@@ -443,9 +434,13 @@ func updateItem(ctx context.Context, s *Server, in UpdateItemInput) (WriteResult
 	if err != nil {
 		return WriteResult{}, err
 	}
+	op := "updated"
+	if in.Status != "" {
+		op = "moved"
+	}
 	s.announce(ctx, WriteEvent{
-		Tool: "update_item", Method: "item.move",
-		ItemID: out.Item.ID, Op: "moved", Result: result,
+		Tool: "update_item", Method: "item.update",
+		ItemID: out.Item.ID, Op: op, Result: result,
 	})
 	return out, nil
 }
@@ -459,8 +454,12 @@ func addComment(ctx context.Context, s *Server, in AddCommentInput) (CommentResu
 		return CommentResult{}, invalidField("body", "a comment needs a body",
 			"Implemented discovery caching; static fallback still pending.")
 	}
+	rev, err := requiredRev("rev", in.Rev)
+	if err != nil {
+		return CommentResult{}, err
+	}
 	result, err := s.dispatchRaw(ctx, "comment.add", map[string]any{
-		"id": in.ID, "body": in.Body, "author": s.authorName(in.Author),
+		"id": in.ID, "body": in.Body, "author": s.authorName(in.Author), "rev": rev,
 	})
 	if err != nil {
 		return CommentResult{}, err

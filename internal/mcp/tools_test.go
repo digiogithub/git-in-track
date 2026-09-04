@@ -509,7 +509,10 @@ func TestUpdateItem(t *testing.T) {
 
 	t.Run("refuses an empty patch", func(t *testing.T) {
 		h := newHarness(t, true)
-		got := callFails(t, h, "update_item", map[string]any{"id": "DEMO-US-0002"})
+		before := call[ItemResult](t, h, "get_item", map[string]any{"id": "DEMO-US-0002"})
+		got := callFails(t, h, "update_item", map[string]any{
+			"id": "DEMO-US-0002", "rev": before.Item.Rev,
+		})
 		if got.Code != codeInvalidRequest {
 			t.Errorf("code = %q, want %q", got.Code, codeInvalidRequest)
 		}
@@ -530,8 +533,9 @@ func TestAddComment(t *testing.T) {
 	h := newHarness(t, true)
 
 	t.Run("writes a comment attributed to the agent", func(t *testing.T) {
+		item := call[ItemResult](t, h, "get_item", map[string]any{"id": "DEMO-US-0001"})
 		got := call[CommentResult](t, h, "add_comment", map[string]any{
-			"id": "DEMO-US-0001", "body": "Picked this up.",
+			"id": "DEMO-US-0001", "body": "Picked this up.", "rev": item.Item.Rev,
 		})
 		if got.Comment.Author != "test-agent" {
 			t.Errorf("author = %q, want the agent name", got.Comment.Author)
@@ -545,7 +549,9 @@ func TestAddComment(t *testing.T) {
 	})
 
 	t.Run("refuses an empty body", func(t *testing.T) {
-		got := callFails(t, h, "add_comment", map[string]any{"id": "DEMO-US-0001", "body": " "})
+		got := callFails(t, h, "add_comment", map[string]any{
+			"id": "DEMO-US-0001", "body": " ", "rev": wildcardRev,
+		})
 		if got.Code != codeInvalidRequest || got.Field != "body" {
 			t.Errorf("error = %+v, want an invalid_request on `body`", got)
 		}
@@ -556,9 +562,11 @@ func TestMoveOnBoard(t *testing.T) {
 	h := newHarness(t, true)
 
 	t.Run("moves a card and the item behind it", func(t *testing.T) {
+		item := call[ItemResult](t, h, "get_item", map[string]any{"id": "DEMO-US-0001"})
 		got := call[MoveResult](t, h, "move_on_board", map[string]any{
 			"board": "delivery", "ref": "DEMO/DEMO-US-0001",
 			"toColumn": "todo", "status": "todo", "position": 0,
+			"rev": wildcardRev, "itemRev": item.Item.Rev,
 		})
 		if got.ToColumn != "todo" || !got.StatusChanged {
 			t.Errorf("move = %+v, want a status-changing move into todo", got)
@@ -574,6 +582,7 @@ func TestMoveOnBoard(t *testing.T) {
 	t.Run("refuses a card whose project is not cloned", func(t *testing.T) {
 		got := callFails(t, h, "move_on_board", map[string]any{
 			"board": "delivery", "ref": "WEB/WEB-US-0031", "toColumn": "done",
+			"rev": wildcardRev, "itemRev": wildcardRev,
 		})
 		if got.Code == "" {
 			t.Errorf("error = %+v, want a refusal", got)
@@ -583,6 +592,7 @@ func TestMoveOnBoard(t *testing.T) {
 	t.Run("rejects a call with no target column", func(t *testing.T) {
 		got := callFails(t, h, "move_on_board", map[string]any{
 			"board": "delivery", "ref": "DEMO/DEMO-US-0002", "toColumn": "",
+			"rev": wildcardRev, "itemRev": wildcardRev,
 		})
 		if got.Code != codeInvalidRequest || got.Field != "toColumn" {
 			t.Errorf("error = %+v, want an invalid_request on `toColumn`", got)
