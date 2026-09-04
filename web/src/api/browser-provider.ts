@@ -18,6 +18,7 @@
 import type {
   BatchResult,
   BoardMoveResult,
+  BoardPatch,
   BoardSummary,
   BoardView,
   Capabilities,
@@ -44,13 +45,26 @@ import type {
   SearchQuery,
   SnapshotRefresh,
   SnapshotResult,
+  SprintCarry,
+  SprintDraft,
+  SprintFilter,
+  SprintPatch,
+  SprintResult,
+  SprintSummary,
+  SprintView,
   TeamSummary,
   Unsubscribe,
   UpdateOp,
 } from '@/api/provider';
 import { ProviderError } from '@/api/provider';
 import { hydrateOrBuild } from '@/cache/index-cache';
-import type { CoreMethodName, CoreParams, CoreResult, WriteSet } from '@/core-bridge/api';
+import type {
+  CoreMethodName,
+  CoreParams,
+  CoreResult,
+  VaultWriteSet,
+  WriteSet,
+} from '@/core-bridge/api';
 import { coreClient, type CoreClient } from '@/core-bridge/client';
 import {
   FsaVault,
@@ -489,17 +503,103 @@ export class BrowserProvider implements DataProvider {
       ...(move.itemRev === undefined ? {} : { itemRev: move.itemRev }),
       ...(move.force === undefined ? {} : { force: move.force }),
     });
-    for (const set of result.writes) {
-      const mount = this.#mounts.get(set.vaultId);
-      if (!mount) continue;
-      await this.#persist(mount, { written: set.written, removed: set.removed });
-      this.#emit({ kind: 'repo', repoId: mount.id });
-    }
+    await this.#persistSets(result.writes);
     if (result.item) {
       const mount = this.#mountForItem(result.item.id, await this.#ensureActive());
       this.#emit({ kind: 'items', repoId: mount.id, ids: [result.item.id] });
     }
     return result;
+  }
+
+  /**
+   * Edits the board file of the team repository and nothing else: one write,
+   * persisted through the team repository's directory handle.
+   */
+  async updateBoard(slug: string, patch: BoardPatch, rev?: string): Promise<BoardView> {
+    await this.#ensureWritable();
+    const result = await this.#call('board.update', {
+      board: slug,
+      patch,
+      ...(rev === undefined ? {} : { rev }),
+    });
+    await this.#persistSets(result.writes);
+    return result.board;
+  }
+
+  // ------------------------------------------------------------------- sprints
+
+  /**
+   * The sprints of the team repository. Without one open there is nothing to
+   * list, which is a state rather than an error.
+   */
+  async listSprints(filter: SprintFilter = {}): Promise<SprintSummary[]> {
+    await this.#ensureActive();
+    try {
+      const result = await this.#call('sprint.list', {
+        ...(filter.board === undefined ? {} : { board: filter.board }),
+        ...(filter.state === undefined ? {} : { state: filter.state }),
+      });
+      return result.sprints;
+    } catch (error) {
+      if (error instanceof ProviderError && error.code === 'not_found') return [];
+      throw error;
+    }
+  }
+
+  async getSprint(id: string): Promise<SprintView> {
+    await this.#ensureActive();
+    return this.#call('sprint.get', { id });
+  }
+
+  async createSprint(input: SprintDraft): Promise<SprintResult> {
+    await this.#ensureWritable();
+    return this.#persistSprint(await this.#call('sprint.create', input));
+  }
+
+  async updateSprint(id: string, patch: SprintPatch, rev?: string): Promise<SprintResult> {
+    await this.#ensureWritable();
+    return this.#persistSprint(
+      await this.#call('sprint.update', { id, patch, ...(rev === undefined ? {} : { rev }) }),
+    );
+  }
+
+  async startSprint(id: string, rev?: string, force?: boolean): Promise<SprintResult> {
+    await this.#ensureWritable();
+    return this.#persistSprint(
+      await this.#call('sprint.start', {
+        id,
+        ...(rev === undefined ? {} : { rev }),
+        ...(force === undefined ? {} : { force }),
+      }),
+    );
+  }
+
+  async closeSprint(id: string, carry?: SprintCarry[], rev?: string): Promise<SprintResult> {
+    await this.#ensureWritable();
+    return this.#persistSprint(
+      await this.#call('sprint.close', {
+        id,
+        ...(carry === undefined ? {} : { carry }),
+        ...(rev === undefined ? {} : { rev }),
+      }),
+    );
+  }
+
+  /** Persists what a sprint call wrote: the team repository, and the project
+   * repository of an item a closing decision sent back to the backlog. */
+  async #persistSprint(result: SprintResult): Promise<SprintResult> {
+    await this.#persistSets(result.writes);
+    return result;
+  }
+
+  /** Writes one `WriteSet` per repository into the folder it belongs to. */
+  async #persistSets(sets: VaultWriteSet[]): Promise<void> {
+    for (const set of sets) {
+      const mount = this.#mounts.get(set.vaultId);
+      if (!mount) continue;
+      await this.#persist(mount, { written: set.written, removed: set.removed });
+      this.#emit({ kind: 'repo', repoId: mount.id });
+    }
   }
 
   // ----------------------------------------------------------------- snapshots

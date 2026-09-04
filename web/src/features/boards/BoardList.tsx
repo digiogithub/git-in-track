@@ -53,6 +53,11 @@ export function BoardList() {
                   <Badge variant="outline" size="sm" className="font-normal">
                     {board.kind}
                   </Badge>
+                  {board.sprint ? (
+                    <Badge variant="outline" size="sm" className="font-normal">
+                      {board.sprint}
+                    </Badge>
+                  ) : null}
                 </CardTitle>
                 <CardDescription>
                   {board.description ?? `${board.columns} columns`}

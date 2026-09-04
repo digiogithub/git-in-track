@@ -307,6 +307,9 @@ export type SnapshotResult = {
   info: SnapshotInfo;
 };
 
+/** The coarse bucket of a status in a project workflow (docs/03 §6.1). */
+export type StatusCategory = 'todo' | 'in_progress' | 'done' | 'cancelled';
+
 export type BoardKind = 'kanban' | 'scrum';
 
 /** One card of a rendered board (docs/04-team-repository.md §5). */
@@ -323,6 +326,8 @@ export type BoardCard = {
   title?: string;
   type?: ItemType;
   status?: string;
+  /** The coarse bucket of `status` in the card's own project workflow. */
+  category?: StatusCategory;
   priority?: Priority;
   assignees?: string[];
   labels?: string[];
@@ -345,8 +350,138 @@ export type BoardCard = {
   stale?: boolean;
   /** The item's file on the git host, absent when no link can be built. */
   remoteUrl?: string;
+  /** The scrum board's sprint lists this card (docs/04 §8.2). */
+  inSprint?: boolean;
+  /** The sprint committed to this card when it started, as opposed to pulling
+   * it in mid-sprint (R-SPR-1). */
+  committed?: boolean;
+  /** A sprint candidate: the board's filters match it and the sprint does not
+   * list it, so it sits in the `backlog_column` (docs/04 §5.5). */
+  backlog?: boolean;
   /** One sentence explaining why the card cannot be edited here. */
   reason?: string;
+};
+
+/** The lifecycle of a sprint (docs/04 §8.2). */
+export type SprintState = 'planned' | 'active' | 'closed';
+
+/** What a sprint header and a closing report count. */
+export type SprintMetrics = {
+  items: number;
+  resolved: number;
+  done: number;
+  points: number;
+  committedPoints: number;
+  donePoints: number;
+  /** References pulled in after the sprint started. */
+  added: number;
+  /** References neither a clone nor a snapshot could render. */
+  unresolved: number;
+};
+
+/** A sprint as the UI reads it: the file plus the numbers it resolves to. */
+export type SprintSummary = {
+  id: string;
+  title: string;
+  board: string;
+  state: SprintState;
+  start?: string;
+  end?: string;
+  goal?: string;
+  capacityHours?: number;
+  velocityTarget?: number;
+  participants?: string[];
+  retro?: string;
+  items: string[];
+  committed?: string[];
+  /** Both ends inclusive; `remainingDays` is 0 once the end date has passed. */
+  totalDays: number;
+  remainingDays: number;
+  metrics: SprintMetrics;
+  body?: string;
+  path?: string;
+  rev?: string;
+};
+
+/** The planning view of one sprint: its scope and the candidates for it. */
+export type SprintView = {
+  sprint: SprintSummary;
+  /** The scope, in the order the sprint file lists it. */
+  cards: BoardCard[];
+  /** What the board would show that the sprint does not list. */
+  backlog: BoardCard[];
+  diagnostics: Diagnostic[];
+};
+
+/** What happens to one unfinished item when a sprint closes (R-SPR-3). */
+export type SprintCarryAction = 'leave' | 'next' | 'backlog';
+
+/** One closing decision. */
+export type SprintCarry = {
+  ref: string;
+  action: SprintCarryAction;
+  /** The sprint to carry into; empty picks the next planned one. */
+  sprint?: string;
+  /** Overrides the status a `backlog` decision writes. */
+  status?: string;
+};
+
+/** The outcome of one closing decision. */
+export type SprintCarryResult = {
+  ref: string;
+  action: SprintCarryAction;
+  sprint?: string;
+  status?: string;
+  /** A decision that could not be applied; the rest still went through. */
+  error?: string;
+};
+
+/** What closing a sprint summarised. */
+export type SprintCloseReport = {
+  sprint: string;
+  board: string;
+  completed: BoardCard[];
+  incomplete: BoardCard[];
+  /** References neither a clone nor a snapshot could grade. */
+  unresolved: BoardCard[];
+  completedPoints: number;
+  incompletePoints: number;
+  metrics: SprintMetrics;
+  carried: SprintCarryResult[];
+};
+
+/** The answer of every sprint call that writes. */
+export type SprintResult = {
+  sprint: SprintView;
+  /** Present when the write touched the board as well. */
+  board?: BoardView;
+  /** Present when the sprint was closed. */
+  report?: SprintCloseReport;
+  writes: VaultWriteSet[];
+};
+
+/** The fields `board.update` may change; the card order is never patched. */
+export type BoardPatch = {
+  title?: string;
+  description?: string;
+  projects?: string[];
+  columns?: BoardColumnPatch[];
+  filters?: BoardFilters;
+  swimlanes?: { by?: string; order?: string[]; collapseEmpty?: boolean };
+  card?: { show?: string[] };
+  sprint?: string;
+  backlogColumn?: string;
+};
+
+/** One column as `board.update` sends it back. */
+export type BoardColumnPatch = {
+  id: string;
+  name?: string;
+  statuses?: Record<string, string[]>;
+  categories?: StatusCategory[];
+  wip?: number;
+  collapsed?: boolean;
+  color?: string;
 };
 
 /** Where a card's fields came from. */
@@ -421,6 +556,8 @@ export type BoardView = {
   card: { show?: string[] };
   sprint?: string;
   backlogColumn?: string;
+  /** The goal, the dates and the metrics of the sprint a scrum board runs. */
+  sprintInfo?: SprintSummary;
   columns: BoardColumnView[];
   /** Items whose status maps to no column: surfaced, never hidden (R-COL-4). */
   unmapped: BoardCard[];
@@ -453,6 +590,9 @@ export type BoardMovePlan = {
   /** Every status the target column maps for this project. */
   choices?: string[];
   wip: { column: string; used: number; limit: number; exceeded: boolean };
+  /** The sprint a scrum board is scoped to, and whether the move joined it. */
+  sprint?: string;
+  sprintAdd?: boolean;
 };
 
 /** A `WriteSet` plus the repository it belongs to. */
@@ -561,6 +701,67 @@ export type CoreApi = {
       force?: boolean;
     };
     result: BoardMoveResult;
+  };
+  /** Edit a board's columns, WIP limits, filters or sprint; never its order. */
+  'board.update': {
+    params: { board: string; rev?: string; patch: BoardPatch };
+    result: { board: BoardView; writes: VaultWriteSet[] };
+  };
+
+  /** The sprints of the team repository, filtered by board and by state. */
+  'sprint.list': {
+    params: { board?: string; state?: SprintState } | undefined;
+    result: { sprints: SprintSummary[]; diagnostics: Diagnostic[] };
+  };
+  /** One sprint: its scope, the candidates for it and its metrics. */
+  'sprint.get': { params: { id: string }; result: SprintView };
+  /** Create a sprint; the id is allocated by the core from the team key. */
+  'sprint.create': {
+    params: {
+      board: string;
+      start: string;
+      end: string;
+      title?: string;
+      goal?: string;
+      state?: SprintState;
+      items?: string[];
+      capacityHours?: number;
+      velocityTarget?: number;
+      participants?: string[];
+      author?: string;
+    };
+    result: SprintResult;
+  };
+  /**
+   * Change the goal, the dates or the scope. Every change is one write to the
+   * sprint file in the team repository, never a write to an item.
+   */
+  'sprint.update': {
+    params: {
+      id: string;
+      rev?: string;
+      patch: {
+        title?: string;
+        goal?: string;
+        start?: string;
+        end?: string;
+        state?: SprintState;
+        capacityHours?: number;
+        velocityTarget?: number;
+        participants?: string[];
+        items?: string[];
+        addItems?: string[];
+        removeItems?: string[];
+      };
+    };
+    result: SprintResult;
+  };
+  /** Make a sprint active, snapshot its commitment and point its board at it. */
+  'sprint.start': { params: { id: string; rev?: string; force?: boolean }; result: SprintResult };
+  /** Close a sprint and apply one explicit decision per unfinished item. */
+  'sprint.close': {
+    params: { id: string; rev?: string; carry?: SprintCarry[] };
+    result: SprintResult;
   };
 
   /**

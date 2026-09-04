@@ -28,6 +28,7 @@ import type {
   BatchResult,
   BoardMoveResult,
   BoardSummary,
+  BoardPatch,
   BoardView,
   CardMove,
   Capabilities,
@@ -56,6 +57,13 @@ import type {
   SearchQuery,
   SnapshotRefresh,
   SnapshotResult,
+  SprintCarry,
+  SprintDraft,
+  SprintFilter,
+  SprintPatch,
+  SprintResult,
+  SprintSummary,
+  SprintView,
   TeamSummary,
   Unsubscribe,
   UpdateOp,
@@ -965,6 +973,64 @@ export class CompanionProvider implements DataProvider {
       },
     );
     return body as BoardMoveResult;
+  }
+
+  /** `If-Match` carries the board revision; `*` overwrites unconditionally. */
+  async updateBoard(slug: string, patch: BoardPatch, rev?: string): Promise<BoardView> {
+    const body = await this.#json(`${API_PREFIX}/boards/${encodeURIComponent(slug)}`, {
+      method: 'PATCH',
+      rev: rev ?? '*',
+      body: patch,
+    });
+    const record = asRecord(body);
+    return (record ? record['board'] : body) as BoardView;
+  }
+
+  // ------------------------------------------------------------------- sprints
+
+  async listSprints(filter: SprintFilter = {}): Promise<SprintSummary[]> {
+    const query = new URLSearchParams();
+    if (filter.board) query.set('board', filter.board);
+    if (filter.state) query.set('state', filter.state);
+    const suffix = query.size > 0 ? `?${query.toString()}` : '';
+    const body = await this.#json(`${API_PREFIX}/sprints${suffix}`);
+    const record = asRecord(body);
+    return asArray(record ? record['sprints'] : body) as SprintSummary[];
+  }
+
+  async getSprint(id: string): Promise<SprintView> {
+    return (await this.#json(`${API_PREFIX}/sprints/${encodeURIComponent(id)}`)) as SprintView;
+  }
+
+  async createSprint(input: SprintDraft): Promise<SprintResult> {
+    return (await this.#json(`${API_PREFIX}/sprints`, {
+      method: 'POST',
+      body: input,
+    })) as SprintResult;
+  }
+
+  async updateSprint(id: string, patch: SprintPatch, rev?: string): Promise<SprintResult> {
+    return (await this.#json(`${API_PREFIX}/sprints/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      rev: rev ?? '*',
+      body: patch,
+    })) as SprintResult;
+  }
+
+  async startSprint(id: string, rev?: string, force?: boolean): Promise<SprintResult> {
+    return (await this.#json(`${API_PREFIX}/sprints/${encodeURIComponent(id)}/start`, {
+      method: 'POST',
+      rev: rev ?? '*',
+      body: { ...(force === undefined ? {} : { force }) },
+    })) as SprintResult;
+  }
+
+  async closeSprint(id: string, carry?: SprintCarry[], rev?: string): Promise<SprintResult> {
+    return (await this.#json(`${API_PREFIX}/sprints/${encodeURIComponent(id)}/close`, {
+      method: 'POST',
+      rev: rev ?? '*',
+      body: { carry: carry ?? [] },
+    })) as SprintResult;
   }
 
   // ----------------------------------------------------------------- snapshots

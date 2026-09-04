@@ -10,7 +10,9 @@ import type {
   BatchResult,
   BoardCard,
   BoardColumnView,
+  BoardColumnPatch,
   BoardMoveResult,
+  BoardPatch,
   BoardSummary,
   BoardView,
   CardMove,
@@ -38,6 +40,16 @@ import type {
   SnapshotItemSummary,
   SnapshotRefresh,
   SnapshotResult,
+  SprintCarry,
+  SprintCarryResult,
+  SprintDraft,
+  SprintFilter,
+  SprintPatch,
+  SprintResult,
+  SprintState,
+  SprintSummary,
+  SprintView,
+  StatusCategory,
   TeamSummary,
   Unsubscribe,
   UpdateOp,
@@ -52,8 +64,12 @@ export type FakeData = {
   repos?: RepoInfo[];
   /** The team repository of the workspace; omit for a workspace without one. */
   team?: TeamSummary | null;
-  /** The boards of the team repository; omit for the sample board. */
+  /** The boards of the team repository; omit for the sample boards. */
   boards?: FakeBoard[];
+  /** The sprints of the team repository; omit for the sample sprint. */
+  sprints?: FakeSprint[];
+  /** The day the sprint header counts its remaining days from. */
+  today?: string;
 };
 
 /**
@@ -78,6 +94,30 @@ export type FakeBoard = {
   }[];
   filters?: BoardView['filters'];
   order: Record<string, string[]>;
+  /** Scrum only: the sprint the board is scoped to (docs/04 §5.5). */
+  sprint?: string;
+  /** Scrum only: the column that offers the sprint candidates. */
+  backlogColumn?: string;
+  rev: string;
+};
+
+/**
+ * A sprint as the team repository stores it (docs/04 §8.2): a goal, a date
+ * range, a state and one `<projectKey>/<itemId>` reference per line.
+ */
+export type FakeSprint = {
+  id: string;
+  title: string;
+  board: string;
+  state: SprintState;
+  start: string;
+  end: string;
+  goal?: string;
+  items: string[];
+  committed?: string[];
+  capacityHours?: number;
+  velocityTarget?: number;
+  participants?: string[];
   rev: string;
 };
 
@@ -103,6 +143,69 @@ export const sampleBoard: FakeBoard = {
   },
   rev: 'sha256:00000000000000b1',
 };
+
+/** The scrum board of `sampleTeam`, scoped to `sampleSprint`. */
+export const sampleScrumBoard: FakeBoard = {
+  id: 'acme-scrum',
+  kind: 'scrum',
+  title: 'SSO Sprint Board',
+  description: 'The sprint the squad is running.',
+  projects: ['ACME', 'WEB'],
+  sprint: 'ACME-TEAM-S-0007',
+  backlogColumn: 'sprint_backlog',
+  columns: [
+    { id: 'sprint_backlog', name: 'Sprint Backlog', statuses: { '*': ['backlog', 'todo'] } },
+    { id: 'in_progress', name: 'In Progress', statuses: { '*': ['in_progress'] }, wip: 2 },
+    { id: 'in_review', name: 'In Review', statuses: { '*': ['in_review'] }, wip: 2 },
+    { id: 'done', name: 'Done', statuses: { '*': ['done', 'cancelled'] } },
+  ],
+  filters: { types: ['story', 'task'] },
+  order: { in_progress: ['ACME/ACME-US-0042'] },
+  rev: 'sha256:00000000000000b2',
+};
+
+/** The sprint `sampleScrumBoard` runs: one cloned item and one remote one. */
+export const sampleSprint: FakeSprint = {
+  id: 'ACME-TEAM-S-0007',
+  title: 'Sprint 7 — SSO end to end',
+  board: 'acme-scrum',
+  state: 'active',
+  start: '2026-08-24',
+  end: '2026-09-06',
+  goal: 'A tenant can log in with their identity provider in staging.',
+  items: ['ACME/ACME-US-0042', 'WEB/WEB-US-0031'],
+  committed: ['ACME/ACME-US-0042', 'WEB/WEB-US-0031'],
+  capacityHours: 260,
+  velocityTarget: 21,
+  participants: ['marta', 'jose'],
+  rev: 'sha256:00000000000000c1',
+};
+
+/**
+ * The coarse bucket of a status. The fake knows the sample workflow, which is
+ * what lets it tell finished work from open work the way the core does.
+ */
+function categoryOf(status: string | undefined): StatusCategory {
+  switch (status) {
+    case 'done':
+      return 'done';
+    case 'cancelled':
+      return 'cancelled';
+    case 'in_progress':
+    case 'in_review':
+    case 'doing':
+    case 'review':
+      return 'in_progress';
+    default:
+      return 'todo';
+  }
+}
+
+/** A card sits in a terminal status of its own project. */
+function isDone(card: BoardCard): boolean {
+  const category = card.category ?? categoryOf(card.status);
+  return category === 'done' || category === 'cancelled';
+}
 
 const writableCapabilities: Capabilities = {
   ...readOnlyCapabilities,
@@ -417,6 +520,8 @@ export class FakeProvider implements DataProvider {
   private repos: RepoInfo[];
   private team: TeamSummary | null;
   private boards: Map<string, FakeBoard>;
+  private sprints: Map<string, FakeSprint>;
+  private today: string;
   private handlers = new Set<(event: ChangeEvent) => void>();
   private revCounter = 1000;
 
@@ -428,8 +533,12 @@ export class FakeProvider implements DataProvider {
     this.pages = new Map((data.pages ?? samplePages).map((p) => [p.path, structuredClone(p)]));
     this.team = data.team ?? null;
     this.boards = new Map(
-      (data.boards ?? [sampleBoard]).map((b) => [b.id, structuredClone(b)]),
+      (data.boards ?? [sampleBoard, sampleScrumBoard]).map((b) => [b.id, structuredClone(b)]),
     );
+    this.sprints = new Map(
+      (data.sprints ?? [sampleSprint]).map((s) => [s.id, structuredClone(s)]),
+    );
+    this.today = data.today ?? '2026-09-02';
     this.repos = data.repos ?? [
       {
         id: 'repo-1',
@@ -762,6 +871,7 @@ export class FakeProvider implements DataProvider {
         vaultId: 'repo-team',
         projects: b.projects,
         columns: b.columns.length,
+        ...(b.sprint === undefined ? {} : { sprint: b.sprint }),
         diagnostics: [],
       })),
     );
@@ -859,6 +969,334 @@ export class FakeProvider implements DataProvider {
     });
   }
 
+  updateBoard(slug: string, patch: BoardPatch, rev?: string): Promise<BoardView> {
+    this.assertWritable();
+    const board = this.boards.get(slug);
+    if (!board) return Promise.reject(new ProviderError('not_found', `No board ${slug}`));
+    if (rev !== undefined && rev !== '*' && rev !== board.rev) {
+      return Promise.reject(new ProviderError('stale_revision', `Board ${slug} changed on disk`));
+    }
+    if (patch.sprint !== undefined) {
+      if (board.kind !== 'scrum') {
+        return Promise.reject(
+          new ProviderError('validation_failed', 'a kanban board cannot be scoped to a sprint'),
+        );
+      }
+      if (patch.sprint !== '' && !this.sprints.has(patch.sprint)) {
+        return Promise.reject(new ProviderError('not_found', `No sprint ${patch.sprint}`));
+      }
+      board.sprint = patch.sprint;
+    }
+    if (patch.title !== undefined) board.title = patch.title;
+    if (patch.description !== undefined) board.description = patch.description;
+    if (patch.backlogColumn !== undefined) board.backlogColumn = patch.backlogColumn;
+    if (patch.columns !== undefined) {
+      board.columns = patch.columns.map((column: BoardColumnPatch) => ({
+        id: column.id,
+        name: column.name ?? column.id,
+        statuses: column.statuses ?? {},
+        ...(column.wip === undefined ? {} : { wip: column.wip }),
+        ...(column.color === undefined ? {} : { color: column.color }),
+      }));
+    }
+    board.rev = this.nextRev();
+    this.emit({ kind: 'repo', repoId: 'repo-team' });
+    return Promise.resolve(this.renderBoard(board));
+  }
+
+  // ------------------------------------------------------------------- sprints
+
+  listSprints(filter: SprintFilter = {}): Promise<SprintSummary[]> {
+    if (!this.team) return Promise.resolve([]);
+    const rows = [...this.sprints.values()]
+      .filter((s) => (filter.board ? s.board === filter.board : true))
+      .filter((s) => (filter.state ? s.state === filter.state : true))
+      .sort((a, b) => a.id.localeCompare(b.id))
+      .map((s) => this.renderSprint(s).sprint);
+    return Promise.resolve(rows);
+  }
+
+  getSprint(id: string): Promise<SprintView> {
+    const sprint = this.sprints.get(id);
+    if (!sprint) return Promise.reject(new ProviderError('not_found', `No sprint ${id}`));
+    return Promise.resolve(this.renderSprint(sprint));
+  }
+
+  createSprint(input: SprintDraft): Promise<SprintResult> {
+    this.assertWritable();
+    if (!this.boards.has(input.board)) {
+      return Promise.reject(new ProviderError('not_found', `No board ${input.board}`));
+    }
+    const overlap = [...this.sprints.values()].find(
+      (s) => s.board === input.board && s.start <= input.end && input.start <= s.end,
+    );
+    if (overlap) {
+      return Promise.reject(
+        new ProviderError(
+          'sprint_overlap',
+          `${input.start} to ${input.end} overlaps sprint ${overlap.id} (${overlap.start} to ${overlap.end}) on board ${input.board}; sprints on one board cannot share a day`,
+        ),
+      );
+    }
+    const numbers = [...this.sprints.keys()].map((id) => Number(id.split('-').pop() ?? 0));
+    const next = (numbers.length > 0 ? Math.max(...numbers) : 0) + 1;
+    const sprint: FakeSprint = {
+      id: `ACME-TEAM-S-${String(next).padStart(4, '0')}`,
+      title: input.title ?? `Sprint ${next}`,
+      board: input.board,
+      state: input.state ?? 'planned',
+      start: input.start,
+      end: input.end,
+      ...(input.goal === undefined ? {} : { goal: input.goal }),
+      items: [...(input.items ?? [])],
+      rev: this.nextRev(),
+    };
+    this.sprints.set(sprint.id, sprint);
+    this.emit({ kind: 'repo', repoId: 'repo-team' });
+    return Promise.resolve({ sprint: this.renderSprint(sprint), writes: [] });
+  }
+
+  updateSprint(id: string, patch: SprintPatch, rev?: string): Promise<SprintResult> {
+    this.assertWritable();
+    const sprint = this.sprints.get(id);
+    if (!sprint) return Promise.reject(new ProviderError('not_found', `No sprint ${id}`));
+    if (rev !== undefined && rev !== '*' && rev !== sprint.rev) {
+      return Promise.reject(new ProviderError('stale_revision', `Sprint ${id} changed on disk`));
+    }
+    if (patch.title !== undefined) sprint.title = patch.title;
+    if (patch.goal !== undefined) sprint.goal = patch.goal;
+    if (patch.start !== undefined) sprint.start = patch.start;
+    if (patch.end !== undefined) sprint.end = patch.end;
+    if (patch.state !== undefined) sprint.state = patch.state;
+    if (patch.capacityHours !== undefined) sprint.capacityHours = patch.capacityHours;
+    if (patch.velocityTarget !== undefined) sprint.velocityTarget = patch.velocityTarget;
+    if (patch.participants !== undefined) sprint.participants = [...patch.participants];
+    if (patch.items !== undefined) sprint.items = [...patch.items];
+    for (const ref of patch.addItems ?? []) {
+      if (!sprint.items.includes(ref)) sprint.items.push(ref);
+    }
+    if (patch.removeItems?.length) {
+      sprint.items = sprint.items.filter((ref) => !patch.removeItems?.includes(ref));
+    }
+    sprint.rev = this.nextRev();
+    this.emit({ kind: 'repo', repoId: 'repo-team' });
+    return Promise.resolve({ sprint: this.renderSprint(sprint), writes: [] });
+  }
+
+  startSprint(id: string, rev?: string, force?: boolean): Promise<SprintResult> {
+    this.assertWritable();
+    const sprint = this.sprints.get(id);
+    if (!sprint) return Promise.reject(new ProviderError('not_found', `No sprint ${id}`));
+    if (rev !== undefined && rev !== '*' && rev !== sprint.rev) {
+      return Promise.reject(new ProviderError('stale_revision', `Sprint ${id} changed on disk`));
+    }
+    const running = [...this.sprints.values()].find(
+      (s) => s.id !== id && s.board === sprint.board && s.state === 'active',
+    );
+    if (running && !force) {
+      return Promise.reject(
+        new ProviderError(
+          'sprint_already_active',
+          `board ${sprint.board} is already running sprint ${running.id}; close it first, or confirm to run two at once`,
+        ),
+      );
+    }
+    sprint.state = 'active';
+    sprint.committed = [...sprint.items];
+    sprint.rev = this.nextRev();
+    const board = this.boards.get(sprint.board);
+    const result: SprintResult = { sprint: this.renderSprint(sprint), writes: [] };
+    if (board && board.sprint !== sprint.id) {
+      board.sprint = sprint.id;
+      board.rev = this.nextRev();
+      result.board = this.renderBoard(board);
+    }
+    this.emit({ kind: 'repo', repoId: 'repo-team' });
+    return Promise.resolve(result);
+  }
+
+  closeSprint(id: string, carry: SprintCarry[] = [], rev?: string): Promise<SprintResult> {
+    this.assertWritable();
+    const sprint = this.sprints.get(id);
+    if (!sprint) return Promise.reject(new ProviderError('not_found', `No sprint ${id}`));
+    if (rev !== undefined && rev !== '*' && rev !== sprint.rev) {
+      return Promise.reject(new ProviderError('stale_revision', `Sprint ${id} changed on disk`));
+    }
+    const view = this.renderSprint(sprint);
+    const completed = view.cards.filter((card) => isDone(card));
+    const incomplete = view.cards.filter((card) => !isDone(card));
+    const carried = carry.map((decision) => {
+      const outcome: SprintCarryResult = { ref: decision.ref, action: decision.action };
+      if (decision.action === 'next') {
+        const target =
+          (decision.sprint ? this.sprints.get(decision.sprint) : undefined) ??
+          [...this.sprints.values()].find(
+            (s) => s.board === sprint.board && s.state === 'planned',
+          );
+        if (!target) {
+          outcome.error = `no sprint to carry ${decision.ref} into`;
+          return outcome;
+        }
+        if (!target.items.includes(decision.ref)) target.items.push(decision.ref);
+        target.rev = this.nextRev();
+        outcome.sprint = target.id;
+        return outcome;
+      }
+      if (decision.action === 'backlog') {
+        const id = decision.ref.split('/')[1] ?? '';
+        const item = this.items.get(id);
+        if (!item) {
+          outcome.error = `project ${decision.ref.split('/')[0] ?? ''} is not cloned on this machine`;
+          return outcome;
+        }
+        const status = decision.status ?? 'backlog';
+        this.items.set(id, { ...item, status, rev: this.nextRev() });
+        outcome.status = status;
+        this.emit({ kind: 'items', repoId: 'repo-1', ids: [id] });
+      }
+      return outcome;
+    });
+    sprint.state = 'closed';
+    sprint.rev = this.nextRev();
+    this.emit({ kind: 'repo', repoId: 'repo-team' });
+    return Promise.resolve({
+      sprint: this.renderSprint(sprint),
+      report: {
+        sprint: sprint.id,
+        board: sprint.board,
+        completed,
+        incomplete,
+        unresolved: [],
+        completedPoints: completed.reduce((sum, card) => sum + (card.estimate ?? 0), 0),
+        incompletePoints: incomplete.reduce((sum, card) => sum + (card.estimate ?? 0), 0),
+        metrics: view.sprint.metrics,
+        carried,
+      },
+      writes: [],
+    });
+  }
+
+  /** Renders a sprint the way `core.BuildSprintView` does. */
+  private renderSprint(sprint: FakeSprint): SprintView {
+    const board = this.boards.get(sprint.board);
+    const cards = sprint.items.map((ref) => this.cardFor(ref, sprint));
+    const backlog = board ? this.candidatesFor(board, sprint) : [];
+    return {
+      sprint: this.summarize(sprint, cards),
+      cards,
+      backlog,
+      diagnostics: [],
+    };
+  }
+
+  /** The header of a sprint: the file's own fields plus what the cards say. */
+  private summarize(sprint: FakeSprint, cards: BoardCard[]): SprintSummary {
+    const committed = new Set(sprint.committed ?? []);
+    const started = sprint.state !== 'planned' || committed.size > 0;
+    const resolved = cards.filter((card) => card.status !== undefined);
+    const done = resolved.filter((card) => isDone(card));
+    const points = (list: BoardCard[]) => list.reduce((sum, card) => sum + (card.estimate ?? 0), 0);
+    const days = (from: string, to: string) =>
+      Math.floor((Date.parse(to) - Date.parse(from)) / 86_400_000) + 1;
+    return {
+      id: sprint.id,
+      title: sprint.title,
+      board: sprint.board,
+      state: sprint.state,
+      start: sprint.start,
+      end: sprint.end,
+      ...(sprint.goal === undefined ? {} : { goal: sprint.goal }),
+      ...(sprint.capacityHours === undefined ? {} : { capacityHours: sprint.capacityHours }),
+      ...(sprint.velocityTarget === undefined ? {} : { velocityTarget: sprint.velocityTarget }),
+      ...(sprint.participants ? { participants: sprint.participants } : {}),
+      items: [...sprint.items],
+      ...(sprint.committed ? { committed: [...sprint.committed] } : {}),
+      totalDays: days(sprint.start, sprint.end),
+      remainingDays: Math.max(0, days(this.today, sprint.end)),
+      metrics: {
+        items: sprint.items.length,
+        resolved: resolved.length,
+        done: done.length,
+        points: points(resolved),
+        committedPoints: points(resolved.filter((card) => committed.has(card.ref))),
+        donePoints: points(done),
+        added: started ? sprint.items.filter((ref) => !committed.has(ref)).length : 0,
+        unresolved: sprint.items.length - resolved.length,
+      },
+      path: `.pmngr/sprints/${sprint.id}.md`,
+      rev: sprint.rev,
+    };
+  }
+
+  /** One card of a sprint scope, live or read from the committed snapshot. */
+  private cardFor(ref: string, sprint: FakeSprint): BoardCard {
+    const [project = '', id = ''] = ref.split('/');
+    const declared = (this.team?.projects.map((p) => p.key) ?? []).includes(project);
+    const cloned = new Set(this.projects.map((p) => p.key));
+    const committed = (sprint.committed ?? []).includes(ref);
+    if (!cloned.has(project)) {
+      return { ...remoteCard(ref, project, id, declared), inSprint: true, committed };
+    }
+    const item = this.items.get(id);
+    if (!item) {
+      return {
+        ref,
+        project,
+        item: id,
+        declared,
+        remote: false,
+        inSprint: true,
+        committed,
+        reason: `${id} does not exist in the clone of ${project}`,
+      };
+    }
+    return { ...this.liveCard(project, item), inSprint: true, committed };
+  }
+
+  /** The candidates a board offers for a sprint: what it shows and the sprint does not. */
+  private candidatesFor(board: FakeBoard, sprint: FakeSprint): BoardCard[] {
+    const column = board.columns.find((c) => c.id === board.backlogColumn);
+    const out: BoardCard[] = [];
+    for (const item of this.items.values()) {
+      if (item.deleted) continue;
+      const project = item.id.split('-')[0] ?? '';
+      if (!board.projects.includes(project)) continue;
+      const types = board.filters?.types;
+      if (types && !types.includes(item.type)) continue;
+      const ref = `${project}/${item.id}`;
+      if (sprint.items.includes(ref)) continue;
+      const mapped = column
+        ? (column.statuses[project] ?? column.statuses['*'] ?? [])
+        : board.columns.flatMap((c) => c.statuses[project] ?? c.statuses['*'] ?? []);
+      if (!item.status || !mapped.includes(item.status)) continue;
+      out.push({ ...this.liveCard(project, item), backlog: true });
+    }
+    return out.sort((a, b) => a.ref.localeCompare(b.ref));
+  }
+
+  /** One card read from an open repository. */
+  private liveCard(project: string, item: Item): BoardCard {
+    return {
+      ref: `${project}/${item.id}`,
+      project,
+      item: item.id,
+      declared: true,
+      remote: false,
+      vaultId: 'repo-1',
+      source: 'live',
+      title: item.title,
+      type: item.type,
+      ...(item.status === undefined ? {} : { status: item.status, category: categoryOf(item.status) }),
+      ...(item.priority === undefined ? {} : { priority: item.priority }),
+      ...(item.assignees ? { assignees: item.assignees } : {}),
+      ...(item.labels ? { labels: item.labels } : {}),
+      ...(item.estimate === undefined ? {} : { estimate: item.estimate }),
+      ...(item.updated === undefined ? {} : { updated: item.updated }),
+      path: item.path,
+      rev: item.rev,
+    };
+  }
+
   /**
    * Renders a board the way `core.BuildBoardView` does: filters first, then one
    * column per status mapping, then the `order` list, then everything else by
@@ -896,6 +1334,12 @@ export class FakeProvider implements DataProvider {
     const declared = this.team?.projects.map((p) => p.key) ?? board.projects;
     const cloned = new Set(this.projects.map((p) => p.key));
     const rank: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+    // A scrum board shows the scope of its sprint, plus the candidates the
+    // sprint does not list in its backlog column (docs/04 §5.5).
+    const sprint =
+      board.kind === 'scrum' && board.sprint ? this.sprints.get(board.sprint) : undefined;
+    const inSprint = (ref: string) => sprint?.items.includes(ref) ?? false;
+    const committed = (ref: string) => sprint?.committed?.includes(ref) ?? false;
 
     const placed = new Set<string>();
     const columns: BoardColumnView[] = board.columns.map((column) => {
@@ -909,7 +1353,13 @@ export class FakeProvider implements DataProvider {
         const mapped = column.statuses[project] ?? column.statuses['*'] ?? [];
         if (!item.status || !mapped.includes(item.status)) continue;
         const ref = `${project}/${item.id}`;
+        if (sprint && !inSprint(ref) && column.id !== board.backlogColumn) continue;
         cards.push({
+          ...(sprint
+            ? inSprint(ref)
+              ? { inSprint: true, committed: committed(ref) }
+              : { backlog: true }
+            : {}),
           ref,
           project,
           item: item.id,
@@ -933,7 +1383,23 @@ export class FakeProvider implements DataProvider {
         if (placed.has(ref)) continue;
         const [project = '', id = ''] = ref.split('/');
         if (cloned.has(project)) continue;
-        cards.push(remoteCard(ref, project, id, declared.includes(project)));
+        if (sprint && !inSprint(ref)) continue;
+        cards.push({
+          ...remoteCard(ref, project, id, declared.includes(project)),
+          ...(sprint ? { inSprint: true, committed: committed(ref) } : {}),
+        });
+        placed.add(ref);
+      }
+      // A remote item the sprint lists but the order does not: it lands in the
+      // column its snapshot status maps to.
+      for (const ref of sprint?.items ?? []) {
+        if (placed.has(ref)) continue;
+        const [project = '', id = ''] = ref.split('/');
+        if (cloned.has(project)) continue;
+        const card = remoteCard(ref, project, id, declared.includes(project));
+        const mapped = column.statuses[project] ?? column.statuses['*'] ?? [];
+        if (!card.status || !mapped.includes(card.status)) continue;
+        cards.push({ ...card, inSprint: true, committed: committed(ref) });
         placed.add(ref);
       }
       const order = board.order[column.id] ?? [];
@@ -967,6 +1433,7 @@ export class FakeProvider implements DataProvider {
       if (types && !types.includes(item.type)) continue;
       const ref = `${project}/${item.id}`;
       if (placed.has(ref)) continue;
+      if (sprint && !inSprint(ref)) continue;
       unmapped.push({
         ref,
         project,
@@ -992,6 +1459,16 @@ export class FakeProvider implements DataProvider {
       filters: board.filters ?? {},
       swimlanes: {},
       card: {},
+      ...(board.sprint === undefined ? {} : { sprint: board.sprint }),
+      ...(board.backlogColumn === undefined ? {} : { backlogColumn: board.backlogColumn }),
+      ...(sprint
+        ? {
+            sprintInfo: this.summarize(
+              sprint,
+              sprint.items.map((ref) => this.cardFor(ref, sprint)),
+            ),
+          }
+        : {}),
       columns,
       unmapped,
       diagnostics: [],

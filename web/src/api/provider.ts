@@ -15,7 +15,9 @@
 
 import type {
   BoardCard,
+  BoardColumnPatch,
   BoardColumnView,
+  BoardPatch,
   BoardMovePlan,
   BoardMoveResult,
   BoardSummary,
@@ -38,6 +40,16 @@ import type {
   SnapshotInfo,
   SnapshotItemSummary,
   SnapshotResult,
+  SprintCarry,
+  SprintCarryAction,
+  SprintCarryResult,
+  SprintCloseReport,
+  SprintMetrics,
+  SprintResult,
+  SprintState,
+  SprintSummary,
+  SprintView,
+  StatusCategory,
   TeamMember,
   TeamProjectSummary,
   TeamSummary,
@@ -47,7 +59,9 @@ import type {
 
 export type {
   BoardCard,
+  BoardColumnPatch,
   BoardColumnView,
+  BoardPatch,
   BoardMovePlan,
   BoardMoveResult,
   BoardSummary,
@@ -70,6 +84,16 @@ export type {
   SnapshotInfo,
   SnapshotItemSummary,
   SnapshotResult,
+  SprintCarry,
+  SprintCarryAction,
+  SprintCarryResult,
+  SprintCloseReport,
+  SprintMetrics,
+  SprintResult,
+  SprintState,
+  SprintSummary,
+  SprintView,
+  StatusCategory,
   TeamMember,
   TeamProjectSummary,
   TeamSummary,
@@ -157,6 +181,10 @@ export type ProviderErrorCode =
   | 'repo_not_cloned'
   /** A move would put a column over its WIP limit; confirm it to go through. */
   | 'wip_limit_exceeded'
+  /** Two sprints of one board would share a day (docs/04 §8.4). */
+  | 'sprint_overlap'
+  /** The board already runs a sprint; confirm to run two at once. */
+  | 'sprint_already_active'
   | 'internal';
 
 export type ChangeEvent =
@@ -230,6 +258,38 @@ export interface DataProvider {
    * unless `force` confirms it.
    */
   moveCard(move: CardMove): Promise<BoardMoveResult>;
+  /**
+   * Edits the board file itself: columns, WIP limits, filters, and the sprint
+   * a scrum board is scoped to. The card order is never patched here — it
+   * moves one card at a time through `moveCard`.
+   */
+  updateBoard(slug: string, patch: BoardPatch, rev?: string): Promise<BoardView>;
+
+  // sprints (docs/04-team-repository.md §8)
+  /** The sprints of the team repository, newest ids last; empty when none. */
+  listSprints(filter?: SprintFilter): Promise<SprintSummary[]>;
+  /** One sprint: its scope, the candidates for it and its metrics. */
+  getSprint(id: string): Promise<SprintView>;
+  /** Creates a sprint; the core allocates the id from the team key. */
+  createSprint(input: SprintDraft): Promise<SprintResult>;
+  /**
+   * Changes the goal, the dates or the scope. Every change is one write to the
+   * sprint file in the team repository, so moving an item in or out of a
+   * sprint stays legal for a project nobody cloned (docs/04 R-SPR-2).
+   */
+  updateSprint(id: string, patch: SprintPatch, rev?: string): Promise<SprintResult>;
+  /**
+   * Makes a sprint active: its scope becomes its commitment and its board is
+   * pointed at it. A board already running a sprint is refused once with
+   * `sprint_already_active`; repeat with `force` to run two at once.
+   */
+  startSprint(id: string, rev?: string, force?: boolean): Promise<SprintResult>;
+  /**
+   * Closes a sprint and reports completed against incomplete work. Closing
+   * modifies no item by itself: `carry` carries one explicit decision per
+   * unfinished item (R-SPR-3).
+   */
+  closeSprint(id: string, carry?: SprintCarry[], rev?: string): Promise<SprintResult>;
 
   // index snapshots (docs/04-team-repository.md §6)
   /**
@@ -247,6 +307,40 @@ export interface DataProvider {
   // events
   subscribe(handler: (event: ChangeEvent) => void): Unsubscribe;
 }
+
+/** How a sprint listing is narrowed; both filters are ANDed. */
+export type SprintFilter = { board?: string; state?: SprintState };
+
+/** A new sprint. Dates are required; the id is allocated by the core. */
+export type SprintDraft = {
+  board: string;
+  start: string;
+  end: string;
+  title?: string;
+  goal?: string;
+  state?: SprintState;
+  items?: string[];
+  capacityHours?: number;
+  velocityTarget?: number;
+  participants?: string[];
+  author?: string;
+};
+
+/** The sprint fields an update may change; an absent one is left alone. */
+export type SprintPatch = {
+  title?: string;
+  goal?: string;
+  start?: string;
+  end?: string;
+  state?: SprintState;
+  capacityHours?: number;
+  velocityTarget?: number;
+  participants?: string[];
+  items?: string[];
+  /** Adds and removes edit the scope without resending it. */
+  addItems?: string[];
+  removeItems?: string[];
+};
 
 /** What to regenerate on a snapshot refresh. */
 export type SnapshotRefresh = {

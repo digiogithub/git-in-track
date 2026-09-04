@@ -32,6 +32,7 @@ import { useToast } from '@/components/ui/toast';
 import { useProjects } from '@/features/backlog/queries';
 import { BoardColumnPanel } from '@/features/boards/BoardColumnPanel';
 import { useBoard, useBoardEvents, useMoveCard } from '@/features/boards/queries';
+import { SprintPanel } from '@/features/boards/SprintPanel';
 
 /** A move waiting for the user to confirm that it may exceed a WIP limit. */
 type PendingMove = { move: CardMove; column: string; limit: number };
@@ -49,7 +50,7 @@ function passes(card: BoardCard, filter: ColumnFilter): boolean {
 }
 
 /**
- * The Kanban board (docs/05-web-app.md §9, story GIT-US-0017).
+ * The board (docs/05-web-app.md §9, stories GIT-US-0017 and GIT-US-0018).
  *
  * Columns and card order come from the board file in the team repository; card
  * content comes from the per-project indexes. Dropping a card in another column
@@ -155,7 +156,7 @@ export function BoardCanvas({ slug }: { slug: string }) {
   const requestMove = (ref: string, toColumn: string, position: number) => {
     const card = cardOf(view, ref);
     if (!card) return;
-    if (card.remote) {
+    if (card.remote && !(card.backlog && view.kind === 'scrum')) {
       toast({
         variant: 'destructive',
         title: `${card.item} is read-only here`,
@@ -209,6 +210,15 @@ export function BoardCanvas({ slug }: { slug: string }) {
           ) : null}
         </p>
       </header>
+
+      {view.kind === 'scrum' && view.sprintInfo ? <SprintPanel view={view} /> : null}
+
+      {view.kind === 'scrum' && !view.sprintInfo ? (
+        <p className="text-sm text-muted-foreground">
+          This scrum board is not scoped to a sprint yet, so it shows nothing to plan. Point it at
+          one from the sprint list.
+        </p>
+      ) : null}
 
       {!canWrite ? (
         <p className="text-sm text-muted-foreground">
