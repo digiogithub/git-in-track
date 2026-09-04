@@ -18,5 +18,8 @@
 // where the browser reports changes through the File System Access API instead.
 // It must not parse item files — that belongs to internal/core.
 //
-// Implementation lands in Phase 2 with the companion CLI (docs/07 section 6.3).
+// The entry points are New, Watcher.AddRepo and Watcher.Events, which delivers
+// one batch per debounce window; ToFileEvents converts a batch into the
+// core.FileEvent slice that an incremental reindex consumes
+// (docs/07 section 6.3).
 package watcher
