@@ -90,6 +90,7 @@ Start with:
 		newLsCommand(flags),
 		newRmCommand(flags),
 		newIndexCommand(flags),
+		newSnapshotCommand(flags),
 		newItemCommand(flags),
 		newDoctorCommand(flags),
 		newConfigCommand(flags),
