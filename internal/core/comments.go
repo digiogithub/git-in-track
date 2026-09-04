@@ -29,6 +29,13 @@ type CommentDraft struct {
 	Reactions   map[string][]string `json:"reactions,omitempty"`
 	Attachments []string            `json:"attachments,omitempty"`
 	Created     Timestamp           `json:"created,omitempty"`
+	// ItemRev is the revision of the *item* the comment is about, as the caller
+	// read it. A comment is a new file and can never overwrite anything, so the
+	// check is not there to protect the thread: it is there so that a writer
+	// which has not seen the current state of an item cannot comment on it as
+	// if it had. Empty skips the check, which is what a human typing in the UI
+	// does; agents quote it (docs/08 section 3.5).
+	ItemRev Rev `json:"itemRev,omitempty"`
 }
 
 // AddComment appends one comment to an item as a new file under
@@ -49,6 +56,18 @@ func (s *FileStore) AddComment(ctx context.Context, id ItemID, c CommentDraft) (
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if c.ItemRev != "" {
+		data, readErr := s.fs.ReadFile(item.Path)
+		if readErr != nil {
+			return nil, fmt.Errorf("read %s: %w", item.Path, readErr)
+		}
+		if current := ComputeRev(data); current != c.ItemRev {
+			return nil, &StaleRevisionError{
+				ID: item.ID, Path: item.Path, Expected: c.ItemRev, Current: current,
+			}
+		}
+	}
 
 	created := c.Created
 	if created.IsZero() {

@@ -502,9 +502,10 @@ func (w *Workspace) MoveCard(ctx context.Context, p BoardMoveParams) (BoardMoveR
 	if err != nil {
 		return BoardMoveResult{}, err
 	}
-	if p.Rev != "" && string(board.Rev) != p.Rev {
+	if p.Rev != "" && p.Rev != "*" && string(board.Rev) != p.Rev {
 		return BoardMoveResult{}, &Error{
 			Code: "stale_revision", Path: board.Path,
+			Current: string(board.Rev),
 			Message: fmt.Sprintf("board %s was modified since revision %s (current %s)",
 				board.ID, p.Rev, board.Rev),
 		}
@@ -680,6 +681,7 @@ func (w *Workspace) UpdateBoard(ctx context.Context, p BoardUpdateParams) (Board
 	if p.Rev != "" && p.Rev != "*" && string(board.Rev) != p.Rev {
 		return BoardUpdateResult{}, &Error{
 			Code: "stale_revision", Path: board.Path,
+			Current: string(board.Rev),
 			Message: fmt.Sprintf("board %s was modified since revision %s (current %s)",
 				board.ID, p.Rev, board.Rev),
 		}

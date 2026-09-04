@@ -725,7 +725,7 @@ func checkSprintRev(s *core.Sprint, rev string) error {
 		return nil
 	}
 	return &Error{
-		Code: "stale_revision", Path: s.Path,
+		Code: "stale_revision", Path: s.Path, Current: string(s.Rev),
 		Message: fmt.Sprintf("sprint %s was modified since revision %s (current %s)", s.ID, rev, s.Rev),
 	}
 }
