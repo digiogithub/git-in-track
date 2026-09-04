@@ -29,6 +29,7 @@ func (s *Server) mountAPI(api chi.Router) {
 		p.Get("/events", s.handleEvents)
 
 		// Workspaces and repositories.
+		p.Get("/workspace", s.handleWorkspaceTree)
 		p.Get("/workspaces", s.handleWorkspaces)
 		p.Get("/workspaces/{name}", s.handleWorkspace)
 		p.Post("/workspaces", s.notImplemented("Creating a workspace is a configuration change; use `gintrack config`."))
@@ -43,7 +44,12 @@ func (s *Server) mountAPI(api chi.Router) {
 		p.Get("/projects/{key}", s.handleProject)
 		p.Patch("/projects/{key}", s.notImplemented("Editing project.yaml over the API arrives with Phase 3."))
 		p.Route("/projects/{key}/kb", s.mountKB)
+
+		// Team repositories: team.yaml, its members and its project list.
+		p.Get("/teams", s.handleTeams)
+		p.Get("/teams/{key}", s.handleTeam)
 		p.Route("/teams/{key}/kb", s.mountKB)
+		p.Get("/refs", s.handleResolveRef)
 		// The flat form addresses the knowledge base by vault path, with an
 		// optional ?project= to disambiguate a multi-project repository.
 		p.Route("/kb", s.mountKB)

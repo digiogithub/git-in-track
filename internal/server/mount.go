@@ -100,6 +100,18 @@ func (m *mount) projectKeys() []string {
 	return out
 }
 
+// teamKey reports the key of the team repository this mount is, empty when its
+// root holds no team.yaml.
+func (m *mount) teamKey() string {
+	if !m.ready() {
+		return ""
+	}
+	if team := m.vlt.Team(); team != nil {
+		return string(team.Key)
+	}
+	return ""
+}
+
 // touch records that the index was rebuilt or updated just now.
 func (m *mount) touch(at time.Time) {
 	m.mu.Lock()
@@ -120,6 +132,7 @@ func (m *mount) info() map[string]any {
 		"key":      m.id,
 		"id":       m.id,
 		"role":     m.role,
+		"team":     m.teamKey(),
 		"name":     m.label,
 		"path":     m.path,
 		"docs":     m.docs,
@@ -146,12 +159,17 @@ func (m *mount) info() map[string]any {
 type registry struct {
 	mounts []*mount
 	byID   map[string]*mount
+	// space is the shared multi-repository view of the mounts: the same
+	// vault.Workspace the browser worker drives, so that cross-repository
+	// reference resolution, unified search and the team surface have exactly
+	// one implementation (docs/04 section 1).
+	space *vault.Workspace
 }
 
 // newRegistry mounts every configured repository. It never fails: a repository
 // that cannot be opened is kept as a broken mount and reported as such.
 func newRegistry(repos []Repo, now func() time.Time) *registry {
-	reg := &registry{byID: make(map[string]*mount, len(repos))}
+	reg := &registry{byID: make(map[string]*mount, len(repos)), space: vault.NewWorkspace()}
 	for _, repo := range repos {
 		m := openMount(repo, now)
 		if _, clash := reg.byID[m.id]; clash {
@@ -161,9 +179,17 @@ func newRegistry(repos []Repo, now func() time.Time) *registry {
 		}
 		reg.byID[m.id] = m
 		reg.mounts = append(reg.mounts, m)
+		if m.ready() {
+			if _, err := reg.space.Attach(m.id, m.role, m.vlt); err != nil {
+				m.err = fmt.Errorf("attach %s: %w", m.id, err)
+			}
+		}
 	}
 	return reg
 }
+
+// workspace returns the multi-repository view of the mounted repositories.
+func (reg *registry) workspace() *vault.Workspace { return reg.space }
 
 // all returns every mount in registration order.
 func (reg *registry) all() []*mount { return reg.mounts }

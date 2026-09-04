@@ -403,9 +403,11 @@ func (s *Server) handleValidate(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	project := q.Get("project")
-	m, ok := s.mountForFilter(w, r, project)
-	if !ok {
-		return
+	if project != "" {
+		if _, found := s.repos.forProject(project); !found {
+			failProblem(w, r, codeNotFound, "No mounted repository exposes project "+project+".")
+			return
+		}
 	}
 	limit := 0
 	if v := q.Get("limit"); v != "" {
@@ -413,10 +415,13 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			limit = min(n, maxItemsPerPage)
 		}
 	}
-	hits, ok := s.call(w, r, m, "search", map[string]any{
-		"q": q.Get("q"), "limit": limit, "project": project,
-	})
-	if !ok {
+	// Search spans every mounted repository: each hit says which project — and
+	// which repository — it came from, so a workspace holding a team repository
+	// and several clones answers one query instead of one per repository
+	// (GIT-US-0016).
+	hits, err := s.repos.workspace().Search(r.Context(), q.Get("q"), limit, project)
+	if err != nil {
+		writeVaultError(w, r, err)
 		return
 	}
 	writeJSON(w, r, http.StatusOK, hits)
