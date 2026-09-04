@@ -354,8 +354,23 @@ describe('BrowserProvider', () => {
       // The workspace answers for both folders once the second one is loaded.
       'workspace.list': () => ({
         vaults: [
-          { id: 'repo-1', role: 'project', label: 'acme-repo', projects: ['ACME'], team: false, stats },
-          { id: 'repo-2', role: 'team', label: 'acme-team', projects: [], team: true, teamKey: 'ACME-TEAM', stats },
+          {
+            id: 'repo-1',
+            role: 'project',
+            label: 'acme-repo',
+            projects: ['ACME'],
+            team: false,
+            stats,
+          },
+          {
+            id: 'repo-2',
+            role: 'team',
+            label: 'acme-team',
+            projects: [],
+            team: true,
+            teamKey: 'ACME-TEAM',
+            stats,
+          },
         ],
         diagnostics: [],
       }),

@@ -63,19 +63,13 @@ const newItemRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: 'items/new',
   validateSearch: validateNewItemSearch,
-  component: lazyRouteComponent(
-    () => import('@/features/editor/NewItemPage'),
-    'NewItemPage',
-  ),
+  component: lazyRouteComponent(() => import('@/features/editor/NewItemPage'), 'NewItemPage'),
 });
 
 const itemEditorRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: 'items/$id/edit',
-  component: lazyRouteComponent(
-    () => import('@/features/editor/ItemEditorPage'),
-    'ItemEditorPage',
-  ),
+  component: lazyRouteComponent(() => import('@/features/editor/ItemEditorPage'), 'ItemEditorPage'),
 });
 
 const epicsRoute = createRoute({
@@ -101,6 +95,19 @@ const boardRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/boards/$slug',
   component: lazyRouteComponent(() => import('@/features/boards/BoardView'), 'BoardView'),
+});
+
+/** Retrospectives (docs/05 §4, docs/04 §9, story GIT-US-0027). */
+const retrosRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/retros',
+  component: lazyRouteComponent(() => import('@/features/retros/RetroList'), 'RetroList'),
+});
+
+const retroRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/retros/$retroId',
+  component: lazyRouteComponent(() => import('@/features/retros/RetroBoard'), 'RetroBoard'),
 });
 
 /** The sync panel (docs/05 §5, story GIT-US-0021). */
@@ -130,6 +137,8 @@ export const routeTree = rootRoute.addChildren([
   ]),
   boardsRoute,
   boardRoute,
+  retrosRoute,
+  retroRoute,
   syncRoute,
   settingsRoute,
 ]);

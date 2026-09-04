@@ -879,9 +879,7 @@ describe('CompanionProvider git surface (story GIT-US-0020)', () => {
   });
 
   it('patches the settings and sends only what changed', async () => {
-    const fetchImpl = vi
-      .fn()
-      .mockResolvedValue(response({ ...settingsBody, commitOnSave: false }));
+    const fetchImpl = vi.fn().mockResolvedValue(response({ ...settingsBody, commitOnSave: false }));
     const settings = await provider(fetchImpl).updateGitSettings({ commitOnSave: false });
 
     const { url, init } = lastCall(fetchImpl);
@@ -892,12 +890,14 @@ describe('CompanionProvider git surface (story GIT-US-0020)', () => {
   });
 
   it('turns a refused template into a typed provider error', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(
-      response(
-        { code: 'invalid_request', detail: 'messageTemplate: the template does not parse' },
-        { status: 400 },
-      ),
-    );
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(
+        response(
+          { code: 'invalid_request', detail: 'messageTemplate: the template does not parse' },
+          { status: 400 },
+        ),
+      );
 
     await expect(
       provider(fetchImpl).updateGitSettings({ messageTemplate: '{{nope}}' }),
@@ -982,9 +982,7 @@ describe('CompanionProvider — sync (GIT-US-0021)', () => {
   });
 
   it('aborts a half-finished integration', async () => {
-    const fetchImpl = vi
-      .fn()
-      .mockResolvedValue(response({ repo: 'acme', git: true, pending: 0 }));
+    const fetchImpl = vi.fn().mockResolvedValue(response({ repo: 'acme', git: true, pending: 0 }));
 
     const status = await provider(fetchImpl).abortSync('acme');
 
