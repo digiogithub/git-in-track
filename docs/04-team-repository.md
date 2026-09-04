@@ -316,11 +316,61 @@ projects:
 | `E-TEAM-KEY-DUP` | E | Duplicate project `key`. |
 | `E-TEAM-HANDLE-DUP` | E | Duplicate member `handle`. |
 | `E-TEAM-EMAIL-DUP` | E | An email appears under two members. |
-| `E-TEAM-PROJECT-FIELDS` | E | A project entry lacks `key`, `name`, `repo`, or `docs_path`. |
+| `E-TEAM-MEMBER-FIELDS` | E | A member entry has a malformed `handle`, or no member is declared. |
+| `E-TEAM-PROJECT-FIELDS` | E | A project entry lacks `key`, `name`, `repo`, or `docs_path`, or none is declared. |
 | `E-TEAM-BACKLOG-IN-TEAM-REPO` | E | `.pmngr/{epics,stories,tasks,milestones,comments}` exists in the team repo. |
 | `W-TEAM-KEY-MISMATCH` | W | Cloned project's `project.yaml:key` ≠ the declared `key`. |
 | `W-TEAM-WEB-URL` | W | `web_url` absent and not inferable (blob links disabled for that project). |
 | `W-TEAM-HINT-DEAD` | W | No `local_hints` path exists on this machine (informational). |
+
+### 3.6 Loading a team repository — the workspace (implemented, GIT-US-0016)
+
+`team.yaml` is parsed by `internal/core` (`core.LoadTeamConfig`, `core.DiscoverTeam`) and never
+by an adapter, so the companion process and the WebAssembly build validate it identically.
+
+A **workspace** (`internal/vault`, type `Workspace`) is several repositories open at once: the
+project clones the user has, plus at most one team repository. It is what makes the cross-repository
+half of this document possible without a second implementation of anything:
+
+| Concern | Where it is answered |
+|---|---|
+| One repository: items, pages, comments, writes | the `Vault` of that repository, unchanged |
+| Which repository answers a call | `Workspace.route`, by explicit `vaultId`, then `project`, then the project key embedded in an item `id`, then the project half of a `ref` |
+| `ref: <KEY>/<ITEM-ID>` resolution | `Workspace.ResolveRef` — see below |
+| Search over everything that is open | `Workspace.Search`, merging the per-repository rankings |
+| The team surface of §3 | `Workspace.Team` |
+
+The hosts differ only in how repositories get in: the browser worker calls `workspace.mount` and
+pushes each folder's files with `vault.load` (both carry a `vaultId`); the companion attaches the
+vaults it already opened over the registered repositories.
+
+**Reference resolution.** `core.ParseRef` decodes `<projectKey>/<itemId>` and rejects a reference
+that disagrees with itself (`WEB/ACME-US-0042`). Resolution never fails on a reference into a
+project nobody cloned — that is the normal state of a team board (§7) — and answers instead with:
+
+| Field | Meaning |
+|---|---|
+| `declared` | `team.yaml` lists the project. |
+| `cloned` | A repository exposing the project is open in this workspace. |
+| `vaultId` | The repository the item was resolved in. |
+| `found` | The item, without its body; absent when the reference is remote. |
+| `reason` | One sentence explaining an unresolved reference, for the UI. |
+
+**Unique project keys.** `E-TEAM-KEY-DUP` covers a `team.yaml` that declares a key twice. The
+workspace raises the same code for the case only it can see: two *open repositories* serving the
+same project key, which would make routing ambiguous.
+
+**The team knowledge base** is indexed as a scope of the team repository's index, keyed by the team
+key, so `knowledge/` is walked, searched, wikilinked and served by exactly the code that serves a
+project's docs folder. It is addressed as `/api/v1/teams/<TEAMKEY>/kb/…` and, in the web app, at
+`/p/<TEAMKEY>/kb/…`.
+
+**Not cloned is a state, not an error.** Every project of `team.yaml` is listed with `cloned: true`
+or `cloned: false`. Rendering a remote card's title and status from a committed snapshot (§6) is
+GIT-US-0019; this build recognises and marks the project, and offers its `repo` URL as the way in.
+
+The fixture `testdata/fixtures/team-basic` is the end-to-end case: a team repository declaring
+`DEMO` (opened next to it from `testdata/fixtures/project-basic`) and `WEB` (never cloned).
 
 ---
 
@@ -1308,7 +1358,7 @@ MCP tools implied by this document (doc 05 specifies them fully): `list_projects
 |---|---|
 | Phase 1 | Nothing: single project, no team repo. |
 | Phase 2 | `team.yaml` parsing in the core (read-only), project resolution from local paths. |
-| Phase 3 | Team repo end to end: `team.yaml`, `knowledge/`, boards (kanban + scrum), sprints, remote references, index snapshots. |
+| Phase 3 | Team repo end to end: `team.yaml` (§3.6, done), `knowledge/` (done), multi-repository workspace and reference resolution (§3.6, done), boards (kanban + scrum), sprints, remote references, index snapshots. |
 | Phase 4 | Multi-repo sync, per-repo push results, conflict handling for `order` and snapshots. |
 | Phase 5 | MCP tools of §12; agents reading snapshots for cross-project questions. |
 | Phase 6 | Retrospectives with voting and promotion, metrics (velocity, burndown, cumulative flow) computed from sprints plus project data. |

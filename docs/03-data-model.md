@@ -1202,6 +1202,10 @@ Severity: **E** = error (blocks writes to the affected item; `doctor` exits non-
 | `W-ESTIMATE-SCALE` | W | `estimate` not in `estimation.values` |
 | `W-PROJ-COUNTER-STALE` | W | Counter below scanned max |
 
+The `E-TEAM-*` / `W-TEAM-*` codes belong to `team.yaml` and are catalogued in
+[`04-team-repository.md`](./04-team-repository.md) §3.5. They share this catalog's namespace and
+the same severity rules: `internal/core` emits both from one `Diagnostic` type.
+
 `gintrack doctor` flags: `--strict` (warnings become non-zero exit, for CI), `--fix` (safe
 autofixes: slugs, key order, timestamp normalisation, label catalog), `--renumber` (§4.3),
 `--json` (machine-readable diagnostics for agents and CI annotations).

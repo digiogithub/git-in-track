@@ -936,6 +936,47 @@ GET /api/v1/repos/ACME
 }
 ```
 
+#### Teams and cross-repository references
+
+```http
+GET /api/v1/workspace                   # every open repository, its projects, the team among them
+GET /api/v1/teams                       # zero or one team repository
+GET /api/v1/teams/{key}                 # team.yaml: members, projects, policies, diagnostics
+GET /api/v1/refs?ref=ACME/ACME-US-0042  # where a cross-repository reference points
+```
+
+`GET /api/v1/teams/{key}` answers with the parsed `team.yaml` (doc 04 §3) plus, for every declared
+project, whether a clone of it is open in this workspace:
+
+```json
+{
+  "key": "ACME-TEAM",
+  "name": "ACME Delivery Team",
+  "knowledgePath": "knowledge",
+  "vaultId": "acme-team",
+  "members": [{ "handle": "jose", "name": "Jose Ruiz", "role": "lead", "active": true }],
+  "projects": [
+    { "key": "ACME", "name": "ACME Platform", "repo": "https://github.com/acme/platform.git",
+      "docsPath": "docs", "cloned": true,  "vaultId": "acme-api", "localDocsPath": "docs" },
+    { "key": "WEB",  "name": "Marketing Website", "repo": "https://gitlab.com/acme/website.git",
+      "docsPath": "documentation", "cloned": false }
+  ],
+  "diagnostics": []
+}
+```
+
+`GET /api/v1/refs` resolves `<projectKey>/<itemId>` across every mounted repository. A reference
+into a project nobody cloned is **not** a 404 — it is the normal state of a team board (doc 04 §7):
+
+```json
+{ "ref": "WEB/WEB-US-0031", "project": "WEB", "item": "WEB-US-0031",
+  "declared": true, "cloned": false,
+  "reason": "project WEB is not cloned on this machine" }
+```
+
+A malformed reference (no `/`, a lowercase key, an id whose prefix disagrees with the key) is a
+`400` with the `invalid_request` problem code.
+
 #### Projects
 
 ```http
@@ -951,7 +992,7 @@ PATCH /api/v1/projects/{key}            # If-Match required; writes project.yaml
 GET /api/v1/projects/{key}/kb/tree      ?depth=3
 GET /api/v1/projects/{key}/kb/page?path=architecture/overview.md&format=raw|html|both
 PUT /api/v1/projects/{key}/kb/page      If-Match; body {"path":…,"content":"…"}
-GET /api/v1/teams/{key}/kb/tree         # team knowledge/ folder, same shape
+GET /api/v1/teams/{key}/kb/tree         # team knowledge/ folder, same shape, {key} is the team key
 GET /api/v1/kb/tree                     ?project=ACME    # flat form, vault-relative
 GET /api/v1/kb/page?path=docs/index.md  ?project=ACME
 PUT /api/v1/kb/page                     If-Match; body {"path":…,"content":"…"}
@@ -1145,6 +1186,12 @@ GET /api/v1/search?q=oidc+discovery&scope=items,kb&project=ACME&limit=20
   "total":7,"tookMs":9,"engine":"bleve"
 }
 ```
+
+Without `?project=`, the query spans **every mounted repository** — the team knowledge base
+included — and each hit carries the `project` it belongs to (the team key for a team
+knowledge-base page) plus the `vaultId` of the repository that answered, so a workspace never
+returns a row whose source is ambiguous (GIT-US-0016). With `?project=<KEY>`, only the repository
+exposing that key is searched, and an unknown key is a `404`.
 
 #### Sync and git
 

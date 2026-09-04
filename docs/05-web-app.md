@@ -153,7 +153,19 @@ state is shareable by URL and survives reloads.
 **WorkspaceHome (`/`)** — Landing surface. Cards for every mounted repository
 (project or team) with: name, project key, branch, ahead/behind counters, dirty
 file count, last index time, and mode badge (Browser / Companion). Empty state
-launches the Add Repository wizard. Below the repos: "Recently edited" (from the
+launches the Add Repository wizard.
+
+When a team repository is open, a **Team panel** (`features/workspace/TeamPanel.tsx`,
+story GIT-US-0016) sits above the repository list: the team name and key, a link
+into the team knowledge base (`/p/<TEAMKEY>/kb/`), the members with their role and
+whether they are active, and every project `team.yaml` declares. A project the
+workspace has open is marked *cloned* and links to its backlog; one nobody cloned
+is marked *not cloned* and shows the `git clone` URL — it is listed, never hidden
+(doc 04 §7). Rendering its cards from a committed snapshot is GIT-US-0019.
+
+A **workspace search panel** (`features/workspace/WorkspaceSearch.tsx`) queries every
+open repository at once and labels each row with the project it came from, because in
+a workspace the same title can exist in two repositories. Below the repos: "Recently edited" (from the
 index, `updated desc`, limit 20), "Assigned to me" (matching `team.yaml` identity
 or the configured git author email), and a sync health strip.
 
@@ -171,7 +183,9 @@ or the configured git author email), and a sync health strip.
 4. *Confirm*: shows what will be written, then runs the initial index with a
    progress bar (files scanned / items found / errors).
 
-**KbViewer (`/p/$projectKey/kb/*`, `/team/$teamId/kb/*`)** — Two panes. Left: a
+**KbViewer (`/p/$projectKey/kb/*`)** — Two panes. The team knowledge base uses the
+same route with the team key in place of a project key, because the core indexes
+`knowledge/` as a scope keyed by the team key (doc 04 §3.6). Left: a
 virtualised file tree of the docs folder (or `knowledge/` for teams) with fuzzy
 filter, folder collapse state persisted per repo, and an outline toggle showing
 the current page's headings. Right: the rendered Markdown page (§7) with a sticky
@@ -271,6 +285,9 @@ export interface DataProvider {
 
   // workspace
   listRepos(): Promise<RepoInfo[]>;
+  listProjects(): Promise<ProjectSummary[]>;
+  getTeam(): Promise<TeamSummary | null>;          // team.yaml of the open team repo, or null
+  resolveRef(ref: string): Promise<RefResolution>; // "<KEY>/<ITEM-ID>" across every open repo
   mountRepo(input: MountInput): Promise<RepoInfo>;
   unmountRepo(repoId: string): Promise<void>;
   reindex(repoId: string, opts?: { full?: boolean }): Promise<IndexStats>;

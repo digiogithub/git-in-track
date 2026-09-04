@@ -2,9 +2,9 @@
 id: GIT-US-0016
 type: story
 title: Load a team repository and its projects
-status: backlog
+status: in_review
 created: 2026-09-03T00:00:00Z
-updated: 2026-09-03T00:00:00Z
+updated: 2026-09-04
 author: team
 priority: critical
 parent: GIT-EP-0004
@@ -31,11 +31,23 @@ GIT-US-0019.
 
 ## Acceptance Criteria
 
-- [ ] `team.yaml` is parsed and validated, with clear errors for malformed entries.
-- [ ] Members, projects and the team knowledge base are all visible in the UI.
-- [ ] Several project repositories can be open at once alongside the team repository.
-- [ ] `ref: <projectKey>/<itemId>` resolves to the right item across repositories.
-- [ ] Search spans all open vaults and shows which project each result came from.
-- [ ] Projects not present locally are listed and marked as not cloned.
-- [ ] Project keys are validated as unique within a team.
-- [ ] The `team-basic` fixture loads end to end in both operating modes.
+- [x] `team.yaml` is parsed and validated, with clear errors for malformed entries.
+- [x] Members, projects and the team knowledge base are all visible in the UI.
+- [x] Several project repositories can be open at once alongside the team repository.
+- [x] `ref: <projectKey>/<itemId>` resolves to the right item across repositories.
+- [x] Search spans all open vaults and shows which project each result came from.
+- [x] Projects not present locally are listed and marked as not cloned.
+- [x] Project keys are validated as unique within a team.
+- [x] The `team-basic` fixture loads end to end in both operating modes.
+
+## Notes
+
+Implemented in `internal/core` (`team.go`, `teamdiscover.go`: `TeamConfig`, `TeamRef`, `Ref`,
+`DiscoverTeam`, the `E-TEAM-*` catalog) and `internal/vault` (`Workspace`: multi-repository
+routing, `team.get`, `ref.resolve`, `workspace.*`, merged search). The companion serves it at
+`/api/v1/{workspace,teams,teams/{key},refs}` and a project-less `/api/v1/search`; the browser
+worker hosts a `vault.Workspace` instead of a single vault, so both modes answer the same
+contract. The web app gained `features/workspace/TeamPanel.tsx` and `WorkspaceSearch.tsx`.
+
+Snapshot rendering for a project that is not cloned stays with GIT-US-0019: this story recognises
+and marks it, and offers the clone URL.
