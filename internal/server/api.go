@@ -62,7 +62,8 @@ func (s *Server) mountAPI(api chi.Router) {
 
 		// Phases 3 and 4. The routes exist so that a client learns "not yet"
 		// from the problem code instead of guessing from a 404.
-		s.deferRoute(p, "/boards", "Boards arrive with Phase 3.")
+		// Team boards: kanban today, scrum with GIT-US-0018.
+		p.Route("/boards", s.mountBoards)
 		s.deferRoute(p, "/sprints", "Sprints arrive with Phase 3.")
 		s.deferRoute(p, "/retros", "Retrospectives arrive with Phase 3.")
 		s.deferRoute(p, "/sync", "Git synchronization arrives with Phase 4.")
@@ -71,6 +72,17 @@ func (s *Server) mountAPI(api chi.Router) {
 
 	api.NotFound(s.handleAPINotFound)
 	api.MethodNotAllowed(s.handleAPINotFound)
+}
+
+// mustJSON encodes call parameters. The values are always plain maps built in
+// this package, so an encoding failure is impossible; nil keeps the call
+// parameter-less rather than sending invalid JSON.
+func mustJSON(params any) []byte {
+	raw, err := json.Marshal(params)
+	if err != nil {
+		return nil
+	}
+	return raw
 }
 
 // deferRoute mounts a whole subtree that answers 501 with a stable code.

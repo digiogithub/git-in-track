@@ -297,6 +297,49 @@ func (s *Server) publishPageWrite(r *http.Request, m *mount, result any) {
 	m.touch(s.now())
 }
 
+// publishBoardMove announces a card move. It writes to two repositories, so it
+// publishes one file event per repository and, when a status changed, the item
+// event the backlog views listen to (docs/04 R-MOVE-1).
+func (s *Server) publishBoardMove(r *http.Request, result any) {
+	moved, ok := result.(vault.BoardMoveResult)
+	if !ok {
+		return
+	}
+	requestID := requestIDOf(r)
+	for _, set := range moved.Writes {
+		m, found := s.repos.lookup(set.VaultID)
+		for _, file := range set.Written {
+			repo := set.VaultID
+			if found {
+				repo = m.id
+			}
+			s.hub.Publish(eventFileChanged, fileChangedData{
+				Repo:    repo,
+				Path:    file.Path,
+				Op:      "write",
+				Size:    int64(len(file.Text)),
+				IsPmngr: isBacklogPath(file.Path),
+				IsKb:    !isBacklogPath(file.Path),
+			})
+		}
+		if !found {
+			continue
+		}
+		if moved.Item != nil && string(moved.Item.ID) != "" && set.VaultID != "" {
+			s.hub.Publish(eventItemChanged, itemChangedData{
+				Repo:      m.id,
+				ID:        string(moved.Item.ID),
+				Op:        "moved",
+				Rev:       string(moved.Item.Rev),
+				Origin:    "api",
+				RequestID: requestID,
+			})
+		}
+		s.publishIndexUpdated(m, indexCounts{Updated: 1}, requestID)
+		m.touch(s.now())
+	}
+}
+
 // publishDelta announces what an incremental index pass changed. It is the
 // watcher's counterpart of publishWrite.
 func (s *Server) publishDelta(m *mount, delta core.IndexDelta) {

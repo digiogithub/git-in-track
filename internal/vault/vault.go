@@ -294,6 +294,14 @@ func (v *Vault) Dispatch(ctx context.Context, method string, raw []byte) (any, e
 	case "ref.resolve":
 		return v.refResolve(raw)
 
+	case "board.list":
+		return v.boardList(ctx)
+	case "board.get":
+		return v.boardGet(ctx, raw)
+	case "board.move":
+		return nil, failf("invalid_request",
+			"moving a card needs the workspace: the item and the board live in different repositories")
+
 	case "item.list":
 		return v.itemList(ctx, raw)
 	case "item.get":

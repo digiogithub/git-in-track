@@ -82,6 +82,20 @@ func (w *Workspace) Dispatch(ctx context.Context, method string, raw []byte) (an
 			return nil, err
 		}
 		return w.ResolveRef(ref), nil
+	case "board.list":
+		return w.Boards(ctx)
+	case "board.get":
+		p, err := decodeParams[BoardParams](raw)
+		if err != nil {
+			return nil, err
+		}
+		return w.BoardView(ctx, p.Board)
+	case "board.move":
+		p, err := decodeParams[BoardMoveParams](raw)
+		if err != nil {
+			return nil, err
+		}
+		return w.MoveCard(ctx, p)
 	case "project.list":
 		return w.Projects(ctx)
 	case "search":
