@@ -58,9 +58,11 @@ func statusForCode(code string) int {
 		return http.StatusNotFound
 	case "validation_failed", "workflow_transition_denied", "invalid_front_matter":
 		return http.StatusUnprocessableEntity
-	case "duplicate_id", "wip_limit_exceeded":
+	case "duplicate_id", "wip_limit_exceeded", "sprint_overlap", "sprint_already_active":
 		// A WIP limit is advisory: the move is refused once, and the caller may
-		// repeat it with `force` (docs/04 R-COL-5).
+		// repeat it with `force` (docs/04 R-COL-5). Two sprints of one board
+		// sharing a day, and a second active sprint, are the same shape of
+		// refusal (docs/04 section 8.4).
 		return http.StatusConflict
 	case "read_only", "forbidden":
 		return http.StatusForbidden

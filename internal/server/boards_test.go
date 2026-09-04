@@ -88,8 +88,8 @@ func TestBoardEndpoints(t *testing.T) {
 			} `json:"boards"`
 		}
 		decode(t, send(t, s, request{method: http.MethodGet, target: "/api/v1/boards"}), http.StatusOK, &body)
-		if len(body.Boards) != 1 {
-			t.Fatalf("boards = %d, want 1", len(body.Boards))
+		if len(body.Boards) != 2 {
+			t.Fatalf("boards = %d, want 2", len(body.Boards))
 		}
 		if body.Boards[0].ID != "delivery" || body.Boards[0].Kind != "kanban" {
 			t.Fatalf("board = %+v", body.Boards[0])

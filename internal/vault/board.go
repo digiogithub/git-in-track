@@ -3,6 +3,7 @@ package vault
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/digiogithub/git-in-track/internal/core"
 )
@@ -86,6 +87,10 @@ type MovePlan struct {
 	StatusChanged bool      `json:"statusChanged"`
 	Choices       []string  `json:"choices,omitempty"`
 	WIP           WipStatus `json:"wip"`
+	// Sprint is the sprint a scrum board is scoped to, and SprintAdd reports
+	// that the move added the reference to it (docs/04 section 5.5).
+	Sprint    string `json:"sprint,omitempty"`
+	SprintAdd bool   `json:"sprintAdd,omitempty"`
 }
 
 // VaultWriteSet is a WriteSet plus the repository it belongs to. A move writes
@@ -360,6 +365,8 @@ type boardContext struct {
 	projects []core.TeamProject
 	// snapshots resolve the cards of the projects nobody cloned.
 	snapshots *core.SnapshotSet
+	// now is the clock a sprint's remaining days are counted from.
+	now time.Time
 }
 
 // boardContext gathers the repositories a board is rendered over.
@@ -381,6 +388,7 @@ func (w *Workspace) boardContext() (boardContext, error) {
 	}
 	out.projects = m.Vault.TeamProjects()
 	out.snapshots = m.Vault.Snapshots()
+	out.now = m.Vault.Now()
 	for _, key := range out.declared {
 		owner, ok := w.MountForProject(key)
 		if !ok {
@@ -398,7 +406,7 @@ func (w *Workspace) boardContext() (boardContext, error) {
 func (c boardContext) input() core.BoardInput {
 	in := core.BoardInput{
 		Declared: c.declared, TeamVaultID: c.team.ID,
-		Projects: c.projects, Snapshots: c.snapshots,
+		Projects: c.projects, Snapshots: c.snapshots, Now: c.now,
 	}
 	for _, key := range c.declared {
 		owner, ok := c.owners[key]
@@ -442,14 +450,36 @@ func (w *Workspace) BoardView(ctx context.Context, id string) (core.BoardView, e
 	if err != nil {
 		return core.BoardView{}, err
 	}
-	return c.render(board), nil
+	return c.render(ctx, board), nil
+}
+
+// inputFor is the render input of one board: the sources of input(), plus the
+// sprint a scrum board is scoped to (docs/04 section 5.5). A sprint file that
+// cannot be read leaves the board unscoped and is reported as a diagnostic by
+// render, never as a failure.
+func (c boardContext) inputFor(ctx context.Context, board *core.Board) core.BoardInput {
+	in := c.input()
+	if board.Kind == core.BoardScrum && board.Sprint != "" {
+		if sprint, err := c.team.Vault.Sprint(ctx, board.Sprint); err == nil {
+			in.Sprint = sprint
+		}
+	}
+	return in
 }
 
 // render builds the view of an already loaded board and appends the findings of
 // its validation, so that the UI shows a broken column instead of hiding it.
-func (c boardContext) render(board *core.Board) core.BoardView {
-	view := core.BuildBoardView(board, c.input())
+func (c boardContext) render(ctx context.Context, board *core.Board) core.BoardView {
+	in := c.inputFor(ctx, board)
+	view := core.BuildBoardView(board, in)
 	view.Diagnostics = append(view.Diagnostics, board.Validate(c.declared, c.configs)...)
+	if board.Kind == core.BoardScrum && board.Sprint != "" && in.Sprint == nil {
+		view.Diagnostics = append(view.Diagnostics, core.Diagnostic{
+			Code: core.CodeSprintID, Severity: core.SeverityError, Path: board.Path, Field: "sprint",
+			Message: fmt.Sprintf("board %s is scoped to sprint %s, which this team repository does not hold",
+				board.ID, board.Sprint),
+		})
+	}
 	view.Diagnostics = append(view.Diagnostics, c.snapshots.Diagnostics()...)
 	return view
 }
@@ -481,9 +511,10 @@ func (w *Workspace) MoveCard(ctx context.Context, p BoardMoveParams) (BoardMoveR
 		}
 	}
 
-	view := c.render(board)
+	in := c.inputFor(ctx, board)
+	view := core.BuildBoardView(board, in)
 	move := core.BoardMove{Ref: ref, ToColumn: p.ToColumn, Position: p.Position, Status: core.Status(p.Status)}
-	plan, err := core.PlanMove(board, view, move, c.configs[ref.Project])
+	plan, err := core.PlanMoveInSprint(board, view, move, c.configs[ref.Project], in.Sprint)
 	if err != nil {
 		code := "invalid_request"
 		if _, cloned := c.owners[ref.Project]; !cloned {
@@ -506,11 +537,32 @@ func (w *Workspace) MoveCard(ctx context.Context, p BoardMoveParams) (BoardMoveR
 				Column: plan.ToColumn, Used: plan.WIPUsed,
 				Limit: plan.WIPLimit, Exceeded: plan.WIPExceeded,
 			},
+			Sprint: plan.Sprint, SprintAdd: plan.SprintAdd,
 		},
 		Writes: []VaultWriteSet{},
 	}
 
-	// 1. The item, in its own repository.
+	// 1. The sprint, in the team repository. Dragging a card out of the backlog
+	// column of a scrum board commits it to the sprint; membership is team-repo
+	// state, so it is written first and undone if anything below fails
+	// (docs/04 sections 5.5 and 11).
+	if plan.SprintAdd && in.Sprint != nil {
+		in.Sprint.AddItem(ref.String())
+		_, sprintWrites, err := c.team.Vault.WriteSprint(ctx, in.Sprint, in.Sprint.Rev)
+		if err != nil {
+			return BoardMoveResult{}, err
+		}
+		result.Writes = append(result.Writes, teamWrites(c.team.ID, sprintWrites))
+	}
+	undoSprint := func() {
+		if !plan.SprintAdd || in.Sprint == nil {
+			return
+		}
+		in.Sprint.RemoveItem(ref.String())
+		_, _, _ = c.team.Vault.WriteSprint(ctx, in.Sprint, in.Sprint.Rev)
+	}
+
+	// 2. The item, in its own repository.
 	var previous core.Status
 	owner := c.owners[ref.Project]
 	if plan.StatusChanged {
@@ -528,6 +580,7 @@ func (w *Workspace) MoveCard(ctx context.Context, p BoardMoveParams) (BoardMoveR
 		expected := core.Rev(p.ItemRev)
 		item, writes, err := owner.Vault.MoveItemStatus(ctx, ref.Item, plan.Status, expected, p.Force)
 		if err != nil {
+			undoSprint()
 			return BoardMoveResult{}, err
 		}
 		result.Item = item
@@ -536,7 +589,7 @@ func (w *Workspace) MoveCard(ctx context.Context, p BoardMoveParams) (BoardMoveR
 		})
 	}
 
-	// 2. The board, in the team repository. A failure here rolls the item back
+	// 3. The board, in the team repository. A failure here rolls the item back
 	// so that the board never shows a position that contradicts the item.
 	core.ApplyMove(board, move)
 	_, boardWrites, err := c.team.Vault.WriteBoard(ctx, board, board.Rev)
@@ -544,18 +597,20 @@ func (w *Workspace) MoveCard(ctx context.Context, p BoardMoveParams) (BoardMoveR
 		if plan.StatusChanged && owner != nil && previous != "" {
 			_, _, rollback := owner.Vault.MoveItemStatus(ctx, ref.Item, previous, "", true)
 			if rollback != nil {
+				undoSprint()
 				return BoardMoveResult{}, failf("internal",
 					"the board write failed (%v) and %s could not be rolled back to %s (%v)",
 					err, ref.Item, previous, rollback)
 			}
 		}
+		undoSprint()
 		return BoardMoveResult{}, err
 	}
 	result.Writes = append(result.Writes, VaultWriteSet{
 		VaultID: c.team.ID, Written: boardWrites.Written, Removed: boardWrites.Removed,
 	})
 
-	result.Board = c.render(board)
+	result.Board = c.render(ctx, board)
 	return result, nil
 }
 
@@ -577,4 +632,110 @@ func statusStrings(list []core.Status) []string {
 		out = append(out, string(s))
 	}
 	return out
+}
+
+// BoardPatch is the set of board fields "board.update" may change: the view
+// itself — columns, WIP limits, filters, swimlanes, card display — and, on a
+// scrum board, the sprint it is scoped to. An absent field is left alone, and
+// the card order is never patched here: it moves one card at a time
+// (docs/07 section 5.5, story GIT-US-0018).
+type BoardPatch struct {
+	Title         *string                `json:"title,omitempty"`
+	Description   *string                `json:"description,omitempty"`
+	Projects      *[]core.ProjectKey     `json:"projects,omitempty"`
+	Columns       *[]core.BoardColumn    `json:"columns,omitempty"`
+	Filters       *core.BoardFilters     `json:"filters,omitempty"`
+	Swimlanes     *core.BoardSwimlanes   `json:"swimlanes,omitempty"`
+	Card          *core.BoardCardDisplay `json:"card,omitempty"`
+	Sprint        *string                `json:"sprint,omitempty"`
+	BacklogColumn *string                `json:"backlogColumn,omitempty"`
+}
+
+// BoardUpdateParams is the input of "board.update".
+type BoardUpdateParams struct {
+	Board string     `json:"board"`
+	Rev   string     `json:"rev,omitempty"`
+	Patch BoardPatch `json:"patch"`
+}
+
+// BoardUpdateResult is the answer of "board.update": the board as it now
+// renders, and what the team repository has to save.
+type BoardUpdateResult struct {
+	Board  core.BoardView  `json:"board"`
+	Writes []VaultWriteSet `json:"writes"`
+}
+
+// UpdateBoard rewrites the board file of the team repository and nothing else.
+// It refuses a change that would leave the file invalid — an unknown column in
+// `backlog_column`, a sprint on a kanban board, a sprint the repository does
+// not hold — so that the UI never has to repair a board it has just broken.
+func (w *Workspace) UpdateBoard(ctx context.Context, p BoardUpdateParams) (BoardUpdateResult, error) {
+	c, err := w.boardContext()
+	if err != nil {
+		return BoardUpdateResult{}, err
+	}
+	board, err := c.team.Vault.Board(ctx, p.Board)
+	if err != nil {
+		return BoardUpdateResult{}, err
+	}
+	if p.Rev != "" && p.Rev != "*" && string(board.Rev) != p.Rev {
+		return BoardUpdateResult{}, &Error{
+			Code: "stale_revision", Path: board.Path,
+			Message: fmt.Sprintf("board %s was modified since revision %s (current %s)",
+				board.ID, p.Rev, board.Rev),
+		}
+	}
+
+	patch := p.Patch
+	if patch.Title != nil {
+		board.Title = *patch.Title
+	}
+	if patch.Description != nil {
+		board.Description = *patch.Description
+	}
+	if patch.Projects != nil {
+		board.Projects = append([]core.ProjectKey(nil), *patch.Projects...)
+	}
+	if patch.Columns != nil {
+		board.Columns = append([]core.BoardColumn(nil), *patch.Columns...)
+	}
+	if patch.Filters != nil {
+		board.Filters = *patch.Filters
+	}
+	if patch.Swimlanes != nil {
+		board.Swimlanes = *patch.Swimlanes
+	}
+	if patch.Card != nil {
+		board.Card = *patch.Card
+	}
+	if patch.Sprint != nil {
+		board.Sprint = *patch.Sprint
+	}
+	if patch.BacklogColumn != nil {
+		board.BacklogColumn = *patch.BacklogColumn
+	}
+
+	if board.Kind == core.BoardScrum && board.Sprint != "" {
+		if _, err := c.team.Vault.Sprint(ctx, board.Sprint); err != nil {
+			return BoardUpdateResult{}, failf("not_found",
+				"no sprint %q in this team repository", board.Sprint)
+		}
+	}
+	for _, d := range board.Validate(c.declared, c.configs) {
+		if d.Severity == core.SeverityError {
+			return BoardUpdateResult{}, failf("validation_failed", "%s: %s", d.Code, d.Message)
+		}
+	}
+	// A column the board no longer declares takes its order list with it
+	// (R-ORD-2); the order of the columns that stayed is untouched.
+	core.PruneOrder(board, nil)
+
+	written, writes, err := c.team.Vault.WriteBoard(ctx, board, board.Rev)
+	if err != nil {
+		return BoardUpdateResult{}, err
+	}
+	return BoardUpdateResult{
+		Board:  c.render(ctx, written),
+		Writes: []VaultWriteSet{teamWrites(c.team.ID, writes)},
+	}, nil
 }

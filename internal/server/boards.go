@@ -19,7 +19,7 @@ func (s *Server) mountBoards(r chi.Router) {
 	r.Get("/", s.handleBoardList)
 	r.Get("/{slug}", s.handleBoardGet)
 	r.Post("/{slug}/cards/move", s.handleBoardCardMove)
-	r.Patch("/{slug}", s.notImplemented("Editing a board's columns over the API arrives with GIT-US-0018."))
+	r.Patch("/{slug}", s.handleBoardUpdate)
 }
 
 // handleBoardList serves GET /api/v1/boards.

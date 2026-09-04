@@ -306,9 +306,11 @@ func (v *Vault) Dispatch(ctx context.Context, method string, raw []byte) (any, e
 		return v.boardList(ctx)
 	case "board.get":
 		return v.boardGet(ctx, raw)
-	case "board.move":
+	case "board.move", "board.update",
+		"sprint.list", "sprint.get", "sprint.create", "sprint.update",
+		"sprint.start", "sprint.close":
 		return nil, failf("invalid_request",
-			"moving a card needs the workspace: the item and the board live in different repositories")
+			"%s needs the workspace: the sprint and its items live in different repositories", method)
 
 	case "item.list":
 		return v.itemList(ctx, raw)

@@ -50,8 +50,8 @@ func wsFail(t *testing.T, w *Workspace, method string, params any) (code, messag
 func TestWorkspaceBoardList(t *testing.T) {
 	modes(t, func(t *testing.T, w *Workspace) {
 		result := decode[BoardListResult](t, wsCall(t, w, "board.list", nil))
-		if len(result.Boards) != 1 {
-			t.Fatalf("boards = %d, want 1", len(result.Boards))
+		if len(result.Boards) != 2 {
+			t.Fatalf("boards = %d, want 2", len(result.Boards))
 		}
 		b := result.Boards[0]
 		if b.ID != "delivery" || b.Kind != core.BoardKanban {

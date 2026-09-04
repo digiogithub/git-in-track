@@ -306,7 +306,33 @@ func (s *Server) publishBoardMove(r *http.Request, result any) {
 		return
 	}
 	requestID := requestIDOf(r)
+	s.publishWriteSets(r, moved.Writes)
+	if moved.Item == nil || string(moved.Item.ID) == "" {
+		return
+	}
 	for _, set := range moved.Writes {
+		m, found := s.repos.lookup(set.VaultID)
+		if !found || set.VaultID == "" {
+			continue
+		}
+		s.hub.Publish(eventItemChanged, itemChangedData{
+			Repo:      m.id,
+			ID:        string(moved.Item.ID),
+			Op:        "moved",
+			Rev:       string(moved.Item.Rev),
+			Origin:    "api",
+			RequestID: requestID,
+		})
+	}
+}
+
+// publishWriteSets announces the files a multi-repository call wrote: one file
+// event per repository, plus the index refresh each of them implies. It is what
+// a card move, a sprint edit and a board edit all report through
+// (docs/04 R-MOVE-1, R-SPR-3).
+func (s *Server) publishWriteSets(r *http.Request, sets []vault.VaultWriteSet) {
+	requestID := requestIDOf(r)
+	for _, set := range sets {
 		m, found := s.repos.lookup(set.VaultID)
 		for _, file := range set.Written {
 			repo := set.VaultID
@@ -324,16 +350,6 @@ func (s *Server) publishBoardMove(r *http.Request, result any) {
 		}
 		if !found {
 			continue
-		}
-		if moved.Item != nil && string(moved.Item.ID) != "" && set.VaultID != "" {
-			s.hub.Publish(eventItemChanged, itemChangedData{
-				Repo:      m.id,
-				ID:        string(moved.Item.ID),
-				Op:        "moved",
-				Rev:       string(moved.Item.Rev),
-				Origin:    "api",
-				RequestID: requestID,
-			})
 		}
 		s.publishIndexUpdated(m, indexCounts{Updated: 1}, requestID)
 		m.touch(s.now())

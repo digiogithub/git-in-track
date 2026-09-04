@@ -96,6 +96,48 @@ func (w *Workspace) Dispatch(ctx context.Context, method string, raw []byte) (an
 			return nil, err
 		}
 		return w.MoveCard(ctx, p)
+	case "board.update":
+		p, err := decodeParams[BoardUpdateParams](raw)
+		if err != nil {
+			return nil, err
+		}
+		return w.UpdateBoard(ctx, p)
+	case "sprint.list":
+		p, err := decodeParams[SprintListParams](raw)
+		if err != nil {
+			return nil, err
+		}
+		return w.Sprints(ctx, p)
+	case "sprint.get":
+		p, err := decodeParams[SprintParams](raw)
+		if err != nil {
+			return nil, err
+		}
+		return w.Sprint(ctx, p.ID)
+	case "sprint.create":
+		p, err := decodeParams[SprintCreateParams](raw)
+		if err != nil {
+			return nil, err
+		}
+		return w.CreateSprint(ctx, p)
+	case "sprint.update":
+		p, err := decodeParams[SprintUpdateParams](raw)
+		if err != nil {
+			return nil, err
+		}
+		return w.UpdateSprint(ctx, p)
+	case "sprint.start":
+		p, err := decodeParams[SprintStartParams](raw)
+		if err != nil {
+			return nil, err
+		}
+		return w.StartSprint(ctx, p)
+	case "sprint.close":
+		p, err := decodeParams[SprintCloseParams](raw)
+		if err != nil {
+			return nil, err
+		}
+		return w.CloseSprint(ctx, p)
 	case "snapshot.list":
 		return w.SnapshotList()
 	case "snapshot.refresh":

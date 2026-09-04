@@ -66,9 +66,9 @@ func (s *Server) mountAPI(api chi.Router) {
 
 		// Phases 3 and 4. The routes exist so that a client learns "not yet"
 		// from the problem code instead of guessing from a 404.
-		// Team boards: kanban today, scrum with GIT-US-0018.
+		// Team boards and the sprints a scrum board runs.
 		p.Route("/boards", s.mountBoards)
-		s.deferRoute(p, "/sprints", "Sprints arrive with Phase 3.")
+		p.Route("/sprints", s.mountSprints)
 		s.deferRoute(p, "/retros", "Retrospectives arrive with Phase 3.")
 		s.deferRoute(p, "/sync", "Git synchronization arrives with Phase 4.")
 		s.deferRoute(p, "/git", "Git inspection arrives with Phase 4.")
