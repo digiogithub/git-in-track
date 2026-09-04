@@ -68,6 +68,11 @@ import type {
   SprintResult,
   SprintSummary,
   SprintView,
+  SyncOptions,
+  SyncRepoStatus,
+  SyncResult,
+  SyncSettings,
+  SyncSettingsPatch,
   TeamSummary,
   Unsubscribe,
   UpdateOp,
@@ -1182,6 +1187,81 @@ export class CompanionProvider implements DataProvider {
     });
     const record = asRecord(body);
     return asArray(record ? record['commits'] : body) as GitCommit[];
+  }
+
+  // --------------------------------------------------------------- git sync
+
+  /** `GET /api/v1/sync/status`. */
+  async getSyncStatus(repoId?: string): Promise<SyncRepoStatus[]> {
+    const body = asRecord(await this.#json(`${API_PREFIX}/sync/status${buildQuery({ repo: repoId })}`));
+    return asArray(body ? body['repos'] : []) as SyncRepoStatus[];
+  }
+
+  /** The sync half of `GET /api/v1/sync/status`. */
+  async getSyncSettings(): Promise<SyncSettings> {
+    const body = asRecord(await this.#json(`${API_PREFIX}/sync/status`));
+    const settings = asRecord(body ? body['settings'] : null);
+    return {
+      pullStrategy: (settings?.['pullStrategy'] as 'rebase' | 'merge') ?? 'rebase',
+      pushOnSync: settings?.['pushOnSync'] !== false,
+      maxPushRetries: typeof settings?.['maxPushRetries'] === 'number' ? settings['maxPushRetries'] : 3,
+      supported: settings?.['supported'] !== false,
+      ...(typeof settings?.['reason'] === 'string' ? { reason: settings['reason'] } : {}),
+    };
+  }
+
+  /** `PATCH /api/v1/sync/settings`. */
+  async updateSyncSettings(patch: SyncSettingsPatch): Promise<SyncSettings> {
+    const settings = asRecord(
+      await this.#json(`${API_PREFIX}/sync/settings`, { method: 'PATCH', body: patch }),
+    );
+    return {
+      pullStrategy: (settings?.['pullStrategy'] as 'rebase' | 'merge') ?? 'rebase',
+      pushOnSync: settings?.['pushOnSync'] !== false,
+      maxPushRetries: typeof settings?.['maxPushRetries'] === 'number' ? settings['maxPushRetries'] : 3,
+      supported: settings?.['supported'] !== false,
+    };
+  }
+
+  /**
+   * `POST /api/v1/sync/run`. The companion commits what commit-on-save batched
+   * before it fetches, so the panel needs no separate "commit first" step.
+   */
+  async sync(repoId: string | undefined, opts: SyncOptions = {}): Promise<SyncResult[]> {
+    const body = asRecord(
+      await this.#json(`${API_PREFIX}/sync/run`, {
+        method: 'POST',
+        body: {
+          ...(repoId === undefined ? {} : { repos: [repoId] }),
+          ...(opts.dryRun === undefined ? {} : { dryRun: opts.dryRun }),
+          ...(opts.push === undefined ? {} : { push: opts.push }),
+          ...(opts.strategy === undefined ? {} : { strategy: opts.strategy }),
+        },
+      }),
+    );
+    return asArray(body ? body['results'] : []) as SyncResult[];
+  }
+
+  /** `POST /api/v1/sync/abort`. */
+  async abortSync(repoId: string): Promise<SyncRepoStatus> {
+    return (await this.#json(`${API_PREFIX}/sync/abort`, {
+      method: 'POST',
+      body: { repo: repoId },
+    })) as SyncRepoStatus;
+  }
+
+  /** `GET /api/v1/sync/conflicts`. */
+  async listSyncConflicts(
+    repoId?: string,
+  ): Promise<{ repo: string; paths: string[]; operation?: string }[]> {
+    const body = asRecord(
+      await this.#json(`${API_PREFIX}/sync/conflicts${buildQuery({ repo: repoId })}`),
+    );
+    return asArray(body ? body['conflicts'] : []) as {
+      repo: string;
+      paths: string[];
+      operation?: string;
+    }[];
   }
 
   subscribe(handler: (event: ChangeEvent) => void): Unsubscribe {

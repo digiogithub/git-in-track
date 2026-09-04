@@ -11,6 +11,7 @@ import { BoardList } from '@/features/boards/BoardList';
 import { validateNewItemSearch } from '@/features/editor/search';
 import { KbViewer } from '@/features/kb/KbViewer';
 import { SettingsPage } from '@/features/settings/SettingsPage';
+import { SyncPanel } from '@/features/sync/SyncPanel';
 import { AddRepositoryPage } from '@/features/workspace/AddRepositoryPage';
 import { WorkspaceHome } from '@/features/workspace/WorkspaceHome';
 
@@ -102,6 +103,13 @@ const boardRoute = createRoute({
   component: lazyRouteComponent(() => import('@/features/boards/BoardView'), 'BoardView'),
 });
 
+/** The sync panel (docs/05 §5, story GIT-US-0021). */
+const syncRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/sync',
+  component: SyncPanel,
+});
+
 const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/settings',
@@ -122,6 +130,7 @@ export const routeTree = rootRoute.addChildren([
   ]),
   boardsRoute,
   boardRoute,
+  syncRoute,
   settingsRoute,
 ]);
 

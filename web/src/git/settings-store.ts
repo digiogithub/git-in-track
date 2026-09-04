@@ -11,7 +11,13 @@
  * breaking the settings page.
  */
 
-import type { GitSettings, GitSettingsPatch } from '@/api/provider';
+import type {
+  GitSettings,
+  GitSettingsPatch,
+  SyncSettings,
+  SyncSettingsPatch,
+} from '@/api/provider';
+import { CORS_PROXY_REASON } from '@/git/browser-sync';
 import { DEFAULT_COMMIT_TEMPLATE, validateCommitTemplate } from '@/git/message';
 
 /** Key prefix; one entry per workspace. */
@@ -26,7 +32,7 @@ export const DEFAULT_COMMIT_DEBOUNCE_MS = 2000;
  * stored and rendered but nothing is committed, and the UI says so.
  */
 export const BROWSER_GIT_REASON =
-  'Browser-only mode cannot commit yet: git in the browser is isomorphic-git, which arrives with the sync story (GIT-US-0021). Run the companion for commit-on-save today.';
+  'Browser-only mode cannot commit on save yet: git in the browser is isomorphic-git, which GIT-US-0021 wires up for sync (fetch, merge and push) but not yet for the debounced commit of every save. Run the companion for commit-on-save today.';
 
 /** The settings of a workspace that has never been configured. */
 export function defaultGitSettings(): GitSettings {
@@ -101,6 +107,69 @@ export function writeGitSettings(patch: GitSettingsPatch, workspace = 'default')
     }),
   );
   return { ...next, persisted };
+}
+
+/** Key of the per-workspace sync settings; they live next to the git ones. */
+const SYNC_PREFIX = 'gintrack.sync.settings';
+
+/**
+ * Browser-mode sync settings (docs/06-git-sync.md §6.3).
+ *
+ * The strategy is always `merge`: isomorphic-git has no rebase, so the setting
+ * is forced rather than silently reinterpreted. `supported` is false until a
+ * CORS proxy is configured, because without one a tab cannot reach a git host
+ * at all — and we never route repository traffic through a proxy the user did
+ * not choose. The proxy URL is a setting, not a secret; no token is ever
+ * written here or anywhere else in the browser (§8.2).
+ */
+export function readSyncSettings(workspace = 'default'): SyncSettings {
+  const raw = safeRead(syncKey(workspace));
+  let corsProxy = '';
+  if (raw !== null) {
+    try {
+      const stored = JSON.parse(raw) as { corsProxy?: unknown; pushOnSync?: unknown };
+      if (typeof stored.corsProxy === 'string') corsProxy = stored.corsProxy.trim();
+      return {
+        pullStrategy: 'merge',
+        pushOnSync: stored.pushOnSync !== false,
+        maxPushRetries: 1,
+        supported: corsProxy !== '',
+        ...(corsProxy === '' ? { reason: CORS_PROXY_REASON } : {}),
+        ...(corsProxy === '' ? {} : { corsProxy }),
+      };
+    } catch {
+      // A corrupt entry is a settings entry: the defaults are correct.
+    }
+  }
+  return {
+    pullStrategy: 'merge',
+    pushOnSync: true,
+    maxPushRetries: 1,
+    supported: false,
+    reason: CORS_PROXY_REASON,
+  };
+}
+
+/** Applies a patch to the sync settings and stores it. */
+export function writeSyncSettings(patch: SyncSettingsPatch, workspace = 'default'): SyncSettings {
+  const current = readSyncSettings(workspace);
+  const corsProxy = (patch.corsProxy ?? current.corsProxy ?? '').trim();
+  if (corsProxy !== '' && !/^https?:\/\//.test(corsProxy)) {
+    throw new RangeError('the CORS proxy must be an http:// or https:// URL');
+  }
+  const pushOnSync = patch.pushOnSync ?? current.pushOnSync;
+  safeWrite(syncKey(workspace), JSON.stringify({ corsProxy, pushOnSync }));
+  return {
+    pullStrategy: 'merge',
+    pushOnSync,
+    maxPushRetries: 1,
+    supported: corsProxy !== '',
+    ...(corsProxy === '' ? { reason: CORS_PROXY_REASON } : { corsProxy }),
+  };
+}
+
+function syncKey(workspace: string): string {
+  return `${SYNC_PREFIX}.${workspace}`;
 }
 
 /** Forgets the stored settings of a workspace. */

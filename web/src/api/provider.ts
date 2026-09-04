@@ -196,6 +196,136 @@ export type GitCommit = {
   message?: string;
 };
 
+/**
+ * The headline state of one repository, in the precedence the companion
+ * resolves it: a blocked repository reads as blocked before it reads as behind
+ * (docs/06-git-sync.md §4, story GIT-US-0021).
+ */
+export type SyncState =
+  | 'conflicted'
+  | 'in_progress'
+  | 'detached'
+  | 'no_remote'
+  | 'no_upstream'
+  | 'diverged'
+  | 'behind'
+  | 'ahead'
+  | 'dirty'
+  | 'up_to_date';
+
+/** One path an integration could not merge on its own. */
+export type SyncConflict = {
+  path: string;
+  /** `content`, `delete-modify`, `add-add` or `unknown`. */
+  kind: string;
+};
+
+/** One commit in a preview or a sync report. */
+export type SyncCommit = {
+  sha: string;
+  subject: string;
+  author?: string;
+  date?: string;
+};
+
+/** One repository's sync state, the row the sync panel renders. */
+export type SyncStatus = {
+  branch: string;
+  detached: boolean;
+  clean: boolean;
+  /** Uncommitted paths: staged, modified and untracked. */
+  dirty?: string[];
+  /** True when any dirty path is tracked, which is what blocks an integration. */
+  trackedChanges: boolean;
+  remote?: string;
+  /** The remote URL with any credential removed; never a token. */
+  remoteUrl?: string;
+  /** The remote-tracking branch, for example `origin/main`. */
+  upstream?: string;
+  ahead: number;
+  behind: number;
+  conflicted?: SyncConflict[];
+  /** `rebase` or `merge` when one is half-finished, else absent. */
+  operation?: string;
+  state: SyncState;
+};
+
+/** One repository in a sync status listing. */
+export type SyncRepoStatus = {
+  repo: string;
+  path: string;
+  /** False when the folder is not a git working tree; `reason` says so. */
+  git: boolean;
+  reason?: string;
+  backend?: string;
+  status?: SyncStatus;
+  /** Edits commit-on-save has batched; a sync commits them before it fetches. */
+  pending: number;
+};
+
+/** How a sync runs. Every field is optional; the defaults come from settings. */
+export type SyncOptions = {
+  /** Preview only: it fetches, which is read-only, and changes nothing else. */
+  dryRun?: boolean;
+  /** Overrides `pushOnSync` for this run. */
+  push?: boolean;
+  /** Overrides `pullStrategy`; browser-only mode is always `merge`. */
+  strategy?: 'rebase' | 'merge';
+};
+
+/** The phase a run ended in. */
+export type SyncPhase = 'preflight' | 'fetch' | 'integrate' | 'push' | 'done' | 'conflicts' | 'failed';
+
+/**
+ * One repository's sync report. It is filled on failure too, so the UI can say
+ * what happened without inspecting an exception: every failure of the pipeline
+ * leaves a recoverable working tree, and `message` says what to do next.
+ */
+export type SyncResult = {
+  repo: string;
+  dryRun: boolean;
+  strategy: 'rebase' | 'merge';
+  phase: SyncPhase;
+  before: SyncStatus;
+  after: SyncStatus;
+  pulled: number;
+  pushed: number;
+  incoming?: SyncCommit[];
+  outgoing?: SyncCommit[];
+  conflicts?: SyncConflict[];
+  retries: number;
+  warnings?: string[];
+  durationMs: number;
+  /** Machine code of a failure, for example `git_push_rejected`. */
+  code?: string;
+  message?: string;
+};
+
+/**
+ * The sync half of the git settings. `supported` is false when this runtime
+ * cannot sync at all — browser-only mode without a CORS proxy — and `reason`
+ * says why, so the UI explains instead of offering a button that fails
+ * (docs/06 §6.3).
+ */
+export type SyncSettings = {
+  pullStrategy: 'rebase' | 'merge';
+  pushOnSync: boolean;
+  maxPushRetries: number;
+  supported: boolean;
+  reason?: string;
+  /** The configured CORS proxy; browser-only mode, never a credential. */
+  corsProxy?: string;
+};
+
+/** The sync settings a change may carry; an absent one is left alone. */
+export type SyncSettingsPatch = {
+  pullStrategy?: 'rebase' | 'merge';
+  pushOnSync?: boolean;
+  maxPushRetries?: number;
+  /** Browser-only mode: the proxy that makes git over HTTPS possible at all. */
+  corsProxy?: string;
+};
+
 /** Statuses are configured per project in `project.yaml`; the UI never hardcodes them. */
 export type ItemStatus = string;
 
@@ -413,6 +543,34 @@ export interface DataProvider {
    * which is the "Commit N changes" action of the sync panel.
    */
   commitNow(input?: { repoId?: string; paths?: string[]; message?: string }): Promise<GitCommit[]>;
+
+  // git — sync (docs/06-git-sync.md §4, story GIT-US-0021)
+  /**
+   * Per-repository sync state: branch, ahead/behind, dirty set, conflicted
+   * paths and any half-finished rebase. It never throws for a folder that is
+   * not a git working tree: that repository comes back `git: false`.
+   */
+  getSyncStatus(repoId?: string): Promise<SyncRepoStatus[]>;
+  /** The strategy and the push policy this runtime syncs with. */
+  getSyncSettings(): Promise<SyncSettings>;
+  /**
+   * Changes them. Browser-only mode accepts only `corsProxy` — its strategy is
+   * forced to `merge` because isomorphic-git has no rebase (docs/06 §6.2) —
+   * and the companion accepts the strategy and the push policy.
+   */
+  updateSyncSettings(patch: SyncSettingsPatch): Promise<SyncSettings>;
+  /**
+   * Fetch, then rebase or merge, then push. With no `repoId` every repository
+   * is synced. A dry run previews the incoming and outgoing commits and
+   * changes nothing. A failure is reported in the result's `code` and
+   * `message`, not thrown, because the tree is always recoverable.
+   */
+  sync(repoId: string | undefined, opts?: SyncOptions): Promise<SyncResult[]>;
+  /** Undo a half-finished rebase or merge, restoring the tree. */
+  abortSync(repoId: string): Promise<SyncRepoStatus>;
+  /** The conflicted paths of every repository whose integration stopped. */
+  listSyncConflicts(repoId?: string): Promise<{ repo: string; paths: string[]; operation?: string }[]>;
+
   subscribe(handler: (event: ChangeEvent) => void): Unsubscribe;
 }
 

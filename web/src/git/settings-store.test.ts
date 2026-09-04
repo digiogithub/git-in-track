@@ -6,7 +6,9 @@ import {
   DEFAULT_COMMIT_DEBOUNCE_MS,
   clearGitSettings,
   readGitSettings,
+  readSyncSettings,
   writeGitSettings,
+  writeSyncSettings,
 } from '@/git/settings-store';
 
 describe('browser git settings', () => {
@@ -82,5 +84,26 @@ describe('browser git settings', () => {
   it('recovers from a corrupt entry', () => {
     globalThis.localStorage.setItem('gintrack.git.settings.default', 'not json');
     expect(readGitSettings().messageTemplate).toBe(DEFAULT_COMMIT_TEMPLATE);
+  });
+});
+
+describe('browser sync settings (GIT-US-0021)', () => {
+  it('is unsupported until a CORS proxy is configured, and says why', () => {
+    const settings = readSyncSettings('proxy-test');
+    expect(settings.supported).toBe(false);
+    expect(settings.reason).toContain('CORS proxy');
+    // isomorphic-git has no rebase, so the strategy is forced, not stored.
+    expect(settings.pullStrategy).toBe('merge');
+  });
+
+  it('becomes supported once a proxy is stored', () => {
+    const saved = writeSyncSettings({ corsProxy: 'https://proxy.example/' }, 'proxy-test');
+    expect(saved.supported).toBe(true);
+    expect(saved.corsProxy).toBe('https://proxy.example/');
+    expect(readSyncSettings('proxy-test').supported).toBe(true);
+  });
+
+  it('refuses a proxy that is not an http URL', () => {
+    expect(() => writeSyncSettings({ corsProxy: 'proxy.example' }, 'proxy-test')).toThrow(RangeError);
   });
 });

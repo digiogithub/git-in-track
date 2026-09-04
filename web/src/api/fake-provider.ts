@@ -54,6 +54,12 @@ import type {
   SprintSummary,
   SprintView,
   StatusCategory,
+  SyncOptions,
+  SyncRepoStatus,
+  SyncResult,
+  SyncSettings,
+  SyncSettingsPatch,
+  SyncStatus,
   TeamSummary,
   Unsubscribe,
   UpdateOp,
@@ -1583,6 +1589,86 @@ export class FakeProvider implements DataProvider {
         paths: input.paths ?? [],
       },
     ]);
+  }
+
+  // --------------------------------------------------------------- git sync
+
+  /**
+   * A clean, up-to-date repository unless a test moves `syncStatuses`. The
+   * sync panel is then rendered from the same shapes both runtimes produce.
+   */
+  syncStatuses: SyncRepoStatus[] | null = null;
+
+  /** The reports the next `sync()` resolves with. */
+  syncResults: SyncResult[] | null = null;
+
+  getSyncStatus(repoId?: string): Promise<SyncRepoStatus[]> {
+    const rows =
+      this.syncStatuses ??
+      this.repos.map((repo) => ({
+        repo: repo.id,
+        path: repo.location,
+        git: true,
+        backend: 'go-git',
+        pending: 0,
+        status: {
+          branch: 'main',
+          detached: false,
+          clean: true,
+          trackedChanges: false,
+          remote: 'origin',
+          upstream: 'origin/main',
+          ahead: 0,
+          behind: 0,
+          state: 'up_to_date' as const,
+        },
+      }));
+    return Promise.resolve(rows.filter((row) => repoId === undefined || row.repo === repoId));
+  }
+
+  /** The sync settings a test may move with `updateSyncSettings`. */
+  syncSettings: SyncSettings = {
+    pullStrategy: 'rebase',
+    pushOnSync: true,
+    maxPushRetries: 3,
+    supported: true,
+  };
+
+  getSyncSettings(): Promise<SyncSettings> {
+    return Promise.resolve({ ...this.syncSettings });
+  }
+
+  updateSyncSettings(patch: SyncSettingsPatch): Promise<SyncSettings> {
+    this.syncSettings = { ...this.syncSettings, ...patch };
+    return Promise.resolve({ ...this.syncSettings });
+  }
+
+  async sync(repoId: string | undefined, opts: SyncOptions = {}): Promise<SyncResult[]> {
+    if (this.syncResults) return this.syncResults;
+    const rows = await this.getSyncStatus(repoId);
+    return rows.map((row) => ({
+      repo: row.repo,
+      dryRun: opts.dryRun === true,
+      strategy: opts.strategy ?? 'rebase',
+      phase: 'done' as const,
+      before: row.status as SyncStatus,
+      after: row.status as SyncStatus,
+      pulled: 0,
+      pushed: 0,
+      retries: 0,
+      durationMs: 1,
+    }));
+  }
+
+  async abortSync(repoId: string): Promise<SyncRepoStatus> {
+    const rows = await this.getSyncStatus(repoId);
+    const row = rows[0];
+    if (!row) throw new ProviderError('not_found', `no repository ${repoId}`);
+    return row;
+  }
+
+  listSyncConflicts(): Promise<{ repo: string; paths: string[]; operation?: string }[]> {
+    return Promise.resolve([]);
   }
 
   subscribe(handler: (event: ChangeEvent) => void): Unsubscribe {

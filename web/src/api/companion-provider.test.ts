@@ -931,3 +931,79 @@ describe('CompanionProvider git surface (story GIT-US-0020)', () => {
     expect(commits[0]).toMatchObject({ repo: 'acme', sha: 'abc123' });
   });
 });
+
+describe('CompanionProvider — sync (GIT-US-0021)', () => {
+  const syncSettingsBody = {
+    pullStrategy: 'rebase',
+    pushOnSync: true,
+    maxPushRetries: 3,
+    supported: true,
+  };
+
+  it('reads the per-repository sync status', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      response({
+        repos: [
+          {
+            repo: 'acme',
+            path: '/code/acme',
+            git: true,
+            pending: 0,
+            status: { branch: 'main', ahead: 1, behind: 2, state: 'diverged' },
+          },
+        ],
+        settings: syncSettingsBody,
+      }),
+    );
+
+    const repos = await provider(fetchImpl).getSyncStatus('acme');
+
+    expect(lastCall(fetchImpl).url).toBe(`${BASE}/api/v1/sync/status?repo=acme`);
+    expect(repos[0]).toMatchObject({ repo: 'acme', git: true });
+    expect(repos[0]?.status).toMatchObject({ ahead: 1, behind: 2, state: 'diverged' });
+  });
+
+  it('runs a dry run against one repository', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      response({
+        operationId: 'sync-1',
+        dryRun: true,
+        results: [{ repo: 'acme', phase: 'done', pulled: 0, pushed: 0 }],
+      }),
+    );
+
+    const results = await provider(fetchImpl).sync('acme', { dryRun: true });
+
+    const { url, init } = lastCall(fetchImpl);
+    expect(url).toBe(`${BASE}/api/v1/sync/run`);
+    expect(init.method).toBe('POST');
+    expect(bodyOf(init)).toEqual({ repos: ['acme'], dryRun: true });
+    expect(results[0]).toMatchObject({ repo: 'acme', phase: 'done' });
+  });
+
+  it('aborts a half-finished integration', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(response({ repo: 'acme', git: true, pending: 0 }));
+
+    const status = await provider(fetchImpl).abortSync('acme');
+
+    const { url, init } = lastCall(fetchImpl);
+    expect(url).toBe(`${BASE}/api/v1/sync/abort`);
+    expect(bodyOf(init)).toEqual({ repo: 'acme' });
+    expect(status).toMatchObject({ repo: 'acme' });
+  });
+
+  it('changes the strategy through the sync settings', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(response({ ...syncSettingsBody, pullStrategy: 'merge' }));
+
+    const settings = await provider(fetchImpl).updateSyncSettings({ pullStrategy: 'merge' });
+
+    const { url, init } = lastCall(fetchImpl);
+    expect(url).toBe(`${BASE}/api/v1/sync/settings`);
+    expect(init.method).toBe('PATCH');
+    expect(settings.pullStrategy).toBe('merge');
+  });
+});

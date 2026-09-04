@@ -59,6 +59,12 @@ import type {
   GitRepoStatus,
   GitSettings,
   GitSettingsPatch,
+  SyncOptions,
+  SyncRepoStatus,
+  SyncResult,
+  SyncSettings,
+  SyncSettingsPatch,
+  SyncStatus,
 } from '@/api/provider';
 import { ProviderError } from '@/api/provider';
 import { hydrateOrBuild } from '@/cache/index-cache';
@@ -85,10 +91,14 @@ import {
   type RepoHandleRecord,
   type VaultFS,
 } from '@/fs';
+import type { DirectoryHandleLike } from '@/fs/types';
+import { readSyncStatus, runSync } from '@/git/browser-sync';
 import {
   BROWSER_GIT_REASON,
   readGitSettings,
+  readSyncSettings,
   writeGitSettings,
+  writeSyncSettings,
 } from '@/git/settings-store';
 
 type MountedRepo = {
@@ -699,6 +709,117 @@ export class BrowserProvider implements DataProvider {
     return Promise.reject(new ProviderError('read_only', BROWSER_GIT_REASON));
   }
 
+  // --------------------------------------------------------------- git sync
+
+  /**
+   * Reads each mounted folder's git state with isomorphic-git (docs/06 §6.1).
+   * A folder that is not a working tree, or a vault that has no File System
+   * Access handle (the `webkitdirectory` fallback), reports why instead of
+   * pretending.
+   */
+  async getSyncStatus(repoId?: string): Promise<SyncRepoStatus[]> {
+    const mounts = [...this.#mounts.values()].filter(
+      (mount) => repoId === undefined || mount.id === repoId,
+    );
+    return Promise.all(
+      mounts.map(async (mount) => {
+        const row: SyncRepoStatus = {
+          repo: mount.id,
+          path: mount.name,
+          git: false,
+          backend: 'isomorphic-git',
+          pending: 0,
+        };
+        const handle = handleOf(mount.vault);
+        if (!handle) {
+          row.reason = NO_HANDLE_REASON;
+          return row;
+        }
+        try {
+          row.status = await readSyncStatus(handle);
+          row.git = true;
+        } catch (error) {
+          row.reason = error instanceof Error ? error.message : String(error);
+        }
+        return row;
+      }),
+    );
+  }
+
+  getSyncSettings(): Promise<SyncSettings> {
+    return Promise.resolve(readSyncSettings(this.#workspaceName));
+  }
+
+  updateSyncSettings(patch: SyncSettingsPatch): Promise<SyncSettings> {
+    try {
+      return Promise.resolve(writeSyncSettings(patch, this.#workspaceName));
+    } catch (error) {
+      return Promise.reject(
+        new ProviderError(
+          'validation_failed',
+          error instanceof Error ? error.message : String(error),
+        ),
+      );
+    }
+  }
+
+  /**
+   * Fetch, merge and push over isomorphic-git. The strategy is always `merge`
+   * and a run without a configured CORS proxy reports `git_cors_proxy_required`
+   * rather than failing obscurely against a host that sends no CORS headers
+   * (docs/06 §6.2, §6.3).
+   */
+  async sync(repoId: string | undefined, opts: SyncOptions = {}): Promise<SyncResult[]> {
+    const settings = readSyncSettings(this.#workspaceName);
+    const git = await this.getGitSettings();
+    const author =
+      git.authorName && git.authorEmail
+        ? { name: git.authorName, email: git.authorEmail }
+        : undefined;
+    const mounts = [...this.#mounts.values()].filter(
+      (mount) => repoId === undefined || mount.id === repoId,
+    );
+    const results: SyncResult[] = [];
+    for (const mount of mounts) {
+      const handle = handleOf(mount.vault);
+      if (!handle) {
+        results.push(unsupportedSync(mount.id, NO_HANDLE_REASON));
+        continue;
+      }
+      const result = await runSync(handle, mount.id, {
+        ...opts,
+        push: opts.push ?? settings.pushOnSync,
+        ...(settings.corsProxy ? { corsProxy: settings.corsProxy } : {}),
+        ...(author ? { author } : {}),
+      });
+      if (result.phase === 'done' && !result.dryRun && result.pulled > 0) {
+        // Incoming work changed files under our feet: reload the vault so the
+        // core and every open view see them.
+        await this.reindex(mount.id);
+      }
+      results.push(result);
+    }
+    return results;
+  }
+
+  /**
+   * isomorphic-git aborts a conflicting merge instead of leaving one half
+   * applied, so there is never a merge to abort here.
+   */
+  abortSync(): Promise<SyncRepoStatus> {
+    return Promise.reject(
+      new ProviderError(
+        'read_only',
+        'Browser git aborts a conflicting merge by itself, so there is nothing to abort. ' +
+          'Your files were left untouched.',
+      ),
+    );
+  }
+
+  listSyncConflicts(): Promise<{ repo: string; paths: string[]; operation?: string }[]> {
+    return Promise.resolve([]);
+  }
+
   // ------------------------------------------------------------------- events
 
   subscribe(handler: (event: ChangeEvent) => void): Unsubscribe {
@@ -920,4 +1041,41 @@ export class BrowserProvider implements DataProvider {
     });
     mount.lastIndexedAt = new Date().toISOString();
   }
+}
+
+/** Why a vault with no File System Access handle cannot be driven by git. */
+const NO_HANDLE_REASON =
+  'This folder was opened read-only through the directory-upload fallback, which gives no handle ' +
+  'git can write through. Reopen it with "Open folder" in a Chromium browser, or run the companion.';
+
+/** The directory handle of a vault, when it has one. */
+function handleOf(vault: VaultFS): DirectoryHandleLike | undefined {
+  return vault instanceof FsaVault ? vault.handle : undefined;
+}
+
+/** A report for a repository this runtime cannot sync at all. */
+function unsupportedSync(repo: string, reason: string): SyncResult {
+  const status: SyncStatus = {
+    branch: '',
+    detached: false,
+    clean: true,
+    trackedChanges: false,
+    ahead: 0,
+    behind: 0,
+    state: 'no_remote',
+  };
+  return {
+    repo,
+    dryRun: false,
+    strategy: 'merge',
+    phase: 'failed',
+    before: status,
+    after: status,
+    pulled: 0,
+    pushed: 0,
+    retries: 0,
+    durationMs: 0,
+    code: 'git_unsupported',
+    message: reason,
+  };
 }
