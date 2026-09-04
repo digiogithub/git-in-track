@@ -102,6 +102,20 @@ export type ProjectSummary = {
   labels: { name: string; color?: string; description?: string }[];
   priorities: Priority[];
   itemCounts: Record<ItemType, number>;
+  /** Initial status and transition map (`from -> [to...]`); absent transitions mean any. */
+  workflow?: { initial?: string; transitions?: Record<string, string[]> };
+  /** `project.yaml` estimation settings. */
+  estimation?: { scale?: string; values?: number[]; trackHours?: boolean };
+  /** Declared custom fields (`project.yaml` `custom_fields`). */
+  customFields?: {
+    key: string;
+    type: string;
+    values?: string[];
+    items?: string;
+    appliesTo?: ItemType[];
+    default?: unknown;
+    description?: string;
+  }[];
 };
 
 export type ItemFilter = {
@@ -109,6 +123,7 @@ export type ItemFilter = {
   type?: ItemType | ItemType[];
   status?: string | string[];
   category?: string | string[];
+  priority?: Priority | Priority[];
   assignee?: string;
   label?: string | string[];
   parent?: string;
@@ -217,7 +232,10 @@ export type CoreApi = {
     params: { id: string; status: string; rev: string };
     result: { item: Item; writes: WriteSet };
   };
-  'item.delete': { params: { id: string; rev: string; hard?: boolean }; result: { writes: WriteSet } };
+  'item.delete': {
+    params: { id: string; rev: string; hard?: boolean };
+    result: { writes: WriteSet };
+  };
   'item.validate': { params: { id?: string; text?: string; path?: string }; result: Diagnostic[] };
   'item.parse': { params: { path: string; text: string }; result: Item };
   'item.serialize': { params: { item: Item }; result: { text: string } };

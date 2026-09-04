@@ -44,6 +44,28 @@ describe('ItemTable', () => {
     expect(screen.queryByRole('link', { name: 'Single sign-on' })).not.toBeInTheDocument();
   });
 
+  it('filters by priority taken from the URL search params', async () => {
+    renderBacklog({ path: '/p/ACME/items?priority=medium' });
+
+    expect(await screen.findByRole('link', { name: 'Logout everywhere' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Login with SSO' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Add OIDC client' })).not.toBeInTheDocument();
+  });
+
+  it('offers the project priorities as a filter and applies the picked one', async () => {
+    const user = userEvent.setup();
+    renderBacklog({ path: '/p/ACME/items' });
+
+    // The options come from `ProjectSummary.priorities`.
+    expect(await screen.findByLabelText('critical')).toBeInTheDocument();
+    await user.click(screen.getByLabelText('medium'));
+
+    expect(await screen.findByRole('link', { name: 'Logout everywhere' })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByRole('link', { name: 'Login with SSO' })).not.toBeInTheDocument();
+    });
+  });
+
   it('moves the selected items in bulk with their current revision', async () => {
     const user = userEvent.setup();
     const provider = new FakeProvider();

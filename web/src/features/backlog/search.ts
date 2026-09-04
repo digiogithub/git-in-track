@@ -12,11 +12,14 @@
 import type { SearchSchemaInput } from '@tanstack/react-router';
 import { z } from 'zod';
 
-import type { ItemFilter, ItemType, ProjectSummary } from '@/api/provider';
+import type { ItemFilter, ItemType, Priority, ProjectSummary } from '@/api/provider';
 
 export const filterableItemTypes = ['epic', 'story', 'task', 'milestone'] as const;
 
 export const statusCategories = ['todo', 'in_progress', 'done', 'cancelled'] as const;
+
+/** Fallback order when a project declares no `priorities` of its own. */
+export const defaultPriorities = ['critical', 'high', 'medium', 'low'] as const;
 
 export const sortFields = ['updated', 'created', 'priority', 'id', 'title'] as const;
 
@@ -48,12 +51,17 @@ const typeList = z
 
 const stringList = z.preprocess(toList, z.array(z.string()).optional()).catch(undefined);
 
+const priorityList = z
+  .preprocess(toList, z.array(z.enum(defaultPriorities)).optional())
+  .catch(undefined);
+
 export const itemSearchSchema = z.object({
   /** Full-text needle, matched by the provider across id, title and body. */
   q: optionalText,
   type: typeList,
   status: stringList,
   category: z.enum(statusCategories).optional().catch(undefined),
+  priority: priorityList,
   label: stringList,
   assignee: optionalText,
   milestone: optionalText,
@@ -75,6 +83,7 @@ export type ItemSearchInput = {
   type?: string | undefined;
   status?: string | undefined;
   category?: string | undefined;
+  priority?: string | undefined;
   label?: string | undefined;
   assignee?: string | undefined;
   milestone?: string | undefined;
@@ -110,6 +119,7 @@ export function toSearchInput(search: ItemSearch): ItemSearchInput {
     type: join(search.type),
     status: join(search.status),
     category: search.category,
+    priority: join(search.priority),
     label: join(search.label),
     assignee: search.assignee,
     milestone: search.milestone,
@@ -127,6 +137,7 @@ export function isEmptySearch(search: ItemSearch): boolean {
     !search.type?.length &&
     !search.status?.length &&
     !search.category &&
+    !search.priority?.length &&
     !search.label?.length &&
     !search.assignee &&
     !search.milestone &&
@@ -172,6 +183,7 @@ export function toItemFilter(search: ItemSearch, options: ToFilterOptions): Item
   }
 
   const types: ItemType[] | undefined = search.type;
+  const priorities: Priority[] | undefined = search.priority;
 
   return {
     project,
@@ -180,6 +192,7 @@ export function toItemFilter(search: ItemSearch, options: ToFilterOptions): Item
     order: search.order ?? (search.sort === 'id' || search.sort === 'title' ? 'asc' : 'desc'),
     ...(types && types.length > 0 ? { type: types } : {}),
     ...(status && status.length > 0 ? { status } : {}),
+    ...(priorities && priorities.length > 0 ? { priority: priorities } : {}),
     ...(search.label && search.label.length > 0 ? { label: search.label } : {}),
     ...(search.assignee ? { assignee: search.assignee } : {}),
     ...(search.milestone ? { milestone: search.milestone } : {}),
@@ -202,6 +215,7 @@ const emptyView: ItemSearchInput = {
   type: undefined,
   status: undefined,
   category: undefined,
+  priority: undefined,
   label: undefined,
   assignee: undefined,
   milestone: undefined,

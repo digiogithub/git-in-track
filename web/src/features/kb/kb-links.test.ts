@@ -38,7 +38,9 @@ const tree: KbNode[] = [
         path: 'docs/guides',
         name: 'guides',
         kind: 'dir',
-        children: [{ path: 'docs/guides/sso.md', name: 'sso.md', kind: 'page', title: 'SSO how-to' }],
+        children: [
+          { path: 'docs/guides/sso.md', name: 'sso.md', kind: 'page', title: 'SSO how-to' },
+        ],
       },
     ],
   },

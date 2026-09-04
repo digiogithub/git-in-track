@@ -38,12 +38,14 @@ export function AppShell() {
 
   // The capability snapshot follows the mounted vault: opening a folder with
   // the read-only fallback flips `write` to false (story GIT-US-0011).
-  const providerCapabilities = provider?.capabilities;
+  // `provider.capabilities` may be a getter returning a fresh object, so the
+  // effect keys on the mounted provider and the last repo refresh, not on the
+  // object identity, and the store ignores value-equal snapshots.
   const reposUpdatedAt = repos.dataUpdatedAt;
   useEffect(() => {
-    if (!providerCapabilities) return;
-    setCapabilities(providerCapabilities);
-  }, [providerCapabilities, reposUpdatedAt, setCapabilities]);
+    if (!provider) return;
+    setCapabilities(provider.capabilities);
+  }, [provider, reposUpdatedAt, setCapabilities]);
 
   const rows = repos.data ?? [];
 

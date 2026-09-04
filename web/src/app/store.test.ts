@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { readOnlyCapabilities } from '@/api/provider';
 
-import { useAppStore } from './store';
+import { sameCapabilities, useAppStore } from './store';
 
 describe('useAppStore', () => {
   beforeEach(() => {
@@ -38,5 +38,20 @@ describe('useAppStore', () => {
     expect(capabilities.write).toBe(true);
     expect(capabilities.git).toBe(true);
     expect(capabilities.maxBatchWrite).toBe(0);
+  });
+});
+
+describe('setCapabilities', () => {
+  it('keeps the same state object for a value-equal snapshot', () => {
+    const before = useAppStore.getState();
+    useAppStore.getState().setCapabilities({ ...before.capabilities });
+    expect(useAppStore.getState().capabilities).toBe(before.capabilities);
+    expect(sameCapabilities(before.capabilities, { ...before.capabilities })).toBe(true);
+    expect(
+      sameCapabilities(before.capabilities, {
+        ...before.capabilities,
+        write: !before.capabilities.write,
+      }),
+    ).toBe(false);
   });
 });

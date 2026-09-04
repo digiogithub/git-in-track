@@ -2,9 +2,9 @@
 id: GIT-US-0010
 type: story
 title: Create and edit items in the Markdown editor
-status: in_progress
+status: in_review
 created: 2026-09-03T00:00:00Z
-updated: 2026-09-03T21:47:06Z
+updated: 2026-09-04T02:37:45Z
 started: 2026-09-03T21:47:06Z
 author: team
 priority: critical

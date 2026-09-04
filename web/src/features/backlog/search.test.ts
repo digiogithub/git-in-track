@@ -17,9 +17,21 @@ describe('parseItemSearch', () => {
     expect(search.label).toEqual(['a', 'b']);
   });
 
-  it('drops values it does not understand instead of throwing', () => {
-    const search = parseItemSearch({ type: 'wombat', category: 'nope', sort: 'colour', q: '' });
+  it('reads the priority list', () => {
+    expect(parseItemSearch({ priority: 'critical,high' }).priority).toEqual(['critical', 'high']);
+    expect(toSearchInput(parseItemSearch({ priority: 'low' })).priority).toBe('low');
+  });
 
+  it('drops values it does not understand instead of throwing', () => {
+    const search = parseItemSearch({
+      type: 'wombat',
+      category: 'nope',
+      priority: 'urgent',
+      sort: 'colour',
+      q: '',
+    });
+
+    expect(search.priority).toBeUndefined();
     expect(search.type).toBeUndefined();
     expect(search.category).toBeUndefined();
     expect(search.sort).toBeUndefined();
@@ -37,6 +49,7 @@ describe('isEmptySearch', () => {
   it('ignores sort and view, which are not filters', () => {
     expect(isEmptySearch(parseItemSearch({ sort: 'title', view: 'all' }))).toBe(true);
     expect(isEmptySearch(parseItemSearch({ assignee: 'jose' }))).toBe(false);
+    expect(isEmptySearch(parseItemSearch({ priority: 'high' }))).toBe(false);
   });
 });
 
@@ -66,6 +79,16 @@ describe('toItemFilter', () => {
     });
 
     expect(filter.status).toEqual(['backlog', 'todo', 'in_progress', 'in_review']);
+  });
+
+  it('passes the priority list to the provider filter', () => {
+    const filter = toItemFilter(parseItemSearch({ priority: 'critical,high' }), {
+      project: 'ACME',
+      projectSummary: sampleProject,
+    });
+
+    expect(filter.priority).toEqual(['critical', 'high']);
+    expect(toItemFilter(parseItemSearch({}), { project: 'ACME' }).priority).toBeUndefined();
   });
 
   it('passes text, labels and parent through to the provider filter', () => {

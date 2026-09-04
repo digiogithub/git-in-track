@@ -2,9 +2,10 @@
 id: GIT-US-0007
 type: story
 title: Index a vault in a Web Worker and cache it in IndexedDB
-status: in_progress
+status: done
 created: 2026-09-03T00:00:00Z
-updated: 2026-09-03T21:47:06Z
+updated: 2026-09-04T02:37:45Z
+closed: 2026-09-04T02:37:45Z
 started: 2026-09-03T21:47:06Z
 author: team
 priority: critical

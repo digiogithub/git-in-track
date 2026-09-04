@@ -576,43 +576,54 @@ One `unified` processor, built once per scope and memoised, in `src/markdown/`.
 
 ```
 remark-parse
-  → remark-frontmatter(['yaml'])       // strip + expose front matter
-  → remark-gfm                          // tables, task lists, strikethrough, autolinks
-  → remark-wiki-link                    // [[Page]] / [[Page|alias]] / [[Page#heading]]
-  → remark-directive + remarkCallouts    // ::: note / > [!WARNING] Obsidian style
-  → remark-footnotes (via gfm)           // GFM footnotes
+  → remark-frontmatter(['yaml','toml'])  // strip + expose front matter
+  → remark-gfm                           // tables, task lists, strikethrough,
+                                         // autolinks, footnotes
   → remark-math (optional, per-repo)     // $...$ / $$...$$
+  → remarkWikilink                       // [[Page]] / [[Page|alias]] / [[Page#heading]]
+                                         // / [[ITEM-ID]] / [[KEY:page]] / ![[embed]]
+  → remarkCallout                        // > [!WARNING] and Obsidian > [!info]-
   → remark-rehype({ allowDangerousHtml: false })
-  → rehype-slug + rehype-autolink-headings
-  → rehypeResolveAssets                  // repo-relative images/links → object URLs / routes
-  → rehypeMermaidPlaceholder             // pre.mermaid → <div data-mermaid> for lazy render
+  → rehype-slug + rehypeHeadingAnchors
+  → rehypeMermaidPlaceholder             // pre.mermaid, rendered client-side
+  → rehypeResolveAssets                  // repo-relative images/links → assets / routes
+  → shiki (lazily imported chunk)        // dual theme, see below
   → rehype-katex (only when math enabled)
-  → rehype-highlight (shiki via rehype-pretty-code, see below)
-  → rehype-sanitize(schema)
-  → rehype-react (React 18 runtime, custom component map)
+  → rehype-sanitize(schema)              // always last
+  → hast-util-to-jsx-runtime             // React 18 runtime, custom component map
 ```
 
 **Sanitisation.** A hardened schema derived from `defaultSchema`:
 allow `input[type=checkbox][checked][disabled]` for task lists; allow
-`className` only on `code`, `pre`, `span`, `div`, `li`, `section` and only with a
-prefix allowlist (`language-`, `hljs-`, `shiki`, `callout-`, `footnote`, `task-list`);
-allow `data-mermaid`, `data-item-ref`, `data-wikilink` on `div`/`a`/`span`; allow
-`id` on headings, `href` restricted to `http`, `https`, `mailto`, `blob:` and
-in-app `#`/relative paths; drop `iframe`, `script`, `style`, `object`, event
-handlers, and `javascript:`. Sanitisation runs **after** every transform, so no
+`className` per element and per value, never freely — the allowlist covers
+`language-*`, `shiki*`, `callout`/`callout-*`, `wikilink*`, `heading`,
+`task-list-item`, `contains-task-list` and `footnotes`, so a document can never
+choose an arbitrary class; allow `data-mermaid`, `data-callout`, `data-item-ref`,
+`data-wikilink`, `data-kind`, `data-unresolved`, `data-kb-link`, `data-external`
+and `data-asset-path` on the elements that carry them; allow `id` on headings
+and list items, `href` restricted to `http`, `https`, `mailto` plus in-app
+`#`/relative paths, and `src` to `http`/`https` (a repo-relative image carries
+`data-asset-path` and gets its object URL after sanitisation); drop `iframe`,
+`script`, `object`, event handlers, `javascript:` and `data:`, and `style`
+everywhere except the `pre`/`code`/`span` that Shiki produces. Sanitisation runs **after** every transform, so no
 plugin can inject unchecked HTML. Raw HTML in Markdown is off by default and, when
 enabled per repo in settings, still passes through the same schema.
 
 **Syntax highlighting.** Default: `shiki` with the `github-light`/`github-dark`
 dual-theme output (CSS variables switch with the app theme, no re-highlight on
-theme change). Shiki's grammars are loaded lazily per language via dynamic import
-and cached; the bundle ships a small default set (ts, js, go, json, yaml, bash,
-sql, md, diff) and fetches others on demand. `highlight.js` remains a build-time
-alternative (`VITE_HIGHLIGHTER=hljs`) for environments where the extra weight
-matters; the sanitize schema accepts both class prefixes.
+theme change). The highlighter lives behind a dynamic `import()` and is reached
+only when a document actually contains a fenced code block, so it is its own
+build chunk that a prose-only page never downloads. It is built on `shiki/core`
+with the JavaScript regex engine (no Oniguruma WebAssembly) and the default
+grammar set of ts, js, go, json, yaml, bash, sql, md and diff; JavaScript, JSX
+and TSX are served by the TypeScript grammar through language aliases rather
+than by their own grammars, which each re-embed the whole JavaScript grammar.
+`highlight.js` remains a build-time alternative for environments where the extra
+weight matters; the sanitize schema accepts both class prefixes.
 
 **Mermaid.** Never at parse time. The rehype plugin emits
-`<div data-mermaid="<encoded source>">`; a React component intersection-observes
+`<pre class="mermaid" data-mermaid>` holding the verbatim source, so the diagram
+degrades to readable text; a React component intersection-observes
 it, dynamically `import('mermaid')` on first visibility, initialises with
 `{ startOnLoad: false, securityLevel: 'strict', theme: currentTheme }`, renders to
 SVG in a detached container, sanitises the SVG, and injects it. Failures render

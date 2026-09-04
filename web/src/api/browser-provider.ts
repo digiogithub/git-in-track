@@ -128,6 +128,8 @@ export class BrowserProvider implements DataProvider {
     this.#client = options.client ?? coreClient;
   }
 
+  #capabilities: Capabilities | null = null;
+
   /**
    * Capabilities follow the mounted vault: the `webkitdirectory` fallback is
    * read-only (story GIT-US-0011). Before anything is mounted we report what
@@ -136,7 +138,10 @@ export class BrowserProvider implements DataProvider {
   get capabilities(): Capabilities {
     const vault = this.#activeMount()?.vault ?? [...this.#mounts.values()][0]?.vault;
     const write = vault ? vault.capabilities.write : supportsFileSystemAccess();
-    return {
+    // Return a stable reference while nothing changed so React effects keyed on
+    // this object do not re-run (and re-render) on every access.
+    if (this.#capabilities?.write === write) return this.#capabilities;
+    this.#capabilities = {
       write,
       git: false,
       ssh: false,
@@ -146,6 +151,7 @@ export class BrowserProvider implements DataProvider {
       openInEditor: false,
       maxBatchWrite: write ? 50 : 0,
     };
+    return this.#capabilities;
   }
 
   // ---------------------------------------------------------------- workspace

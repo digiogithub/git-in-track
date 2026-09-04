@@ -423,8 +423,50 @@ func (b *Bridge) projectList() []projectSummary {
 			if summary.Name == "" {
 				summary.Name = p.Config.Name
 			}
+			summary.Workflow = workflowOf(p.Config.Workflow)
+			summary.Estimation = &estimationSummary{
+				Scale:      p.Config.Estimation.Scale,
+				Values:     p.Config.Estimation.Values,
+				TrackHours: p.Config.Estimation.TrackHours,
+			}
+			summary.CustomFields = customFieldsOf(p.Config.CustomFields)
 		}
 		out = append(out, summary)
+	}
+	return out
+}
+
+// workflowOf exposes the initial status and the transition map as plain strings.
+func workflowOf(w core.Workflow) *workflowSummary {
+	out := &workflowSummary{Initial: string(w.Initial)}
+	if len(w.Transitions) > 0 {
+		out.Transitions = make(map[string][]string, len(w.Transitions))
+		for from, tos := range w.Transitions {
+			targets := make([]string, 0, len(tos))
+			for _, to := range tos {
+				targets = append(targets, string(to))
+			}
+			out.Transitions[string(from)] = targets
+		}
+	}
+	return out
+}
+
+// customFieldsOf converts the declared custom fields to their wire form.
+func customFieldsOf(fields []core.CustomField) []customFieldSummary {
+	if len(fields) == 0 {
+		return nil
+	}
+	out := make([]customFieldSummary, 0, len(fields))
+	for _, f := range fields {
+		applies := make([]string, 0, len(f.AppliesTo))
+		for _, t := range f.AppliesTo {
+			applies = append(applies, string(t))
+		}
+		out = append(out, customFieldSummary{
+			Key: f.Key, Type: f.Type, Values: f.Values, Items: f.Items,
+			AppliesTo: applies, Default: f.Default, Description: f.Description,
+		})
 	}
 	return out
 }
@@ -509,6 +551,9 @@ func (b *Bridge) filterOf(p itemFilterParams) (core.Filter, error) {
 	}
 	for _, s := range p.Status {
 		f.Statuses = append(f.Statuses, core.Status(s))
+	}
+	for _, pr := range p.Priority {
+		f.Priorities = append(f.Priorities, core.Priority(pr))
 	}
 	f.Statuses = append(f.Statuses, b.statusesOfCategories(p.Category, p.Project)...)
 	if p.UpdatedSince != "" {

@@ -74,7 +74,15 @@ const attributes: Attributes = {
   div: [
     ...inherit('div'),
     'dataCallout',
-    ['className', 'callout', 'callout-title', 'callout-body', 'mermaid', 'math-display', CALLOUT_CLASS],
+    [
+      'className',
+      'callout',
+      'callout-title',
+      'callout-body',
+      'mermaid',
+      'math-display',
+      CALLOUT_CLASS,
+    ],
   ],
   details: ['open', 'dataCallout', ['className', 'callout', CALLOUT_CLASS]],
   summary: [['className', 'callout-title']],
@@ -97,12 +105,12 @@ const attributes: Attributes = {
     'dataBlockedImage',
     ['className', 'wikilink-embed'],
   ],
-  h1: [['className', 'heading']],
-  h2: [['className', 'heading']],
-  h3: [['className', 'heading']],
-  h4: [['className', 'heading']],
-  h5: [['className', 'heading']],
-  h6: [['className', 'heading']],
+  h1: [['className', 'heading', 'sr-only']],
+  h2: [['className', 'heading', 'sr-only']],
+  h3: [['className', 'heading', 'sr-only']],
+  h4: [['className', 'heading', 'sr-only']],
+  h5: [['className', 'heading', 'sr-only']],
+  h6: [['className', 'heading', 'sr-only']],
 };
 
 /** The hardened schema used for every KB page, item body and editor preview. */

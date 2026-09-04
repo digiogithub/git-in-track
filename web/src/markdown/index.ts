@@ -13,7 +13,14 @@ export {
   type MarkdownLinkRenderer,
 } from '@/markdown/context';
 export { clearMarkdownCache, readFrontMatter, renderMarkdown } from '@/markdown/pipeline';
-export { basename, dirname, isExternalUrl, normalizePath, resolveFrom, stem } from '@/markdown/paths';
+export {
+  basename,
+  dirname,
+  isExternalUrl,
+  normalizePath,
+  resolveFrom,
+  stem,
+} from '@/markdown/paths';
 export { kbSanitizeSchema } from '@/markdown/sanitize';
 export { readThemeMode, useThemeMode, type ThemeMode } from '@/markdown/theme';
 export type {

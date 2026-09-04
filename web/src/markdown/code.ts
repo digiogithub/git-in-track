@@ -13,7 +13,9 @@ export function classNames(node: Element): string[] {
 /** Reads the language of a `<pre><code class="language-x">` block, or `null`. */
 export function codeLanguage(node: Element): string | null {
   if (node.tagName !== 'pre') return null;
-  const code = node.children.find((c): c is Element => c.type === 'element' && c.tagName === 'code');
+  const code = node.children.find(
+    (c): c is Element => c.type === 'element' && c.tagName === 'code',
+  );
   if (!code) return null;
   const prefixed = classNames(code).find((c) => c.startsWith('language-'));
   return prefixed ? prefixed.slice('language-'.length).toLowerCase() : null;

@@ -14,7 +14,8 @@ export function readThemeMode(): ThemeMode {
   if (typeof document === 'undefined') return 'light';
   const explicit = document.documentElement.dataset['theme'];
   if (explicit === 'dark' || explicit === 'light') return explicit;
-  return typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: dark)').matches
+  return typeof window !== 'undefined' &&
+    window.matchMedia?.('(prefers-color-scheme: dark)').matches
     ? 'dark'
     : 'light';
 }
@@ -29,7 +30,10 @@ export function useThemeMode(): ThemeMode {
     media?.addEventListener('change', update);
 
     const observer = new MutationObserver(update);
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme'],
+    });
 
     update();
     return () => {

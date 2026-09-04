@@ -15,6 +15,8 @@ import { textContent } from '@/markdown/code';
 import type { Heading } from '@/markdown/types';
 
 const HEADINGS = new Set(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']);
+/** `mdast-util-to-hast` labels the footnote section; it is not page structure. */
+const GENERATED_IDS = new Set(['footnote-label']);
 
 export const rehypeHeadingAnchors: Plugin<[], Root> = () => (tree: Root) => {
   visit(tree, 'element', (node: Element) => {
@@ -23,7 +25,11 @@ export const rehypeHeadingAnchors: Plugin<[], Root> = () => (tree: Root) => {
     if (typeof id !== 'string' || id === '') return;
 
     node.properties ??= {};
-    node.properties['className'] = ['heading'];
+    const existing = node.properties['className'];
+    node.properties['className'] = [
+      ...(Array.isArray(existing) ? existing.map((entry) => String(entry)) : []),
+      'heading',
+    ];
     node.children.push({
       type: 'element',
       tagName: 'a',
@@ -47,7 +53,7 @@ export function collectHeadings(tree: Root): Heading[] {
   visit(tree, 'element', (node: Element) => {
     if (!HEADINGS.has(node.tagName)) return;
     const id = node.properties?.['id'];
-    if (typeof id !== 'string' || id === '') return;
+    if (typeof id !== 'string' || id === '' || GENERATED_IDS.has(id)) return;
 
     const text = node.children
       .filter((child) => !(child.type === 'element' && isAnchorMarker(child)))

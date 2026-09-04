@@ -180,6 +180,8 @@ function matches(item: Item, f: ItemFilter): boolean {
   if (types && !types.includes(item.type)) return false;
   const statuses = list(f.status);
   if (statuses && (!item.status || !statuses.includes(item.status))) return false;
+  const priorities = list(f.priority);
+  if (priorities && (!item.priority || !priorities.includes(item.priority))) return false;
   if (f.assignee && !(item.assignees ?? []).includes(f.assignee)) return false;
   const labels = list(f.label);
   if (labels && !labels.some((l) => (item.labels ?? []).includes(l))) return false;

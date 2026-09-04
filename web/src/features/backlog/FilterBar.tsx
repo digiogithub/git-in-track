@@ -9,6 +9,7 @@ import { Select } from '@/components/ui/select';
 import { useIdentity } from '@/features/backlog/identity';
 import { typeName } from '@/features/backlog/item-meta';
 import {
+  defaultPriorities,
   filterableItemTypes,
   isEmptySearch,
   statusCategories,
@@ -127,6 +128,10 @@ export function FilterBar({ search, project, milestones }: FilterBarProps) {
     value: type,
     label: typeName(type),
   }));
+  const priorityOptions: Option[] = (project?.priorities ?? defaultPriorities).map((priority) => ({
+    value: priority,
+    label: priority,
+  }));
 
   const join = (values: string[]) => (values.length > 0 ? values.join(',') : undefined);
 
@@ -162,6 +167,15 @@ export function FilterBar({ search, project, milestones }: FilterBarProps) {
         selected={search.status ?? []}
         onChange={(next) => {
           setSearch({ status: join(next), view: undefined });
+        }}
+      />
+
+      <MultiSelectFilter
+        label="Priority"
+        options={priorityOptions}
+        selected={search.priority ?? []}
+        onChange={(next) => {
+          setSearch({ priority: join(next), view: undefined });
         }}
       />
 
@@ -258,6 +272,7 @@ export function FilterBar({ search, project, milestones }: FilterBarProps) {
               type: undefined,
               status: undefined,
               category: undefined,
+              priority: undefined,
               label: undefined,
               assignee: undefined,
               milestone: undefined,

@@ -381,6 +381,7 @@ function ItemTableView() {
                       type: undefined,
                       status: undefined,
                       category: undefined,
+                      priority: undefined,
                       label: undefined,
                       assignee: undefined,
                       milestone: undefined,

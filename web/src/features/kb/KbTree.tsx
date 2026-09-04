@@ -41,10 +41,7 @@ export function KbTree({ project, nodes, currentPath }: KbTreeProps) {
   const [expanded, setExpanded] = useState<Set<string>>(() => defaultExpanded(nodes, currentPath));
   const needle = filter.trim().toLowerCase();
 
-  const visible = useMemo(
-    () => nodes.filter((node) => matches(node, needle)),
-    [nodes, needle],
-  );
+  const visible = useMemo(() => nodes.filter((node) => matches(node, needle)), [nodes, needle]);
 
   const toggle = (path: string) => {
     setExpanded((previous) => {

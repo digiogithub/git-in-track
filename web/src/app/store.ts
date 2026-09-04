@@ -25,6 +25,15 @@ function writeSessionFlag(key: string, value: boolean): void {
 }
 
 /**
+ * Providers may expose `capabilities` as a getter that builds a fresh object on
+ * every access; comparing by value keeps the store (and every subscriber) from
+ * re-rendering when nothing actually changed.
+ */
+export function sameCapabilities(a: Capabilities, b: Capabilities): boolean {
+  return a === b || (Object.keys(a) as (keyof Capabilities)[]).every((key) => a[key] === b[key]);
+}
+
+/**
  * Which runtime the app is talking to.
  *
  * - `detecting` — the health probe has not answered yet (boot state).
@@ -102,7 +111,7 @@ export const useAppStore = create<AppState>((set) => ({
     }));
   },
   setCapabilities: (capabilities) => {
-    set({ capabilities });
+    set((state) => (sameCapabilities(state.capabilities, capabilities) ? state : { capabilities }));
   },
   setPendingVault: (pendingVaultId, pendingVaultName = null) => {
     set({ pendingVaultId, pendingVaultName });

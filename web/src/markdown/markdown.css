@@ -28,9 +28,19 @@
   scroll-margin-top: 5rem;
 }
 
-.markdown-body > h1 { font-size: 1.5rem; }
-.markdown-body > h2 { font-size: 1.25rem; margin-top: 2rem; padding-bottom: 0.25rem; border-bottom: 1px solid hsl(var(--border)); }
-.markdown-body > h3 { font-size: 1.0625rem; margin-top: 1.5rem; }
+.markdown-body > h1 {
+  font-size: 1.5rem;
+}
+.markdown-body > h2 {
+  font-size: 1.25rem;
+  margin-top: 2rem;
+  padding-bottom: 0.25rem;
+  border-bottom: 1px solid hsl(var(--border));
+}
+.markdown-body > h3 {
+  font-size: 1.0625rem;
+  margin-top: 1.5rem;
+}
 
 .markdown-body .heading-anchor {
   margin-left: 0.35rem;
@@ -57,9 +67,15 @@
   padding-left: 1.5rem;
 }
 
-.markdown-body ul { list-style: disc; }
-.markdown-body ol { list-style: decimal; }
-.markdown-body li + li { margin-top: 0.25rem; }
+.markdown-body ul {
+  list-style: disc;
+}
+.markdown-body ol {
+  list-style: decimal;
+}
+.markdown-body li + li {
+  margin-top: 0.25rem;
+}
 
 .markdown-body ul.contains-task-list,
 .markdown-body .contains-task-list ul {
@@ -168,17 +184,27 @@
   margin-top: 0.5rem;
 }
 
-.markdown-body .callout-note { border-left-color: hsl(var(--accent)); }
+.markdown-body .callout-note {
+  border-left-color: hsl(var(--accent));
+}
 .markdown-body .callout-tip,
-.markdown-body .callout-success { border-left-color: hsl(var(--status-done)); }
+.markdown-body .callout-success {
+  border-left-color: hsl(var(--status-done));
+}
 .markdown-body .callout-important,
-.markdown-body .callout-question { border-left-color: hsl(var(--status-in-review)); }
+.markdown-body .callout-question {
+  border-left-color: hsl(var(--status-in-review));
+}
 .markdown-body .callout-warning,
-.markdown-body .callout-todo { border-left-color: hsl(var(--status-in-progress)); }
+.markdown-body .callout-todo {
+  border-left-color: hsl(var(--status-in-progress));
+}
 .markdown-body .callout-caution,
 .markdown-body .callout-danger,
 .markdown-body .callout-bug,
-.markdown-body .callout-failure { border-left-color: hsl(var(--destructive)); }
+.markdown-body .callout-failure {
+  border-left-color: hsl(var(--destructive));
+}
 
 /* Wikilinks: resolved, item reference, and "not written yet" (R-WIKI-2). */
 .markdown-body .wikilink-missing {

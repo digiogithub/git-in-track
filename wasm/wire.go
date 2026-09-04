@@ -161,6 +161,35 @@ type projectSummary struct {
 	BacklogPath string            `json:"backlogPath,omitempty"`
 	Writable    bool              `json:"writable"`
 	Diagnostics []core.Diagnostic `json:"diagnostics,omitempty"`
+
+	Workflow     *workflowSummary     `json:"workflow,omitempty"`
+	Estimation   *estimationSummary   `json:"estimation,omitempty"`
+	CustomFields []customFieldSummary `json:"customFields,omitempty"`
+}
+
+// workflowSummary exposes the parts of the workflow the editor needs beyond the
+// status list: the initial status and the transition map.
+type workflowSummary struct {
+	Initial     string              `json:"initial,omitempty"`
+	Transitions map[string][]string `json:"transitions,omitempty"`
+}
+
+// estimationSummary mirrors project.yaml `estimation`.
+type estimationSummary struct {
+	Scale      string    `json:"scale,omitempty"`
+	Values     []float64 `json:"values,omitempty"`
+	TrackHours bool      `json:"trackHours"`
+}
+
+// customFieldSummary mirrors one entry of project.yaml `custom_fields`.
+type customFieldSummary struct {
+	Key         string   `json:"key"`
+	Type        string   `json:"type"`
+	Values      []string `json:"values,omitempty"`
+	Items       string   `json:"items,omitempty"`
+	AppliesTo   []string `json:"appliesTo,omitempty"`
+	Default     any      `json:"default,omitempty"`
+	Description string   `json:"description,omitempty"`
 }
 
 // itemFilterParams is the contract's ItemFilter.
@@ -169,6 +198,7 @@ type itemFilterParams struct {
 	Type           stringList `json:"type,omitempty"`
 	Status         stringList `json:"status,omitempty"`
 	Category       stringList `json:"category,omitempty"`
+	Priority       stringList `json:"priority,omitempty"`
 	Assignee       string     `json:"assignee,omitempty"`
 	Label          stringList `json:"label,omitempty"`
 	Parent         string     `json:"parent,omitempty"`

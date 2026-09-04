@@ -2,9 +2,10 @@
 id: GIT-US-0008
 type: story
 title: Render knowledge base pages with extended Markdown
-status: in_progress
+status: done
 created: 2026-09-03T00:00:00Z
-updated: 2026-09-03T21:47:06Z
+updated: 2026-09-04T02:37:45Z
+closed: 2026-09-04T02:37:45Z
 started: 2026-09-03T21:47:06Z
 author: team
 priority: critical
@@ -33,12 +34,12 @@ are stripped, and external links get `rel="noopener noreferrer"`.
 
 ## Acceptance Criteria
 
-- [ ] GFM tables, task lists, footnotes and callouts render correctly.
-- [ ] `[[Page]]` and `[[Page|alias]]` resolve to vault pages; unresolved links are marked.
-- [ ] Mermaid diagrams render client-side and fail gracefully on a syntax error.
-- [ ] Relative links and images inside the vault resolve through the directory handles.
-- [ ] A page outline and a backlinks panel are generated from the link graph.
-- [ ] Output is sanitised: no raw `<script>`, no `javascript:`/`data:` URLs.
-- [ ] Rendering is covered by golden tests against fixture pages.
-- [ ] Code blocks are syntax-highlighted and long content scrolls without breaking layout.
+- [x] GFM tables, task lists, footnotes and callouts render correctly.
+- [x] `[[Page]]` and `[[Page|alias]]` resolve to vault pages; unresolved links are marked.
+- [x] Mermaid diagrams render client-side and fail gracefully on a syntax error.
+- [x] Relative links and images inside the vault resolve through the directory handles.
+- [x] A page outline and a backlinks panel are generated from the link graph.
+- [x] Output is sanitised: no raw `<script>`, no `javascript:`/`data:` URLs.
+- [x] Rendering is covered by golden tests against fixture pages.
+- [x] Code blocks are syntax-highlighted and long content scrolls without breaking layout.
 - [ ] The viewer is keyboard navigable and passes an accessibility check.

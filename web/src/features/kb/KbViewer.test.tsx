@@ -167,7 +167,11 @@ describe('KbViewer', () => {
     // Wait for the Markdown itself, not just the page header. The generous
     // timeout covers the first load of the Shiki chunk: this page has a fence.
     expect(
-      await screen.findByRole('heading', { name: 'Getting started', level: 2 }, { timeout: 10_000 }),
+      await screen.findByRole(
+        'heading',
+        { name: 'Getting started', level: 2 },
+        { timeout: 10_000 },
+      ),
     ).toBeVisible();
 
     // Front matter card.

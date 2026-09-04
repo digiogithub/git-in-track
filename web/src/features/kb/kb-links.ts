@@ -63,11 +63,7 @@ export function buildKbIndex(nodes: KbNode[]): KbIndex {
 }
 
 /** Resolves a wikilink page target to a vault path, or `null` when unresolved. */
-export function resolvePagePath(
-  index: KbIndex,
-  fromPath: string,
-  target: string,
-): string | null {
+export function resolvePagePath(index: KbIndex, fromPath: string, target: string): string | null {
   const cleaned = target.replace(/^\.\//, '');
   const candidates = [
     resolveFrom(fromPath, cleaned),

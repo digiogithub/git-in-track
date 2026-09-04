@@ -23,9 +23,7 @@ describe('remarkCallout', () => {
 
   it('uses the type as the default title and a custom title when given', async () => {
     expect(await html('> [!NOTE]\n> Body.')).toContain('>Note</div>');
-    expect(await html('> [!WARNING] Do not do this\n> Body.')).toContain(
-      '>Do not do this</div>',
-    );
+    expect(await html('> [!WARNING] Do not do this\n> Body.')).toContain('>Do not do this</div>');
   });
 
   it('renders an Obsidian collapsible callout as details/summary', async () => {

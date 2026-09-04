@@ -30,7 +30,7 @@ export function KbLink({ href, children, className, title, kind, wikilink }: Mar
         className,
         'underline-offset-2 hover:underline',
         kind === 'item' && 'font-medium text-accent',
-        missing && 'text-destructive decoration-dotted underline',
+        missing && 'text-destructive underline decoration-dotted',
       )}
       {...(title ? { title } : {})}
       data-kind={kind}

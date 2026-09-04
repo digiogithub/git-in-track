@@ -65,10 +65,7 @@ export function KbViewer() {
   }, [path]);
 
   const page = pageQuery.data;
-  const resolvers = useMemo(
-    () => createKbResolvers(project, index, path),
-    [project, index, path],
-  );
+  const resolvers = useMemo(() => createKbResolvers(project, index, path), [project, index, path]);
   const renderOptions = useMemo<RenderOptions>(
     () => ({
       basePath: path,
@@ -95,12 +92,7 @@ export function KbViewer() {
 
   return (
     <div className="grid gap-6 lg:grid-cols-[minmax(0,14rem)_minmax(0,1fr)_minmax(0,12rem)]">
-      <aside
-        className={cn(
-          'min-w-0 lg:block lg:border-r lg:pr-4',
-          treeOpen ? 'block' : 'hidden',
-        )}
-      >
+      <aside className={cn('min-w-0 lg:block lg:border-r lg:pr-4', treeOpen ? 'block' : 'hidden')}>
         {treeQuery.isPending ? (
           <TreeSkeleton />
         ) : treeQuery.isError ? (
@@ -156,9 +148,7 @@ export function KbViewer() {
               ) : null}
             </div>
           </div>
-          {page ? (
-            <h1 className="text-2xl font-semibold tracking-tight">{page.title}</h1>
-          ) : null}
+          {page ? <h1 className="text-2xl font-semibold tracking-tight">{page.title}</h1> : null}
         </header>
 
         {pageQuery.isPending && path !== '' ? <PageSkeleton /> : null}
@@ -212,7 +202,11 @@ function TreeSkeleton() {
   return (
     <div className="space-y-2" aria-hidden="true">
       {[0, 1, 2, 3, 4].map((row) => (
-        <div key={row} className="h-4 animate-pulse rounded bg-muted" style={{ width: `${90 - row * 10}%` }} />
+        <div
+          key={row}
+          className="h-4 animate-pulse rounded bg-muted"
+          style={{ width: `${90 - row * 10}%` }}
+        />
       ))}
     </div>
   );
