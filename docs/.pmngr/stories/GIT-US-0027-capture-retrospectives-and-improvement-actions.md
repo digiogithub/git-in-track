@@ -2,9 +2,9 @@
 id: GIT-US-0027
 type: story
 title: Capture retrospectives and improvement actions
-status: backlog
+status: in_review
 created: 2026-09-03T00:00:00Z
-updated: 2026-09-03T00:00:00Z
+updated: 2026-09-04
 author: team
 priority: high
 parent: GIT-EP-0007
@@ -32,11 +32,19 @@ the point is following through, not writing notes.
 
 ## Acceptance Criteria
 
-- [ ] A retro can be created for a sprint with participants and the three sections.
-- [ ] Items can be added, edited and grouped during the session.
-- [ ] Selected improvements are written to `actions[]` in the front matter.
-- [ ] An action can be promoted to a task in a chosen project repository.
-- [ ] The created task links back to the retro and the retro links to the task.
-- [ ] Open actions from previous retros are shown when a new retro starts.
-- [ ] Retro files stay valid Markdown that reads well in a plain editor and on the host.
-- [ ] Concurrent editing by several participants merges without losing entries.
+- [x] A retro can be created for a sprint with participants and the three sections.
+- [x] Items can be added, edited and grouped during the session.
+- [x] Selected improvements are written to `actions[]` in the front matter.
+- [x] An action can be promoted to a task in a chosen project repository.
+- [x] The created task links back to the retro and the retro links to the task.
+- [x] Open actions from previous retros are shown when a new retro starts.
+- [x] Retro files stay valid Markdown that reads well in a plain editor and on the host.
+- [x] Concurrent editing by several participants merges without losing entries.
+
+## Notes
+
+Implemented in `internal/core/retro.go`, `retrobody.go` and `retroview.go`, with the calls
+`retro.list/get/create/update/promote` in `internal/vault/retro.go` and the same surface over
+REST in `internal/server/retros.go`. The web side is `web/src/features/retros/`, on all three
+providers. Details are recorded in docs/04 section 9.6; MCP retro tools stay planned
+(docs/08 section 4.11).

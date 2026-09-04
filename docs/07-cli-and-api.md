@@ -1242,8 +1242,8 @@ POST /api/v1/items/ACME-T-0311/comments
 
 #### Boards, sprints, retrospectives
 
-Boards are served since GIT-US-0017 and sprints since GIT-US-0018; retrospectives still answer
-`not_implemented`, and so does a sprint's burndown until the metrics of GIT-US-0028.
+Boards are served since GIT-US-0017, sprints since GIT-US-0018 and retrospectives since
+GIT-US-0027; a sprint's burndown still answers `not_implemented` until the metrics of GIT-US-0028.
 
 ```http
 GET  /api/v1/snapshots                      committed index snapshots, with their age
@@ -1260,9 +1260,11 @@ PATCH /api/v1/sprints/{id}                  If-Match (goal, dates, addItems, rem
 POST /api/v1/sprints/{id}/start             If-Match; {force?} to run two at once
 POST /api/v1/sprints/{id}/close             If-Match; {carry:[{ref,action,sprint?,status?}]}
 GET  /api/v1/sprints/{id}/burndown          not_implemented until GIT-US-0028
-GET  /api/v1/retros
-GET  /api/v1/retros/{id}
-POST /api/v1/retros/{id}/actions/promote    {"action":2,"project":"ACME","type":"task"}
+GET  /api/v1/retros                         ?sprint=&board=&state=; carries the open actions
+GET  /api/v1/retros/{id}                    notes, themes by votes, actions; ETag: <retro rev>
+POST /api/v1/retros                         create a retro; the core allocates the id
+PATCH /api/v1/retros/{id}                   If-Match (notes, themes, votes, actions)
+POST /api/v1/retros/{id}/actions/promote    If-Match; {"action":"a1","project":"ACME"}
 ```
 
 ```json

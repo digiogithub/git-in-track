@@ -243,7 +243,7 @@ Handles are declared in the team repository's `team.yaml` (doc 04, §3.2) and MA
 
 | Field | Allowed values |
 |---|---|
-| `type` | `epic`, `story`, `task`, `milestone`, `comment` (the `board`, `sprint` and `retro` types exist only in the team repo, and are specified in [doc 04](./04-team-repository.md) §§5, 8 and 9) |
+| `type` | `epic`, `story`, `task`, `milestone`, `comment` (the `board`, `sprint` and `retro` types exist only in the team repo, and are specified in [doc 04](./04-team-repository.md) §§5, 8 and 9; all three round-trip through the same byte-stable emitter as an item, so an edit to one field is a one-line diff) |
 | `priority` | `critical`, `high`, `medium`, `low` |
 | `status` | any `id` declared in `project.yaml:workflow.statuses` |
 | relation kind | `blocks`, `blocked_by`, `relates_to`, `duplicates`, `duplicated_by` |

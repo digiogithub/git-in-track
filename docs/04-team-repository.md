@@ -1351,6 +1351,55 @@ the website work grows.
 | `W-RETRO-ACTION-TASK-DEAD` | W | `task` ref does not resolve in a cloned project. |
 | `W-RETRO-SPRINT-DEAD` | W | `sprint` names a sprint that does not exist. |
 
+### 9.6 As built (GIT-US-0027)
+
+Everything above is implemented, with the details §9.1–§9.5 left open pinned down as follows.
+
+**The body is structured data that still reads as a document.** `internal/core/retrobody.go`
+parses a retro body into level-2 sections. The three collection sections (`## Went well`,
+`## To improve`, `## Puzzles`, matched case-insensitively, with a few synonyms) and `## Actions`
+are *owned*: their bullets are re-rendered from the structured state on every write. Every other
+section — `## Previous Actions`, `## Discussion`, anything a human added — is written back
+verbatim, in place. A note bullet is `- (n1) text — handle`; the `(n1)` prefix is what a theme
+references, and a bullet without one is kept exactly as it was typed. An action bullet is
+`- [x] a1 — title (owner, due) → \`PROJ/PROJ-T-0111\``.
+
+**One entry, one line.** That is the whole answer to concurrent editing: two participants adding
+notes at the same time touch different lines, so git merges both sides. `themes` and `votes` are
+front-matter fields with one entry per line for the same reason. A retro round-trips byte for
+byte through `ParseRetro`/`SerializeRetro`.
+
+**The file name carries a slug.** `PathOf` writes `<RETRO-ID>-<slug of title>.md`, and a lookup
+by id scans `retros/` for the file whose stem is the id or begins with `<id>-`. `E-RETRO-ID`
+therefore checks the id against the *prefix* of the file name, not the whole stem.
+
+**An action's live state beats its recorded one.** `BuildRetroView` resolves `actions[].task`
+through `core.ResolveCard` — live from a clone, read-only from the committed index snapshot, or
+unresolved with the reason — and grades the action from that card. `status: done` in the file is
+only the fallback for an action that was never promoted, which is R-RETRO-1 made executable. The
+next retro's `carried` list is the still-open actions of the retro its `carried_from` names, or
+of every earlier retro when it names none.
+
+**Promotion writes to two repositories or to none.** `retro.promote` refuses with
+`repo_not_cloned` when the target project is not open, rather than half writing; the UI then
+offers the action as Markdown to paste. When it goes through it creates the task
+(`labels: [retro]`, `assignees: [owner]`, `due`, `author` = the facilitator, and the body line
+`Promoted from retro <ID> (action <id>).`) and writes `PROJ/PROJ-T-NNNN` back into the action in
+the same call. Promoting an already promoted action is `retro_action_promoted`.
+
+**Calls.** `retro.list` (filters `sprint`, `board`, `state`; the answer carries `carried`),
+`retro.get`, `retro.create`, `retro.update` and `retro.promote` on the workspace, and
+`GET/POST /api/v1/retros`, `GET/PATCH /api/v1/retros/{id}` and
+`POST /api/v1/retros/{id}/actions/promote` on the companion. `retro.update` adds, edits and
+removes notes and actions one entry at a time, and replaces `themes` and `votes` wholesale
+because grouping is one decision about the whole wall. `retro.create` for a sprint fills in its
+board, its title and its participants, sets the sprint's `retro:` back-link, and refuses a second
+retro for a sprint that already has one.
+
+**Not built here.** Voting is stored and ranked but has no per-person budget enforcement beyond
+the `W-RETRO-VOTE-BUDGET` warning, and no MCP tools were added: `get_retro`,
+`create_retro_action` and `promote_retro_action` remain planned (doc 08 §4.11).
+
 ---
 
 ## 10. Permissions model
@@ -1451,7 +1500,7 @@ MCP tools implied by this document (doc 05 specifies them fully): `list_projects
 | Phase 3 | Team repo end to end: `team.yaml` (§3.6, done), `knowledge/` (done), multi-repository workspace and reference resolution (§3.6, done), kanban boards (§5, done), scrum boards and sprints (§§5.5, 8, done), remote references and index snapshots (§§6, 7, done). |
 | Phase 4 | Multi-repo sync, per-repo push results, conflict handling for `order` and snapshots. |
 | Phase 5 | MCP tools of §12; agents reading snapshots for cross-project questions. |
-| Phase 6 | Retrospectives with voting and promotion, metrics (velocity, burndown, cumulative flow) computed from sprints plus project data. |
+| Phase 6 | Retrospectives with voting and promotion (§9, done — GIT-US-0027), metrics (velocity, burndown, cumulative flow) computed from sprints plus project data. |
 
 ---
 

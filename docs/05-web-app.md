@@ -143,8 +143,8 @@ state is shareable by URL and survives reloads.
   /team/$teamId/boards/$boardSlug           BoardView (kanban or scrum)
   /team/$teamId/boards/$boardSlug/planning  SprintPlanning
   /team/$teamId/sprints/$sprintId           SprintDetail
-  /team/$teamId/retros                      RetroList
-  /team/$teamId/retros/$retroId             RetroBoard
+  /retros                                   RetroList     (as built)
+  /retros/$retroId                          RetroBoard    (as built)
   /team/$teamId/metrics                     Metrics (Phase 6)
 /sync                                    SyncPanel
   /sync/conflicts/$conflictId              ConflictResolver
@@ -247,6 +247,17 @@ Sticky-note cards are list items in the body; adding a note appends a bullet.
 Voting (Phase 6) is stored as a `votes` map in front matter. Any action can be
 "promoted to task": a dialog picks the target project, and the provider creates a
 task in that repo and writes the produced ref back into the retro's `actions[]`.
+
+*As built (GIT-US-0027).* The routes are `/retros` and `/retros/$retroId`. **RetroList** puts what
+past retros left open *above* the list of retros, because the point of writing a retro down is
+following through, and starts a retro for a closed sprint that has none in one click.
+**RetroBoard** renders the three collection columns from the body bullets — adding a note appends
+one line, which is what lets two participants write at once — plus the themes ranked by the votes
+they got and the improvement actions. An action carries an owner, a due date and a "Promote to
+task" control that names the target project; once promoted, the row shows the task reference and
+its live status instead, and its checkbox is disabled because the task, not the retro, decides
+whether the action is done (docs/04 R-RETRO-1). The provider members are `listRetros`, `getRetro`,
+`createRetro`, `updateRetro` and `promoteRetroAction`, on all three providers.
 
 **SyncPanel (`/sync`)** — Per-repo rows: branch, ahead/behind, dirty files,
 last fetch, and buttons Fetch / Sync / Push. Expanding a row shows the staged
@@ -374,8 +385,13 @@ export interface DataProvider {
   moveCard(move: CardMove): Promise<BoardMoveResult>;
   getSprint(teamId: string, id: string): Promise<Sprint>;
   updateSprint(teamId: string, id: string, patch: SprintPatch, rev: string): Promise<Sprint>;
-  getRetro(teamId: string, id: string): Promise<Retro>;
-  updateRetro(teamId: string, id: string, patch: RetroPatch, rev: string): Promise<Retro>;
+  // A workspace holds at most one team repository here too, so no teamId.
+  listRetros(filter?: RetroFilter): Promise<RetroListing>;
+  getRetro(id: string): Promise<RetroView>;
+  createRetro(input: RetroDraft): Promise<RetroResult>;
+  updateRetro(id: string, patch: RetroPatch, rev?: string): Promise<RetroResult>;
+  // Creates the task in the named project and writes the ref back into the retro.
+  promoteRetroAction(input: RetroPromotion): Promise<RetroResult>;
 
   // git — commit on save (GIT-US-0020, implemented)
   getGitSettings(): Promise<GitSettings>;
@@ -1074,7 +1090,7 @@ and the Chromium e2e project on every PR; the full browser matrix runs nightly.
 | 3 | Team repo mounting, boards (kanban + scrum) with dnd-kit, sprint planning, remote reference cards, multi-project item table |
 | 4 | Commit-on-save settings card with a live message preview and per-repository git status (GIT-US-0020, done); sync panel with the status indicator and the dry-run preview, over the companion API and over isomorphic-git in the browser (GIT-US-0021, done); credential prompt in the sync panel, per-session in-memory tokens and the redaction rules (GIT-US-0023, done); conflict resolver UI (GIT-US-0022, done; git activity strips still to come) |
 | 5 | Agent/MCP status screen, call log, agent-oriented empty states and AGENTS.md surfacing in the KB |
-| 6 | Retro board, action promotion, metrics (burndown, CFD), link graph view, PWA polish, visual/a11y test gates, 1.0 |
+| 6 | Retro board and action promotion (GIT-US-0027, done); metrics (burndown, CFD), link graph view, PWA polish, visual/a11y test gates, 1.0 |
 
 ---
 
