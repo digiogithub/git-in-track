@@ -399,10 +399,22 @@ Recommended structure (convention, not enforced): `ways-of-working/`, `decisions
 
 ## 5. Boards — `.pmngr/boards/<slug>.md`
 
+**Status: kanban boards are implemented (GIT-US-0017).** Scrum boards ([§5.5](#55-scrum-boards))
+parse and validate but render as kanban until GIT-US-0018; a remote card shows its reference and
+nothing else until GIT-US-0019 reads the snapshots.
+
 A board is a *view*: columns, ordering, filters, swimlanes. It holds no work item state. Moving a
 card between columns changes the **status of the referenced item in its own project repository**,
 which means moving a card on a board can require writing to a different git repository than the one
 holding the board — a fact the UI must surface ([§5.7](#57-what-happens-when-a-card-moves)).
+
+**Implementation home.** `internal/core/board.go` parses, validates and emits the file;
+`internal/core/boardview.go` turns a board plus the items of the open repositories into the
+columns the UI renders and decides what a move implies. `internal/vault/board.go` is the plumbing
+— read the files, hand the pieces to the core, write the answer back — and answers `board.list`,
+`board.get` and `board.move` for a workspace. `internal/server/boards.go` serves the same three
+calls over HTTP ([doc 07 §9](./07-cli-and-api.md)). The fixture is
+`testdata/fixtures/team-basic/.pmngr/boards/delivery.md`.
 
 ### 5.1 Front matter
 
@@ -447,8 +459,12 @@ columns:
 - **R-COL-3** A status that maps to two columns is `E-BOARD-STATUS-AMBIGUOUS` for that project.
 - **R-COL-4** An item whose status maps to no column is not shown; the board header shows
   "3 items hidden (unmapped status)" with a link to list them.
-- **R-COL-5** `wip` is advisory. Exceeding it colours the column header and shows a badge; it never
-  blocks a move (a rule that blocks writes to another repository would be unenforceable anyway).
+- **R-COL-5** `wip` is advisory: it is never a stored constraint, and a column that is already over
+  its limit renders every card it holds. Exceeding it colours the column header and shows a badge.
+  A move that *would* put the column over its limit is refused **once**, with the code
+  `wip_limit_exceeded` and a sentence naming the column and the limit; repeating the call with
+  `force` (the "Move anyway" button) goes through. Advisory, but never silently exceeded — and a
+  hard block would be unenforceable anyway, since the item lives in another repository.
 
 ### 5.3 Filters
 
@@ -519,7 +535,8 @@ order:
   that no longer belong to the column (status changed elsewhere) are ignored on read and pruned on
   the next write.
 - **R-ORD-3** The list is stored one ref per line so that two people re-ordering different columns
-  produce non-overlapping diffs. Concurrent re-ordering *of the same column* is a genuine text
+  produce non-overlapping diffs; a fractional index was considered and rejected in
+  [ADR-013](./adr/ADR-013-board-card-ordering.md). Concurrent re-ordering *of the same column* is a genuine text
   conflict; the conflict UI offers "take mine / take theirs / union (mine first)". This is accepted:
   card order is the least valuable state in the system.
 - **R-ORD-4** Ordering is per column, not global, and is not stored per swimlane. When swimlanes are
@@ -551,9 +568,13 @@ sequenceDiagram
 ```
 
 - **R-MOVE-1** A move writes to two repositories: the item's status in the project repo, and the
-  board's `order` in the team repo. Both writes are independent commits. If the project write fails
-  (dirty rev, no clone, read-only), the board write MUST be rolled back so the board never shows a
-  position that contradicts the item.
+  board's `order` in the team repo. Both writes are independent commits. If either write fails
+  (dirty rev, no clone, read-only), the other MUST be rolled back so the board never shows a
+  position that contradicts the item. The implementation writes the item first — it is the write
+  that can be refused for a reason the caller has to see — and rolls the status back when the board
+  write fails. The two repositories hold two independent optimistic locks: the board's revision and
+  the item's, so a move carries both (`rev` and `itemRev`, or `If-Match` and `itemRev` over HTTP).
+  A re-order inside one column changes no status and writes the board file only.
 - **R-MOVE-2** The new status is the **first** status listed for the target column for that project
   (`statuses["*"]` or the project override), or, for a `categories:` column, the project's first
   status in that category. `project.yaml:workflow.transitions` is consulted; a disallowed transition
@@ -694,6 +715,17 @@ Capacity for this sprint is 2.5 FTE (Tomás is half-time). Daily at 09:45 CET.
 | `W-BOARD-REF-DEAD` | W | A ref resolves to an item that does not exist in the cloned project. |
 | `W-BOARD-WIP-EXCEEDED` | W | Live condition, reported in the UI, not by `doctor`. |
 | `W-BOARD-UNMAPPED-STATUS` | W | A project status maps to no column. |
+
+**Writing a board back.** `SerializeBoard` is the only writer. It emits the front matter in the key
+order of §5.1, one column per block entry, the `statuses` mapping with `"*"` first and the project
+overrides sorted, and `order:` one ref per line — never in flow style, and `[]` for a column whose
+list is deliberately empty. Emission is deterministic (no Go map iteration reaches the output) and
+idempotent: parsing a board and serialising it again yields the same bytes. That is what makes a
+concurrent move a mergeable diff, and `internal/core` pins it with a test that drives
+`git merge-file` over two divergent moves.
+
+Columns the board no longer declares are dropped from `order:` on the next write, and so are refs
+the column no longer shows (R-ORD-2).
 
 ---
 
@@ -1358,7 +1390,7 @@ MCP tools implied by this document (doc 05 specifies them fully): `list_projects
 |---|---|
 | Phase 1 | Nothing: single project, no team repo. |
 | Phase 2 | `team.yaml` parsing in the core (read-only), project resolution from local paths. |
-| Phase 3 | Team repo end to end: `team.yaml` (§3.6, done), `knowledge/` (done), multi-repository workspace and reference resolution (§3.6, done), boards (kanban + scrum), sprints, remote references, index snapshots. |
+| Phase 3 | Team repo end to end: `team.yaml` (§3.6, done), `knowledge/` (done), multi-repository workspace and reference resolution (§3.6, done), kanban boards (§5, done), scrum boards, sprints, remote references, index snapshots. |
 | Phase 4 | Multi-repo sync, per-repo push results, conflict handling for `order` and snapshots. |
 | Phase 5 | MCP tools of §12; agents reading snapshots for cross-project questions. |
 | Phase 6 | Retrospectives with voting and promotion, metrics (velocity, burndown, cumulative flow) computed from sprints plus project data. |

@@ -863,8 +863,13 @@ Field notes: `code` is a stable machine string (clients switch on it, not on `ty
 Catalog of `code` values: `unauthorized`, `forbidden`, `not_found`, `invalid_request`,
 `validation_failed`, `invalid_front_matter`, `precondition_required`, `stale_revision`,
 `conflict`, `duplicate_id`, `workflow_transition_denied`, `read_only`,
-`repo_not_registered`, `repo_not_cloned`, `git_dirty`, `git_auth_failed`, `git_conflict`,
-`index_unavailable`, `rate_limited`, `not_implemented`, `internal`.
+`repo_not_registered`, `repo_not_cloned`, `wip_limit_exceeded`, `git_dirty`, `git_auth_failed`,
+`git_conflict`, `index_unavailable`, `rate_limited`, `not_implemented`, `internal`.
+
+`wip_limit_exceeded` (HTTP 409) is a *refusal the caller may repeat*: a board's WIP limit is
+advisory (doc 04 R-COL-5), so the move is declined once with the column and the limit in `detail`,
+and the same request with `force` goes through. It exists so that a limit is never exceeded
+silently, and never blocks a team that has decided to exceed it.
 
 `not_implemented` (HTTP 501) is what a route of a later phase answers: the path exists so
 that a client learns "not yet" from the code instead of guessing from a 404.
@@ -1120,11 +1125,13 @@ POST /api/v1/items/ACME-T-0311/comments
 
 #### Boards, sprints, retrospectives
 
+Boards are served since GIT-US-0017; sprints and retrospectives still answer `not_implemented`.
+
 ```http
-GET  /api/v1/boards                         ?team=acme-team
-GET  /api/v1/boards/{slug}                  ?resolve=true (hydrate refs from project repos)
-POST /api/v1/boards/{slug}/cards/move       If-Match
-PATCH /api/v1/boards/{slug}                 If-Match (columns, wip, filters)
+GET  /api/v1/boards                         list the boards of the team repository
+GET  /api/v1/boards/{slug}                  always resolved against the open repositories
+POST /api/v1/boards/{slug}/cards/move       If-Match: <board rev>; body carries itemRev
+PATCH /api/v1/boards/{slug}                 If-Match (columns, wip, filters) — GIT-US-0018
 GET  /api/v1/sprints                        ?board=platform-scrum&state=active
 GET  /api/v1/sprints/{id}
 GET  /api/v1/sprints/{id}/burndown
@@ -1159,13 +1166,38 @@ GET /api/v1/boards/platform-kanban?resolve=true
 ```json
 POST /api/v1/boards/platform-kanban/cards/move
 If-Match: sha256:88fa…101
-{"ref":"ACME/ACME-T-0311","toColumn":"In review","position":0,"updateStatus":true}
+{"ref":"ACME/ACME-T-0311","toColumn":"in_review","position":0,
+ "itemRev":"sha256:7ab0…d12"}
 
 200
-{ "board":{"rev":"sha256:91cd…773"},
-  "item":{"id":"ACME-T-0311","status":"in_review","rev":"sha256:5e88…4b1"},
-  "wip":{"column":"In review","used":3,"limit":3,"exceeded":false} }
+{ "board": { …the whole board, re-rendered… },
+  "item":  {"id":"ACME-T-0311","status":"in_review","rev":"sha256:5e88…4b1"},
+  "move":  {"ref":"ACME/ACME-T-0311","fromColumn":"in_progress","toColumn":"in_review",
+            "status":"in_review","statusChanged":true,"choices":["in_review"],
+            "wip":{"column":"in_review","used":3,"limit":4,"exceeded":false}},
+  "writes":[{"vaultId":"acme-platform","written":[{"path":"docs/.pmngr/tasks/…md","text":"…"}],
+             "removed":[]},
+            {"vaultId":"acme-team","written":[{"path":".pmngr/boards/platform-kanban.md","text":"…"}],
+             "removed":[]}] }
 ```
+
+Notes on the move:
+
+- `toColumn` is a **column id**, not its display name.
+- `If-Match` carries the revision of the *board*; `itemRev` carries the revision of the *item*.
+  They live in different repositories and therefore hold two independent optimistic locks; either
+  may be omitted to skip that check, and `If-Match: *` skips the board's.
+- `position` is the 0-based index in the target column; `-1` appends. A move into the column the
+  card already sits in is a re-order: `statusChanged` is `false`, no item file is written, and
+  `writes` carries the team repository only.
+- `status` may be sent to pick one of `choices` when a column maps several statuses for the
+  project; otherwise the first mapped status wins (doc 04 R-MOVE-2).
+- `force: true` (or `?force=true`) confirms a move over a WIP limit, and a transition the project
+  workflow does not declare.
+- A card whose project nobody cloned answers `repo_not_cloned` (404): the board's `order:` still
+  holds it, but nothing here can write its status.
+- `writes[]` is what a host without a file system of its own must persist — the browser build
+  writes each set into the folder its `vaultId` names.
 
 #### Search
 
