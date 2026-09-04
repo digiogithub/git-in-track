@@ -26,6 +26,10 @@
 import { resolveCompanionBaseUrl } from '@/api/detect';
 import type {
   BatchResult,
+  BoardMoveResult,
+  BoardSummary,
+  BoardView,
+  CardMove,
   Capabilities,
   ChangeEvent,
   Comment,
@@ -175,6 +179,7 @@ const PROBLEM_CODES: Record<string, ProviderErrorCode> = {
   git_dirty: 'git_conflict',
   git_auth_failed: 'git_auth_failed',
   repo_not_cloned: 'repo_not_cloned',
+  wip_limit_exceeded: 'wip_limit_exceeded',
   index_unavailable: 'internal',
   rate_limited: 'internal',
   internal: 'internal',
@@ -921,6 +926,43 @@ export class CompanionProvider implements DataProvider {
       body: { status },
     });
     return this.#hydrate(body, id);
+  }
+
+  // -------------------------------------------------------------------- boards
+
+  async listBoards(): Promise<BoardSummary[]> {
+    const body = await this.#json(`${API_PREFIX}/boards`);
+    const record = asRecord(body);
+    const entries = record ? asArray(record['boards'] ?? record['items']) : asArray(body);
+    return entries as BoardSummary[];
+  }
+
+  async getBoard(slug: string): Promise<BoardView> {
+    return (await this.#json(`${API_PREFIX}/boards/${encodeURIComponent(slug)}`)) as BoardView;
+  }
+
+  /**
+   * `If-Match` carries the board revision; `itemRev` carries the item's,
+   * because the two live in different repositories and therefore hold two
+   * independent optimistic locks.
+   */
+  async moveCard(move: CardMove): Promise<BoardMoveResult> {
+    const body = await this.#json(
+      `${API_PREFIX}/boards/${encodeURIComponent(move.board)}/cards/move`,
+      {
+        method: 'POST',
+        rev: move.rev ?? '*',
+        body: {
+          ref: move.ref,
+          toColumn: move.toColumn,
+          position: move.position,
+          ...(move.status === undefined ? {} : { status: move.status }),
+          ...(move.itemRev === undefined ? {} : { itemRev: move.itemRev }),
+          ...(move.force === undefined ? {} : { force: move.force }),
+        },
+      },
+    );
+    return body as BoardMoveResult;
   }
 
   /** Sequential, so one rejected rev does not abort the rest of the batch. */

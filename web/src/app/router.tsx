@@ -95,6 +95,13 @@ const boardsRoute = createRoute({
   component: BoardList,
 });
 
+/** The board itself pulls in dnd-kit, so it loads as a lazy chunk. */
+const boardRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/boards/$slug',
+  component: lazyRouteComponent(() => import('@/features/boards/BoardView'), 'BoardView'),
+});
+
 const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/settings',
@@ -114,6 +121,7 @@ export const routeTree = rootRoute.addChildren([
     milestonesRoute,
   ]),
   boardsRoute,
+  boardRoute,
   settingsRoute,
 ]);
 

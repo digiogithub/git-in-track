@@ -8,6 +8,12 @@
 
 import type {
   BatchResult,
+  BoardCard,
+  BoardColumnView,
+  BoardMoveResult,
+  BoardSummary,
+  BoardView,
+  CardMove,
   Capabilities,
   ChangeEvent,
   Comment,
@@ -42,6 +48,56 @@ export type FakeData = {
   repos?: RepoInfo[];
   /** The team repository of the workspace; omit for a workspace without one. */
   team?: TeamSummary | null;
+  /** The boards of the team repository; omit for the sample board. */
+  boards?: FakeBoard[];
+};
+
+/**
+ * A board as the team repository stores it: columns mapping onto per-project
+ * statuses, an advisory WIP limit and one card ref per line under `order`
+ * (docs/04-team-repository.md §5). The fake renders it the way the Go core
+ * does, so a component test exercises the real semantics.
+ */
+export type FakeBoard = {
+  id: string;
+  kind: 'kanban' | 'scrum';
+  title: string;
+  description?: string;
+  projects: string[];
+  columns: {
+    id: string;
+    name: string;
+    /** Project key, or `*` for the default rule. */
+    statuses: Record<string, string[]>;
+    wip?: number;
+    color?: string;
+  }[];
+  filters?: BoardView['filters'];
+  order: Record<string, string[]>;
+  rev: string;
+};
+
+/** The board of `sampleTeam`: cards from a cloned project and a remote one. */
+export const sampleBoard: FakeBoard = {
+  id: 'delivery',
+  kind: 'kanban',
+  title: 'Delivery',
+  description: 'Everything the squad is working on, across both repositories.',
+  projects: ['ACME', 'WEB'],
+  columns: [
+    { id: 'todo', name: 'To Do', statuses: { '*': ['backlog', 'todo'] }, color: '#94a3b8' },
+    { id: 'in_progress', name: 'In Progress', statuses: { '*': ['in_progress'] }, wip: 1 },
+    { id: 'in_review', name: 'In Review', statuses: { '*': ['in_review'] }, wip: 2 },
+    { id: 'done', name: 'Done', statuses: { '*': ['done', 'cancelled'] } },
+  ],
+  filters: { types: ['story', 'task'] },
+  order: {
+    todo: ['ACME/ACME-T-0107', 'WEB/WEB-US-0031'],
+    in_progress: ['ACME/ACME-US-0042'],
+    in_review: [],
+    done: [],
+  },
+  rev: 'sha256:00000000000000b1',
 };
 
 const writableCapabilities: Capabilities = {
@@ -263,6 +319,7 @@ export class FakeProvider implements DataProvider {
   private pages: Map<string, KbPage>;
   private repos: RepoInfo[];
   private team: TeamSummary | null;
+  private boards: Map<string, FakeBoard>;
   private handlers = new Set<(event: ChangeEvent) => void>();
   private revCounter = 1000;
 
@@ -273,6 +330,9 @@ export class FakeProvider implements DataProvider {
     this.comments = structuredClone(data.comments ?? sampleComments);
     this.pages = new Map((data.pages ?? samplePages).map((p) => [p.path, structuredClone(p)]));
     this.team = data.team ?? null;
+    this.boards = new Map(
+      (data.boards ?? [sampleBoard]).map((b) => [b.id, structuredClone(b)]),
+    );
     this.repos = data.repos ?? [
       {
         id: 'repo-1',
@@ -588,6 +648,237 @@ export class FakeProvider implements DataProvider {
     this.comments.push(comment);
     this.emit({ kind: 'items', repoId: 'repo-1', ids: [id] });
     return Promise.resolve(structuredClone(comment));
+  }
+
+  // -------------------------------------------------------------------- boards
+
+  listBoards(): Promise<BoardSummary[]> {
+    if (!this.team) return Promise.resolve([]);
+    return Promise.resolve(
+      [...this.boards.values()].map((b) => ({
+        id: b.id,
+        kind: b.kind,
+        title: b.title,
+        ...(b.description === undefined ? {} : { description: b.description }),
+        path: `.pmngr/boards/${b.id}.md`,
+        rev: b.rev,
+        vaultId: 'repo-team',
+        projects: b.projects,
+        columns: b.columns.length,
+        diagnostics: [],
+      })),
+    );
+  }
+
+  getBoard(slug: string): Promise<BoardView> {
+    const board = this.boards.get(slug);
+    if (!board) return Promise.reject(new ProviderError('not_found', `No board ${slug}`));
+    return Promise.resolve(this.renderBoard(board));
+  }
+
+  moveCard(move: CardMove): Promise<BoardMoveResult> {
+    this.assertWritable();
+    const board = this.boards.get(move.board);
+    if (!board) return Promise.reject(new ProviderError('not_found', `No board ${move.board}`));
+    if (move.rev !== undefined && move.rev !== board.rev) {
+      return Promise.reject(
+        new ProviderError('stale_revision', `Board ${board.id} changed on disk`),
+      );
+    }
+    const column = board.columns.find((c) => c.id === move.toColumn);
+    if (!column) {
+      return Promise.reject(
+        new ProviderError('validation_failed', `Board ${board.id} has no column ${move.toColumn}`),
+      );
+    }
+
+    const view = this.renderBoard(board);
+    const card = view.columns.flatMap((c) => c.cards).find((c) => c.ref === move.ref);
+    if (!card) {
+      return Promise.reject(new ProviderError('not_found', `${move.ref} is not on this board`));
+    }
+    if (card.remote) {
+      return Promise.reject(
+        new ProviderError(
+          'repo_not_cloned',
+          `${card.project} is not cloned on this machine; clone it to move this card`,
+        ),
+      );
+    }
+
+    const from = view.columns.find((c) => c.cards.some((entry) => entry.ref === move.ref));
+    const target = view.columns.find((c) => c.id === column.id);
+    const used = (target?.cards.length ?? 0) + (from?.id === column.id ? 0 : 1);
+    const exceeded = (column.wip ?? 0) > 0 && used > (column.wip ?? 0);
+    if (exceeded && !move.force) {
+      return Promise.reject(
+        new ProviderError(
+          'wip_limit_exceeded',
+          `${column.name} is at its WIP limit of ${column.wip}; confirm the move to exceed it`,
+        ),
+      );
+    }
+
+    const choices = column.statuses[card.project] ?? column.statuses['*'] ?? [];
+    const status = move.status ?? (from?.id === column.id ? card.status : choices[0]);
+    const statusChanged = status !== undefined && status !== card.status;
+    let item: Item | undefined;
+    if (statusChanged && status !== undefined) {
+      const existing = this.items.get(card.item);
+      if (!existing) return Promise.reject(new ProviderError('not_found', `No item ${card.item}`));
+      if (move.itemRev !== undefined && move.itemRev !== existing.rev) {
+        return Promise.reject(
+          new ProviderError('stale_revision', `Item ${card.item} changed on disk`),
+        );
+      }
+      item = { ...existing, status, rev: this.nextRev() };
+      this.items.set(card.item, item);
+    }
+
+    for (const id of Object.keys(board.order)) {
+      board.order[id] = (board.order[id] ?? []).filter((ref) => ref !== move.ref);
+    }
+    const list = board.order[column.id] ?? [];
+    const at = move.position < 0 || move.position > list.length ? list.length : move.position;
+    board.order[column.id] = [...list.slice(0, at), move.ref, ...list.slice(at)];
+    board.rev = this.nextRev();
+
+    this.emit({ kind: 'repo', repoId: 'repo-team' });
+    if (item) this.emit({ kind: 'items', repoId: 'repo-1', ids: [item.id] });
+
+    return Promise.resolve({
+      board: this.renderBoard(board),
+      ...(item ? { item: structuredClone(item) } : {}),
+      move: {
+        ref: move.ref,
+        ...(from ? { fromColumn: from.id } : {}),
+        toColumn: column.id,
+        ...(status === undefined ? {} : { status }),
+        statusChanged,
+        choices,
+        wip: { column: column.id, used, limit: column.wip ?? 0, exceeded },
+      },
+      writes: [],
+    });
+  }
+
+  /**
+   * Renders a board the way `core.BuildBoardView` does: filters first, then one
+   * column per status mapping, then the `order` list, then everything else by
+   * priority. A ref into a project the workspace has not opened stays where the
+   * board puts it and is marked remote.
+   */
+  private renderBoard(board: FakeBoard): BoardView {
+    const declared = this.team?.projects.map((p) => p.key) ?? board.projects;
+    const cloned = new Set(this.projects.map((p) => p.key));
+    const rank: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+
+    const placed = new Set<string>();
+    const columns: BoardColumnView[] = board.columns.map((column) => {
+      const cards: BoardCard[] = [];
+      for (const item of this.items.values()) {
+        if (item.deleted) continue;
+        const project = item.id.split('-')[0] ?? '';
+        if (!cloned.has(project) || !board.projects.includes(project)) continue;
+        const types = board.filters?.types;
+        if (types && !types.includes(item.type)) continue;
+        const mapped = column.statuses[project] ?? column.statuses['*'] ?? [];
+        if (!item.status || !mapped.includes(item.status)) continue;
+        const ref = `${project}/${item.id}`;
+        cards.push({
+          ref,
+          project,
+          item: item.id,
+          declared: declared.includes(project),
+          remote: false,
+          vaultId: 'repo-1',
+          title: item.title,
+          type: item.type,
+          ...(item.status === undefined ? {} : { status: item.status }),
+          ...(item.priority === undefined ? {} : { priority: item.priority }),
+          ...(item.assignees ? { assignees: item.assignees } : {}),
+          ...(item.labels ? { labels: item.labels } : {}),
+          ...(item.estimate === undefined ? {} : { estimate: item.estimate }),
+          ...(item.updated === undefined ? {} : { updated: item.updated }),
+          path: item.path,
+          rev: item.rev,
+        });
+        placed.add(ref);
+      }
+      for (const ref of board.order[column.id] ?? []) {
+        if (placed.has(ref)) continue;
+        const [project = '', id = ''] = ref.split('/');
+        if (cloned.has(project)) continue;
+        cards.push({
+          ref,
+          project,
+          item: id,
+          declared: declared.includes(project),
+          remote: true,
+          reason: `project ${project} is not cloned on this machine; clone it to move this card`,
+        });
+        placed.add(ref);
+      }
+      const order = board.order[column.id] ?? [];
+      cards.sort((a, b) => {
+        const ia = order.indexOf(a.ref);
+        const ib = order.indexOf(b.ref);
+        if (ia >= 0 && ib >= 0) return ia - ib;
+        if (ia >= 0) return -1;
+        if (ib >= 0) return 1;
+        return (
+          (rank[a.priority ?? 'low'] ?? 3) - (rank[b.priority ?? 'low'] ?? 3) ||
+          a.ref.localeCompare(b.ref)
+        );
+      });
+      return {
+        id: column.id,
+        name: column.name,
+        ...(column.wip === undefined ? {} : { wip: column.wip }),
+        ...(column.color === undefined ? {} : { color: column.color }),
+        cards,
+        exceeded: (column.wip ?? 0) > 0 && cards.length > (column.wip ?? 0),
+      };
+    });
+
+    const unmapped: BoardCard[] = [];
+    for (const item of this.items.values()) {
+      if (item.deleted) continue;
+      const project = item.id.split('-')[0] ?? '';
+      if (!cloned.has(project) || !board.projects.includes(project)) continue;
+      const types = board.filters?.types;
+      if (types && !types.includes(item.type)) continue;
+      const ref = `${project}/${item.id}`;
+      if (placed.has(ref)) continue;
+      unmapped.push({
+        ref,
+        project,
+        item: item.id,
+        declared: true,
+        remote: false,
+        title: item.title,
+        type: item.type,
+        ...(item.status === undefined ? {} : { status: item.status }),
+        reason: `status ${item.status ?? ''} maps to no column of this board`,
+      });
+    }
+
+    return {
+      id: board.id,
+      kind: board.kind,
+      title: board.title,
+      ...(board.description === undefined ? {} : { description: board.description }),
+      path: `.pmngr/boards/${board.id}.md`,
+      rev: board.rev,
+      teamVaultId: 'repo-team',
+      projects: board.projects,
+      filters: board.filters ?? {},
+      swimlanes: {},
+      card: {},
+      columns,
+      unmapped,
+      diagnostics: [],
+    };
   }
 
   writePage(_scope: KbScope, path: string, content: string, rev?: string): Promise<KbPage> {

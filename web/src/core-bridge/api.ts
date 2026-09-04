@@ -266,6 +266,126 @@ export type RefResolution = {
   reason?: string;
 };
 
+export type BoardKind = 'kanban' | 'scrum';
+
+/** One card of a rendered board (docs/04-team-repository.md §5). */
+export type BoardCard = {
+  /** `<projectKey>/<itemId>`. */
+  ref: string;
+  project: string;
+  item: string;
+  /** `team.yaml` declares the project; an undeclared ref renders as inert text. */
+  declared: boolean;
+  /** No open repository serves the project: the card is read-only (docs/04 §7). */
+  remote: boolean;
+  vaultId?: string;
+  title?: string;
+  type?: ItemType;
+  status?: string;
+  priority?: Priority;
+  assignees?: string[];
+  labels?: string[];
+  estimate?: number;
+  milestone?: string;
+  parent?: string;
+  due?: string;
+  updated?: string;
+  path?: string;
+  rev?: string;
+  /** One sentence explaining why the card cannot be edited here. */
+  reason?: string;
+};
+
+/** One rendered column, with the live WIP condition recomputed on every read. */
+export type BoardColumnView = {
+  id: string;
+  name: string;
+  /** 0 or absent means unlimited. */
+  wip?: number;
+  color?: string;
+  collapsed?: boolean;
+  cards: BoardCard[];
+  /** The column holds more cards than its limit allows. */
+  exceeded: boolean;
+};
+
+export type BoardFilters = {
+  projects?: string[];
+  types?: ItemType[];
+  labelsAny?: string[];
+  labelsAll?: string[];
+  labelsNone?: string[];
+  assignees?: string[];
+  priorities?: Priority[];
+  milestone?: string;
+  sprint?: string;
+  dueBefore?: string;
+  updatedSince?: string;
+  includeClosed?: boolean;
+  query?: string;
+};
+
+/** A board plus the cards it currently shows. */
+export type BoardView = {
+  id: string;
+  kind: BoardKind;
+  title: string;
+  description?: string;
+  path: string;
+  rev: string;
+  teamVaultId?: string;
+  projects: string[];
+  filters: BoardFilters;
+  swimlanes: { by?: string; order?: string[]; collapseEmpty?: boolean };
+  card: { show?: string[] };
+  sprint?: string;
+  backlogColumn?: string;
+  columns: BoardColumnView[];
+  /** Items whose status maps to no column: surfaced, never hidden (R-COL-4). */
+  unmapped: BoardCard[];
+  body?: string;
+  diagnostics: Diagnostic[];
+};
+
+/** One entry of the board index. */
+export type BoardSummary = {
+  id: string;
+  kind: BoardKind;
+  title: string;
+  description?: string;
+  path: string;
+  rev: string;
+  vaultId?: string;
+  projects: string[];
+  columns: number;
+  sprint?: string;
+  diagnostics: Diagnostic[];
+};
+
+/** What a card move implied, echoed back so the UI can explain it. */
+export type BoardMovePlan = {
+  ref: string;
+  fromColumn?: string;
+  toColumn: string;
+  status?: string;
+  statusChanged: boolean;
+  /** Every status the target column maps for this project. */
+  choices?: string[];
+  wip: { column: string; used: number; limit: number; exceeded: boolean };
+};
+
+/** A `WriteSet` plus the repository it belongs to. */
+export type VaultWriteSet = { vaultId: string } & WriteSet;
+
+export type BoardMoveResult = {
+  board: BoardView;
+  /** Present only when the move changed a status. */
+  item?: Item;
+  move: BoardMovePlan;
+  /** One entry per repository written: the item's clone and the team repo. */
+  writes: VaultWriteSet[];
+};
+
 /** One repository of the workspace. */
 export type WorkspaceVault = {
   id: string;
@@ -333,6 +453,34 @@ export type CoreApi = {
   'ref.resolve': { params: { ref: string }; result: RefResolution };
 
   'project.list': { params: undefined; result: ProjectSummary[] };
+
+  /** Every board of the team repository. */
+  'board.list': { params: undefined; result: { boards: BoardSummary[]; diagnostics: Diagnostic[] } };
+  /** One board, rendered over every open repository. */
+  'board.get': { params: { board: string }; result: BoardView };
+  /**
+   * Move one card. It writes the item's status in its own project repository
+   * and the board's `order:` list in the team repository, and nothing else
+   * (docs/04 R-MOVE-1). A move that would exceed a WIP limit fails once with
+   * `wip_limit_exceeded`; repeat it with `force` to confirm.
+   */
+  'board.move': {
+    params: {
+      board: string;
+      ref: string;
+      toColumn: string;
+      /** 0-based index in the target column; -1 appends. */
+      position: number;
+      /** Overrides the status the column mapping would pick. */
+      status?: string;
+      /** Board revision the caller read. */
+      rev?: string;
+      /** Item revision the caller read. */
+      itemRev?: string;
+      force?: boolean;
+    };
+    result: BoardMoveResult;
+  };
 
   'item.list': { params: ItemFilter; result: ItemPage };
   'item.get': { params: { id: string }; result: Item };

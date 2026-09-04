@@ -17,7 +17,11 @@
 
 import type {
   BatchResult,
+  BoardMoveResult,
+  BoardSummary,
+  BoardView,
   Capabilities,
+  CardMove,
   ChangeEvent,
   Comment,
   DataProvider,
@@ -80,6 +84,8 @@ export type BrowserProviderOptions = {
 /** Core error codes that map onto a provider code; everything else is internal. */
 const CORE_ERROR_CODES: Record<string, ProviderError['code']> = {
   stale_revision: 'stale_revision',
+  wip_limit_exceeded: 'wip_limit_exceeded',
+  repo_not_cloned: 'repo_not_cloned',
   rev_mismatch: 'stale_revision',
   conflict: 'stale_revision',
   validation_failed: 'validation_failed',
@@ -441,6 +447,57 @@ export class BrowserProvider implements DataProvider {
     await this.#persist(mount, writes);
     this.#emit({ kind: 'kb', repoId: mount.id, paths: [page.path] });
     return page;
+  }
+
+  // -------------------------------------------------------------------- boards
+
+  /**
+   * The boards of the team repository. Without one open there is nothing to
+   * list, which is a state rather than an error.
+   */
+  async listBoards(): Promise<BoardSummary[]> {
+    await this.#ensureActive();
+    try {
+      const result = await this.#call('board.list', undefined);
+      return result.boards;
+    } catch (error) {
+      if (error instanceof ProviderError && error.code === 'not_found') return [];
+      throw error;
+    }
+  }
+
+  async getBoard(slug: string): Promise<BoardView> {
+    await this.#ensureActive();
+    return this.#call('board.get', { board: slug });
+  }
+
+  /**
+   * A move writes two repositories, so the core answers with one `WriteSet`
+   * per repository and each is persisted into the folder it belongs to.
+   */
+  async moveCard(move: CardMove): Promise<BoardMoveResult> {
+    await this.#ensureWritable();
+    const result = await this.#call('board.move', {
+      board: move.board,
+      ref: move.ref,
+      toColumn: move.toColumn,
+      position: move.position,
+      ...(move.status === undefined ? {} : { status: move.status }),
+      ...(move.rev === undefined ? {} : { rev: move.rev }),
+      ...(move.itemRev === undefined ? {} : { itemRev: move.itemRev }),
+      ...(move.force === undefined ? {} : { force: move.force }),
+    });
+    for (const set of result.writes) {
+      const mount = this.#mounts.get(set.vaultId);
+      if (!mount) continue;
+      await this.#persist(mount, { written: set.written, removed: set.removed });
+      this.#emit({ kind: 'repo', repoId: mount.id });
+    }
+    if (result.item) {
+      const mount = this.#mountForItem(result.item.id, await this.#ensureActive());
+      this.#emit({ kind: 'items', repoId: mount.id, ids: [result.item.id] });
+    }
+    return result;
   }
 
   // ------------------------------------------------------------------- events

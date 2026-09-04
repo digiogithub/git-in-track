@@ -9,11 +9,17 @@
  * `@/core-bridge/api` so that the browser provider can pass them through
  * unchanged and the companion provider maps them 1:1 onto the REST API.
  *
- * Board, sprint, retro and git members land with their phases (3 and 4) and
- * are intentionally absent here.
+ * The board members arrived with GIT-US-0017; sprint, retro and git members
+ * land with their stories.
  */
 
 import type {
+  BoardCard,
+  BoardColumnView,
+  BoardMovePlan,
+  BoardMoveResult,
+  BoardSummary,
+  BoardView,
   Comment,
   Diagnostic,
   IndexStats,
@@ -37,6 +43,12 @@ import type {
 } from '@/core-bridge/api';
 
 export type {
+  BoardCard,
+  BoardColumnView,
+  BoardMovePlan,
+  BoardMoveResult,
+  BoardSummary,
+  BoardView,
   Comment,
   Diagnostic,
   IndexStats,
@@ -137,6 +149,8 @@ export type ProviderErrorCode =
   | 'git_conflict'
   | 'git_auth_failed'
   | 'repo_not_cloned'
+  /** A move would put a column over its WIP limit; confirm it to go through. */
+  | 'wip_limit_exceeded'
   | 'internal';
 
 export type ChangeEvent =
@@ -195,9 +209,43 @@ export interface DataProvider {
   addComment(id: string, body: string, author?: string): Promise<Comment>;
   writePage(scope: KbScope, path: string, content: string, rev?: string): Promise<KbPage>;
 
+  // boards (docs/04-team-repository.md §5)
+  /** Every board of the team repository; empty when none is open. */
+  listBoards(): Promise<BoardSummary[]>;
+  /**
+   * One board, rendered over every open repository. A card whose project
+   * nobody cloned comes back `remote: true` with a reason, never missing.
+   */
+  getBoard(slug: string): Promise<BoardView>;
+  /**
+   * Moves one card. It writes the item's status in its own project repository
+   * and the board's `order:` list in the team repository, and nothing else.
+   * A move that would exceed a WIP limit fails with `wip_limit_exceeded`
+   * unless `force` confirms it.
+   */
+  moveCard(move: CardMove): Promise<BoardMoveResult>;
+
   // events
   subscribe(handler: (event: ChangeEvent) => void): Unsubscribe;
 }
+
+/** One card move: where the card goes and which locks the caller holds. */
+export type CardMove = {
+  board: string;
+  /** `<projectKey>/<itemId>`. */
+  ref: string;
+  toColumn: string;
+  /** 0-based index in the target column; -1 appends. */
+  position: number;
+  /** Overrides the status the column mapping would pick. */
+  status?: string;
+  /** Board revision the user was looking at. */
+  rev?: string;
+  /** Item revision the user was looking at. */
+  itemRev?: string;
+  /** Confirms a move over a WIP limit, and an undeclared transition. */
+  force?: boolean;
+};
 
 /** A typed provider failure. Callers switch on `code`, never on an HTTP status. */
 export class ProviderError extends Error {
