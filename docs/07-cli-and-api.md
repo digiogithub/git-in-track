@@ -1396,17 +1396,30 @@ POST  /api/v1/git/commit                     {} flushes what is batched, or
 GET  /api/v1/sync/status                    per-repo ahead/behind/dirty
 POST /api/v1/sync/run                       {"repos":["ACME"],"dryRun":false,"push":true}
 GET  /api/v1/sync/conflicts
-POST /api/v1/sync/conflicts/resolve         {"repo":"TEAM","path":"…","resolution":"ours|theirs|merged","content":"…"}
+GET  /api/v1/sync/conflicts/file?repo=TEAM&path=…   base/ours/theirs + the proposed merge
+POST /api/v1/sync/conflicts/resolve         {"repo":"TEAM","path":"…",
+                                             "resolution":"ours|theirs|merged|manual",
+                                             "content":"…","fields":{…},"hunks":{…},
+                                             "hunkText":{…},"continue":true}
 POST /api/v1/sync/abort
 GET  /api/v1/git/log?item=ACME-T-0311&limit=20
 ```
 
 The `/git` routes are served since GIT-US-0020 and the `/sync` routes since GIT-US-0021,
 which also adds `PATCH /api/v1/sync/settings` (`pullStrategy`, `pushOnSync`,
-`maxPushRetries`). `/git/log` still answers `not_implemented`, and so does
-`POST /api/v1/sync/conflicts/resolve`, which belongs to the conflict resolver of
-GIT-US-0022; `GET /api/v1/sync/conflicts` already lists the conflicted paths of a stopped
-integration.
+`maxPushRetries`). `/git/log` still answers `not_implemented`. The conflict resolver of
+GIT-US-0022 serves the last two: `GET /api/v1/sync/conflicts/file` returns the three
+versions of one conflicted path (base, ours and theirs, read from the index stages, with
+the sides swapped back into the user's frame during a rebase) plus the merge the core
+proposes — the per-field decisions, the body hunks and the canonical merged file — and
+`POST /api/v1/sync/conflicts/resolve` applies a resolution, stages it and continues the
+rebase or merge unless `"continue": false`. `resolution` is `ours` or `theirs` (keep one
+whole side), `manual` (write `content` verbatim) or `merged` (the automatic merge plus the
+`fields` and `hunks` overrides the user flipped). A resolution that would still leave a
+conflicted hunk is refused with `validation_failed` before anything is written; a path that
+is no longer conflicted answers `404 not_found`, because the integration moved on while
+the resolver was open. Applying a resolution needs the system-git backend: go-git cannot
+finish a rebase, so it answers `git_unsupported` (docs/06 §5.7).
 
 ```json
 GET /api/v1/git/settings
@@ -1606,7 +1619,12 @@ Event types and `data` schemas:
             "paths":[".pmngr/boards/platform-kanban.md"],
             "kind":"content|order|delete-modify",
             "resolvable":"assisted",
-            "ours":"sha256:88fa…101","theirs":"sha256:aa02…44c" } }
+            "operation":"rebase|merge", "status": { /* SyncStatus */ } } }
+
+// conflict.resolved — one conflicted path was written, staged and (maybe) continued
+{ "type":"conflict.resolved",
+  "data": { "repo":"TEAM", "path":".pmngr/boards/platform-kanban.md",
+            "resolution":"merged", "continued":true, "remaining":0 } }
 ```
 
 Client→server frames: `subscribe`, `unsubscribe`, `resume`, `ping`. The server sends a
@@ -1810,8 +1828,8 @@ type Backend interface {
     Identity(ctx context.Context) (Identity, error)
     Status(ctx context.Context) (Status, error)
     Commit(ctx context.Context, req CommitRequest) (CommitResult, error)
-    // Fetch, Integrate, Push, Conflicts, ResolvePath and Abort are added by
-    // GIT-US-0021 and GIT-US-0022.
+    // Fetch, Integrate, Push, Abort, Continue and Commits are added by
+    // GIT-US-0021; ConflictFile and ResolvePath by GIT-US-0022.
 }
 
 type CommitRequest struct {
@@ -1860,6 +1878,10 @@ Push(ctx, PushRequest) (PushResult, error)
 Abort(ctx) error                                            // system backend only
 Continue(ctx) (IntegrateResult, error)                      // system backend only
 Commits(ctx, LogRequest) ([]Commit, error)                  // dry-run previews
+
+// The structured conflict surface (GIT-US-0022, doc 06 section 5.7).
+ConflictFile(ctx, path string) (ConflictVersions, error)    // index stages 1/2/3
+ResolvePath(ctx, ResolveRequest) (ResolveResult, error)     // write, stage, continue
 
 // The pipeline over them: preflight, fetch, integrate, push, with the
 // non-fast-forward retry ladder of doc 06 section 4.2.

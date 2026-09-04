@@ -127,6 +127,11 @@ Body in Markdown.
 - **R-FMT-6** When the tool rewrites a file it MUST preserve the body byte-for-byte unless the body
   itself was edited, and it MUST re-emit front matter in the canonical key order given in
   [§3.2](#32-canonical-key-order). Unknown keys are preserved (see `x-` rules in [§13.2](#132-custom-fields)).
+- **R-FMT-7** A file produced by resolving a merge conflict is a file like any other: the
+  conflict resolver merges front matter on parsed values and the body as text, then puts the
+  result back through the same parser and emitter the editor writes with, so the resolution is
+  byte-identical in shape to a normal save and can never contain a conflict marker
+  (docs/06 §5.7, `internal/core/merge.go`).
 
 ### 3.2 Canonical key order
 

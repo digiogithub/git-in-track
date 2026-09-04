@@ -2,9 +2,9 @@
 id: GIT-US-0022
 type: story
 title: Resolve text conflicts in the UI
-status: backlog
+status: in_review
 created: 2026-09-03T00:00:00Z
-updated: 2026-09-03T00:00:00Z
+updated: 2026-09-04
 author: team
 priority: high
 parent: GIT-EP-0005
@@ -33,12 +33,38 @@ the user can always fall back to keep-mine, keep-theirs or manual editing.
 
 ## Acceptance Criteria
 
-- [ ] Conflicted files are listed with the conflict type and the affected fields.
-- [ ] Markdown bodies get a three-way diff with per-hunk selection and manual editing.
-- [ ] Front matter is merged per field on parsed values, never on raw text.
-- [ ] Board `order:` conflicts preserve additions from both sides.
-- [ ] Auto-merged fields are shown explicitly and can be overridden.
-- [ ] Keep-mine, keep-theirs and manual edit are available for every conflict.
-- [ ] Resolving writes a canonical file that validates and completes the rebase or merge.
-- [ ] Aborting restores the pre-sync state exactly.
-- [ ] Conflict scenarios are covered by scripted integration tests.
+- [x] Conflicted files are listed with the conflict type and the affected fields.
+- [x] Markdown bodies get a three-way diff with per-hunk selection and manual editing.
+- [x] Front matter is merged per field on parsed values, never on raw text.
+- [x] Board `order:` conflicts preserve additions from both sides.
+- [x] Auto-merged fields are shown explicitly and can be overridden.
+- [x] Keep-mine, keep-theirs and manual edit are available for every conflict.
+- [x] Resolving writes a canonical file that validates and completes the rebase or merge.
+- [x] Aborting restores the pre-sync state exactly.
+- [x] Conflict scenarios are covered by scripted integration tests.
+
+## Notes
+
+Implemented on `feat/phase-4-git-sync`:
+
+- `internal/core/merge.go` + `merge_text.go` — the three-way merge, front matter
+  field by field on parsed values and the body hunk by hunk (diff3), with the
+  result round-tripped through the emitter the editor writes with. WASM-safe, so
+  browser mode runs the same rules through the `conflict.merge` core method.
+- `internal/gitops` — `Backend.ConflictFile` (index stages 1/2/3, sides swapped
+  back into the user's frame during a rebase) and `Backend.ResolvePath` (write,
+  stage, continue). Reading works on both backends; applying is system-git only,
+  as `Abort` and `Continue` already were.
+- `internal/server/conflicts.go` — `GET /api/v1/sync/conflicts/file` and
+  `POST /api/v1/sync/conflicts/resolve` (replacing the `not_implemented` stub),
+  plus the `conflict.resolved` event.
+- Web — `ConflictResolver`, wired into the sync panel, over new provider methods
+  `readConflict` and `resolveConflict` implemented in all three providers. Browser
+  mode plugs a merge driver into `isomorphic-git`, keeps the conflict in memory
+  (nothing is written while it is open) and replays the merge with the accepted
+  resolution to complete it.
+
+Docs updated: 06 §5.7 (as built), §6.2, §7.1, §13; 07 (routes, events, the
+`Backend` surface); 05 (SyncPanel, ConflictResolver, the provider contract); 03
+(R-FMT-7); 02 (the `internal/gitops` row). No ADR: every decision here follows
+the rules docs/06 §5 already fixed.

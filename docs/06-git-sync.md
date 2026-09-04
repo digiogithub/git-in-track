@@ -406,6 +406,59 @@ to a plain "keep ours / keep theirs / open externally" choice. `project.yaml`,
 `team.yaml` and board headers get the same front-matter-aware treatment as items,
 since they are YAML documents with a known schema.
 
+### 5.7 As built (GIT-US-0022)
+
+The resolver is three layers, and the merge itself is in **one** of them.
+
+**The merge — `internal/core/merge.go` and `merge_text.go`.** `MergeFiles(path,
+{base, ours, theirs}, resolution)` returns the merged file plus everything the UI
+needs to explain it: one `FieldDecision` per front-matter field a decision was
+made for (with the rule that was applied and whether it needs review) and one
+`MergeHunk` per body region the two sides did not both leave alone (with the
+Markdown heading it falls under, the three versions, the choice, and whether it is
+still conflicted). The rules are §5.2, §5.3 and §5.4 exactly: immutable fields
+keep the base value and flag the difference, set-like lists union additions and
+honor deletions, ordered lists and board `order:` mappings merge per §5.4,
+scalars fall back to the newest `updated` and are marked for review, a
+checkbox-only difference resolves to checked, and `## Notes` and
+`## Acceptance Criteria` suggest "take both". The result is put back through the
+parser and the emitter of the type the file declares (`SerializeItem`,
+`SerializeBoard`, `SerializeSprint`, `SerializeComment`), so a resolved file is
+byte-identical in shape to one the editor saves — and never contains a conflict
+marker. The package is WASM-safe, so browser mode runs the same code through
+`conflict.merge` on the core bridge.
+
+**The git plumbing — `internal/gitops`.** `Backend` gained
+`ConflictFile(ctx, path)`, which reads stages 1, 2 and 3 of a conflicted path out
+of the index (base, ours, theirs) plus the working copy and a binary flag, and
+`ResolvePath(ctx, req)`, which writes one resolution, stages it and — once no
+conflicted path is left and the caller asked for it — continues the rebase or
+merge. **Sides are normalised to the user's frame of reference**: during a rebase
+git replays local commits onto the upstream, so its stage 2 is the *remote* work;
+`ConflictFile` swaps them back and sets `rebased: true`, so "keep mine" always
+means the commit this user made. Reading works on both backends; applying a
+resolution is system-git only, for the same reason `Abort` and `Continue` are
+(go-git has no rebase), and go-git says so with `git_unsupported` instead of
+half-resolving. Abort remains available at every step.
+
+**The API — `internal/server/conflicts.go`.**
+`GET /api/v1/sync/conflicts/file?repo=&path=` serves the three versions and the
+proposed merge; `POST /api/v1/sync/conflicts/resolve` takes
+`ours | theirs | merged | manual` plus optional per-field and per-hunk overrides,
+merges in the core, writes, stages and continues, and publishes
+`conflict.resolved`. A resolution that would still leave a conflicted hunk is
+refused before anything is written.
+
+**Browser mode.** `isomorphic-git` rolls a conflicting merge back rather than
+leaving markers on disk, so browser mode plugs a **merge driver** into
+`git.merge`: it sees the base, ours and theirs blobs of every conflicting file,
+hands them to the core, and records what it could not resolve in memory for the
+resolver. The working tree is untouched while a conflict is open — which makes
+"abort restores the pre-sync state" trivially true — and accepting a resolution
+replays the merge with that text supplied to the driver, so the merge completes
+and the merge commit is written. A reload discards a pending conflict and loses
+nothing: nothing had been written.
+
 ---
 
 ## 6. Browser-only mode: `isomorphic-git`
@@ -465,7 +518,7 @@ no-ops). Supported operations: `clone`, `fetch`, `pull` (as fetch + merge),
 | **No SSH** | `git@host:org/repo.git` remotes cannot be used | Detect SSH remotes at mount time and either ask for an HTTPS remote URL (stored as a per-repo "sync URL" override, since the on-disk `origin` stays SSH) or require the companion |
 | **CORS** | Git HTTP endpoints of GitHub/GitLab/Bitbucket do not send CORS headers, so the browser cannot talk to them directly | A CORS proxy is required (§6.3) |
 | **No rebase** | `isomorphic-git` has no rebase implementation | Browser mode uses **merge** as the integration strategy, always. The setting is forced and the UI explains why |
-| Merge driver is limited | `isomorphic-git`'s merge handles fast-forward and non-conflicting three-way merges; conflicting content merges are limited | We run our own three-way merge (§5.2/§5.3) on the blobs we fetch (`base`, `ours`, `theirs` via `readBlob` at the merge bases), so conflict resolution quality does not depend on the library |
+| Merge driver is limited | `isomorphic-git`'s merge handles fast-forward and non-conflicting three-way merges; conflicting content merges are limited | We plug our own merge driver into `git.merge` (`mergeDriver`), which hands us the `base`, `ours` and `theirs` blobs of every conflicting file and takes our merged text back, so conflict resolution quality is the core's (§5.2/§5.3/§5.7) and not the library's |
 | Performance | Pack negotiation and object inflation in JS; large repos are slow | Shallow clone (`depth: 50`) and `singleBranch: true` by default; index/status via `statusMatrix` scoped to the docs folder, not the whole repo; long operations run in the git worker with progress events |
 | Shallow history | `git log` beyond the shallow boundary is unavailable; some merges need a deeper base | On "merge base not found", deepen automatically (`depth *= 4`, up to a cap) and retry once, then tell the user to use the companion |
 | No signing, no hooks, no submodules, no LFS | Signed commits and LFS assets are unsupported in browser mode | Documented; the companion covers all of them (LFS via system git) |
@@ -520,11 +573,10 @@ compatible binary is on `PATH`, else go-git), `go-git`, or `system`.
 
 `internal/gitops` binds one `Backend` to one working tree, so the caller passes
 no repository path per call. It exposes `Name`, `Path`, `Capabilities`,
-`Identity`, `Status` and `Commit` (GIT-US-0020) plus the sync half added by
-GIT-US-0021: `SyncStatus`, `Fetch`, `Integrate`, `Push`, `Abort`, `Continue`
-and `Commits`. The structured conflict surface — reading the base/ours/theirs
-blobs of a conflicted path and continuing from a resolution — is GIT-US-0022 and
-is still deliberately absent rather than declared and unimplemented.
+`Identity`, `Status` and `Commit` (GIT-US-0020), the sync half added by
+GIT-US-0021 (`SyncStatus`, `Fetch`, `Integrate`, `Push`, `Abort`, `Continue`
+and `Commits`) and the structured conflict surface added by GIT-US-0022
+(`ConflictFile` and `ResolvePath`, §5.7).
 
 A third go-git gap matters to sync, on top of the two below: **go-git has no
 rebase, and its merge is fast-forward only.** The go-git backend therefore
@@ -931,7 +983,7 @@ sequenceDiagram
 | 3 | Unknown SSH host key | go-git host key callback | Fingerprint shown, sync aborted | User accepts explicitly (CLI command shown); never auto-accepted |
 | 4 | Push rejected, non-fast-forward | Remote rejection | Automatic fetch+integrate+retry ×3 | Manual retry; local commits are intact |
 | 5 | Push rejected, protected branch | Remote rejection with a policy message | Suggest switching this repo to `user-branch` mode | Change branch policy; existing commits are cherry-picked to the user branch |
-| 6 | Rebase conflict | Git stops with conflicted paths | Conflict UI (§5), sync paused in `CONFLICTS` | Resolve and continue, or abort (tree restored, stash reapplied) |
+| 6 | Rebase conflict | Git stops with conflicted paths | Conflict UI (§5, §5.7), sync paused in `CONFLICTS` | Resolve and continue, or abort (tree restored, stash reapplied) |
 | 7 | Conflict in a file we cannot merge (binary/broken YAML) | Structured merge fails | "Keep ours / keep theirs / open externally" | Manual choice; the raw conflicted file is available |
 | 8 | Interrupted rebase (crash, power loss) | `.git/rebase-merge` present at startup | Repo enters "rebase in progress" state, editing disabled | "Continue" or "Abort" from the sync panel; both are plain git operations |
 | 9 | Dirty tree at sync time | `status` before fetch | Per `git.dirtyPolicy`: commit, stash, ask, or abort | Auto-stash is restored after integration; a failed restore leaves the stash listed with its ref |
@@ -1028,7 +1080,7 @@ on the team repo.
 | 1 | Atomic writes, canonical serialisation, `rev` computation and checks. No git yet |
 | 2 | fsnotify watcher, debounce, WS change events, external-change detection including `.git/HEAD` |
 | 3 | Team-index snapshot generation and its deterministic merge rule; cross-repo operation journal |
-| 4 | Commit-on-save and the two native backends (GIT-US-0020, done); the sync pipeline — fetch, rebase or merge, push, retries, dry run, status indicator — plus isomorphic-git browser sync and the CORS-proxy handling (GIT-US-0021, done; branch policy §4.3 deferred); front-matter-aware merge, conflict UI, ID collision repair (GIT-US-0022); credential handling in both runtimes (GIT-US-0023, done — delegation to the user's helper and ssh-agent natively, a per-session in-memory token in the browser, and redaction everywhere) |
+| 4 | Commit-on-save and the two native backends (GIT-US-0020, done); the sync pipeline — fetch, rebase or merge, push, retries, dry run, status indicator — plus isomorphic-git browser sync and the CORS-proxy handling (GIT-US-0021, done; branch policy §4.3 deferred); front-matter-aware merge and the conflict UI (GIT-US-0022, done — §5.7; ID collision repair §5.5 is still to come); credential handling in both runtimes (GIT-US-0023, done — delegation to the user's helper and ssh-agent natively, a per-session in-memory token in the browser, and redaction everywhere) |
 | 5 | MCP writes go through exactly the same write path and `rev` checks; agent-authored commits carry a `Tool:` trailer identifying the agent |
 | 6 | Auto-sync interval, WebAuthn-protected browser credentials, sync metrics in the dashboard, force-push recovery flow polish |
 
