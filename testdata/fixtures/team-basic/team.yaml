@@ -1,0 +1,78 @@
+# Fixture team repository used by the internal/core, internal/vault and
+# internal/server tests. Field reference: docs/04-team-repository.md, section 3.
+schema: 1
+key: DEMO-TEAM
+name: Demo Delivery Team
+description: Fixture team owning the Demo Shop backlog and the marketing website.
+timezone: Europe/Madrid
+
+knowledge:
+  path: knowledge
+  wikilinks: true
+  mermaid: true
+  math: false
+  footnotes: true
+  callouts: true
+
+cadence:
+  sprint_length_days: 14
+  sprint_start_weekday: monday
+  retro_after_sprint: true
+
+defaults:
+  board: delivery
+  capacity_hours_per_day: 6
+
+policies:
+  definition_of_done: knowledge/ways-of-working/definition-of-done.md
+
+snapshots:
+  enabled: true
+  max_age_days: 7
+  include_closed: false
+
+members:
+  - handle: jose
+    name: Jose Ruiz
+    role: lead
+    emails: [jose@example.com]
+    handles: { github: joseruiz }
+    capacity: 1.0
+    active: true
+  - handle: marta
+    name: Marta Alonso
+    role: dev
+    emails: [marta@example.com, marta.alonso@example.org]
+    git_names: ["Marta Alonso", "malonso"]
+    capacity: 1.0
+    active: true
+  - handle: bot-ci
+    name: CI Bot
+    role: bot
+    emails: [ci@example.com]
+  - handle: laura
+    name: Laura Prat
+    role: dev
+    emails: [laura@example.com]
+    active: false
+
+projects:
+  # Cloned locally by the tests: testdata/fixtures/project-basic.
+  - key: DEMO
+    name: Demo Shop
+    repo: https://github.com/example/demo-shop.git
+    default_branch: main
+    docs_path: docs
+    host: github
+    web_url: https://github.com/example/demo-shop
+    color: "#2563eb"
+    local_hints: [~/src/example/demo-shop]
+  # Declared but never cloned: every reference into it is remote.
+  - key: WEB
+    name: Marketing Website
+    repo: https://gitlab.com/example/website.git
+    default_branch: main
+    docs_path: documentation
+    host: gitlab
+    web_url: https://gitlab.com/example/website
+    color: "#7c3aed"

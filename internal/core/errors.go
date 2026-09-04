@@ -61,6 +61,19 @@ const (
 	CodeProjInitial          Code = "E-PROJ-INITIAL"
 	CodeProjTransitionTarget Code = "E-PROJ-TRANSITION-TARGET"
 
+	// Team-repository codes (docs/04 section 3.5). The rules that need a local
+	// clone (W-TEAM-KEY-MISMATCH) are raised by the workspace, not by the parser.
+	CodeTeamSchema            Code = "E-TEAM-SCHEMA"
+	CodeTeamKey               Code = "E-TEAM-KEY"
+	CodeTeamKeyDup            Code = "E-TEAM-KEY-DUP"
+	CodeTeamHandleDup         Code = "E-TEAM-HANDLE-DUP"
+	CodeTeamEmailDup          Code = "E-TEAM-EMAIL-DUP"
+	CodeTeamMemberFields      Code = "E-TEAM-MEMBER-FIELDS"
+	CodeTeamProjectFields     Code = "E-TEAM-PROJECT-FIELDS"
+	CodeTeamBacklogInTeamRepo Code = "E-TEAM-BACKLOG-IN-TEAM-REPO"
+	CodeTeamKeyMismatch       Code = "W-TEAM-KEY-MISMATCH"
+	CodeTeamWebURL            Code = "W-TEAM-WEB-URL"
+
 	CodeWarnNoDone       Code = "W-PROJ-NO-DONE"
 	CodeWarnLabelDup     Code = "W-PROJ-LABEL-DUP"
 	CodeWarnCounterStale Code = "W-PROJ-COUNTER-STALE"

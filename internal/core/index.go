@@ -74,6 +74,10 @@ type ProjectRef struct {
 	Config *ProjectConfig `json:"-"`
 	// Diagnostics are the findings of project.yaml validation.
 	Diagnostics []Diagnostic `json:"-"`
+	// Team marks the pseudo-project that stands for a team repository's
+	// knowledge base (docs/04 section 4). It has no backlog: the indexer scans
+	// its pages and nothing else, and it is never reported as a project.
+	Team bool `json:"team,omitempty"`
 }
 
 // DiscoverProjects walks a vault from root and returns every project backlog it
@@ -406,8 +410,10 @@ func (ix *Index) Build(ctx context.Context, full bool) (IndexStats, error) {
 			return ix.stats.clone(), err
 		}
 		p := ix.projects[i]
-		if err := ix.scanBacklog(ctx, p, pass); err != nil {
-			return ix.stats.clone(), err
+		if !p.Team {
+			if err := ix.scanBacklog(ctx, p, pass); err != nil {
+				return ix.stats.clone(), err
+			}
 		}
 		if err := ix.scanKnowledgeBase(ctx, p, pass); err != nil {
 			return ix.stats.clone(), err
@@ -899,6 +905,14 @@ const (
 // classify locates a path inside the projects the index covers.
 func (ix *Index) classify(filePath string) (ProjectRef, fileKind, ItemType, bool) {
 	for _, p := range ix.projects {
+		if p.Team {
+			// A team scope owns pages only: its `.pmngr/` holds boards, sprints
+			// and retros, which are not this story's business.
+			if _, ok := underDir(p.DocsPath, filePath); ok && isMarkdown(filePath) {
+				return p, filePage, "", true
+			}
+			continue
+		}
 		if filePath == p.ConfigPath {
 			return p, fileConfig, "", true
 		}
@@ -1270,7 +1284,12 @@ func (ix *Index) updateCounts() {
 		}
 		warnCount++
 	}
-	ix.stats.Projects = len(ix.projects)
+	ix.stats.Projects = 0
+	for _, p := range ix.projects {
+		if !p.Team {
+			ix.stats.Projects++
+		}
+	}
 	ix.stats.Files = len(ix.files)
 	ix.stats.Items = len(ix.byID)
 	ix.stats.Comments = len(ix.commentsByPath)

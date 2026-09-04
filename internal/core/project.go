@@ -35,7 +35,7 @@ type ProjectConfig struct {
 	Defaults     map[ItemType]ItemDefaults `yaml:"defaults,omitempty"`
 	CustomFields []CustomField             `yaml:"custom_fields,omitempty"`
 	People       []Person                  `yaml:"people,omitempty"`
-	Team         *TeamRef                  `yaml:"team,omitempty"`
+	Team         *TeamLink                 `yaml:"team,omitempty"`
 	Links        *LinksConfig              `yaml:"links,omitempty"`
 }
 
@@ -155,8 +155,10 @@ type Person struct {
 	Kind   string `yaml:"kind,omitempty"`
 }
 
-// TeamRef points at the team repository this project belongs to.
-type TeamRef struct {
+// TeamLink points at the team repository this project belongs to. It is the
+// `team:` block of project.yaml, not a team repository the app has opened:
+// that one is a TeamRef (docs/04 section 3).
+type TeamLink struct {
 	Repo string `yaml:"repo,omitempty"`
 	Key  string `yaml:"key,omitempty"`
 }
