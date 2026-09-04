@@ -47,11 +47,12 @@ Then read only what your task needs: `docs/01-vision-and-scope.md`,
 ```
 cmd/gintrack/            # CLI entry point (cobra commands only, thin)
 internal/core/           # model, front-matter parser, index, query, ID allocation
+internal/vault/          # the CoreApi contract over a core.FS (browser and companion share it)
 internal/server/         # HTTP/WS API; embeds web/dist
 internal/watcher/        # fsnotify file watching
 internal/gitops/         # go-git wrapper (and optional system-git shell-out)
 internal/mcp/            # MCP server and tool definitions
-wasm/                    # WASM entry point (main_js.go) + JS glue
+wasm/                    # WASM entry point (main_js.go) + JS glue, no domain logic
 web/                     # React + Vite + TypeScript app
 docs/                    # planning docs, docs/adr/, docs/.pmngr/ backlog
 .github/workflows/       # ci.yml, release.yml

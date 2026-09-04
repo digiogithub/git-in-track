@@ -9,22 +9,33 @@ import (
 	"syscall/js"
 
 	"github.com/digiogithub/git-in-track/internal/core"
+	"github.com/digiogithub/git-in-track/internal/vault"
 )
 
 // namespace is the global object the Web Worker talks to.
 const namespace = "gintrackCore"
 
-// commit and date are set with -ldflags by the release build; version lives in
-// bridge.go because the "version" method of the bridge answers with it.
+// version, commit and date are set with -ldflags by the release build, exactly
+// as they are for the CLI binary. The version is handed to the vault, whose
+// "version" method answers with it.
 var (
-	commit = "none"
-	date   = "unknown"
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
 )
 
-// vault is the single Bridge the worker drives. One worker owns one vault, so a
+// api is the single vault the worker drives. One worker owns one vault, so a
 // package-level value is the whole lifecycle: it is created when the module
 // starts and lives until the worker is terminated.
-var vault = NewBridge()
+var api = newVault()
+
+// newVault returns the in-memory vault of a browser-only session, tagged with
+// the build of this module. Its files arrive through the "vault.load" method.
+func newVault() *vault.Vault {
+	v := vault.NewInMemory()
+	v.SetVersion(version)
+	return v
+}
 
 func main() {
 	ns := js.Global().Get("Object").New()
@@ -52,7 +63,7 @@ func jsCall(_ js.Value, args []js.Value) any {
 	if len(args) > 1 && args[1].Type() == js.TypeString {
 		params = args[1].String()
 	}
-	return vault.Call(args[0].String(), params)
+	return api.Call(args[0].String(), params)
 }
 
 // jsVersion reports the build and the data-model schema this module implements.

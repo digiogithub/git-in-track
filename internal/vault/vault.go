@@ -1,4 +1,4 @@
-package main
+package vault
 
 import (
 	"bytes"
@@ -15,149 +15,301 @@ import (
 	"github.com/digiogithub/git-in-track/internal/core"
 )
 
-// version is set with -ldflags by the release build, exactly as it is for the
-// CLI binary. It lives in this file, and not in the build-tagged entry point,
-// because the "version" method answers with it and is covered by native tests.
+// version is the build the "version" method answers with when the host injects
+// none. Each host sets its own with (*Vault).SetVersion: the WebAssembly module
+// passes the value -ldflags wrote into wasm/main_js.go, the CLI passes the one
+// it prints in `gintrack version`.
 var version = "dev"
 
-// protocolVersion is the version of the request envelope the worker speaks. It
+// ProtocolVersion is the version of the request envelope the hosts speak. It
 // must match CORE_PROTOCOL_VERSION in web/src/core-bridge/protocol.ts.
-const protocolVersion = 1
+const ProtocolVersion = 1
 
-// Bridge is the whole browser-only backend: one in-memory vault, the projects
-// discovered in it, the index built over it and one file store per project.
+// Vault is the whole backend behind the CoreApi contract: one file system, the
+// projects discovered in it, the index built over it and one file store per
+// project.
 //
-// It is deliberately free of syscall/js so that every method of the CoreApi
-// contract is exercised by native Go tests; wasm/main_js.go only marshals
-// strings in and out of JavaScript.
+// It is deliberately free of syscall/js, os and path/filepath so that the same
+// implementation serves the browser (over an in-memory file system filled by
+// "vault.load") and the companion process (over internal/core/osfs). Every
+// method of the contract is therefore exercised by native Go tests, and
+// wasm/main_js.go only marshals strings in and out of JavaScript.
 //
-// A Bridge is safe for concurrent use, although the worker drives it from a
-// single thread.
-type Bridge struct {
-	mu        sync.Mutex
+// A Vault is safe for concurrent use.
+type Vault struct {
+	mu sync.Mutex
+	// base is the file system the vault is mounted on, untracked: writes that
+	// come from outside (a host event, a "vault.load") go through it so that
+	// they never show up in the next WriteSet.
+	base core.FS
+	// mem is base when it is an in-memory file system, nil otherwise. It is what
+	// tells the two modes apart: only an in-memory vault can be replaced
+	// wholesale by "vault.load" or fed file contents by "vault.apply".
 	mem       *core.MemFS
 	fs        *trackingFS
 	projects  []core.ProjectRef
 	index     *core.Index
 	stores    map[core.ProjectKey]*core.FileStore
 	rootLabel string
+	version   string
 
 	// now supplies build timestamps and the created/updated stamps of writes.
 	// It defaults to time.Now and exists so that tests can pin them.
 	now func() time.Time
 }
 
-// NewBridge returns a bridge over an empty vault. Call "vault.load" to fill it.
-func NewBridge() *Bridge {
-	b := &Bridge{now: time.Now}
-	b.mount(core.NewMemFS())
-	return b
+// Options configures a Vault.
+type Options struct {
+	// FS is the file system the vault is mounted on. A nil FS mounts a fresh
+	// in-memory one, which is the browser's cold start: "vault.load" fills it.
+	FS core.FS
+	// Root is the human-readable label of the vault root: a directory handle
+	// name in the browser, the vault directory in the companion process.
+	Root string
+	// Version is the build the "version" method reports. Empty means the
+	// package default.
+	Version string
+	// Now supplies build timestamps and the created/updated stamps of writes.
+	// Nil means time.Now.
+	Now func() time.Time
+	// Scan builds the index over FS as part of the call. It is what a
+	// disk-backed host wants; the browser leaves it off because its vault is
+	// empty until "vault.load" arrives.
+	Scan bool
+}
+
+// New returns a vault configured by opts. It only fails when opts.Scan is set
+// and the initial scan of the file system fails.
+func New(opts Options) (*Vault, error) {
+	v := newVault(opts)
+	if !opts.Scan {
+		return v, nil
+	}
+	if _, err := v.reload(context.Background()); err != nil {
+		return nil, err
+	}
+	return v, nil
+}
+
+// newVault mounts a vault without scanning it, which is the only part of
+// construction that cannot fail.
+func newVault(opts Options) *Vault {
+	v := &Vault{now: opts.Now, version: opts.Version, rootLabel: opts.Root}
+	if v.now == nil {
+		v.now = time.Now
+	}
+	if v.version == "" {
+		v.version = version
+	}
+	fsys := opts.FS
+	if fsys == nil {
+		fsys = core.NewMemFS()
+	}
+	v.mount(fsys)
+	return v
+}
+
+// NewInMemory returns a vault over an empty in-memory file system, which is how
+// the browser starts: call "vault.load" to fill it.
+func NewInMemory() *Vault {
+	return newVault(Options{})
+}
+
+// Open mounts an existing vault on fsys, discovers its projects and builds the
+// index from the files themselves. It is the native entry point: unlike the
+// browser, a companion process reads the vault directly instead of having the
+// host push file contents in.
+func Open(fsys core.FS, rootLabel string) (*Vault, error) {
+	if fsys == nil {
+		return nil, failf("invalid_request", "open vault: no file system")
+	}
+	return New(Options{FS: fsys, Root: rootLabel, Scan: true})
 }
 
 // SetClock replaces the clock used for build timestamps and for the created and
 // updated fields of new items. It exists for tests and for reproducible fixtures.
-func (b *Bridge) SetClock(now func() time.Time) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
+func (v *Vault) SetClock(now func() time.Time) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
 	if now == nil {
 		now = time.Now
 	}
-	b.now = now
-	b.index.Now = now
-	for _, s := range b.stores {
+	v.now = now
+	v.index.Now = now
+	for _, s := range v.stores {
 		s.Clock = core.ClockFunc(now)
 	}
 }
 
-// bridgeError carries the stable error code the UI switches on, and the file the
-// failure is about when there is one.
-type bridgeError struct {
+// SetVersion sets the build string the "version" method reports. Each host
+// injects its own: the browser module the value -ldflags wrote into it, the
+// companion process the version of the binary.
+func (v *Vault) SetVersion(build string) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if build == "" {
+		build = version
+	}
+	v.version = build
+}
+
+// Root returns the label of the vault root the host mounted.
+func (v *Vault) Root() string {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.rootLabel
+}
+
+// Projects returns the projects discovered in the vault, in discovery order.
+func (v *Vault) Projects() []core.ProjectRef {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	out := make([]core.ProjectRef, len(v.projects))
+	copy(out, v.projects)
+	return out
+}
+
+// Stats reports the current state of the index.
+func (v *Vault) Stats() IndexStats {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.stats()
+}
+
+// Reload discovers the projects again and rebuilds the whole index from the
+// file system. It is what a watcher calls after a change it cannot describe as
+// a list of events: a branch switch, a pull, a directory rename.
+func (v *Vault) Reload(ctx context.Context) (IndexStats, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.reload(ctx)
+}
+
+// ApplyEvents folds a batch of file events into the index and reports exactly
+// what changed, so that a caller can invalidate only the affected queries.
+//
+// The files are read back through the vault's file system, which is why a
+// native watcher only has to say which paths moved, not what they now contain.
+// A change to a project.yaml that adds or removes a project forces a full
+// rebuild, and the returned delta is then empty: call Stats for the new totals.
+func (v *Vault) ApplyEvents(ctx context.Context, events []core.FileEvent) (core.IndexDelta, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	delta, _, err := v.applyEvents(ctx, events)
+	return delta, err
+}
+
+// Error carries the stable error code the hosts switch on, the message and the
+// file the failure is about when there is one. The browser reports it as the
+// `error` half of the JSON envelope; the companion server maps Code onto an
+// RFC 7807 problem type.
+type Error struct {
 	Code    string
 	Message string
 	Path    string
 }
 
 // Error implements the error interface.
-func (e *bridgeError) Error() string { return e.Message }
+func (e *Error) Error() string { return e.Message }
 
-// failf builds a bridgeError with a formatted message.
-func failf(code, format string, args ...any) *bridgeError {
-	return &bridgeError{Code: code, Message: fmt.Sprintf(format, args...)}
+// AsError classifies err into the stable code catalog. It reports false only
+// for a nil error: anything it does not recognize comes back as "internal", so
+// a host can map every failure without repeating the catalog.
+func AsError(err error) (*Error, bool) {
+	if err == nil {
+		return nil, false
+	}
+	var already *Error
+	if errors.As(err, &already) {
+		return already, true
+	}
+	out := &Error{Code: "internal", Message: err.Error()}
+	classify(err, out)
+	return out, true
+}
+
+// failf builds an Error with a formatted message.
+func failf(code, format string, args ...any) *Error {
+	return &Error{Code: code, Message: fmt.Sprintf(format, args...)}
 }
 
 // Call runs one CoreApi method and returns the JSON envelope, never an error:
 // the boundary with JavaScript has one shape, `{"ok":true,"result":…}` or
 // `{"ok":false,"error":{"code","message","path"}}`.
-func (b *Bridge) Call(method, params string) string {
-	result, err := b.dispatch(method, []byte(params))
+func (v *Vault) Call(method, params string) string {
+	result, err := v.Dispatch(context.Background(), method, []byte(params))
 	if err != nil {
 		return failureEnvelope(err)
 	}
 	return successEnvelope(result)
 }
 
-// dispatch routes one method to its handler. The vault mutex is held for the
-// whole call so that a query never observes a half-applied write.
-func (b *Bridge) dispatch(method string, raw []byte) (any, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	ctx := context.Background()
+// Dispatch routes one method of the CoreApi contract to its handler and returns
+// the typed result, which is what the companion server serves and what Call
+// wraps in the JSON envelope the browser expects. Every failure it returns can
+// be classified with AsError.
+//
+// The vault mutex is held for the whole call so that a query never observes a
+// half-applied write.
+func (v *Vault) Dispatch(ctx context.Context, method string, raw []byte) (any, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
 
 	switch method {
 	case "ping":
 		return map[string]any{"pong": true, "wasm": true}, nil
 	case "version":
-		return map[string]any{"protocol": protocolVersion, "core": version}, nil
+		return map[string]any{"protocol": ProtocolVersion, "core": v.version}, nil
 
 	case "vault.load":
-		return b.vaultLoad(ctx, raw)
+		return v.vaultLoad(ctx, raw)
 	case "vault.apply":
-		return b.vaultApply(ctx, raw)
+		return v.vaultApply(ctx, raw)
 	case "vault.stats":
-		return b.stats(), nil
+		return v.stats(), nil
 	case "snapshot.export":
-		return b.snapshotExport()
+		return v.snapshotExport()
 	case "snapshot.load":
-		return b.snapshotLoad(raw)
+		return v.snapshotLoad(raw)
 
 	case "project.list":
-		return b.projectList(), nil
+		return v.projectList(), nil
 
 	case "item.list":
-		return b.itemList(ctx, raw)
+		return v.itemList(ctx, raw)
 	case "item.get":
-		return b.itemGet(raw)
+		return v.itemGet(raw)
 	case "item.children":
-		return b.itemChildren(raw)
+		return v.itemChildren(raw)
 	case "item.create":
-		return b.itemCreate(ctx, raw)
+		return v.itemCreate(ctx, raw)
 	case "item.update":
-		return b.itemUpdate(ctx, raw)
+		return v.itemUpdate(ctx, raw)
 	case "item.move":
-		return b.itemMove(ctx, raw)
+		return v.itemMove(ctx, raw)
 	case "item.delete":
-		return b.itemDelete(ctx, raw)
+		return v.itemDelete(ctx, raw)
 	case "item.validate":
-		return b.itemValidate(raw)
+		return v.itemValidate(raw)
 	case "item.parse":
-		return b.itemParse(raw)
+		return v.itemParse(raw)
 	case "item.serialize":
-		return b.itemSerialize(raw)
+		return v.itemSerialize(raw)
 
 	case "comment.list":
-		return b.commentList(raw)
+		return v.commentList(raw)
 	case "comment.add":
-		return b.commentAdd(ctx, raw)
+		return v.commentAdd(ctx, raw)
 
 	case "kb.tree":
-		return b.kbTree(raw)
+		return v.kbTree(raw)
 	case "kb.page":
-		return b.kbPage(raw)
+		return v.kbPage(raw)
 	case "kb.write":
-		return b.kbWrite(ctx, raw)
+		return v.kbWrite(ctx, raw)
 
 	case "search":
-		return b.search(raw)
+		return v.search(raw)
 	default:
 		return nil, failf("unknown_method", "unknown method %q", method)
 	}
@@ -165,41 +317,42 @@ func (b *Bridge) dispatch(method string, raw []byte) (any, error) {
 
 // ---------------------------------------------------------------- vault ----
 
-// mount replaces the in-memory vault, rediscovers its projects and rebuilds the
-// index over them. The caller holds the lock, except in NewBridge.
-func (b *Bridge) mount(mem *core.MemFS) {
-	b.mem = mem
-	b.fs = newTrackingFS(mem)
-	b.projects = nil
-	b.index = core.NewIndex(b.fs, nil)
-	if b.now != nil {
-		b.index.Now = b.now
+// mount points the vault at a file system and drops everything derived from the
+// previous one. The caller holds the lock, except in New.
+func (v *Vault) mount(fsys core.FS) {
+	v.base = fsys
+	v.mem, _ = fsys.(*core.MemFS)
+	v.fs = newTrackingFS(fsys)
+	v.projects = nil
+	v.index = core.NewIndex(v.fs, nil)
+	if v.now != nil {
+		v.index.Now = v.now
 	}
-	b.stores = map[core.ProjectKey]*core.FileStore{}
+	v.stores = map[core.ProjectKey]*core.FileStore{}
 }
 
 // rediscover walks the vault again and rebuilds the per-project stores. It
 // reports whether the set of projects changed, which is what forces a full
 // rebuild instead of an incremental pass.
-func (b *Bridge) rediscover() (bool, error) {
-	found, err := core.DiscoverProjects(b.fs, ".")
+func (v *Vault) rediscover() (bool, error) {
+	found, err := core.DiscoverProjects(v.fs, ".")
 	if err != nil {
 		return false, fmt.Errorf("discover projects: %w", err)
 	}
-	changed := !sameProjects(b.projects, found)
-	b.projects = found
-	b.stores = make(map[core.ProjectKey]*core.FileStore, len(found))
+	changed := !sameProjects(v.projects, found)
+	v.projects = found
+	v.stores = make(map[core.ProjectKey]*core.FileStore, len(found))
 	for _, p := range found {
 		if p.Config == nil || p.Key == "" {
 			// project.yaml could not be decoded: the vault opens read-only for
 			// that project rather than pretending the folder is not there.
 			continue
 		}
-		store := core.NewStore(b.fs, p.BacklogPath, p.Config)
-		if b.now != nil {
-			store.Clock = core.ClockFunc(b.now)
+		store := core.NewStore(v.fs, p.BacklogPath, p.Config)
+		if v.now != nil {
+			store.Clock = core.ClockFunc(v.now)
 		}
-		b.stores[p.Key] = store
+		v.stores[p.Key] = store
 	}
 	return changed, nil
 }
@@ -218,9 +371,34 @@ func sameProjects(a, c []core.ProjectRef) bool {
 	return true
 }
 
+// rebuild throws the index away and builds it again over the mounted file
+// system, keeping the projects discovered last. The caller holds the lock.
+func (v *Vault) rebuild(ctx context.Context) (IndexStats, error) {
+	v.index = core.NewIndex(v.fs, v.projects)
+	v.index.Now = v.now
+	if _, err := v.index.Build(ctx, true); err != nil {
+		return IndexStats{}, fmt.Errorf("build index: %w", err)
+	}
+	return v.stats(), nil
+}
+
+// reload rediscovers the projects and rebuilds the whole index from the files.
+// The caller holds the lock.
+func (v *Vault) reload(ctx context.Context) (IndexStats, error) {
+	if _, err := v.rediscover(); err != nil {
+		return IndexStats{}, err
+	}
+	return v.rebuild(ctx)
+}
+
 // vaultLoad replaces the vault with the files the host pushed and builds the
-// index from scratch.
-func (b *Bridge) vaultLoad(ctx context.Context, raw []byte) (any, error) {
+// index from scratch. It is meaningless for a vault that reads its own files:
+// there, a full rescan is Reload.
+func (v *Vault) vaultLoad(ctx context.Context, raw []byte) (any, error) {
+	if v.mem == nil {
+		return nil, failf("invalid_request",
+			"this vault reads its files itself: reload it instead of pushing files in")
+	}
 	p, err := decodeParams[vaultLoadParams](raw)
 	if err != nil {
 		return nil, err
@@ -228,93 +406,109 @@ func (b *Bridge) vaultLoad(ctx context.Context, raw []byte) (any, error) {
 	mem := core.NewMemFS()
 	for _, f := range p.Files {
 		if err := mem.WriteFile(f.Path, []byte(f.Text)); err != nil {
-			return nil, &bridgeError{Code: "invalid_request", Message: err.Error(), Path: f.Path}
+			return nil, &Error{Code: "invalid_request", Message: err.Error(), Path: f.Path}
 		}
 	}
-	b.mount(mem)
-	b.rootLabel = p.RootLabel
-	if _, err := b.rediscover(); err != nil {
+	v.mount(mem)
+	v.rootLabel = p.RootLabel
+	stats, err := v.reload(ctx)
+	if err != nil {
 		return nil, err
 	}
-	b.index = core.NewIndex(b.fs, b.projects)
-	b.index.Now = b.now
-	if _, err := b.index.Build(ctx, true); err != nil {
-		return nil, fmt.Errorf("build index: %w", err)
-	}
-	return b.stats(), nil
+	return stats, nil
 }
 
 // vaultApply mirrors a batch of host file events into the vault and re-indexes
 // only what they touched.
-func (b *Bridge) vaultApply(ctx context.Context, raw []byte) (any, error) {
+func (v *Vault) vaultApply(ctx context.Context, raw []byte) (any, error) {
 	p, err := decodeParams[vaultApplyParams](raw)
 	if err != nil {
 		return nil, err
 	}
 	events := make([]core.FileEvent, 0, len(p.Events))
-	configTouched := false
 	for _, ev := range p.Events {
 		kind, err := fileEventKind(ev.Op)
 		if err != nil {
 			return nil, err
 		}
-		if err := b.applyToVault(kind, ev); err != nil {
+		if err := v.applyToVault(kind, ev); err != nil {
 			return nil, err
-		}
-		if isProjectFile(ev.Path) || isProjectFile(ev.From) {
-			configTouched = true
 		}
 		events = append(events, core.FileEvent{Kind: kind, Path: ev.Path, OldPath: ev.From})
 	}
+	delta, rebuilt, err := v.applyEvents(ctx, events)
+	if err != nil {
+		return nil, err
+	}
+	stats := v.stats()
+	if !rebuilt {
+		stats.Delta = &delta
+	}
+	return stats, nil
+}
 
+// applyEvents re-indexes what a batch of file events touched. It reports the
+// delta and whether the batch forced a full rebuild, which leaves the delta
+// empty. The caller holds the lock.
+func (v *Vault) applyEvents(ctx context.Context, events []core.FileEvent) (core.IndexDelta, bool, error) {
+	configTouched := false
+	for _, ev := range events {
+		if isProjectFile(ev.Path) || isProjectFile(ev.OldPath) {
+			configTouched = true
+			break
+		}
+	}
 	if configTouched {
-		changed, err := b.rediscover()
+		changed, err := v.rediscover()
 		if err != nil {
-			return nil, err
+			return core.IndexDelta{}, false, err
 		}
 		if changed {
 			// A project appeared or vanished: the layout classification of every
 			// file may have changed, so an incremental pass cannot be trusted.
-			b.index = core.NewIndex(b.fs, b.projects)
-			b.index.Now = b.now
-			if _, err := b.index.Build(ctx, true); err != nil {
-				return nil, fmt.Errorf("build index: %w", err)
+			if _, err := v.rebuild(ctx); err != nil {
+				return core.IndexDelta{}, true, err
 			}
-			return b.stats(), nil
+			return core.IndexDelta{}, true, nil
 		}
 	}
-
-	delta, err := b.index.ApplyFileEvents(ctx, events)
+	delta, err := v.index.ApplyFileEvents(ctx, events)
 	if err != nil {
-		return nil, fmt.Errorf("apply file events: %w", err)
+		return core.IndexDelta{}, false, fmt.Errorf("apply file events: %w", err)
 	}
-	stats := b.stats()
-	stats.Delta = &delta
-	return stats, nil
+	return delta, false, nil
 }
 
-// applyToVault writes one host event into the in-memory file system. It goes
-// straight to the MemFS: these bytes come from the host, which has already
-// persisted them, so they must not show up in the next WriteSet.
-func (b *Bridge) applyToVault(kind core.FileEventKind, ev fileEventParams) error {
+// applyToVault mirrors one host event into the in-memory file system. It goes
+// straight to the MemFS, bypassing the write log: these bytes come from the
+// host, which has already persisted them, so they must not show up in the next
+// WriteSet.
+//
+// A vault that reads its own files has nothing to mirror. There the event only
+// names the path that changed, and the bytes are read back from the file system
+// itself, which is why a native watcher never has to carry file contents.
+func (v *Vault) applyToVault(kind core.FileEventKind, ev fileEventParams) error {
+	if v.mem == nil {
+		return nil
+	}
 	switch kind {
 	case core.FileCreated, core.FileModified:
-		if err := b.mem.WriteFile(ev.Path, []byte(ev.Text)); err != nil {
-			return &bridgeError{Code: "invalid_request", Message: err.Error(), Path: ev.Path}
+		if err := v.mem.WriteFile(ev.Path, []byte(ev.Text)); err != nil {
+			return &Error{Code: "invalid_request", Message: err.Error(), Path: ev.Path}
 		}
 	case core.FileRemoved:
-		if err := b.mem.Remove(ev.Path); err != nil && !errors.Is(err, core.ErrNotExist) {
-			return &bridgeError{Code: "internal", Message: err.Error(), Path: ev.Path}
+		if err := v.mem.Remove(ev.Path); err != nil && !errors.Is(err, core.ErrNotExist) {
+			return &Error{Code: "internal", Message: err.Error(), Path: ev.Path}
 		}
 	case core.FileRenamed:
 		if ev.From != "" {
-			if err := b.mem.Rename(ev.From, ev.Path); err != nil && !errors.Is(err, core.ErrNotExist) {
-				return &bridgeError{Code: "internal", Message: err.Error(), Path: ev.Path}
+			if err := v.mem.Rename(ev.From, ev.Path); err != nil && !errors.Is(err, core.ErrNotExist) {
+				return &Error{Code: "internal", Message: err.Error(), Path: ev.Path}
 			}
 		}
 		if ev.Text != "" {
-			if err := b.mem.WriteFile(ev.Path, []byte(ev.Text)); err != nil {
-				return &bridgeError{Code: "invalid_request", Message: err.Error(), Path: ev.Path}
+			if err := v.mem.WriteFile(ev.Path, []byte(ev.Text)); err != nil {
+				return &Error{Code: "invalid_request", Message: err.Error(), Path: ev.Path}
 			}
 		}
 	}
@@ -348,13 +542,13 @@ func isProjectFile(p string) bool {
 }
 
 // stats projects the current index state onto the contract's IndexStats.
-func (b *Bridge) stats() indexStats {
-	return newIndexStats(b.index.Stats(), b.index.Fingerprint(), b.index.Warnings())
+func (v *Vault) stats() IndexStats {
+	return newIndexStats(v.index.Stats(), v.index.Fingerprint(), v.index.Warnings())
 }
 
 // snapshotExport serializes the index for the IndexedDB cache.
-func (b *Bridge) snapshotExport() (any, error) {
-	snap := b.index.Snapshot()
+func (v *Vault) snapshotExport() (any, error) {
+	snap := v.index.Snapshot()
 	data, err := core.EncodeSnapshot(snap)
 	if err != nil {
 		return nil, fmt.Errorf("encode snapshot: %w", err)
@@ -365,7 +559,7 @@ func (b *Bridge) snapshotExport() (any, error) {
 // snapshotLoad hydrates the index from a cached snapshot, without any files. The
 // result answers structural queries immediately; bodies and search come back
 // once vault.load pushes the real files.
-func (b *Bridge) snapshotLoad(raw []byte) (any, error) {
+func (v *Vault) snapshotLoad(raw []byte) (any, error) {
 	p, err := decodeParams[snapshotBlob](raw)
 	if err != nil {
 		return nil, err
@@ -374,21 +568,21 @@ func (b *Bridge) snapshotLoad(raw []byte) (any, error) {
 	if err != nil {
 		return nil, failf("invalid_request", "decode snapshot: %v", err)
 	}
-	if err := b.index.Load(snap); err != nil {
+	if err := v.index.Load(snap); err != nil {
 		return nil, failf("invalid_request", "load snapshot: %v", err)
 	}
-	b.projects = b.index.Projects()
-	return b.stats(), nil
+	v.projects = v.index.Projects()
+	return v.stats(), nil
 }
 
 // -------------------------------------------------------------- projects ----
 
 // projectList summarizes every discovered project.
-func (b *Bridge) projectList() []projectSummary {
-	counts := b.index.ProjectCounts()
-	out := make([]projectSummary, 0, len(b.projects))
-	for _, p := range b.projects {
-		_, writable := b.stores[p.Key]
+func (v *Vault) projectList() []projectSummary {
+	counts := v.index.ProjectCounts()
+	out := make([]projectSummary, 0, len(v.projects))
+	for _, p := range v.projects {
+		_, writable := v.stores[p.Key]
 		summary := projectSummary{
 			Key:         string(p.Key),
 			Name:        p.Name,
@@ -490,16 +684,16 @@ func itemCounts(counts map[core.ItemType]int) map[core.ItemType]int {
 // ----------------------------------------------------------------- items ----
 
 // itemList answers a filtered, sorted, paginated query.
-func (b *Bridge) itemList(ctx context.Context, raw []byte) (any, error) {
+func (v *Vault) itemList(ctx context.Context, raw []byte) (any, error) {
 	p, err := decodeParams[itemFilterParams](raw)
 	if err != nil {
 		return nil, err
 	}
-	filter, err := b.filterOf(p)
+	filter, err := v.filterOf(p)
 	if err != nil {
 		return nil, err
 	}
-	page, err := b.index.Items(ctx, filter)
+	page, err := v.index.Items(ctx, filter)
 	if err != nil {
 		return nil, failf("invalid_request", "%v", err)
 	}
@@ -530,7 +724,7 @@ func wantsBody(fields []string) bool {
 // filterOf maps the contract's ItemFilter onto core.Filter. `category` has no
 // core counterpart: it is expanded into the statuses of the matching category,
 // which is what makes a cross-project board possible.
-func (b *Bridge) filterOf(p itemFilterParams) (core.Filter, error) {
+func (v *Vault) filterOf(p itemFilterParams) (core.Filter, error) {
 	f := core.Filter{
 		Assignees:      nonEmpty(p.Assignee),
 		Labels:         p.Label,
@@ -555,9 +749,9 @@ func (b *Bridge) filterOf(p itemFilterParams) (core.Filter, error) {
 	for _, pr := range p.Priority {
 		f.Priorities = append(f.Priorities, core.Priority(pr))
 	}
-	f.Statuses = append(f.Statuses, b.statusesOfCategories(p.Category, p.Project)...)
+	f.Statuses = append(f.Statuses, v.statusesOfCategories(p.Category, p.Project)...)
 	if p.UpdatedSince != "" {
-		ts, err := core.ParseUpdatedSince(p.UpdatedSince, b.now())
+		ts, err := core.ParseUpdatedSince(p.UpdatedSince, v.now())
 		if err != nil {
 			return core.Filter{}, failf("invalid_request", "updatedSince: %v", err)
 		}
@@ -568,7 +762,7 @@ func (b *Bridge) filterOf(p itemFilterParams) (core.Filter, error) {
 
 // statusesOfCategories expands coarse status categories into the concrete
 // statuses the matching projects declare.
-func (b *Bridge) statusesOfCategories(categories []string, project string) []core.Status {
+func (v *Vault) statusesOfCategories(categories []string, project string) []core.Status {
 	if len(categories) == 0 {
 		return nil
 	}
@@ -578,7 +772,7 @@ func (b *Bridge) statusesOfCategories(categories []string, project string) []cor
 	}
 	seen := map[core.Status]bool{}
 	var out []core.Status
-	for _, p := range b.projects {
+	for _, p := range v.projects {
 		if p.Config == nil || (project != "" && string(p.Key) != project) {
 			continue
 		}
@@ -612,14 +806,14 @@ func nonEmpty(v string) []string {
 }
 
 // itemGet returns one item with its body.
-func (b *Bridge) itemGet(raw []byte) (any, error) {
+func (v *Vault) itemGet(raw []byte) (any, error) {
 	p, err := decodeParams[struct {
 		ID string `json:"id"`
 	}](raw)
 	if err != nil {
 		return nil, err
 	}
-	it, err := b.index.Item(core.ItemID(p.ID))
+	it, err := v.index.Item(core.ItemID(p.ID))
 	if err != nil {
 		return nil, fmt.Errorf("get %s: %w", p.ID, err)
 	}
@@ -627,14 +821,14 @@ func (b *Bridge) itemGet(raw []byte) (any, error) {
 }
 
 // itemChildren returns the direct children of an item.
-func (b *Bridge) itemChildren(raw []byte) (any, error) {
+func (v *Vault) itemChildren(raw []byte) (any, error) {
 	p, err := decodeParams[struct {
 		ID string `json:"id"`
 	}](raw)
 	if err != nil {
 		return nil, err
 	}
-	kids := b.index.Children(core.ItemID(p.ID))
+	kids := v.index.Children(core.ItemID(p.ID))
 	if kids == nil {
 		kids = []core.Item{}
 	}
@@ -642,21 +836,21 @@ func (b *Bridge) itemChildren(raw []byte) (any, error) {
 }
 
 // itemCreate allocates an id, writes the file and reports the WriteSet.
-func (b *Bridge) itemCreate(ctx context.Context, raw []byte) (any, error) {
+func (v *Vault) itemCreate(ctx context.Context, raw []byte) (any, error) {
 	p, err := decodeParams[itemDraftParams](raw)
 	if err != nil {
 		return nil, err
 	}
-	store, err := b.storeFor(core.ProjectKey(p.Project))
+	store, err := v.storeFor(core.ProjectKey(p.Project))
 	if err != nil {
 		return nil, err
 	}
-	b.fs.begin()
+	v.fs.begin()
 	it, err := store.Create(ctx, p.draft())
 	if err != nil {
 		return nil, fmt.Errorf("create item: %w", err)
 	}
-	writes, err := b.commit(ctx)
+	writes, err := v.commit(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -664,7 +858,7 @@ func (b *Bridge) itemCreate(ctx context.Context, raw []byte) (any, error) {
 }
 
 // itemUpdate applies a sparse patch under an optimistic lock.
-func (b *Bridge) itemUpdate(ctx context.Context, raw []byte) (any, error) {
+func (v *Vault) itemUpdate(ctx context.Context, raw []byte) (any, error) {
 	p, err := decodeParams[struct {
 		ID    string          `json:"id"`
 		Patch itemPatchParams `json:"patch"`
@@ -673,16 +867,16 @@ func (b *Bridge) itemUpdate(ctx context.Context, raw []byte) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	store, err := b.storeForItem(core.ItemID(p.ID))
+	store, err := v.storeForItem(core.ItemID(p.ID))
 	if err != nil {
 		return nil, err
 	}
-	b.fs.begin()
+	v.fs.begin()
 	it, err := store.Update(ctx, core.ItemID(p.ID), p.Patch.patch(), core.Rev(p.Rev))
 	if err != nil {
 		return nil, fmt.Errorf("update %s: %w", p.ID, err)
 	}
-	writes, err := b.commit(ctx)
+	writes, err := v.commit(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -690,7 +884,7 @@ func (b *Bridge) itemUpdate(ctx context.Context, raw []byte) (any, error) {
 }
 
 // itemMove changes the status of an item, honoring the declared workflow.
-func (b *Bridge) itemMove(ctx context.Context, raw []byte) (any, error) {
+func (v *Vault) itemMove(ctx context.Context, raw []byte) (any, error) {
 	p, err := decodeParams[struct {
 		ID     string `json:"id"`
 		Status string `json:"status"`
@@ -699,16 +893,16 @@ func (b *Bridge) itemMove(ctx context.Context, raw []byte) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	store, err := b.storeForItem(core.ItemID(p.ID))
+	store, err := v.storeForItem(core.ItemID(p.ID))
 	if err != nil {
 		return nil, err
 	}
-	b.fs.begin()
+	v.fs.begin()
 	it, err := store.Move(ctx, core.ItemID(p.ID), core.Status(p.Status), core.Rev(p.Rev))
 	if err != nil {
 		return nil, fmt.Errorf("move %s: %w", p.ID, err)
 	}
-	writes, err := b.commit(ctx)
+	writes, err := v.commit(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -716,7 +910,7 @@ func (b *Bridge) itemMove(ctx context.Context, raw []byte) (any, error) {
 }
 
 // itemDelete soft-deletes an item, or removes the file when hard is set.
-func (b *Bridge) itemDelete(ctx context.Context, raw []byte) (any, error) {
+func (v *Vault) itemDelete(ctx context.Context, raw []byte) (any, error) {
 	p, err := decodeParams[struct {
 		ID   string `json:"id"`
 		Rev  string `json:"rev"`
@@ -725,16 +919,16 @@ func (b *Bridge) itemDelete(ctx context.Context, raw []byte) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	store, err := b.storeForItem(core.ItemID(p.ID))
+	store, err := v.storeForItem(core.ItemID(p.ID))
 	if err != nil {
 		return nil, err
 	}
-	b.fs.begin()
+	v.fs.begin()
 	opts := core.DeleteOptions{Hard: p.Hard}
 	if err := store.DeleteWith(ctx, core.ItemID(p.ID), core.Rev(p.Rev), opts); err != nil {
 		return nil, fmt.Errorf("delete %s: %w", p.ID, err)
 	}
-	writes, err := b.commit(ctx)
+	writes, err := v.commit(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -743,7 +937,7 @@ func (b *Bridge) itemDelete(ctx context.Context, raw []byte) (any, error) {
 
 // itemValidate validates an indexed item, or a candidate file the editor holds
 // but has not written yet.
-func (b *Bridge) itemValidate(raw []byte) (any, error) {
+func (v *Vault) itemValidate(raw []byte) (any, error) {
 	p, err := decodeParams[struct {
 		ID   string `json:"id,omitempty"`
 		Text string `json:"text,omitempty"`
@@ -765,7 +959,7 @@ func (b *Bridge) itemValidate(raw []byte) (any, error) {
 		}
 		item = parsed
 	case p.ID != "":
-		found, err := b.index.Item(core.ItemID(p.ID))
+		found, err := v.index.Item(core.ItemID(p.ID))
 		if err != nil {
 			return nil, fmt.Errorf("validate %s: %w", p.ID, err)
 		}
@@ -773,7 +967,7 @@ func (b *Bridge) itemValidate(raw []byte) (any, error) {
 	default:
 		return nil, failf("invalid_request", "item.validate needs an id or a text")
 	}
-	cfg := b.configFor(item)
+	cfg := v.configFor(item)
 	diags := core.ValidateItem(item, cfg)
 	if diags == nil {
 		diags = []core.Diagnostic{}
@@ -795,7 +989,7 @@ func diagnosticsOf(err error, filePath string) []core.Diagnostic {
 }
 
 // itemParse parses one file without indexing it.
-func (b *Bridge) itemParse(raw []byte) (any, error) {
+func (v *Vault) itemParse(raw []byte) (any, error) {
 	p, err := decodeParams[struct {
 		Path string `json:"path"`
 		Text string `json:"text"`
@@ -811,7 +1005,7 @@ func (b *Bridge) itemParse(raw []byte) (any, error) {
 }
 
 // itemSerialize renders an item back to canonical Markdown.
-func (b *Bridge) itemSerialize(raw []byte) (any, error) {
+func (v *Vault) itemSerialize(raw []byte) (any, error) {
 	p, err := decodeParams[struct {
 		Item core.Item `json:"item"`
 	}](raw)
@@ -828,14 +1022,14 @@ func (b *Bridge) itemSerialize(raw []byte) (any, error) {
 // -------------------------------------------------------------- comments ----
 
 // commentList returns the thread of an item, oldest first.
-func (b *Bridge) commentList(raw []byte) (any, error) {
+func (v *Vault) commentList(raw []byte) (any, error) {
 	p, err := decodeParams[struct {
 		ID string `json:"id"`
 	}](raw)
 	if err != nil {
 		return nil, err
 	}
-	list := b.index.Comments(core.ItemID(p.ID))
+	list := v.index.Comments(core.ItemID(p.ID))
 	if list == nil {
 		list = []core.Comment{}
 	}
@@ -843,7 +1037,7 @@ func (b *Bridge) commentList(raw []byte) (any, error) {
 }
 
 // commentAdd appends one comment file to an item's thread.
-func (b *Bridge) commentAdd(ctx context.Context, raw []byte) (any, error) {
+func (v *Vault) commentAdd(ctx context.Context, raw []byte) (any, error) {
 	p, err := decodeParams[struct {
 		ID        string `json:"id"`
 		Author    string `json:"author"`
@@ -853,17 +1047,17 @@ func (b *Bridge) commentAdd(ctx context.Context, raw []byte) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	store, err := b.storeForItem(core.ItemID(p.ID))
+	store, err := v.storeForItem(core.ItemID(p.ID))
 	if err != nil {
 		return nil, err
 	}
-	b.fs.begin()
+	v.fs.begin()
 	draft := core.CommentDraft{Author: p.Author, Body: p.Body, InReplyTo: p.InReplyTo}
 	comment, err := store.AddComment(ctx, core.ItemID(p.ID), draft)
 	if err != nil {
 		return nil, fmt.Errorf("add comment to %s: %w", p.ID, err)
 	}
-	writes, err := b.commit(ctx)
+	writes, err := v.commit(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -873,20 +1067,20 @@ func (b *Bridge) commentAdd(ctx context.Context, raw []byte) (any, error) {
 // -------------------------------------------------------- knowledge base ----
 
 // kbTree returns the knowledge base as a forest of folders and pages.
-func (b *Bridge) kbTree(raw []byte) (any, error) {
+func (v *Vault) kbTree(raw []byte) (any, error) {
 	p, err := decodeParams[struct {
 		Project string `json:"project,omitempty"`
 	}](raw)
 	if err != nil {
 		return nil, err
 	}
-	root := b.index.KbTree()
+	root := v.index.KbTree()
 	if root == nil {
 		return []kbNode{}, nil
 	}
 	node := root
 	if p.Project != "" {
-		if found := findNode(root, b.docsPathOf(core.ProjectKey(p.Project))); found != nil {
+		if found := findNode(root, v.docsPathOf(core.ProjectKey(p.Project))); found != nil {
 			node = found
 		}
 	}
@@ -898,8 +1092,8 @@ func (b *Bridge) kbTree(raw []byte) (any, error) {
 }
 
 // docsPathOf returns the documentation folder of a project, or the empty string.
-func (b *Bridge) docsPathOf(key core.ProjectKey) string {
-	for _, p := range b.projects {
+func (v *Vault) docsPathOf(key core.ProjectKey) string {
+	for _, p := range v.projects {
 		if p.Key == key {
 			return p.DocsPath
 		}
@@ -936,26 +1130,26 @@ func treeNodeOf(n *core.TreeNode) kbNode {
 }
 
 // kbPage returns one page with its body and its link neighborhood.
-func (b *Bridge) kbPage(raw []byte) (any, error) {
+func (v *Vault) kbPage(raw []byte) (any, error) {
 	p, err := decodeParams[struct {
 		Path string `json:"path"`
 	}](raw)
 	if err != nil {
 		return nil, err
 	}
-	page, ok := b.index.Page(p.Path)
+	page, ok := v.index.Page(p.Path)
 	if !ok {
-		return nil, &bridgeError{
+		return nil, &Error{
 			Code: "not_found", Message: fmt.Sprintf("page %s is not indexed", p.Path), Path: p.Path,
 		}
 	}
-	return b.pageResult(page), nil
+	return v.pageResult(page), nil
 }
 
 // pageResult projects a KBPage onto the contract's KbPage.
-func (b *Bridge) pageResult(page *core.KBPage) kbPageResult {
+func (v *Vault) pageResult(page *core.KBPage) kbPageResult {
 	node := core.PageNode(page.Path)
-	graph := b.index.LinkGraph()
+	graph := v.index.LinkGraph()
 	out := kbPageResult{
 		Path:        page.Path,
 		Title:       page.Title,
@@ -1002,7 +1196,7 @@ func referenceTargets(refs []core.Reference, incoming bool) []string {
 }
 
 // kbWrite creates or replaces a knowledge-base page under an optimistic lock.
-func (b *Bridge) kbWrite(ctx context.Context, raw []byte) (any, error) {
+func (v *Vault) kbWrite(ctx context.Context, raw []byte) (any, error) {
 	p, err := decodeParams[struct {
 		Path string `json:"path"`
 		Text string `json:"text"`
@@ -1011,27 +1205,27 @@ func (b *Bridge) kbWrite(ctx context.Context, raw []byte) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	ref, store, err := b.projectOfPath(p.Path)
+	ref, store, err := v.projectOfPath(p.Path)
 	if err != nil {
 		return nil, err
 	}
 	rel := relativeToDocs(ref.DocsPath, p.Path)
-	b.fs.begin()
+	v.fs.begin()
 	page, err := store.WritePage(ctx, ref.Key, rel, []byte(p.Text), core.Rev(p.Rev))
 	if err != nil {
 		return nil, fmt.Errorf("write page %s: %w", p.Path, err)
 	}
-	writes, err := b.commit(ctx)
+	writes, err := v.commit(ctx)
 	if err != nil {
 		return nil, err
 	}
-	indexed, ok := b.index.Page(page.Path)
+	indexed, ok := v.index.Page(page.Path)
 	if !ok {
 		indexed = page
 	} else {
 		indexed.Body = page.Body
 	}
-	return map[string]any{"page": b.pageResult(indexed), "writes": writes}, nil
+	return map[string]any{"page": v.pageResult(indexed), "writes": writes}, nil
 }
 
 // relativeToDocs turns a vault-relative page path into the documentation-folder
@@ -1050,7 +1244,7 @@ func relativeToDocs(docsPath, p string) string {
 // ---------------------------------------------------------------- search ----
 
 // search runs the ranked substring search over items and pages.
-func (b *Bridge) search(raw []byte) (any, error) {
+func (v *Vault) search(raw []byte) (any, error) {
 	p, err := decodeParams[struct {
 		Q       string `json:"q"`
 		Limit   int    `json:"limit,omitempty"`
@@ -1065,7 +1259,7 @@ func (b *Bridge) search(raw []byte) (any, error) {
 		// so ask for more and cut afterwards.
 		limit *= 4
 	}
-	hits := b.index.Search(p.Q, limit)
+	hits := v.index.Search(p.Q, limit)
 	out := make([]searchHit, 0, len(hits))
 	for _, h := range hits {
 		if p.Project != "" && string(h.Project) != p.Project {
@@ -1086,42 +1280,42 @@ func (b *Bridge) search(raw []byte) (any, error) {
 
 // commit reports what the last mutating call wrote and folds it back into the
 // index, so that the next query already sees the change.
-func (b *Bridge) commit(ctx context.Context) (writeSet, error) {
-	written, removed := b.fs.take()
-	out := writeSet{Written: make([]vaultFile, 0, len(written)), Removed: removed}
+func (v *Vault) commit(ctx context.Context) (WriteSet, error) {
+	written, removed := v.fs.take()
+	out := WriteSet{Written: make([]File, 0, len(written)), Removed: removed}
 	if out.Removed == nil {
 		out.Removed = []string{}
 	}
 	events := make([]core.FileEvent, 0, len(written)+len(removed))
 	for _, p := range written {
-		data, err := b.mem.ReadFile(p)
+		data, err := v.base.ReadFile(p)
 		if err != nil {
-			return writeSet{}, fmt.Errorf("read back %s: %w", p, err)
+			return WriteSet{}, fmt.Errorf("read back %s: %w", p, err)
 		}
-		out.Written = append(out.Written, vaultFile{Path: p, Text: string(data)})
+		out.Written = append(out.Written, File{Path: p, Text: string(data)})
 		events = append(events, core.FileEvent{Kind: core.FileModified, Path: p})
 	}
 	for _, p := range removed {
 		events = append(events, core.FileEvent{Kind: core.FileRemoved, Path: p})
 	}
-	if _, err := b.index.ApplyFileEvents(ctx, events); err != nil {
-		return writeSet{}, fmt.Errorf("reindex written files: %w", err)
+	if _, err := v.index.ApplyFileEvents(ctx, events); err != nil {
+		return WriteSet{}, fmt.Errorf("reindex written files: %w", err)
 	}
 	return out, nil
 }
 
 // storeFor returns the writable store of a project. An empty key is allowed when
 // the vault holds exactly one project, which is the browser-only common case.
-func (b *Bridge) storeFor(key core.ProjectKey) (*core.FileStore, error) {
+func (v *Vault) storeFor(key core.ProjectKey) (*core.FileStore, error) {
 	if key == "" {
-		if len(b.stores) != 1 {
-			return nil, failf("invalid_request", "this vault holds %d projects: name one", len(b.stores))
+		if len(v.stores) != 1 {
+			return nil, failf("invalid_request", "this vault holds %d projects: name one", len(v.stores))
 		}
-		for _, s := range b.stores {
+		for _, s := range v.stores {
 			return s, nil
 		}
 	}
-	store, ok := b.stores[key]
+	store, ok := v.stores[key]
 	if !ok {
 		return nil, failf("not_found", "project %q is not open for writing", key)
 	}
@@ -1130,33 +1324,33 @@ func (b *Bridge) storeFor(key core.ProjectKey) (*core.FileStore, error) {
 
 // storeForItem returns the store that owns an item, taken from the project key
 // embedded in its id.
-func (b *Bridge) storeForItem(id core.ItemID) (*core.FileStore, error) {
+func (v *Vault) storeForItem(id core.ItemID) (*core.FileStore, error) {
 	key, _, _, err := core.ParseItemID(string(id))
 	if err != nil {
-		return b.storeFor("")
+		return v.storeFor("")
 	}
-	return b.storeFor(key)
+	return v.storeFor(key)
 }
 
 // projectOfPath returns the project whose documentation folder holds a path, the
 // longest match winning so that nested projects resolve to the inner one.
-func (b *Bridge) projectOfPath(p string) (core.ProjectRef, *core.FileStore, error) {
+func (v *Vault) projectOfPath(p string) (core.ProjectRef, *core.FileStore, error) {
 	clean := path.Clean(p)
 	best := -1
-	for i, ref := range b.projects {
+	for i, ref := range v.projects {
 		if ref.DocsPath == "." || strings.HasPrefix(clean, ref.DocsPath+"/") {
-			if best < 0 || len(ref.DocsPath) > len(b.projects[best].DocsPath) {
+			if best < 0 || len(ref.DocsPath) > len(v.projects[best].DocsPath) {
 				best = i
 			}
 		}
 	}
 	if best < 0 {
-		return core.ProjectRef{}, nil, &bridgeError{
+		return core.ProjectRef{}, nil, &Error{
 			Code: "not_found", Message: fmt.Sprintf("no project owns %s", p), Path: p,
 		}
 	}
-	ref := b.projects[best]
-	store, err := b.storeFor(ref.Key)
+	ref := v.projects[best]
+	store, err := v.storeFor(ref.Key)
 	if err != nil {
 		return core.ProjectRef{}, nil, err
 	}
@@ -1165,17 +1359,17 @@ func (b *Bridge) projectOfPath(p string) (core.ProjectRef, *core.FileStore, erro
 
 // configFor returns the project configuration an item is validated against, or
 // nil when the vault has none for it.
-func (b *Bridge) configFor(it *core.Item) *core.ProjectConfig {
+func (v *Vault) configFor(it *core.Item) *core.ProjectConfig {
 	key, _, _, err := core.ParseItemID(string(it.ID))
 	if err == nil {
-		for _, p := range b.projects {
+		for _, p := range v.projects {
 			if p.Key == key {
 				return p.Config
 			}
 		}
 	}
-	if len(b.projects) == 1 {
-		return b.projects[0].Config
+	if len(v.projects) == 1 {
+		return v.projects[0].Config
 	}
 	return nil
 }
@@ -1202,12 +1396,12 @@ func successEnvelope(payload any) string {
 	if err != nil {
 		return failureEnvelope(failf("internal", "encode result: %v", err))
 	}
-	var b strings.Builder
-	b.Grow(len(data) + 16)
-	b.WriteString(`{"ok":true,"result":`)
-	b.Write(data)
-	b.WriteString(`}`)
-	return b.String()
+	var env strings.Builder
+	env.Grow(len(data) + 16)
+	env.WriteString(`{"ok":true,"result":`)
+	env.Write(data)
+	env.WriteString(`}`)
+	return env.String()
 }
 
 // failureEnvelope classifies an error and wraps it in the failure envelope.
@@ -1217,55 +1411,56 @@ func failureEnvelope(err error) string {
 	if marshalErr != nil {
 		return `{"ok":false,"error":{"code":"internal","message":"encode error"}}`
 	}
-	var b strings.Builder
-	b.Grow(len(data) + 16)
-	b.WriteString(`{"ok":false,"error":`)
-	b.Write(data)
-	b.WriteString(`}`)
-	return b.String()
+	var env strings.Builder
+	env.Grow(len(data) + 16)
+	env.WriteString(`{"ok":false,"error":`)
+	env.Write(data)
+	env.WriteString(`}`)
+	return env.String()
 }
 
-// errorPayload maps a Go error onto the stable code catalog the UI switches on.
+// errorPayload renders an error as the `error` half of the JSON envelope.
 func errorPayload(err error) map[string]string {
-	out := map[string]string{"code": "internal", "message": err.Error()}
-
-	var be *bridgeError
-	if errors.As(err, &be) {
-		out["code"] = be.Code
-		if be.Path != "" {
-			out["path"] = be.Path
-		}
-		return out
+	e, ok := AsError(err)
+	if !ok {
+		return map[string]string{"code": "internal", "message": "unknown error"}
 	}
+	out := map[string]string{"code": e.Code, "message": e.Message}
+	if e.Path != "" {
+		out["path"] = e.Path
+	}
+	return out
+}
+
+// classify fills in the stable code, and the file the failure is about, for an
+// error the core reported. Anything it does not recognize keeps the "internal"
+// code the caller set.
+func classify(err error, out *Error) {
 	var stale *core.StaleRevisionError
 	var transition *core.TransitionError
 	var parse *core.ParseError
 	var diag *core.DiagnosticError
 	switch {
 	case errors.As(err, &stale):
-		out["code"] = core.StaleRevisionCode
-		out["path"] = stale.Path
+		out.Code = core.StaleRevisionCode
+		out.Path = stale.Path
 	case errors.As(err, &transition):
-		out["code"] = core.TransitionDeniedCode
+		out.Code = core.TransitionDeniedCode
 	case errors.As(err, &parse):
-		out["code"] = "invalid_front_matter"
-		out["path"] = parse.Path
+		out.Code = "invalid_front_matter"
+		out.Path = parse.Path
 	case errors.As(err, &diag):
-		out["code"] = "validation_failed"
-		out["path"] = diag.Diagnostic.Path
+		out.Code = "validation_failed"
+		out.Path = diag.Diagnostic.Path
 	case errors.Is(err, core.ErrItemNotFound), errors.Is(err, core.ErrNotExist):
-		out["code"] = "not_found"
+		out.Code = "not_found"
 	case errors.Is(err, core.ErrDuplicateID):
-		out["code"] = "duplicate_id"
+		out.Code = "duplicate_id"
 	case errors.Is(err, core.ErrReadOnly):
-		out["code"] = "read_only"
+		out.Code = "read_only"
 	case errors.Is(err, core.ErrRevMismatch):
-		out["code"] = core.StaleRevisionCode
+		out.Code = core.StaleRevisionCode
 	case errors.Is(err, core.ErrInvalidFrontMatter):
-		out["code"] = "invalid_front_matter"
+		out.Code = "invalid_front_matter"
 	}
-	if out["path"] == "" {
-		delete(out, "path")
-	}
-	return out
 }

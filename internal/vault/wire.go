@@ -1,4 +1,4 @@
-package main
+package vault
 
 import (
 	"bytes"
@@ -46,22 +46,22 @@ func (s *stringList) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// vaultFile is one file pushed into, or reported out of, the in-memory vault.
-type vaultFile struct {
+// File is one file pushed into, or reported out of, the in-memory vault.
+type File struct {
 	Path string `json:"path"`
 	Text string `json:"text"`
 }
 
-// writeSet is what the host must persist after a mutating call.
-type writeSet struct {
-	Written []vaultFile `json:"written"`
-	Removed []string    `json:"removed"`
+// WriteSet is what the host must persist after a mutating call.
+type WriteSet struct {
+	Written []File   `json:"written"`
+	Removed []string `json:"removed"`
 }
 
 // vaultLoadParams replaces the whole in-memory vault.
 type vaultLoadParams struct {
-	Files     []vaultFile `json:"files"`
-	RootLabel string      `json:"rootLabel,omitempty"`
+	Files     []File `json:"files"`
+	RootLabel string `json:"rootLabel,omitempty"`
 }
 
 // fileEventParams is one incremental change, carrying the new text so that the
@@ -78,10 +78,10 @@ type vaultApplyParams struct {
 	Events []fileEventParams `json:"events"`
 }
 
-// indexStats is the contract's IndexStats. The fields after Diagnostics are
+// IndexStats is the contract's IndexStats. The fields after Diagnostics are
 // additive: they carry what core.IndexStats knows and the UI can use, without
 // changing the shape the contract declares.
-type indexStats struct {
+type IndexStats struct {
 	Projects    int               `json:"projects"`
 	Items       int               `json:"items"`
 	Pages       int               `json:"pages"`
@@ -103,11 +103,11 @@ type indexStats struct {
 }
 
 // newIndexStats projects a core build summary onto the wire shape.
-func newIndexStats(s core.IndexStats, fingerprint string, diags []core.Diagnostic) indexStats {
+func newIndexStats(s core.IndexStats, fingerprint string, diags []core.Diagnostic) IndexStats {
 	if diags == nil {
 		diags = []core.Diagnostic{}
 	}
-	out := indexStats{
+	out := IndexStats{
 		Projects:    s.Projects,
 		Items:       s.Items,
 		Pages:       s.Pages,

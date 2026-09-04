@@ -495,6 +495,7 @@ reasoning in [ADR-003](adr/ADR-003-shared-go-core-wasm.md).
 ```
 cmd/gintrack/            # CLI entry point (cobra): serve, mcp, index, snapshot, doctor
 internal/core/           # shared core (model, frontmatter, index, query, ids) -> also WASM
+internal/vault/          # the CoreApi contract over a core.FS, one implementation for both hosts
 internal/server/         # HTTP/WS API, embeds web/dist
 internal/watcher/        # fsnotify
 internal/gitops/         # go-git wrapper
@@ -510,11 +511,12 @@ Makefile, go.mod, .goreleaser.yaml
 |------|--------------------------|
 | `cmd/gintrack/` | Cobra command tree and flag parsing only. No business logic; every command is a thin call into `internal/*`. Subcommands: `serve`, `mcp`, `index`, `snapshot`, `init`, `doctor`, `version`. |
 | `internal/core/` | The shared core described in §5. **Must not import** `os`, `net`, `net/http`, `os/exec`, or any package that breaks the `js/wasm` build. Enforced by a lint rule and a `GOOS=js GOARCH=wasm go build` step in CI. |
+| `internal/vault/` | The CoreApi contract of `web/src/core-bridge/api.ts` implemented once, over a `core.FS` the host injects: `NewInMemory()` for the browser (files pushed in with `vault.load`), `Open(fsys, root)` for the companion process (files read through `internal/core/osfs`). Exposes `Call` (JSON envelope, for the WASM glue) and `Dispatch` (typed result and error, for the REST layer). **Must not import** `os`, `path/filepath` or `syscall/js`. |
 | `internal/server/` | chi router, REST handlers, WebSocket hub, static file serving of the embedded `web/dist`, localhost binding, token middleware, origin checks. Translates core errors into HTTP status codes. |
 | `internal/watcher/` | fsnotify wrapper: recursive watch registration, ignore rules (`.git/`, `node_modules/`, editor swap files), debouncing, event coalescing, and rename detection. |
 | `internal/gitops/` | Status, add, commit, fetch, merge/rebase, push, conflict enumeration, credential resolution. Two backends behind one interface: `go-git` (pure Go, always available) and `system-git` (`os/exec`, used when present and configured). |
 | `internal/mcp/` | MCP tool definitions, JSON schemas, stdio transport, and the streamable HTTP handler mounted by `internal/server`. Tools delegate to `internal/core`. |
-| `wasm/` | `main_js.go` (WASM entry, `//go:build js && wasm`), host implementations that call back into JS, and the TypeScript glue copied into the web build. Built to `web/public/core.wasm`. |
+| `wasm/` | `main_js.go` (WASM entry, `//go:build js && wasm`) and nothing else: it marshals strings in and out of JavaScript and delegates every method to `internal/vault`. The TypeScript glue copied into the web build lives here too. Built to `web/public/core.wasm`. |
 | `web/` | The React application. `web/src/core-bridge/` is the only place that talks to the worker or the REST client; `web/src/datasource/` exposes the mode-agnostic interface; feature folders sit above it. Built to `web/dist`, embedded by `internal/server`. |
 | `docs/` | Planning documents (this file), ADRs, the format specification, and the project's own knowledge base. `docs/.pmngr/` holds git-in-track's own backlog — the project dogfoods itself from Phase 1. |
 | `.github/workflows/` | `ci.yml` (go vet/test, golangci-lint, wasm build check, web lint/typecheck/test, Playwright) and `release.yml` (GoReleaser on tag `v*`). |

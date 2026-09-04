@@ -1,18 +1,22 @@
-package main
+package vault
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/digiogithub/git-in-track/internal/core"
 )
 
 // fixtureRoot is the vault every test in this file is built from.
-const fixtureRoot = "../testdata/fixtures/project-basic"
+const fixtureRoot = "../../testdata/fixtures/project-basic"
 
-// envelope is the decoded form of what Bridge.Call returns.
+// envelope is the decoded form of what Vault.Call returns.
 type envelope struct {
 	OK     bool            `json:"ok"`
 	Result json.RawMessage `json:"result"`
@@ -24,9 +28,9 @@ type envelope struct {
 }
 
 // call runs one method and fails the test when the envelope reports an error.
-func call(t *testing.T, b *Bridge, method string, params any) json.RawMessage {
+func call(t *testing.T, v *Vault, method string, params any) json.RawMessage {
 	t.Helper()
-	env := rawCall(t, b, method, params)
+	env := rawCall(t, v, method, params)
 	if !env.OK {
 		t.Fatalf("%s: %s: %s", method, env.Error.Code, env.Error.Message)
 	}
@@ -34,7 +38,7 @@ func call(t *testing.T, b *Bridge, method string, params any) json.RawMessage {
 }
 
 // rawCall runs one method and returns the envelope, error or not.
-func rawCall(t *testing.T, b *Bridge, method string, params any) envelope {
+func rawCall(t *testing.T, v *Vault, method string, params any) envelope {
 	t.Helper()
 	encoded := "null"
 	if params != nil {
@@ -45,7 +49,7 @@ func rawCall(t *testing.T, b *Bridge, method string, params any) envelope {
 		encoded = string(data)
 	}
 	var env envelope
-	if err := json.Unmarshal([]byte(b.Call(method, encoded)), &env); err != nil {
+	if err := json.Unmarshal([]byte(v.Call(method, encoded)), &env); err != nil {
 		t.Fatalf("%s returned invalid JSON: %v", method, err)
 	}
 	return env
@@ -93,18 +97,18 @@ func fixtureFiles(t *testing.T) []map[string]string {
 	return files
 }
 
-// loadedBridge returns a bridge with the fixture vault indexed and a pinned
+// loadedVault returns a vault with the fixture files indexed and a pinned
 // clock, so that created/updated stamps are reproducible.
-func loadedBridge(t *testing.T) (*Bridge, indexStats) {
+func loadedVault(t *testing.T) (*Vault, IndexStats) {
 	t.Helper()
-	b := NewBridge()
-	b.SetClock(func() time.Time { return time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC) })
-	raw := call(t, b, "vault.load", map[string]any{"files": fixtureFiles(t)})
-	return b, decode[indexStats](t, raw)
+	v := NewInMemory()
+	v.SetClock(func() time.Time { return time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC) })
+	raw := call(t, v, "vault.load", map[string]any{"files": fixtureFiles(t)})
+	return v, decode[IndexStats](t, raw)
 }
 
-func TestBridgeVaultLoad(t *testing.T) {
-	b, stats := loadedBridge(t)
+func TestVaultLoad(t *testing.T) {
+	v, stats := loadedVault(t)
 
 	if stats.Projects != 1 {
 		t.Errorf("projects = %d, want 1", stats.Projects)
@@ -129,14 +133,14 @@ func TestBridgeVaultLoad(t *testing.T) {
 	}
 
 	t.Run("stats are stable across calls", func(t *testing.T) {
-		again := decode[indexStats](t, call(t, b, "vault.stats", nil))
+		again := decode[IndexStats](t, call(t, v, "vault.stats", nil))
 		if again.Fingerprint != stats.Fingerprint {
 			t.Errorf("fingerprint drifted: %s != %s", again.Fingerprint, stats.Fingerprint)
 		}
 	})
 
 	t.Run("projects carry their workflow", func(t *testing.T) {
-		projects := decode[[]projectSummary](t, call(t, b, "project.list", nil))
+		projects := decode[[]projectSummary](t, call(t, v, "project.list", nil))
 		if len(projects) != 1 {
 			t.Fatalf("project.list returned %d projects, want 1", len(projects))
 		}
@@ -156,11 +160,11 @@ func TestBridgeVaultLoad(t *testing.T) {
 	})
 }
 
-func TestBridgeItemList(t *testing.T) {
-	b, _ := loadedBridge(t)
+func TestVaultItemList(t *testing.T) {
+	v, _ := loadedVault(t)
 
 	t.Run("every item", func(t *testing.T) {
-		page := decode[itemPage](t, call(t, b, "item.list", map[string]any{}))
+		page := decode[itemPage](t, call(t, v, "item.list", map[string]any{}))
 		if page.Total != 5 {
 			t.Errorf("total = %d, want 5", page.Total)
 		}
@@ -175,7 +179,7 @@ func TestBridgeItemList(t *testing.T) {
 	})
 
 	t.Run("filtered by type and status", func(t *testing.T) {
-		page := decode[itemPage](t, call(t, b, "item.list", map[string]any{
+		page := decode[itemPage](t, call(t, v, "item.list", map[string]any{
 			"type": "story", "status": []string{"in_progress"},
 		}))
 		if page.Total != 1 || page.Items[0].ID != "DEMO-US-0001" {
@@ -184,7 +188,7 @@ func TestBridgeItemList(t *testing.T) {
 	})
 
 	t.Run("filtered by category", func(t *testing.T) {
-		page := decode[itemPage](t, call(t, b, "item.list", map[string]any{
+		page := decode[itemPage](t, call(t, v, "item.list", map[string]any{
 			"type": []string{"story", "task"}, "category": "in_progress",
 		}))
 		// The category spans both in_progress statuses of the fixture workflow:
@@ -195,7 +199,7 @@ func TestBridgeItemList(t *testing.T) {
 	})
 
 	t.Run("body on request", func(t *testing.T) {
-		page := decode[itemPage](t, call(t, b, "item.list", map[string]any{
+		page := decode[itemPage](t, call(t, v, "item.list", map[string]any{
 			"type": "story", "fields": []string{"id", "body"},
 		}))
 		for _, it := range page.Items {
@@ -210,7 +214,7 @@ func TestBridgeItemList(t *testing.T) {
 			ID   string `json:"id"`
 			Body string `json:"body"`
 		}
-		if err := json.Unmarshal(call(t, b, "item.get", map[string]any{"id": "DEMO-EP-0001"}), &item); err != nil {
+		if err := json.Unmarshal(call(t, v, "item.get", map[string]any{"id": "DEMO-EP-0001"}), &item); err != nil {
 			t.Fatalf("decode item: %v", err)
 		}
 		if item.ID != "DEMO-EP-0001" || !strings.Contains(item.Body, "## ") {
@@ -218,24 +222,24 @@ func TestBridgeItemList(t *testing.T) {
 		}
 		kids := decode[[]struct {
 			ID string `json:"id"`
-		}](t, call(t, b, "item.children", map[string]any{"id": "DEMO-EP-0001"}))
+		}](t, call(t, v, "item.children", map[string]any{"id": "DEMO-EP-0001"}))
 		if len(kids) != 2 {
 			t.Errorf("children = %d, want the two stories", len(kids))
 		}
 	})
 
 	t.Run("a missing item is not_found", func(t *testing.T) {
-		env := rawCall(t, b, "item.get", map[string]any{"id": "DEMO-US-9999"})
+		env := rawCall(t, v, "item.get", map[string]any{"id": "DEMO-US-9999"})
 		if env.OK || env.Error.Code != "not_found" {
 			t.Errorf("got ok=%v code=%q, want not_found", env.OK, env.Error.Code)
 		}
 	})
 }
 
-func TestBridgeItemCreateReturnsWriteSet(t *testing.T) {
-	b, before := loadedBridge(t)
+func TestVaultItemCreateReturnsWriteSet(t *testing.T) {
+	v, before := loadedVault(t)
 
-	raw := call(t, b, "item.create", map[string]any{
+	raw := call(t, v, "item.create", map[string]any{
 		"project": "DEMO", "type": "task", "title": "Trim pasted addresses",
 		"parent": "DEMO-US-0001", "author": "claude", "labels": []string{"frontend"},
 		"body": "## Description\n\nTrim the address before validating it.\n",
@@ -247,7 +251,7 @@ func TestBridgeItemCreateReturnsWriteSet(t *testing.T) {
 			Rev    string `json:"rev"`
 			Status string `json:"status"`
 		} `json:"item"`
-		Writes writeSet `json:"writes"`
+		Writes WriteSet `json:"writes"`
 	}](t, raw)
 
 	if created.Item.ID != "DEMO-T-0002" {
@@ -284,14 +288,14 @@ func TestBridgeItemCreateReturnsWriteSet(t *testing.T) {
 	}
 
 	t.Run("the index sees the new item at once", func(t *testing.T) {
-		after := decode[indexStats](t, call(t, b, "vault.stats", nil))
+		after := decode[IndexStats](t, call(t, v, "vault.stats", nil))
 		if after.Items != before.Items+1 {
 			t.Errorf("items = %d, want %d", after.Items, before.Items+1)
 		}
 		if after.Fingerprint == before.Fingerprint {
 			t.Error("the fingerprint must change when a file is written")
 		}
-		page := decode[itemPage](t, call(t, b, "item.list", map[string]any{
+		page := decode[itemPage](t, call(t, v, "item.list", map[string]any{
 			"parent": "DEMO-US-0001", "sort": "id", "order": "asc",
 		}))
 		if page.Total != 2 || page.Items[1].ID != "DEMO-T-0002" {
@@ -300,7 +304,7 @@ func TestBridgeItemCreateReturnsWriteSet(t *testing.T) {
 	})
 
 	t.Run("a stale rev is refused", func(t *testing.T) {
-		env := rawCall(t, b, "item.update", map[string]any{
+		env := rawCall(t, v, "item.update", map[string]any{
 			"id":    "DEMO-T-0002",
 			"rev":   "sha256:0000000000000000",
 			"patch": map[string]any{"set": map[string]any{"title": "Nope"}},
@@ -322,8 +326,8 @@ func TestBridgeItemCreateReturnsWriteSet(t *testing.T) {
 				Title string `json:"title"`
 				Rev   string `json:"rev"`
 			} `json:"item"`
-			Writes writeSet `json:"writes"`
-		}](t, call(t, b, "item.update", map[string]any{
+			Writes WriteSet `json:"writes"`
+		}](t, call(t, v, "item.update", map[string]any{
 			"id":  "DEMO-T-0002",
 			"rev": created.Item.Rev,
 			"patch": map[string]any{
@@ -342,12 +346,12 @@ func TestBridgeItemCreateReturnsWriteSet(t *testing.T) {
 	t.Run("move honors the workflow", func(t *testing.T) {
 		current := decode[struct {
 			Rev string `json:"rev"`
-		}](t, call(t, b, "item.get", map[string]any{"id": "DEMO-T-0002"}))
+		}](t, call(t, v, "item.get", map[string]any{"id": "DEMO-T-0002"}))
 		moved := decode[struct {
 			Item struct {
 				Status string `json:"status"`
 			} `json:"item"`
-		}](t, call(t, b, "item.move", map[string]any{
+		}](t, call(t, v, "item.move", map[string]any{
 			"id": "DEMO-T-0002", "status": "in_progress", "rev": current.Rev,
 		}))
 		if moved.Item.Status != "in_progress" {
@@ -358,29 +362,29 @@ func TestBridgeItemCreateReturnsWriteSet(t *testing.T) {
 	t.Run("a hard delete removes the file", func(t *testing.T) {
 		current := decode[struct {
 			Rev string `json:"rev"`
-		}](t, call(t, b, "item.get", map[string]any{"id": "DEMO-T-0002"}))
+		}](t, call(t, v, "item.get", map[string]any{"id": "DEMO-T-0002"}))
 		deleted := decode[struct {
-			Writes writeSet `json:"writes"`
-		}](t, call(t, b, "item.delete", map[string]any{
+			Writes WriteSet `json:"writes"`
+		}](t, call(t, v, "item.delete", map[string]any{
 			"id": "DEMO-T-0002", "rev": current.Rev, "hard": true,
 		}))
 		if len(deleted.Writes.Removed) != 1 {
 			t.Fatalf("removed = %v, want exactly the item file", deleted.Writes.Removed)
 		}
-		env := rawCall(t, b, "item.get", map[string]any{"id": "DEMO-T-0002"})
+		env := rawCall(t, v, "item.get", map[string]any{"id": "DEMO-T-0002"})
 		if env.OK {
 			t.Error("the deleted item is still in the index")
 		}
 	})
 }
 
-func TestBridgeComments(t *testing.T) {
-	b, _ := loadedBridge(t)
+func TestVaultComments(t *testing.T) {
+	v, _ := loadedVault(t)
 
 	existing := decode[[]struct {
 		Author string `json:"author"`
 		Body   string `json:"body"`
-	}](t, call(t, b, "comment.list", map[string]any{"id": "DEMO-US-0001"}))
+	}](t, call(t, v, "comment.list", map[string]any{"id": "DEMO-US-0001"}))
 	if len(existing) != 1 || existing[0].Author != "marta" {
 		t.Fatalf("comment.list returned %+v", existing)
 	}
@@ -390,8 +394,8 @@ func TestBridgeComments(t *testing.T) {
 			Author string `json:"author"`
 			Path   string `json:"path"`
 		} `json:"comment"`
-		Writes writeSet `json:"writes"`
-	}](t, call(t, b, "comment.add", map[string]any{
+		Writes WriteSet `json:"writes"`
+	}](t, call(t, v, "comment.add", map[string]any{
 		"id": "DEMO-US-0001", "author": "Claude", "body": "Trimming lands in DEMO-T-0001.",
 	}))
 	if added.Comment.Author != "claude" {
@@ -400,17 +404,17 @@ func TestBridgeComments(t *testing.T) {
 	if len(added.Writes.Written) != 1 || added.Writes.Written[0].Path != added.Comment.Path {
 		t.Errorf("writes = %+v, want the comment file", added.Writes.Written)
 	}
-	after := decode[[]json.RawMessage](t, call(t, b, "comment.list", map[string]any{"id": "DEMO-US-0001"}))
+	after := decode[[]json.RawMessage](t, call(t, v, "comment.list", map[string]any{"id": "DEMO-US-0001"}))
 	if len(after) != 2 {
 		t.Errorf("the thread has %d comments, want 2", len(after))
 	}
 }
 
-func TestBridgeKnowledgeBase(t *testing.T) {
-	b, _ := loadedBridge(t)
+func TestVaultKnowledgeBase(t *testing.T) {
+	v, _ := loadedVault(t)
 
 	t.Run("tree", func(t *testing.T) {
-		tree := decode[[]kbNode](t, call(t, b, "kb.tree", map[string]any{}))
+		tree := decode[[]kbNode](t, call(t, v, "kb.tree", map[string]any{}))
 		var dirs, pages int
 		var walk func(nodes []kbNode)
 		walk = func(nodes []kbNode) {
@@ -430,7 +434,7 @@ func TestBridgeKnowledgeBase(t *testing.T) {
 	})
 
 	t.Run("page with backlinks", func(t *testing.T) {
-		page := decode[kbPageResult](t, call(t, b, "kb.page", map[string]any{
+		page := decode[kbPageResult](t, call(t, v, "kb.page", map[string]any{
 			"path": "docs/architecture/overview.md",
 		}))
 		if page.Title == "" {
@@ -453,8 +457,8 @@ func TestBridgeKnowledgeBase(t *testing.T) {
 	t.Run("write creates a page and reindexes it", func(t *testing.T) {
 		result := decode[struct {
 			Page   kbPageResult `json:"page"`
-			Writes writeSet     `json:"writes"`
-		}](t, call(t, b, "kb.write", map[string]any{
+			Writes WriteSet     `json:"writes"`
+		}](t, call(t, v, "kb.write", map[string]any{
 			"path": "docs/runbooks/deploy.md",
 			"text": "---\ntitle: Deploy\n---\n\nSee [[DEMO-EP-0001]].\n",
 		}))
@@ -467,24 +471,24 @@ func TestBridgeKnowledgeBase(t *testing.T) {
 		if result.Writes.Written[0].Path != "docs/runbooks/deploy.md" {
 			t.Errorf("wrote %s", result.Writes.Written[0].Path)
 		}
-		stats := decode[indexStats](t, call(t, b, "vault.stats", nil))
+		stats := decode[IndexStats](t, call(t, v, "vault.stats", nil))
 		if stats.Pages != 3 {
 			t.Errorf("pages = %d, want 3 after the write", stats.Pages)
 		}
 	})
 
 	t.Run("an unknown page is not_found", func(t *testing.T) {
-		env := rawCall(t, b, "kb.page", map[string]any{"path": "docs/nope.md"})
+		env := rawCall(t, v, "kb.page", map[string]any{"path": "docs/nope.md"})
 		if env.OK || env.Error.Code != "not_found" {
 			t.Errorf("got ok=%v code=%q", env.OK, env.Error.Code)
 		}
 	})
 }
 
-func TestBridgeSearch(t *testing.T) {
-	b, _ := loadedBridge(t)
+func TestVaultSearch(t *testing.T) {
+	v, _ := loadedVault(t)
 
-	hits := decode[[]searchHit](t, call(t, b, "search", map[string]any{"q": "checkout"}))
+	hits := decode[[]searchHit](t, call(t, v, "search", map[string]any{"q": "checkout"}))
 	if len(hits) == 0 {
 		t.Fatal("search returned nothing for a term the fixture uses")
 	}
@@ -500,22 +504,22 @@ func TestBridgeSearch(t *testing.T) {
 	}
 
 	t.Run("an id match ranks first", func(t *testing.T) {
-		byID := decode[[]searchHit](t, call(t, b, "search", map[string]any{"q": "DEMO-US-0002"}))
+		byID := decode[[]searchHit](t, call(t, v, "search", map[string]any{"q": "DEMO-US-0002"}))
 		if len(byID) == 0 || byID[0].ID != "DEMO-US-0002" {
 			t.Errorf("got %+v, want DEMO-US-0002 first", byID)
 		}
 	})
 
 	t.Run("limit is honored", func(t *testing.T) {
-		limited := decode[[]searchHit](t, call(t, b, "search", map[string]any{"q": "checkout", "limit": 1}))
+		limited := decode[[]searchHit](t, call(t, v, "search", map[string]any{"q": "checkout", "limit": 1}))
 		if len(limited) != 1 {
 			t.Errorf("got %d hits, want 1", len(limited))
 		}
 	})
 }
 
-func TestBridgeSnapshotRoundTrip(t *testing.T) {
-	source, stats := loadedBridge(t)
+func TestVaultSnapshotRoundTrip(t *testing.T) {
+	source, stats := loadedVault(t)
 	blob := decode[snapshotBlob](t, call(t, source, "snapshot.export", nil))
 	if blob.Fingerprint != stats.Fingerprint {
 		t.Errorf("snapshot fingerprint %s != index fingerprint %s", blob.Fingerprint, stats.Fingerprint)
@@ -525,8 +529,8 @@ func TestBridgeSnapshotRoundTrip(t *testing.T) {
 	}
 
 	// A cold worker hydrates from the cache alone: no files, no scan.
-	cold := NewBridge()
-	hydrated := decode[indexStats](t, call(t, cold, "snapshot.load", blob))
+	cold := NewInMemory()
+	hydrated := decode[IndexStats](t, call(t, cold, "snapshot.load", blob))
 	if hydrated.Items != stats.Items {
 		t.Errorf("hydrated items = %d, want %d", hydrated.Items, stats.Items)
 	}
@@ -546,8 +550,8 @@ func TestBridgeSnapshotRoundTrip(t *testing.T) {
 	}
 }
 
-func TestBridgeVaultApply(t *testing.T) {
-	b, before := loadedBridge(t)
+func TestVaultApply(t *testing.T) {
+	v, before := loadedVault(t)
 	target := "docs/.pmngr/stories/DEMO-US-0002-save-payment-methods.md"
 	original, err := os.ReadFile(filepath.Join(fixtureRoot, filepath.FromSlash(target)))
 	if err != nil {
@@ -556,7 +560,7 @@ func TestBridgeVaultApply(t *testing.T) {
 
 	t.Run("a write reindexes one file", func(t *testing.T) {
 		patched := strings.Replace(string(original), "title: Save payment methods", "title: Save cards", 1)
-		stats := decode[indexStats](t, call(t, b, "vault.apply", map[string]any{
+		stats := decode[IndexStats](t, call(t, v, "vault.apply", map[string]any{
 			"events": []map[string]any{{"op": "write", "path": target, "text": patched}},
 		}))
 		if stats.Items != before.Items {
@@ -573,14 +577,14 @@ func TestBridgeVaultApply(t *testing.T) {
 		}
 		item := decode[struct {
 			Title string `json:"title"`
-		}](t, call(t, b, "item.get", map[string]any{"id": "DEMO-US-0002"}))
+		}](t, call(t, v, "item.get", map[string]any{"id": "DEMO-US-0002"}))
 		if item.Title != "Save cards" {
 			t.Errorf("title = %q, want the applied change", item.Title)
 		}
 	})
 
 	t.Run("a removal drops the item", func(t *testing.T) {
-		stats := decode[indexStats](t, call(t, b, "vault.apply", map[string]any{
+		stats := decode[IndexStats](t, call(t, v, "vault.apply", map[string]any{
 			"events": []map[string]any{{"op": "remove", "path": target}},
 		}))
 		if stats.Items != before.Items-1 {
@@ -592,7 +596,7 @@ func TestBridgeVaultApply(t *testing.T) {
 	})
 
 	t.Run("an unknown op is rejected", func(t *testing.T) {
-		env := rawCall(t, b, "vault.apply", map[string]any{
+		env := rawCall(t, v, "vault.apply", map[string]any{
 			"events": []map[string]any{{"op": "touch", "path": target}},
 		})
 		if env.OK || env.Error.Code != "invalid_request" {
@@ -601,12 +605,12 @@ func TestBridgeVaultApply(t *testing.T) {
 	})
 }
 
-func TestBridgeParseSerializeValidate(t *testing.T) {
-	b, _ := loadedBridge(t)
+func TestVaultParseSerializeValidate(t *testing.T) {
+	v, _ := loadedVault(t)
 
 	t.Run("parse and serialize round-trip", func(t *testing.T) {
 		text := "---\nid: DEMO-US-0003\ntype: story\ntitle: Round trip\nstatus: todo\n---\n\n## Description\n\nBody.\n"
-		parsed := decode[map[string]any](t, call(t, b, "item.parse", map[string]any{
+		parsed := decode[map[string]any](t, call(t, v, "item.parse", map[string]any{
 			"path": "docs/.pmngr/stories/DEMO-US-0003-round-trip.md", "text": text,
 		}))
 		if parsed["id"] != "DEMO-US-0003" {
@@ -614,7 +618,7 @@ func TestBridgeParseSerializeValidate(t *testing.T) {
 		}
 		serialized := decode[struct {
 			Text string `json:"text"`
-		}](t, call(t, b, "item.serialize", map[string]any{"item": parsed}))
+		}](t, call(t, v, "item.serialize", map[string]any{"item": parsed}))
 		if !strings.Contains(serialized.Text, "id: DEMO-US-0003") ||
 			!strings.Contains(serialized.Text, "## Description") {
 			t.Errorf("serialized text lost data:\n%s", serialized.Text)
@@ -622,14 +626,14 @@ func TestBridgeParseSerializeValidate(t *testing.T) {
 	})
 
 	t.Run("a file without front matter reports its code", func(t *testing.T) {
-		env := rawCall(t, b, "item.parse", map[string]any{"path": "a.md", "text": "no front matter\n"})
+		env := rawCall(t, v, "item.parse", map[string]any{"path": "a.md", "text": "no front matter\n"})
 		if env.OK || env.Error.Code != "invalid_front_matter" {
 			t.Errorf("got ok=%v code=%q", env.OK, env.Error.Code)
 		}
 	})
 
 	t.Run("validate an indexed item", func(t *testing.T) {
-		diags := decode[[]map[string]any](t, call(t, b, "item.validate", map[string]any{"id": "DEMO-US-0001"}))
+		diags := decode[[]map[string]any](t, call(t, v, "item.validate", map[string]any{"id": "DEMO-US-0001"}))
 		if len(diags) != 0 {
 			t.Errorf("the fixture must validate clean: %+v", diags)
 		}
@@ -639,7 +643,7 @@ func TestBridgeParseSerializeValidate(t *testing.T) {
 		text := "---\nid: DEMO-US-0004\ntype: story\ntitle: Bad status\nstatus: reviewing\n---\n\nBody.\n"
 		diags := decode[[]struct {
 			Code string `json:"code"`
-		}](t, call(t, b, "item.validate", map[string]any{
+		}](t, call(t, v, "item.validate", map[string]any{
 			"path": "docs/.pmngr/stories/DEMO-US-0004-bad-status.md", "text": text,
 		}))
 		if len(diags) == 0 {
@@ -657,38 +661,101 @@ func TestBridgeParseSerializeValidate(t *testing.T) {
 	})
 }
 
-func TestBridgeLifecycleMethods(t *testing.T) {
-	b := NewBridge()
+func TestVaultLifecycleMethods(t *testing.T) {
+	v := NewInMemory()
 
 	ping := decode[struct {
 		Pong bool `json:"pong"`
 		WASM bool `json:"wasm"`
-	}](t, call(t, b, "ping", nil))
+	}](t, call(t, v, "ping", nil))
 	if !ping.Pong || !ping.WASM {
 		t.Errorf("ping = %+v", ping)
 	}
 
-	v := decode[struct {
+	build := decode[struct {
 		Protocol int    `json:"protocol"`
 		Core     string `json:"core"`
-	}](t, call(t, b, "version", nil))
-	if v.Protocol != protocolVersion || v.Core == "" {
-		t.Errorf("version = %+v", v)
+	}](t, call(t, v, "version", nil))
+	if build.Protocol != ProtocolVersion || build.Core == "" {
+		t.Errorf("version = %+v", build)
 	}
 
-	env := rawCall(t, b, "nope", nil)
+	env := rawCall(t, v, "nope", nil)
 	if env.OK || env.Error.Code != "unknown_method" {
 		t.Errorf("got ok=%v code=%q, want unknown_method", env.OK, env.Error.Code)
 	}
 
 	t.Run("an empty vault answers without files", func(t *testing.T) {
-		stats := decode[indexStats](t, call(t, b, "vault.stats", nil))
+		stats := decode[IndexStats](t, call(t, v, "vault.stats", nil))
 		if stats.Items != 0 || stats.Projects != 0 {
 			t.Errorf("stats = %+v, want an empty vault", stats)
 		}
-		page := decode[itemPage](t, call(t, b, "item.list", map[string]any{}))
+		page := decode[itemPage](t, call(t, v, "item.list", map[string]any{}))
 		if page.Total != 0 || page.Items == nil {
 			t.Errorf("item.list = %+v, want an empty array", page)
+		}
+	})
+}
+
+func TestVaultSetVersion(t *testing.T) {
+	v := NewInMemory()
+	build := func() string {
+		return decode[struct {
+			Core string `json:"core"`
+		}](t, call(t, v, "version", nil)).Core
+	}
+	if got := build(); got != version {
+		t.Errorf("core = %q, want the package default %q", got, version)
+	}
+	v.SetVersion("1.2.3")
+	if got := build(); got != "1.2.3" {
+		t.Errorf("core = %q, want the injected build", got)
+	}
+	v.SetVersion("")
+	if got := build(); got != version {
+		t.Errorf("core = %q, want the package default back", got)
+	}
+}
+
+func TestAsError(t *testing.T) {
+	v, _ := loadedVault(t)
+
+	t.Run("nil is not an error", func(t *testing.T) {
+		if e, ok := AsError(nil); ok || e != nil {
+			t.Errorf("AsError(nil) = %+v, %v", e, ok)
+		}
+	})
+
+	t.Run("a vault error keeps its code and path", func(t *testing.T) {
+		_, err := v.Dispatch(context.Background(), "kb.page", []byte(`{"path":"docs/nope.md"}`))
+		e, ok := AsError(err)
+		if !ok {
+			t.Fatalf("AsError(%v) reported no error", err)
+		}
+		if e.Code != "not_found" || e.Path != "docs/nope.md" {
+			t.Errorf("error = %+v, want not_found on docs/nope.md", e)
+		}
+	})
+
+	t.Run("a core error is classified", func(t *testing.T) {
+		params := []byte(`{"id":"DEMO-US-0001","rev":"sha256:0000000000000000","patch":{"set":{"title":"Nope"}}}`)
+		_, err := v.Dispatch(context.Background(), "item.update", params)
+		e, ok := AsError(err)
+		if !ok {
+			t.Fatalf("AsError(%v) reported no error", err)
+		}
+		if e.Code != core.StaleRevisionCode {
+			t.Errorf("code = %q, want %q", e.Code, core.StaleRevisionCode)
+		}
+		if e.Path == "" {
+			t.Error("a stale revision must name the file it is about")
+		}
+	})
+
+	t.Run("an unknown failure is internal", func(t *testing.T) {
+		e, ok := AsError(errors.New("boom"))
+		if !ok || e.Code != "internal" || e.Message != "boom" {
+			t.Errorf("error = %+v, %v", e, ok)
 		}
 	})
 }
