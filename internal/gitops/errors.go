@@ -67,6 +67,10 @@ const (
 	CodeCancelled = "git_cancelled"
 	// CodeSyncFailed is the fallback classification of a sync failure.
 	CodeSyncFailed = "git_sync_failed"
+	// CodeNotFound means the path asked about is not conflicted, normally
+	// because the integration moved on while the resolver was open
+	// (GIT-US-0022).
+	CodeNotFound = "not_found"
 )
 
 // ErrGit is the sentinel behind every failure of this package, so a caller can

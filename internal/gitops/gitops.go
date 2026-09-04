@@ -132,10 +132,9 @@ type CommitResult struct {
 // (docs/07 section 6.4).
 //
 // The sync half of the interface (SyncStatus, Fetch, Integrate, Push, Abort,
-// Commits) landed with GIT-US-0021. The structured conflict surface — reading
-// the base/ours/theirs blobs of a conflicted path and continuing the
-// integration from a resolution — belongs to GIT-US-0022 and is deliberately
-// still absent rather than declared and unimplemented.
+// Commits) landed with GIT-US-0021, and the structured conflict surface —
+// reading the base/ours/theirs blobs of a conflicted path and continuing the
+// integration from a resolution — with GIT-US-0022.
 type Backend interface {
 	// Name is "go-git" or "system".
 	Name() string
@@ -176,6 +175,15 @@ type Backend interface {
 	// Commits lists the commits reachable from req.To but not from req.From,
 	// newest first. It is what a dry-run preview is made of.
 	Commits(ctx context.Context, req LogRequest) ([]Commit, error)
+
+	// ConflictFile reads the three versions of a conflicted path — the merge
+	// base, ours and theirs — out of the index stages a stopped integration
+	// left behind. It is what the resolver of GIT-US-0022 is built on.
+	ConflictFile(ctx context.Context, path string) (ConflictVersions, error)
+	// ResolvePath writes one path's resolution, stages it and, once nothing is
+	// left conflicted, continues the rebase or merge. Abort stays available
+	// throughout: a resolution that goes wrong is still recoverable.
+	ResolvePath(ctx context.Context, req ResolveRequest) (ResolveResult, error)
 }
 
 // Options configures Open.

@@ -541,3 +541,11 @@ func (s *stubBackend) Commits(context.Context, LogRequest) ([]Commit, error) {
 func (s *stubBackend) Continue(context.Context) (IntegrateResult, error) {
 	return IntegrateResult{}, nil
 }
+
+func (s *stubBackend) ConflictFile(context.Context, string) (ConflictVersions, error) {
+	return ConflictVersions{}, nil
+}
+
+func (s *stubBackend) ResolvePath(context.Context, ResolveRequest) (ResolveResult, error) {
+	return ResolveResult{}, nil
+}
