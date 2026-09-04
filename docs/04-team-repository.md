@@ -871,10 +871,12 @@ Rules:
   `snapshots.enabled` is true (debounced, default 30 s); (c) `gintrack snapshot [K]` is run
   explicitly, which is also how CI in the *project* repo publishes for a project few people clone;
   (d) a client calls `POST /api/v1/snapshots` (companion) or `snapshot.refresh` (browser).
-- **R-SNAP-6a** *(as built, GIT-US-0019)* (a) and (b) arrive with the git and watcher phases. What
-  exists today is (c) and (d): `gintrack snapshot [KEY...]` in the CLI, and the `snapshot.list` /
-  `snapshot.refresh` pair of the core contract, served over HTTP as `GET` and `POST
-  /api/v1/snapshots`. All three generate from the same `(*Index).ProjectSnapshot`, write only into
+- **R-SNAP-6a** *(as built, GIT-US-0019, extended by GIT-US-0021)* (a) is implemented: a
+  `gintrack sync` run that pulled work refreshes the snapshots afterwards (skip it with
+  `--no-snapshot`), and so does `POST /api/v1/sync/run` in the companion. (b) still arrives with
+  the watcher phase. (c) and (d) are `gintrack snapshot [KEY...]` in the CLI, and the
+  `snapshot.list` / `snapshot.refresh` pair of the core contract, served over HTTP as `GET` and
+  `POST /api/v1/snapshots`. All three generate from the same `(*Index).ProjectSnapshot`, write only into
   the team repository, and skip — with a reason — every project no open repository serves. The
   `source` block is left out until the git backend of Phase 4 can fill it honestly.
 - **R-SNAP-6b** A regenerated snapshot is compared with the file on disk **ignoring `generated`,

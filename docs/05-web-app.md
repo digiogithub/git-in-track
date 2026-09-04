@@ -253,6 +253,19 @@ last fetch, and buttons Fetch / Sync / Push. Expanding a row shows the staged
 change set (path, item id, title) and the commit message that will be used.
 Conflicts appear as a list linking to ConflictResolver (doc 06 §5).
 
+*As built (GIT-US-0021).* Each row shows the branch, the tracking branch, the
+ahead/behind counters, the uncommitted count and one state word (up to date,
+ahead, behind, diverged, uncommitted changes, conflicts, rebase in progress,
+detached HEAD, no remote, no upstream). Two buttons: **Preview**, a dry run that
+fetches — which is read-only — and lists the incoming and outgoing commits
+without changing anything, and **Sync**, the full run. The report under a row
+explains a failure with the message the pipeline produced and names every
+conflicted file. A runtime that cannot sync (browser-only mode with no CORS
+proxy, doc 06 §6.3) shows the reason and disables both buttons rather than
+offering an action that would fail. Both buttons are disabled while a run is in
+flight; per-row progress from `sync.progress` and the link into
+ConflictResolver arrive with GIT-US-0022.
+
 **ConflictResolver (`/sync/conflicts/$conflictId`)** — Front matter conflicts
 render as a field-by-field table (ours / theirs / merged, with the auto-merge
 result preselected). Body conflicts render side-by-side with a CodeMirror merge
@@ -333,9 +346,17 @@ export interface DataProvider {
   getGitStatus(repoId?: string): Promise<GitRepoStatus[]>;
   commitNow(input?: { repoId?: string; paths?: string[]; message?: string }): Promise<GitCommit[]>;
 
-  // git — sync (Phase 4, GIT-US-0021 and GIT-US-0022)
-  sync(repoId: string, opts: SyncOptions): Promise<SyncResult>;
-  listConflicts(repoId: string): Promise<Conflict[]>;
+  // git — sync (GIT-US-0021, implemented)
+  getSyncStatus(repoId?: string): Promise<SyncRepoStatus[]>;
+  getSyncSettings(): Promise<SyncSettings>;
+  updateSyncSettings(patch: SyncSettingsPatch): Promise<SyncSettings>;
+  /** With no repoId every repository is synced. A failure is reported in the
+   *  result's `code`/`message`, not thrown: the tree is always recoverable. */
+  sync(repoId: string | undefined, opts?: SyncOptions): Promise<SyncResult[]>;
+  abortSync(repoId: string): Promise<SyncRepoStatus>;
+  listSyncConflicts(repoId?: string): Promise<{ repo: string; paths: string[] }[]>;
+
+  // git — conflict resolution (GIT-US-0022)
   resolveConflict(repoId: string, id: string, resolution: Resolution): Promise<void>;
 
   // events
@@ -1007,7 +1028,7 @@ and the Chromium e2e project on every PR; the full browser matrix runs nightly.
 | 1 | File System Access mount, WASM worker bridge, KB viewer with the full markdown pipeline, item table/detail/editor, epic tree, milestones, IndexedDB index cache, read-only fallback |
 | 2 | `CompanionProvider`, health probe + upgrade toast, WS-driven invalidation, contract test suite across providers |
 | 3 | Team repo mounting, boards (kanban + scrum) with dnd-kit, sprint planning, remote reference cards, multi-project item table |
-| 4 | Commit-on-save settings card with a live message preview and per-repository git status (GIT-US-0020, done); sync panel, conflict resolver UI, credentials screen, git activity strips (GIT-US-0021 … GIT-US-0023) |
+| 4 | Commit-on-save settings card with a live message preview and per-repository git status (GIT-US-0020, done); sync panel with the status indicator and the dry-run preview, over the companion API and over isomorphic-git in the browser (GIT-US-0021, done); conflict resolver UI, credentials screen, git activity strips (GIT-US-0022, GIT-US-0023) |
 | 5 | Agent/MCP status screen, call log, agent-oriented empty states and AGENTS.md surfacing in the KB |
 | 6 | Retro board, action promotion, metrics (burndown, CFD), link graph view, PWA polish, visual/a11y test gates, 1.0 |
 

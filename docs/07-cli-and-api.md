@@ -639,6 +639,15 @@ Conflicts are surfaced, not auto-resolved. For board `order:` lists and other li
 YAML the sync engine offers a union merge assist in the web UI; the CLI reports the
 conflicting paths and exits 5.
 
+*As built (GIT-US-0021).* The flags above all work, plus `--no-snapshot` (skip the index
+snapshot refresh a run that pulled work would do, rule R-SNAP-6(a) of doc 04 §6) and
+`--json` (the machine-readable report). `--repo` is repeatable, `--continue` and `--abort`
+are mutually exclusive, and so are `--dry-run` and `--commit-all`. Exit codes: 5 for a
+conflict, 6 for any other git failure, 4 for an unregistered `--repo`, 2 for an unknown
+`--strategy`. A repository that is registered but is not a git working tree is skipped with
+its reason rather than failing the run. `--dry-run` fetches — which is read-only — and
+changes nothing else.
+
 ### 4.8 `gintrack doctor [--fix] [--renumber]`
 
 Health check across configuration, repositories, and content.
@@ -1390,8 +1399,12 @@ POST /api/v1/sync/abort
 GET  /api/v1/git/log?item=ACME-T-0311&limit=20
 ```
 
-The `/git` routes are served since GIT-US-0020; `/sync` and `/git/log` answer
-`not_implemented` until GIT-US-0021.
+The `/git` routes are served since GIT-US-0020 and the `/sync` routes since GIT-US-0021,
+which also adds `PATCH /api/v1/sync/settings` (`pullStrategy`, `pushOnSync`,
+`maxPushRetries`). `/git/log` still answers `not_implemented`, and so does
+`POST /api/v1/sync/conflicts/resolve`, which belongs to the conflict resolver of
+GIT-US-0022; `GET /api/v1/sync/conflicts` already lists the conflicted paths of a stopped
+integration.
 
 ```json
 GET /api/v1/git/settings
@@ -1467,13 +1480,43 @@ GET /api/v1/git/log?item=ACME-T-0311&limit=3
 }
 ```
 
-`POST /api/v1/sync/run` is asynchronous: it returns `202 Accepted` with an operation id and
-streams progress over the WebSocket as `sync.progress` events.
+`POST /api/v1/sync/run` streams progress over the WebSocket as `sync.progress` events while
+it works.
 
 ```json
 202 Accepted
 {"operationId":"sync-01J9Z7","repos":["ACME","AWEB","TEAM"],"startedAt":"2026-09-03T11:00:00Z"}
 ```
+
+*As built (GIT-US-0021).* The call answers `200 OK` with the finished report rather than
+`202` with a handle to poll: a sync of a backlog repository is a bounded operation, the web
+client needs the `SyncResult` to render the panel, and cancelling the HTTP request cancels
+the run through its context — which is the cancellation the story asks for. The response
+still carries `operationId` and `startedAt`, and every `sync.progress` event carries the
+same id, so nothing about the event contract changes when a resumable `202` form is added
+for long-running multi-repository runs.
+
+```json
+POST /api/v1/sync/run   {"repos":["ACME"],"dryRun":true}
+200
+{ "operationId":"sync-3", "startedAt":"2026-09-04T11:00:00Z", "dryRun":true,
+  "results":[
+    { "repo":"ACME", "dryRun":true, "strategy":"rebase", "phase":"done",
+      "before":{ "…":"SyncStatus" }, "after":{ "…":"SyncStatus" },
+      "pulled":0, "pushed":0, "retries":0, "durationMs":184,
+      "incoming":[{"sha":"9f2c1ab…","subject":"docs: teammate work"}],
+      "outgoing":[{"sha":"4e5f1c2…","subject":"pmngr: update ACME-US-0042"}] }
+  ] }
+```
+
+A failure is reported in the result, not as a problem document: the run is non-destructive
+at every step, so `phase` (`done` | `conflicts` | `failed`), `code` and `message` say what
+happened and what to do next. The codes are the `git_*` set of doc 06 §12:
+`git_dirty_tree`, `git_no_remote`, `git_no_upstream`, `git_unexpected_branch`,
+`git_operation_in_progress`, `git_auth_required`, `git_network_unavailable`,
+`git_host_key_unverified`, `git_conflict`, `git_push_rejected`, `git_cancelled`.
+`POST /api/v1/sync/abort` undoes a half-finished rebase or merge and answers with the
+repository's fresh status.
 
 ### 5.6 WebSocket event stream
 
@@ -1785,8 +1828,31 @@ type Status struct {
     Branch                      string
     Detached, Clean             bool
     Staged, Modified, Untracked []string
-    // Ahead/Behind/Remote arrive with the sync pipeline.
 }
+
+// SyncStatus is the status indicator: everything a repository row shows.
+type SyncStatus struct {
+    Branch, Remote, RemoteURL, Upstream string      // RemoteURL is credential-free
+    Detached, Clean, Tracked            bool
+    Dirty                               []string
+    Ahead, Behind                       int
+    Conflicted                          []Conflict
+    Operation                           string      // "" | "rebase" | "merge"
+    State                               State       // up_to_date | ahead | behind |
+}                                                   // diverged | dirty | conflicted | …
+
+// The sync half of the Backend interface (GIT-US-0021).
+SyncStatus(ctx) (SyncStatus, error)
+Fetch(ctx, FetchRequest) (FetchResult, error)
+Integrate(ctx, IntegrateRequest) (IntegrateResult, error)   // rebase or merge
+Push(ctx, PushRequest) (PushResult, error)
+Abort(ctx) error                                            // system backend only
+Continue(ctx) (IntegrateResult, error)                      // system backend only
+Commits(ctx, LogRequest) ([]Commit, error)                  // dry-run previews
+
+// The pipeline over them: preflight, fetch, integrate, push, with the
+// non-fast-forward retry ladder of doc 06 section 4.2.
+func Sync(ctx context.Context, b Backend, opts SyncOptions) (SyncResult, error)
 
 // Committer batches writes so one logical edit is one commit.
 func NewCommitter(opts CommitterOptions) *Committer

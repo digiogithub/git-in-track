@@ -214,6 +214,35 @@ PREFLIGHT → FETCH → INTEGRATE (rebase|merge) → [CONFLICTS] → REINDEX →
 `SyncResult` reports per-repo: commits pulled, commits pushed, files changed,
 items changed (ids), conflicts encountered/resolved, duration, and any warnings.
 
+**As built (GIT-US-0021).** The pipeline is `gitops.Sync`, driven by
+`POST /api/v1/sync/run` and by `gintrack sync`. What ships:
+
+- PREFLIGHT commits what commit-on-save batched (`Committer.Flush`) and then
+  refuses a run whose tree still has uncommitted changes to *tracked* files,
+  with a message naming the two ways out ("Commit changes" in the panel, or
+  `gintrack sync --commit-all`). Untracked files never block a run. It also
+  refuses a detached HEAD, a repository with no remote, a branch with no
+  upstream and a half-finished rebase or merge, each with its own code. This is
+  `dirtyPolicy: commit` made explicit and `abort` as the default fallback; the
+  `stash` and `ask` policies are not implemented, and the key is not read yet.
+- FETCH, INTEGRATE and PUSH are as described, with the retry ladder of §4.2.
+- REINDEX needs no step of its own in companion mode: the watcher sees the
+  files the integration wrote. In browser mode the provider re-reads the vault
+  after a run that pulled anything.
+- SNAPSHOT runs after a run that pulled work, in both the CLI (`gintrack sync`,
+  rule R-SNAP-6(a) of doc 04 §6) and the companion (`snapshot.refresh`).
+- CONFLICTS is detection and reporting only: the paths are named, the rebase or
+  merge is left in progress and resumable, and `POST /api/v1/sync/abort` or
+  `gintrack sync --abort` restores the tree. The structured resolver is
+  GIT-US-0022.
+- Branch policy (§4.3) is not implemented: every repository syncs the branch it
+  has checked out against its own upstream. `user-branch` mode, `autoPr` and the
+  host URL templates arrive with the branch-policy work.
+
+`SyncResult` is filled on failure too — `phase`, `code` and `message` — so the
+CLI and the panel report what happened without inspecting an exception. Every
+failure leaves a recoverable tree, which is the milestone-5 exit criterion.
+
 ### 4.2 Retry on non-fast-forward
 
 Push races are the common failure. Policy:
@@ -383,14 +412,28 @@ since they are YAML documents with a known schema.
 
 ### 6.0 What ships when
 
-Browser-mode git — including commit-on-save — lands with **GIT-US-0021**, which
-owns the isomorphic-git integration and the CORS-proxy handling. GIT-US-0020
-ships the parts of commit-on-save that are runtime-independent: the settings are
-stored per workspace, the message format is implemented a second time in
+Browser-mode git lands with **GIT-US-0021**, which owns the isomorphic-git
+integration and the CORS-proxy handling. GIT-US-0020 ships the parts of
+commit-on-save that are runtime-independent: the settings are stored per
+workspace, the message format is implemented a second time in
 `web/src/git/message.ts` against the same cases as the Go renderer, and the
 settings UI reports that this runtime cannot commit yet instead of offering a
 switch that would do nothing. Nothing about the format has to be revisited when
 the commits themselves start happening.
+
+**As built (GIT-US-0021).** What ships in the browser is the *sync* half:
+`web/src/git/fsa-fs.ts` is the `fs` adapter over the File System Access handles
+(§6.1) and `web/src/git/browser-sync.ts` reads the status and runs fetch, merge
+and push over it. The debounced commit-on-save of §3.3 still belongs to the
+companion in this build — the settings card says so — because it needs the
+write path to enqueue through the git worker rather than the vault. The
+integration strategy is forced to `merge` (§6.2) and reported as such, and a
+workspace with no configured CORS proxy reports `git_cors_proxy_required`
+with the reason instead of attempting a request that a git host will refuse
+(§6.3). SSH remotes are refused with their own message. The dedicated git Web
+Worker of §6.4 is not split out yet: the operations run on the main thread with
+the same abort semantics, which is enough for a backlog-sized repository and is
+the next thing to move when it is not.
 
 ### 6.1 What works
 
@@ -464,9 +507,18 @@ compatible binary is on `PATH`, else go-git), `go-git`, or `system`.
 
 `internal/gitops` binds one `Backend` to one working tree, so the caller passes
 no repository path per call. It exposes `Name`, `Path`, `Capabilities`,
-`Identity`, `Status` and `Commit` today; `Fetch`, `Integrate`, `Push` and the
-conflict surface are added by GIT-US-0021 and GIT-US-0022 rather than declared
-and left unimplemented.
+`Identity`, `Status` and `Commit` (GIT-US-0020) plus the sync half added by
+GIT-US-0021: `SyncStatus`, `Fetch`, `Integrate`, `Push`, `Abort`, `Continue`
+and `Commits`. The structured conflict surface — reading the base/ours/theirs
+blobs of a conflicted path and continuing from a resolution — is GIT-US-0022 and
+is still deliberately absent rather than declared and unimplemented.
+
+A third go-git gap matters to sync, on top of the two below: **go-git has no
+rebase, and its merge is fast-forward only.** The go-git backend therefore
+fast-forwards when it can and fails with `git_unsupported` and an actionable
+message when it cannot, rather than half-applying an integration; `Abort` and
+`Continue` are likewise system-only. With the default `auto` backend a machine
+that has git never lands there.
 
 Two go-git gaps that matter to commit-on-save, both invisible with the default
 `auto` backend on a machine that has git:
@@ -871,14 +923,21 @@ git:
 
   # --- new in this document ---
   pushAfterCommit: false        # (new) push right after a commit-on-save
+  # pullStrategy, pushOnSync and maxPushRetries above are read as built
+  # (GIT-US-0021); the keys below are still declarative unless marked.
   branchMode: default           # (new) default | user-branch
   userBranchTemplate: 'pmngr/{{.User}}'   # (new)
   autoPr: false                 # (new) user-branch mode only
-  dirtyPolicy: commit           # (new) commit | stash | ask | abort
+  dirtyPolicy: commit           # (new) commit | stash | ask | abort — not read yet:
+                                # the effective behaviour is "commit what
+                                # commit-on-save batched, then abort with an
+                                # actionable message" (§4.1)
   maxPushRetries: 3             # (new)
   autoSyncIntervalMinutes: 0    # (new) 0 = manual sync only
   renameOnTitleChange: false    # (new) see §3.1
-  corsProxy: ""                 # (new) required for browser-mode git over HTTPS
+  corsProxy: ""                 # (new) required for browser-mode git over HTTPS.
+                                # The browser stores it per workspace rather
+                                # than in this file, which the companion owns
   cloneDepth: 50                # (new) browser-mode shallow clone depth
 
 credentials:                    # (new section)
@@ -912,7 +971,7 @@ on the team repo.
 | 1 | Atomic writes, canonical serialisation, `rev` computation and checks. No git yet |
 | 2 | fsnotify watcher, debounce, WS change events, external-change detection including `.git/HEAD` |
 | 3 | Team-index snapshot generation and its deterministic merge rule; cross-repo operation journal |
-| 4 | Commit-on-save and the two native backends (GIT-US-0020, done); full sync pipeline (fetch/rebase/merge/push, retries, branch policy) and isomorphic-git browser mode + CORS proxy guidance (GIT-US-0021); front-matter-aware merge, conflict UI, ID collision repair (GIT-US-0022); credential storage in both runtimes (GIT-US-0023) |
+| 4 | Commit-on-save and the two native backends (GIT-US-0020, done); the sync pipeline — fetch, rebase or merge, push, retries, dry run, status indicator — plus isomorphic-git browser sync and the CORS-proxy handling (GIT-US-0021, done; branch policy §4.3 deferred); front-matter-aware merge, conflict UI, ID collision repair (GIT-US-0022); credential storage in both runtimes (GIT-US-0023) |
 | 5 | MCP writes go through exactly the same write path and `rev` checks; agent-authored commits carry a `Tool:` trailer identifying the agent |
 | 6 | Auto-sync interval, WebAuthn-protected browser credentials, sync metrics in the dashboard, force-push recovery flow polish |
 
