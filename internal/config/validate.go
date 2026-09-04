@@ -64,6 +64,12 @@ func (c *Config) Validate() error {
 	if c.Git.CommitDebounce < 0 {
 		add("git.commitDebounce", "must not be negative")
 	}
+	if s := c.Git.PullStrategy; s != "" && !s.Valid() {
+		add("git.pullStrategy", "unknown strategy %q: use rebase or merge", s)
+	}
+	if c.Git.MaxPushRetries < 0 {
+		add("git.maxPushRetries", "must not be negative")
+	}
 	if c.Index.Debounce < 0 {
 		add("index.debounce", "must not be negative")
 	}

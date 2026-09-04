@@ -314,13 +314,17 @@ func TestGitSettingsRoundTrip(t *testing.T) {
 				Backend:         BackendSystem,
 				CommitDebounce:  DefaultCommitDebounce,
 				MessageTemplate: DefaultCommitMessageTemplate,
+				PullStrategy:    PullRebase,
+				PushOnSync:      true,
+				MaxPushRetries:  DefaultMaxPushRetries,
 			},
 		},
 		{
 			name: "every key is read",
 			yaml: "version: 1\ngit:\n  backend: go-git\n  commitOnSave: true\n" +
 				"  commitDebounce: 500ms\n  messageTemplate: '{{action}} {{id}}'\n" +
-				"  authorName: Marta\n  authorEmail: marta@acme.dev\n  signCommits: true\n",
+				"  authorName: Marta\n  authorEmail: marta@acme.dev\n  signCommits: true\n" +
+				"  pullStrategy: merge\n  pushOnSync: false\n  maxPushRetries: 5\n",
 			want: Git{
 				Backend:         BackendGoGit,
 				CommitOnSave:    true,
@@ -329,6 +333,9 @@ func TestGitSettingsRoundTrip(t *testing.T) {
 				AuthorName:      "Marta",
 				AuthorEmail:     "marta@acme.dev",
 				SignCommits:     true,
+				PullStrategy:    PullMerge,
+				PushOnSync:      false,
+				MaxPushRetries:  5,
 			},
 		},
 	}

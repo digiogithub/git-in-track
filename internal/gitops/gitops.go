@@ -131,8 +131,11 @@ type CommitResult struct {
 // bound to one working tree, which is what the caller has: a mounted repository
 // (docs/07 section 6.4).
 //
-// Fetch, Integrate, Push and the conflict surface land with GIT-US-0021; they
-// are deliberately absent here rather than declared and unimplemented.
+// The sync half of the interface (SyncStatus, Fetch, Integrate, Push, Abort,
+// Commits) landed with GIT-US-0021. The structured conflict surface — reading
+// the base/ours/theirs blobs of a conflicted path and continuing the
+// integration from a resolution — belongs to GIT-US-0022 and is deliberately
+// still absent rather than declared and unimplemented.
 type Backend interface {
 	// Name is "go-git" or "system".
 	Name() string
@@ -148,6 +151,31 @@ type Backend interface {
 	// Commit stages exactly req.Paths and commits them. It never touches the
 	// working tree, so a failed commit loses nothing (AC 7).
 	Commit(ctx context.Context, req CommitRequest) (CommitResult, error)
+
+	// SyncStatus reports everything the status indicator needs: the branch, the
+	// dirty set, the remote, the ahead/behind counters, any conflicted path and
+	// any half-finished rebase or merge.
+	SyncStatus(ctx context.Context) (SyncStatus, error)
+	// Fetch downloads the remote branch. It updates no working file, so a
+	// failure here is always non-destructive.
+	Fetch(ctx context.Context, req FetchRequest) (FetchResult, error)
+	// Integrate rebases or merges req.Upstream into the current branch. An
+	// integration that conflicts fails with CodeConflict and leaves the
+	// operation in progress, which is the recoverable state Abort undoes.
+	Integrate(ctx context.Context, req IntegrateRequest) (IntegrateResult, error)
+	// Push publishes the current branch. A non-fast-forward rejection fails
+	// with CodePushRejected and leaves every local commit intact.
+	Push(ctx context.Context, req PushRequest) (PushResult, error)
+	// Abort undoes a half-finished rebase or merge, restoring the tree to what
+	// it was before the integration started.
+	Abort(ctx context.Context) error
+	// Continue resumes a half-finished rebase or merge once its conflicted
+	// paths have been resolved and staged. It fails with CodeConflict while
+	// any path is still unmerged.
+	Continue(ctx context.Context) (IntegrateResult, error)
+	// Commits lists the commits reachable from req.To but not from req.From,
+	// newest first. It is what a dry-run preview is made of.
+	Commits(ctx context.Context, req LogRequest) ([]Commit, error)
 }
 
 // Options configures Open.

@@ -28,6 +28,47 @@ const (
 	CodeTemplateInvalid = "git_template_invalid"
 )
 
+// The codes the sync pipeline adds (GIT-US-0021, docs/06 section 12). Every one
+// of them describes a state the working tree can be recovered from.
+const (
+	// CodeNoRemote means the repository has no remote to sync against.
+	CodeNoRemote = "git_no_remote"
+	// CodeNoUpstream means the branch tracks no remote branch yet.
+	CodeNoUpstream = "git_no_upstream"
+	// CodeUnexpectedBranch means HEAD is detached or is not the branch the
+	// repository is configured to sync; we never switch branches by ourselves.
+	CodeUnexpectedBranch = "git_unexpected_branch"
+	// CodeInProgress means a rebase or merge is half-finished and has to be
+	// continued or aborted before anything else runs.
+	CodeInProgress = "git_operation_in_progress"
+	// CodeDirtyTree means uncommitted changes to tracked files block the
+	// integration. Nothing was fetched.
+	CodeDirtyTree = "git_dirty_tree"
+	// CodeFetchFailed is any fetch failure that is neither auth nor network.
+	CodeFetchFailed = "git_fetch_failed"
+	// CodeAuthRequired means the host refused the credentials. Credential
+	// storage itself is GIT-US-0023; this code is what asks for it.
+	CodeAuthRequired = "git_auth_required"
+	// CodeNetwork means the host was unreachable. Local work is untouched.
+	CodeNetwork = "git_network_unavailable"
+	// CodeHostKey means an SSH host key is not trusted; never auto-accepted.
+	CodeHostKey = "git_host_key_unverified"
+	// CodeConflict means an integration stopped on conflicted paths. The
+	// rebase or merge is still in progress and is resumable.
+	CodeConflict = "git_conflict"
+	// CodeIntegrateFailed is any other rebase or merge failure.
+	CodeIntegrateFailed = "git_integrate_failed"
+	// CodePushRejected means the remote refused the push: a non-fast-forward
+	// race, or a policy such as a protected branch. Local commits are intact.
+	CodePushRejected = "git_push_rejected"
+	// CodePushFailed is any other push failure.
+	CodePushFailed = "git_push_failed"
+	// CodeCancelled means the caller cancelled the run or its deadline expired.
+	CodeCancelled = "git_cancelled"
+	// CodeSyncFailed is the fallback classification of a sync failure.
+	CodeSyncFailed = "git_sync_failed"
+)
+
 // ErrGit is the sentinel behind every failure of this package, so a caller can
 // classify one with errors.Is without inspecting the fields.
 var ErrGit = errors.New("git operation failed")

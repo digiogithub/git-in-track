@@ -136,7 +136,34 @@ type Git struct {
 	// SignCommits asks for gpg or ssh signed commits. It is honored by the
 	// system backend only; go-git refuses it with git_unsupported.
 	SignCommits bool `json:"signCommits" yaml:"signCommits"`
+
+	// PullStrategy is how a sync integrates remote work: rebase, which keeps
+	// the history of a backlog linear, or merge (docs/06 section 4.3).
+	PullStrategy PullStrategy `json:"pullStrategy" yaml:"pullStrategy"`
+	// PushOnSync reports whether a sync ends with a push. False leaves a
+	// local-only workflow that still pulls.
+	PushOnSync bool `json:"pushOnSync" yaml:"pushOnSync"`
+	// MaxPushRetries is how many times a non-fast-forward rejection is answered
+	// with a fresh fetch, integrate and push (docs/06 section 4.2).
+	MaxPushRetries int `json:"maxPushRetries" yaml:"maxPushRetries"`
 }
+
+// PullStrategy selects how remote work is integrated.
+type PullStrategy string
+
+// The two strategies of `git.pullStrategy`.
+const (
+	// PullRebase replays local commits on top of the remote branch.
+	PullRebase PullStrategy = "rebase"
+	// PullMerge merges the remote branch into the local one.
+	PullMerge PullStrategy = "merge"
+)
+
+// Valid reports whether the strategy is one this build knows.
+func (p PullStrategy) Valid() bool { return p == PullRebase || p == PullMerge }
+
+// DefaultMaxPushRetries is the shipped `git.maxPushRetries`.
+const DefaultMaxPushRetries = 3
 
 // Index is the indexer and watcher section.
 type Index struct {
@@ -175,6 +202,9 @@ func Default() *Config {
 			Backend:         BackendAuto,
 			CommitDebounce:  DefaultCommitDebounce,
 			MessageTemplate: DefaultCommitMessageTemplate,
+			PullStrategy:    PullRebase,
+			PushOnSync:      true,
+			MaxPushRetries:  DefaultMaxPushRetries,
 		},
 		Index: Index{
 			Watch:    true,
