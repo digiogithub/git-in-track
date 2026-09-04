@@ -517,3 +517,57 @@ func TestDoctorWarnsAboutLoosePermissions(t *testing.T) {
 		t.Errorf("--strict: exit %d, want %d", code, exitValidation)
 	}
 }
+
+// TestDoctorReportsTheGitBackend covers the environment check of docs/07
+// section 4.8: the resolved backend and the state of commit-on-save.
+func TestDoctorReportsTheGitBackend(t *testing.T) {
+	tests := []struct {
+		name     string
+		git      config.Git
+		want     string
+		severity string
+	}{
+		{
+			name:     "commit-on-save off",
+			git:      config.Default().Git,
+			want:     "commit-on-save off",
+			severity: "ok",
+		},
+		{
+			name: "commit-on-save on names the template",
+			git: config.Git{
+				Backend: config.BackendAuto, CommitOnSave: true,
+				CommitDebounce:  config.DefaultCommitDebounce,
+				MessageTemplate: "{{action}} {{id}}",
+			},
+			want:     `commit-on-save on (debounce 2s, template "{{action}} {{id}}")`,
+			severity: "ok",
+		},
+		{
+			name: "a broken template is an error",
+			git: config.Git{
+				Backend: config.BackendAuto, CommitOnSave: true,
+				MessageTemplate: "{{nosuchplaceholder}}",
+			},
+			want:     "git.messageTemplate does not parse",
+			severity: "error",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config.Default()
+			cfg.Git = tc.git
+			results := checkGit(cfg)
+			if len(results) != 1 {
+				t.Fatalf("results = %+v, want one", results)
+			}
+			if !strings.Contains(results[0].Message, tc.want) {
+				t.Errorf("message = %q, want it to contain %q", results[0].Message, tc.want)
+			}
+			if results[0].Severity != tc.severity {
+				t.Errorf("severity = %q, want %q", results[0].Severity, tc.severity)
+			}
+		})
+	}
+}
