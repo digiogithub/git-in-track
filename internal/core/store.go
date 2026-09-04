@@ -43,6 +43,17 @@ const StaleRevisionCode = "stale_revision"
 // TransitionDeniedCode is the RFC 7807 machine code of a refused status change.
 const TransitionDeniedCode = "workflow_transition_denied"
 
+// ConflictField names one field a rejected write disagreed with: the value the
+// file holds now, and the value the write wanted to put there. It is what turns
+// a stale revision from "try again" into a decision an agent can make on its
+// own — a patch whose fields already hold the values it wanted needs no retry
+// at all (R-REV-3).
+type ConflictField struct {
+	Field    string `json:"field"`
+	Current  string `json:"current,omitempty"`
+	Proposed string `json:"proposed,omitempty"`
+}
+
 // StaleRevisionError carries the current rev of a file so that a client or an
 // agent can retry the merge without a second round trip (R-REV-3).
 type StaleRevisionError struct {
@@ -50,6 +61,10 @@ type StaleRevisionError struct {
 	Path     string
 	Expected Rev
 	Current  Rev
+	// Fields are the fields the refused write would still have changed, judged
+	// against the content that is on disk now. It is empty when the caller's
+	// intent is not expressible as a field diff, such as a delete.
+	Fields []ConflictField
 }
 
 // Error implements the error interface.
@@ -412,15 +427,30 @@ func (s *FileStore) Update(ctx context.Context, id ItemID, patch ItemPatch, expe
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	it, err := s.readChecked(id, expected)
+	it, err := s.readChecked(id, expected, patch.conflictWith)
 	if err != nil {
 		return nil, err
 	}
 	oldPath := it.Path
+	// A status change is a workflow transition wherever it is spelled, so a
+	// patch that carries one is validated exactly as Move validates it. That is
+	// what lets a caller change fields and status in a single conditional
+	// write, with no window between two writes for a third party to slip into.
+	from := it.Status
+	moving := patch.Status != nil && *patch.Status != from
+	if moving {
+		if err := s.checkTransition(it, *patch.Status, false); err != nil {
+			return nil, err
+		}
+	}
 	if err := applyPatch(it, patch); err != nil {
 		return nil, err
 	}
-	it.Updated = s.now()
+	now := s.now()
+	it.Updated = now
+	if moving {
+		s.stampTransition(it, from, it.Status, now)
+	}
 	s.retarget(it, oldPath)
 	if err := s.validate(it); err != nil {
 		return nil, err
@@ -445,7 +475,7 @@ func (s *FileStore) DeleteWith(ctx context.Context, id ItemID, expected Rev, opt
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	it, err := s.readChecked(id, expected)
+	it, err := s.readChecked(id, expected, nil)
 	if err != nil {
 		return err
 	}
@@ -474,7 +504,7 @@ func (s *FileStore) MoveWith(ctx context.Context, id ItemID, status Status, expe
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	it, err := s.readChecked(id, expected)
+	it, err := s.readChecked(id, expected, statusIntent(status))
 	if err != nil {
 		return nil, err
 	}
@@ -533,8 +563,15 @@ func (s *FileStore) stampTransition(it *Item, from, to Status, now Timestamp) {
 	}
 }
 
-// readChecked locates an item, reads it and enforces the optimistic lock.
-func (s *FileStore) readChecked(id ItemID, expected Rev) (*Item, error) {
+// A conflictIntent describes what a write meant to do, so that a refused write
+// can name the fields it disagreed with. It is given the item as it stands on
+// disk now and returns the fields the write would still have changed.
+type conflictIntent func(current *Item) []ConflictField
+
+// readChecked locates an item, reads it and enforces the optimistic lock. When
+// the lock fails, intent turns the caller's proposal into the field list the
+// conflict reports; a nil intent reports the revisions only.
+func (s *FileStore) readChecked(id ItemID, expected Rev, intent conflictIntent) (*Item, error) {
 	found, err := s.locate(id)
 	if err != nil {
 		return nil, err
@@ -544,10 +581,18 @@ func (s *FileStore) readChecked(id ItemID, expected Rev) (*Item, error) {
 		return nil, fmt.Errorf("read %s: %w", found.Path, err)
 	}
 	current := ComputeRev(data)
+	it, parseErr := ParseItem(found.Path, data)
 	if expected != "" && expected != current {
-		return nil, &StaleRevisionError{ID: id, Path: found.Path, Expected: expected, Current: current}
+		stale := &StaleRevisionError{ID: id, Path: found.Path, Expected: expected, Current: current}
+		if parseErr == nil && intent != nil {
+			stale.Fields = intent(it)
+		}
+		return nil, stale
 	}
-	return ParseItem(found.Path, data)
+	if parseErr != nil {
+		return nil, parseErr
+	}
+	return it, nil
 }
 
 // retarget recomputes the file name after a title change, keeping the id

@@ -336,7 +336,13 @@ func (s *Server) publishBoardMove(r *http.Request, result any) {
 // a card move, a sprint edit and a board edit all report through
 // (docs/04 R-MOVE-1, R-SPR-3).
 func (s *Server) publishWriteSets(r *http.Request, sets []vault.RepoWriteSet) {
-	requestID := requestIDOf(r)
+	s.publishWriteSetsWith(requestIDOf(r), sets)
+}
+
+// publishWriteSetsWith is publishWriteSets for a caller that has no request:
+// the MCP server writes through the same core, and its changes reach the
+// connected UIs the same way (docs/08 section 2.2).
+func (s *Server) publishWriteSetsWith(requestID string, sets []vault.RepoWriteSet) {
 	for _, set := range sets {
 		m, found := s.repos.lookup(set.VaultID)
 		for _, file := range set.Written {

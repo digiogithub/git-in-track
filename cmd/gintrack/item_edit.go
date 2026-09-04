@@ -53,7 +53,7 @@ is the same optimistic lock the API and the MCP tools use.`,
 
 	f := cmd.Flags()
 	f.StringVar(&local.title, "title", "", "new title; the file is renamed to match")
-	f.StringVar(&local.status, "status", "", "new status (item move enforces the workflow)")
+	f.StringVar(&local.status, "status", "", "new status; the project workflow is enforced, as it is by item move")
 	f.StringVar(&local.priority, "priority", "", "critical, high, medium or low")
 	f.StringVar(&local.parent, "parent", "", "new parent item id")
 	f.StringVar(&local.milestone, "milestone", "", "new milestone id")

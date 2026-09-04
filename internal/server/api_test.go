@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/digiogithub/git-in-track/internal/core"
 )
 
 // fixtureRoot is the vault every API test runs against, copied first so that no
@@ -136,13 +138,14 @@ type itemPageBody struct {
 
 // problemBody is the RFC 7807 document the API answers failures with.
 type problemBody struct {
-	Type       string `json:"type"`
-	Title      string `json:"title"`
-	Status     int    `json:"status"`
-	Detail     string `json:"detail"`
-	Code       string `json:"code"`
-	Path       string `json:"path"`
-	CurrentRev string `json:"currentRev"`
+	Type       string               `json:"type"`
+	Title      string               `json:"title"`
+	Status     int                  `json:"status"`
+	Detail     string               `json:"detail"`
+	Code       string               `json:"code"`
+	Path       string               `json:"path"`
+	CurrentRev string               `json:"currentRev"`
+	Conflicts  []core.ConflictField `json:"conflicts"`
 }
 
 // getItem reads one item and returns its revision.
@@ -344,6 +347,9 @@ func TestItemUpdateHonoursIfMatch(t *testing.T) {
 		}
 		if doc.Path == "" {
 			t.Error("the problem does not say which file is stale")
+		}
+		if len(doc.Conflicts) != 1 || doc.Conflicts[0].Field != "priority" {
+			t.Errorf("conflicts = %+v, want the field the write disagreed on", doc.Conflicts)
 		}
 	})
 

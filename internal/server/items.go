@@ -356,8 +356,17 @@ func (s *Server) handleCommentAdd(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// A comment is a new file and can overwrite nothing, so If-Match is not
+	// required here as it is on a write against an existing file. It is honored
+	// when it is sent: a client that quotes the rev of the item it read is told
+	// when the item moved on underneath it (docs/07 section 5.3).
+	rev, _, wildcard := ifMatch(r)
+	if wildcard {
+		rev = ""
+	}
 	result, ok := s.call(w, r, m, "comment.add", map[string]any{
 		"id": id, "body": body.Body, "author": body.Author, "inReplyTo": body.InReplyTo,
+		"rev": rev,
 	})
 	if !ok {
 		return

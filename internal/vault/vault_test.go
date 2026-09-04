@@ -750,6 +750,33 @@ func TestAsError(t *testing.T) {
 		if e.Path == "" {
 			t.Error("a stale revision must name the file it is about")
 		}
+		if e.Current == "" {
+			t.Error("a stale revision must carry the rev the file holds now")
+		}
+		if len(e.Conflicts) != 1 || e.Conflicts[0].Field != "title" {
+			t.Errorf("conflicts = %+v, want the field the write disagreed on", e.Conflicts)
+		}
+	})
+
+	t.Run("the JSON envelope carries what a retry needs", func(t *testing.T) {
+		params := `{"id":"DEMO-US-0001","rev":"sha256:0000000000000000","patch":{"set":{"title":"Nope"}}}`
+		var env struct {
+			OK    bool `json:"ok"`
+			Error struct {
+				Code       string               `json:"code"`
+				CurrentRev string               `json:"currentRev"`
+				Conflicts  []core.ConflictField `json:"conflicts"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal([]byte(v.Call("item.update", params)), &env); err != nil {
+			t.Fatalf("decode the envelope: %v", err)
+		}
+		if env.OK || env.Error.Code != core.StaleRevisionCode {
+			t.Fatalf("envelope = %+v", env)
+		}
+		if env.Error.CurrentRev == "" || len(env.Error.Conflicts) != 1 {
+			t.Errorf("error = %+v, want the current rev and the conflicting field", env.Error)
+		}
 	})
 
 	t.Run("an unknown failure is internal", func(t *testing.T) {

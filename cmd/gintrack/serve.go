@@ -26,6 +26,11 @@ type serveFlags struct {
 	watch       bool
 	idleTimeout time.Duration
 	repos       []string
+	// mcpHTTP mounts the Model Context Protocol server at POST /mcp, and
+	// mcpAllowWrite advertises its write tools (docs/08 section 2.2).
+	mcpHTTP       bool
+	mcpAllowWrite bool
+	mcpAgent      string
 }
 
 // browserDelay is how long the banner waits before opening the browser, so that
@@ -64,6 +69,12 @@ without registering it in the configuration.`,
 	cmd.Flags().DurationVar(&flags.idleTimeout, "idle-timeout", 0, "exit after this idle duration; 0 disables it")
 	cmd.Flags().StringArrayVar(&flags.repos, "repo", nil,
 		"serve this repository without registering it; repeatable")
+	cmd.Flags().BoolVar(&flags.mcpHTTP, "mcp-http", false,
+		"serve the Model Context Protocol at POST /mcp")
+	cmd.Flags().BoolVar(&flags.mcpAllowWrite, "mcp-allow-write", false,
+		"advertise the MCP write tools; without it /mcp is read-only")
+	cmd.Flags().StringVar(&flags.mcpAgent, "mcp-agent", "",
+		"agent name recorded as the author of comments written through /mcp")
 	return cmd
 }
 
@@ -114,6 +125,11 @@ func runServe(cmd *cobra.Command, build buildInfo, flags *serveFlags) error {
 		// survive a restart.
 		Git:        cfg.Git,
 		ConfigPath: res.Path,
+		// The MCP endpoint is off unless asked for, on the command line or in
+		// the `mcp:` section of the configuration.
+		MCPHTTP:       pickBool(cmd, "mcp-http", flags.mcpHTTP, cfg.MCP.Enabled),
+		MCPAllowWrite: pickBool(cmd, "mcp-allow-write", flags.mcpAllowWrite, cfg.MCP.AllowWrite),
+		MCPAgent:      flags.mcpAgent,
 	}
 	srv, err := server.New(opts)
 	if err != nil {
@@ -266,6 +282,9 @@ func printBanner(cmd *cobra.Command, build buildInfo, srv *server.Server, token 
 		banner("  %-12s %s — %v, %d items, %d pages\n", repo.ID, repo.Path, repo.Projects, repo.Items, repo.Pages)
 	}
 	banner("indexed:   %d items, %d pages\n", items, pages)
+	if opts.MCPHTTP {
+		banner("mcp:        %s/mcp (%s)\n", srv.URL(), writeMode(opts.MCPAllowWrite))
+	}
 	banner("listening on %s\n", srv.URL())
 	if token != "" {
 		banner("token:      %s\n", token)

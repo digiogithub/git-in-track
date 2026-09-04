@@ -229,6 +229,13 @@ type Error struct {
 	Code    string
 	Message string
 	Path    string
+	// Current is the revision the file holds now, filled in for a stale
+	// revision so that every host can hand a caller the token its retry needs
+	// without a second round trip (docs/03 R-REV-3).
+	Current string
+	// Conflicts are the fields the refused write would still have changed,
+	// judged against the current content. Empty for every other failure.
+	Conflicts []core.ConflictField
 }
 
 // Error implements the error interface.
@@ -1137,6 +1144,7 @@ func (v *Vault) commentAdd(ctx context.Context, raw []byte) (any, error) {
 		Author    string `json:"author"`
 		Body      string `json:"body"`
 		InReplyTo string `json:"inReplyTo,omitempty"`
+		Rev       string `json:"rev,omitempty"`
 	}](raw)
 	if err != nil {
 		return nil, err
@@ -1146,7 +1154,15 @@ func (v *Vault) commentAdd(ctx context.Context, raw []byte) (any, error) {
 		return nil, err
 	}
 	v.fs.begin()
-	draft := core.CommentDraft{Author: p.Author, Body: p.Body, InReplyTo: p.InReplyTo}
+	rev := p.Rev
+	if rev == "*" {
+		// The wildcard of If-Match: an explicit, deliberate write against
+		// whatever the file holds now.
+		rev = ""
+	}
+	draft := core.CommentDraft{
+		Author: p.Author, Body: p.Body, InReplyTo: p.InReplyTo, ItemRev: core.Rev(rev),
+	}
 	comment, err := store.AddComment(ctx, core.ItemID(p.ID), draft)
 	if err != nil {
 		return nil, fmt.Errorf("add comment to %s: %w", p.ID, err)
@@ -1514,14 +1530,22 @@ func failureEnvelope(err error) string {
 }
 
 // errorPayload renders an error as the `error` half of the JSON envelope.
-func errorPayload(err error) map[string]string {
+func errorPayload(err error) map[string]any {
 	e, ok := AsError(err)
 	if !ok {
-		return map[string]string{"code": "internal", "message": "unknown error"}
+		return map[string]any{"code": "internal", "message": "unknown error"}
 	}
-	out := map[string]string{"code": e.Code, "message": e.Message}
+	out := map[string]any{"code": e.Code, "message": e.Message}
 	if e.Path != "" {
 		out["path"] = e.Path
+	}
+	// A rejected conditional write carries what a retry needs: the revision the
+	// file holds now, and where the two versions disagree.
+	if e.Current != "" {
+		out["currentRev"] = e.Current
+	}
+	if len(e.Conflicts) > 0 {
+		out["conflicts"] = e.Conflicts
 	}
 	return out
 }
@@ -1538,6 +1562,8 @@ func classify(err error, out *Error) {
 	case errors.As(err, &stale):
 		out.Code = core.StaleRevisionCode
 		out.Path = stale.Path
+		out.Current = string(stale.Current)
+		out.Conflicts = stale.Fields
 	case errors.As(err, &transition):
 		out.Code = core.TransitionDeniedCode
 	case errors.As(err, &parse):
