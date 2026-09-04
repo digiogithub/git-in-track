@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   CORS_PROXY_REASON,
   isSshRemote,
+  mergeUpstream,
   readSyncStatus,
   redactUrl,
   runSync,
@@ -190,5 +191,77 @@ describe('remote URL handling', () => {
     expect(isSshRemote('ssh://git@example.test/acme/web.git')).toBe(true);
     expect(isSshRemote('https://example.test/acme/web.git')).toBe(false);
     expect(isSshRemote(undefined)).toBe(false);
+  });
+});
+
+/**
+ * The conflict half of browser git (GIT-US-0022, docs/06 §5, §6.2).
+ *
+ * `isomorphic-git` rolls a conflicting merge back instead of leaving markers on
+ * disk, so the three versions the merge driver sees are the whole conflicted
+ * state — and replaying the merge with a resolution is how it completes.
+ */
+describe('mergeUpstream', () => {
+  /** Builds a repository whose branch and upstream changed the same line. */
+  async function divergedRepo(): Promise<FakeDirectory> {
+    const root = new FakeDirectory();
+    const fs = createGitFs(root);
+    await git.init({ fs, dir: '/', defaultBranch: 'main' });
+    const author = { name: 'Test User', email: 'test@example.com' };
+
+    await fs.promises.writeFile('story.md', '---\ntype: story\n---\n\nBase.\n');
+    await git.add({ fs, dir: '/', filepath: 'story.md' });
+    const base = await git.commit({ fs, dir: '/', message: 'seed', author });
+
+    // The remote side, recorded as the tracking ref.
+    await fs.promises.writeFile('story.md', '---\ntype: story\n---\n\nTheirs.\n');
+    await git.add({ fs, dir: '/', filepath: 'story.md' });
+    const theirs = await git.commit({ fs, dir: '/', message: 'theirs', author });
+    await git.writeRef({ fs, dir: '/', ref: 'refs/remotes/origin/main', value: theirs, force: true });
+
+    // Our side, on top of the base.
+    await git.writeRef({ fs, dir: '/', ref: 'refs/heads/main', value: base, force: true });
+    await git.checkout({ fs, dir: '/', ref: 'main', force: true });
+    await fs.promises.writeFile('story.md', '---\ntype: story\n---\n\nMine.\n');
+    await git.add({ fs, dir: '/', filepath: 'story.md' });
+    await git.commit({ fs, dir: '/', message: 'mine', author });
+
+    await git.addRemote({ fs, dir: '/', remote: 'origin', url: 'https://example.test/a/b.git' });
+    return root;
+  }
+
+  it('reports the three versions of a conflicted file and touches nothing', async () => {
+    const root = await divergedRepo();
+    const conflicts = await mergeUpstream(root, {
+      author: { name: 'Test User', email: 'test@example.com' },
+    });
+
+    expect(conflicts).toHaveLength(1);
+    expect(conflicts[0]?.path).toBe('story.md');
+    expect(conflicts[0]?.base).toContain('Base.');
+    expect(conflicts[0]?.ours).toContain('Mine.');
+    expect(conflicts[0]?.theirs).toContain('Theirs.');
+
+    // The working tree still holds our version, with no conflict markers.
+    const fs = createGitFs(root);
+    const onDisk = (await fs.promises.readFile('story.md', { encoding: 'utf8' })) as string;
+    expect(onDisk).toContain('Mine.');
+    expect(onDisk).not.toContain('<<<<<<<');
+  });
+
+  it('completes the merge with the resolution the user accepted', async () => {
+    const root = await divergedRepo();
+    const resolved = '---\ntype: story\n---\n\nMine and theirs.\n';
+    const conflicts = await mergeUpstream(root, {
+      author: { name: 'Test User', email: 'test@example.com' },
+      resolutions: { 'story.md': resolved },
+    });
+
+    expect(conflicts).toHaveLength(0);
+    const fs = createGitFs(root);
+    const onDisk = (await fs.promises.readFile('story.md', { encoding: 'utf8' })) as string;
+    expect(onDisk).toBe(resolved);
+    const log = await git.log({ fs, dir: '/', ref: 'main', depth: 5 });
+    expect(log[0]?.commit.parent).toHaveLength(2);
   });
 });

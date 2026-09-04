@@ -317,6 +317,121 @@ export type SyncSettings = {
   corsProxy?: string;
 };
 
+/**
+ * The conflict resolver (docs/06-git-sync.md §5, story GIT-US-0022).
+ *
+ * A conflicted file is never handed over as raw conflict markers: the front
+ * matter is merged field by field on parsed values and the body hunk by hunk,
+ * and every decision the merge made is reported so the user can flip it.
+ */
+export type ConflictFieldDecision = {
+  field: string;
+  /** `immutable`, `set`, `ordered`, `order-map`, `scalar`, `timestamp` or `unknown`. */
+  kind: string;
+  base?: unknown;
+  ours?: unknown;
+  theirs?: unknown;
+  merged?: unknown;
+  /** The side the merged value came from: `base`, `ours`, `theirs` or `merged`. */
+  choice: string;
+  /** True when both sides changed the field, so the decision deserves a look. */
+  review: boolean;
+  note?: string;
+};
+
+/** One region of the body the two sides did not both leave alone. */
+export type ConflictHunk = {
+  index: number;
+  /** The Markdown heading the hunk falls under. */
+  section?: string;
+  base: string;
+  ours: string;
+  theirs: string;
+  merged: string;
+  /** `ours`, `theirs`, `both`, `base`, `merged` or `edited`. */
+  choice: string;
+  /** True when no rule could pick, so the user has to. */
+  conflicted: boolean;
+  suggestion?: string;
+  note?: string;
+};
+
+/** What the core proposes for one conflicted file. */
+export type ConflictMerge = {
+  path: string;
+  /** True when the file has front matter, so the field-level merge applied. */
+  structured: boolean;
+  fields?: ConflictFieldDecision[];
+  hunks?: ConflictHunk[];
+  /** The merged file, canonically serialised. */
+  content: string;
+  conflicted: number;
+  review: number;
+  clean: boolean;
+  warnings?: string[];
+};
+
+/** The three versions of a conflicted path, as the index holds them. */
+export type ConflictVersions = {
+  path: string;
+  kind: string;
+  base?: string;
+  ours?: string;
+  theirs?: string;
+  hasBase: boolean;
+  hasOurs: boolean;
+  hasTheirs: boolean;
+  /** True when the sides were swapped back into the user's frame (a rebase). */
+  rebased?: boolean;
+  /** The working copy, conflict markers included: the manual edit starts here. */
+  working?: string;
+  /** Binary conflicts have no structured resolution: keep mine or keep theirs. */
+  binary: boolean;
+};
+
+/** Everything the resolver needs for one conflicted path. */
+export type ConflictAnalysis = {
+  repo: string;
+  path: string;
+  kind: string;
+  operation?: string;
+  strategy?: 'rebase' | 'merge';
+  versions: ConflictVersions;
+  /** Absent for a binary conflict. */
+  merge?: ConflictMerge;
+};
+
+/** What the user decided for one conflicted path. */
+export type ConflictResolution = {
+  /** `ours` and `theirs` keep one whole side; `manual` writes `content`. */
+  resolution: 'ours' | 'theirs' | 'merged' | 'manual';
+  content?: string;
+  body?: string;
+  /** Field name to `ours`, `theirs` or `base`. */
+  fields?: Record<string, string>;
+  /** Hunk index, as a string, to `ours`, `theirs`, `both`, `base` or `edited`. */
+  hunks?: Record<string, string>;
+  /** The text of an `edited` hunk, keyed by the same index. */
+  hunkText?: Record<string, string>;
+  /** Defaults to true: finish the rebase or merge once nothing is left. */
+  continue?: boolean;
+};
+
+/** What a resolution did. */
+export type ConflictResolveResult = {
+  repo: string;
+  path: string;
+  merge: ConflictMerge;
+  result: {
+    staged: boolean;
+    continued: boolean;
+    remaining?: SyncConflict[];
+    status?: SyncStatus;
+  };
+  /** The repository row after the resolution. */
+  status?: SyncRepoStatus;
+};
+
 /** The sync settings a change may carry; an absent one is left alone. */
 export type SyncSettingsPatch = {
   pullStrategy?: 'rebase' | 'merge';
@@ -570,6 +685,24 @@ export interface DataProvider {
   abortSync(repoId: string): Promise<SyncRepoStatus>;
   /** The conflicted paths of every repository whose integration stopped. */
   listSyncConflicts(repoId?: string): Promise<{ repo: string; paths: string[]; operation?: string }[]>;
+
+  // git — conflict resolution (docs/06 §5, story GIT-US-0022)
+  /**
+   * The three versions of one conflicted path plus the merge the core proposes
+   * for them: the field decisions, the body hunks and the canonical merged
+   * file. It is what the ConflictResolver renders.
+   */
+  readConflict(repoId: string, path: string): Promise<ConflictAnalysis>;
+  /**
+   * Writes a resolution, stages it and — unless `continue` is false — finishes
+   * the rebase or merge. Keep-mine, keep-theirs and a manual edit are always
+   * available, whatever the shape of the conflict.
+   */
+  resolveConflict(
+    repoId: string,
+    path: string,
+    resolution: ConflictResolution,
+  ): Promise<ConflictResolveResult>;
 
   subscribe(handler: (event: ChangeEvent) => void): Unsubscribe;
 }

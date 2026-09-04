@@ -51,6 +51,21 @@ export const SSH_REMOTE_REASON =
   'This repository’s remote uses SSH, which a browser tab cannot speak. ' +
   'Add an HTTPS remote URL for it, or run the companion.';
 
+/**
+ * One conflicted path with the three versions the merge driver saw. Browser
+ * mode keeps them in memory for the resolver: `isomorphic-git` aborts a
+ * conflicting merge instead of leaving markers on disk, so the working tree is
+ * untouched and the three blobs are the only record of the conflict
+ * (docs/06 §5, §6.2).
+ */
+export type BrowserConflict = {
+  path: string;
+  kind: string;
+  base: string;
+  ours: string;
+  theirs: string;
+};
+
 /** What a browser sync needs beyond the folder itself. */
 export type BrowserGitOptions = {
   /** The configured CORS proxy; empty means git over the network is off. */
@@ -68,6 +83,18 @@ export type BrowserGitOptions = {
   onAuthFailure?: AuthFailureCallback;
   /** Author of a merge commit; falls back to the repository's git config. */
   author?: { name: string; email: string };
+  /**
+   * Resolutions to apply during the merge, keyed by path. A path that has one
+   * merges cleanly with exactly that text, which is how a resolved conflict
+   * completes the merge it belongs to.
+   */
+  resolutions?: Record<string, string>;
+  /**
+   * Called with the conflicted paths and their three versions when the merge
+   * stopped. It is how the provider remembers a conflict the resolver then
+   * works on; nothing is written to disk.
+   */
+  onConflict?: (conflicts: BrowserConflict[]) => void;
 };
 
 /** A failure with the same machine codes the companion reports. */
@@ -207,6 +234,43 @@ export async function runSync(
   }
 }
 
+/**
+ * Merges the fetched upstream into the current branch, out of band of a full
+ * sync. It is what the conflict resolver replays once the user has decided:
+ * the resolutions in `opts` are handed to the merge driver, so the merge that
+ * stopped completes with exactly the text the user accepted.
+ *
+ * It resolves with the conflicts that stopped it, if any; the working tree is
+ * untouched in that case, because the merge is rolled back.
+ */
+export async function mergeUpstream(
+  root: DirectoryHandleLike,
+  opts: BrowserGitOptions = {},
+): Promise<BrowserConflict[]> {
+  const fs = createGitFs(root);
+  const status = await readSyncStatus(root);
+  if (!status.upstream) {
+    throw new BrowserGitError(
+      'git_no_upstream',
+      `Branch ${status.branch} tracks no remote branch yet, so there is nothing to merge.`,
+    );
+  }
+  const seen: BrowserConflict[] = [];
+  try {
+    await integrate(fs, status, {
+      ...opts,
+      onConflict: (conflicts) => {
+        seen.push(...conflicts);
+        opts.onConflict?.(conflicts);
+      },
+    });
+  } catch (error) {
+    const failure = asBrowserGitError(error);
+    if (failure.code !== 'git_conflict') throw failure;
+  }
+  return seen;
+}
+
 /** Refuses a run the browser cannot complete, before it touches the network. */
 function preflight(status: SyncStatus, opts: SyncOptions & BrowserGitOptions): void {
   if (status.detached) {
@@ -244,9 +308,18 @@ function preflight(status: SyncStatus, opts: SyncOptions & BrowserGitOptions): v
   }
 }
 
-/** Merges the fetched work and brings the working tree up to it. */
+/**
+ * Merges the fetched work and brings the working tree up to it.
+ *
+ * The merge runs with our own driver, which is what gives browser mode a
+ * conflict surface at all (docs/06 §6.2): `isomorphic-git`'s own merge would
+ * only report the paths, while the driver sees the base, ours and theirs blobs
+ * of every conflicting file. A path the caller already resolved merges cleanly
+ * with that text, which is how a resolution finishes the merge.
+ */
 async function integrate(fs: GitFs, status: SyncStatus, opts: BrowserGitOptions): Promise<void> {
   const author = opts.author ?? (await readAuthor(fs));
+  const seen: BrowserConflict[] = [];
   try {
     await git.merge({
       fs,
@@ -255,9 +328,19 @@ async function integrate(fs: GitFs, status: SyncStatus, opts: BrowserGitOptions)
       theirs: `refs/remotes/${status.upstream}`,
       abortOnConflict: true,
       author,
+      mergeDriver: ({ contents, path }) => {
+        const [base = '', ours = '', theirs = ''] = contents;
+        const resolved = opts.resolutions?.[path];
+        if (resolved !== undefined) return { cleanMerge: true, mergedText: resolved };
+        seen.push({ path, kind: 'content', base, ours, theirs });
+        // Nothing is written: `abortOnConflict` rolls the merge back, and the
+        // three versions above are what the resolver works on.
+        return { cleanMerge: false, mergedText: ours };
+      },
     });
   } catch (error) {
-    const conflicts = conflictsOf(error);
+    const conflicts = seen.length > 0 ? seen.map(asSyncConflict) : conflictsOf(error);
+    if (seen.length > 0) opts.onConflict?.(seen);
     if (conflicts.length > 0) {
       throw new BrowserGitError(
         'git_conflict',
@@ -443,6 +526,11 @@ export function redactUrl(url: string): string {
   const slash = rest.indexOf('/');
   if (at === -1 || (slash !== -1 && at > slash)) return url;
   return `${scheme}://***@${rest.slice(at + 1)}`;
+}
+
+/** Narrows a recorded conflict to the shape the sync report carries. */
+function asSyncConflict(conflict: BrowserConflict): SyncConflict {
+  return { path: conflict.path, kind: conflict.kind };
 }
 
 /** Reads the conflicted paths out of an isomorphic-git merge failure. */

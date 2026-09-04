@@ -25,6 +25,10 @@ import type {
   CardMove,
   ChangeEvent,
   Comment,
+  ConflictAnalysis,
+  ConflictMerge,
+  ConflictResolution,
+  ConflictResolveResult,
   DataProvider,
   Diagnostic,
   IndexStats,
@@ -69,6 +73,7 @@ import type {
 import { ProviderError } from '@/api/provider';
 import { hydrateOrBuild } from '@/cache/index-cache';
 import type {
+  ConflictResolutionParams,
   CoreMethodName,
   CoreParams,
   CoreResult,
@@ -92,7 +97,7 @@ import {
   type VaultFS,
 } from '@/fs';
 import type { DirectoryHandleLike } from '@/fs/types';
-import { readSyncStatus, runSync } from '@/git/browser-sync';
+import { readSyncStatus, runSync, type BrowserConflict } from '@/git/browser-sync';
 import { createAuthCallback, createAuthFailureCallback, forgetCredentials } from '@/git/credentials';
 import {
   BROWSER_GIT_REASON,
@@ -101,6 +106,9 @@ import {
   writeGitSettings,
   writeSyncSettings,
 } from '@/git/settings-store';
+
+/** One conflicted path browser mode is holding for the resolver. */
+type PendingConflict = BrowserConflict & { resolved?: string };
 
 type MountedRepo = {
   id: string;
@@ -172,6 +180,15 @@ export class BrowserProvider implements DataProvider {
   readonly #mounts = new Map<string, MountedRepo>();
   readonly #handlers = new Set<(event: ChangeEvent) => void>();
   #activeRepoId: string | null = null;
+  /**
+   * The conflicts of the last stopped merge, per repository and path, with the
+   * three versions the merge driver saw and any resolution the user accepted.
+   * `isomorphic-git` rolls a conflicting merge back, so this in-memory record
+   * is the whole conflicted state: a reload simply loses it and leaves the
+   * working tree exactly as it was, which is what abort would have done
+   * (docs/06 §6.2).
+   */
+  readonly #conflicts = new Map<string, Map<string, PendingConflict>>();
   /** Namespaces the per-workspace git settings in browser storage. */
   readonly #workspaceName: string;
 
@@ -789,8 +806,10 @@ export class BrowserProvider implements DataProvider {
         results.push(unsupportedSync(mount.id, NO_HANDLE_REASON));
         continue;
       }
+      const resolutions = resolutionsOf(this.#conflicts.get(mount.id));
       const result = await runSync(handle, mount.id, {
         ...opts,
+        ...(resolutions ? { resolutions } : {}),
         push: opts.push ?? settings.pushOnSync,
         ...(settings.corsProxy ? { corsProxy: settings.corsProxy } : {}),
         ...(author ? { author } : {}),
@@ -798,6 +817,7 @@ export class BrowserProvider implements DataProvider {
         // memory for this tab only (GIT-US-0023, docs/06 §8.2).
         onAuth: createAuthCallback(settings.corsProxy ? { corsProxy: settings.corsProxy } : {}),
         onAuthFailure: createAuthFailureCallback(),
+        onConflict: (conflicts) => this.#rememberConflicts(mount.id, conflicts),
       });
       if (result.phase === 'done' && !result.dryRun && result.pulled > 0) {
         // Incoming work changed files under our feet: reload the vault so the
@@ -810,21 +830,150 @@ export class BrowserProvider implements DataProvider {
   }
 
   /**
-   * isomorphic-git aborts a conflicting merge instead of leaving one half
-   * applied, so there is never a merge to abort here.
+   * Browser git rolls a conflicting merge back by itself, so aborting is only
+   * ever about forgetting the conflict this session is holding: the working
+   * tree was never touched, which is exactly the pre-sync state.
    */
-  abortSync(): Promise<SyncRepoStatus> {
-    return Promise.reject(
-      new ProviderError(
-        'read_only',
-        'Browser git aborts a conflicting merge by itself, so there is nothing to abort. ' +
-          'Your files were left untouched.',
-      ),
-    );
+  async abortSync(repoId: string): Promise<SyncRepoStatus> {
+    this.#conflicts.delete(repoId);
+    const [row] = await this.getSyncStatus(repoId);
+    if (!row) {
+      throw new ProviderError('not_found', `No repository is mounted as ${repoId}.`);
+    }
+    return row;
   }
 
-  listSyncConflicts(): Promise<{ repo: string; paths: string[]; operation?: string }[]> {
-    return Promise.resolve([]);
+  listSyncConflicts(repoId?: string): Promise<{ repo: string; paths: string[]; operation?: string }[]> {
+    const out: { repo: string; paths: string[]; operation?: string }[] = [];
+    for (const [repo, paths] of this.#conflicts) {
+      if (repoId !== undefined && repo !== repoId) continue;
+      if (paths.size === 0) continue;
+      out.push({ repo, paths: [...paths.keys()].sort(), operation: 'merge' });
+    }
+    return Promise.resolve(out);
+  }
+
+  /**
+   * The three versions of one conflicted path and the merge the core proposes
+   * for them. The merge runs in the same Go code the companion calls, so the
+   * two runtimes never drift (docs/06 §5, §6.2).
+   */
+  async readConflict(repoId: string, path: string): Promise<ConflictAnalysis> {
+    const pending = this.#pendingConflict(repoId, path);
+    const merge = await this.#mergeConflict(pending);
+    return {
+      repo: repoId,
+      path,
+      kind: pending.kind,
+      operation: 'merge',
+      strategy: 'merge',
+      versions: {
+        path,
+        kind: pending.kind,
+        base: pending.base,
+        ours: pending.ours,
+        theirs: pending.theirs,
+        hasBase: pending.base !== '',
+        hasOurs: true,
+        hasTheirs: true,
+        binary: false,
+      },
+      merge,
+    };
+  }
+
+  /**
+   * Writes a resolution and, once every conflicted path has one, replays the
+   * merge with those resolutions so that it completes: the merge driver is
+   * handed the resolved text and reports a clean merge, which is how browser
+   * mode finishes an integration it could not finish on its own.
+   */
+  async resolveConflict(
+    repoId: string,
+    path: string,
+    resolution: ConflictResolution,
+  ): Promise<ConflictResolveResult> {
+    const pending = this.#pendingConflict(repoId, path);
+    const merge = await this.#mergeConflict(pending, resolution);
+    if (!merge.clean) {
+      throw new ProviderError(
+        'validation_failed',
+        `The resolution of ${path} still leaves conflicted hunks: decide every hunk, or use ` +
+          'keep mine, keep theirs or a manual edit.',
+      );
+    }
+    pending.resolved = merge.content;
+
+    const repoConflicts = this.#conflicts.get(repoId);
+    const remaining = [...(repoConflicts?.values() ?? [])].filter((c) => c.resolved === undefined);
+    const proceed = resolution.continue !== false && remaining.length === 0;
+    const out: ConflictResolveResult = {
+      repo: repoId,
+      path,
+      merge,
+      result: {
+        staged: true,
+        continued: false,
+        remaining: remaining.map((c) => ({ path: c.path, kind: c.kind })),
+      },
+    };
+    if (!proceed) return out;
+
+    const results = await this.sync(repoId, { push: true });
+    const [result] = results;
+    if (result && (result.phase === 'failed' || result.phase === 'conflicts')) {
+      throw new ProviderError(
+        'git_conflict',
+        result.message ?? `The merge of ${repoId} could not be completed.`,
+      );
+    }
+    this.#conflicts.delete(repoId);
+    out.result.continued = true;
+    if (result) out.result.status = result.after;
+    const [row] = await this.getSyncStatus(repoId);
+    if (row) out.status = row;
+    return out;
+  }
+
+  /** Records the conflicts a stopped merge reported, keeping any resolution. */
+  #rememberConflicts(repoId: string, conflicts: BrowserConflict[]): void {
+    const existing = this.#conflicts.get(repoId);
+    const next = new Map<string, PendingConflict>();
+    for (const conflict of conflicts) {
+      const previous = existing?.get(conflict.path);
+      next.set(conflict.path, {
+        ...conflict,
+        ...(previous?.resolved === undefined ? {} : { resolved: previous.resolved }),
+      });
+    }
+    this.#conflicts.set(repoId, next);
+  }
+
+  /** Looks up one held conflict, or explains that the list is stale. */
+  #pendingConflict(repoId: string, path: string): PendingConflict {
+    const pending = this.#conflicts.get(repoId)?.get(path);
+    if (!pending) {
+      throw new ProviderError(
+        'not_found',
+        `${path} is not conflicted in ${repoId}: run the sync again to see the current conflicts.`,
+      );
+    }
+    return pending;
+  }
+
+  /** Runs the core's three-way merge over one held conflict. */
+  async #mergeConflict(
+    pending: PendingConflict,
+    resolution?: ConflictResolution,
+  ): Promise<ConflictMerge> {
+    const merged = await this.#call('conflict.merge', {
+      path: pending.path,
+      base: pending.base,
+      ours: pending.ours,
+      theirs: pending.theirs,
+      ...(resolution ? { resolution: coreResolution(resolution) } : {}),
+    });
+    return merged satisfies ConflictMerge;
   }
 
   // ------------------------------------------------------------------- events
@@ -1085,4 +1234,32 @@ function unsupportedSync(repo: string, reason: string): SyncResult {
     code: 'git_unsupported',
     message: reason,
   };
+}
+
+/** Maps the provider's resolution onto the core's, which is side-shaped. */
+function coreResolution(resolution: ConflictResolution): ConflictResolutionParams {
+  return {
+    ...(resolution.resolution === 'ours' || resolution.resolution === 'theirs'
+      ? { take: resolution.resolution }
+      : {}),
+    ...(resolution.resolution === 'manual' && resolution.content !== undefined
+      ? { content: resolution.content }
+      : {}),
+    ...(resolution.body === undefined ? {} : { body: resolution.body }),
+    ...(resolution.fields === undefined ? {} : { fields: resolution.fields }),
+    ...(resolution.hunks === undefined ? {} : { hunks: resolution.hunks }),
+    ...(resolution.hunkText === undefined ? {} : { hunkText: resolution.hunkText }),
+  };
+}
+
+/** The resolved texts a replayed merge applies, keyed by path. */
+function resolutionsOf(
+  conflicts: Map<string, PendingConflict> | undefined,
+): Record<string, string> | undefined {
+  if (!conflicts || conflicts.size === 0) return undefined;
+  const out: Record<string, string> = {};
+  for (const [path, conflict] of conflicts) {
+    if (conflict.resolved !== undefined) out[path] = conflict.resolved;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }

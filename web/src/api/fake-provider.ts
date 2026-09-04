@@ -19,6 +19,9 @@ import type {
   Capabilities,
   ChangeEvent,
   Comment,
+  ConflictAnalysis,
+  ConflictResolution,
+  ConflictResolveResult,
   DataProvider,
   Diagnostic,
   GitCommit,
@@ -1668,7 +1671,57 @@ export class FakeProvider implements DataProvider {
   }
 
   listSyncConflicts(): Promise<{ repo: string; paths: string[]; operation?: string }[]> {
-    return Promise.resolve([]);
+    const out = [...this.conflicts.values()].map((analysis) => ({
+      repo: analysis.repo,
+      paths: [analysis.path],
+      ...(analysis.operation === undefined ? {} : { operation: analysis.operation }),
+    }));
+    return Promise.resolve(out);
+  }
+
+  /**
+   * Conflicts a test seeded, keyed by `<repo>:<path>`. The fake provider is
+   * what component tests render the ConflictResolver against, so it carries the
+   * same analysis shape the two real providers return.
+   */
+  conflicts = new Map<string, ConflictAnalysis>();
+
+  /** The resolutions the fake recorded, newest last; tests assert on them. */
+  resolutions: { repo: string; path: string; resolution: ConflictResolution }[] = [];
+
+  readConflict(repoId: string, path: string): Promise<ConflictAnalysis> {
+    const analysis = this.conflicts.get(`${repoId}:${path}`);
+    if (!analysis) {
+      return Promise.reject(new ProviderError('not_found', `${path} is not conflicted in ${repoId}`));
+    }
+    return Promise.resolve(analysis);
+  }
+
+  resolveConflict(
+    repoId: string,
+    path: string,
+    resolution: ConflictResolution,
+  ): Promise<ConflictResolveResult> {
+    const analysis = this.conflicts.get(`${repoId}:${path}`);
+    if (!analysis) {
+      return Promise.reject(new ProviderError('not_found', `${path} is not conflicted in ${repoId}`));
+    }
+    this.resolutions.push({ repo: repoId, path, resolution });
+    this.conflicts.delete(`${repoId}:${path}`);
+    const merge = analysis.merge ?? {
+      path,
+      structured: false,
+      content: analysis.versions.ours ?? '',
+      conflicted: 0,
+      review: 0,
+      clean: true,
+    };
+    return Promise.resolve({
+      repo: repoId,
+      path,
+      merge: { ...merge, clean: true, conflicted: 0 },
+      result: { staged: true, continued: resolution.continue !== false, remaining: [] },
+    });
   }
 
   subscribe(handler: (event: ChangeEvent) => void): Unsubscribe {

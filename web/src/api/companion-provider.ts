@@ -34,6 +34,9 @@ import type {
   Capabilities,
   ChangeEvent,
   Comment,
+  ConflictAnalysis,
+  ConflictResolution,
+  ConflictResolveResult,
   DataProvider,
   Diagnostic,
   IndexStats,
@@ -1262,6 +1265,39 @@ export class CompanionProvider implements DataProvider {
       paths: string[];
       operation?: string;
     }[];
+  }
+
+  /** `GET /api/v1/sync/conflicts/file`: the three versions and the merge. */
+  async readConflict(repoId: string, path: string): Promise<ConflictAnalysis> {
+    return (await this.#json(
+      `${API_PREFIX}/sync/conflicts/file${buildQuery({ repo: repoId, path })}`,
+    )) as ConflictAnalysis;
+  }
+
+  /**
+   * `POST /api/v1/sync/conflicts/resolve`: write the resolution, stage it and
+   * finish the rebase or merge. The merge itself runs in the core, so browser
+   * mode and the companion resolve a conflict by exactly the same rules.
+   */
+  async resolveConflict(
+    repoId: string,
+    path: string,
+    resolution: ConflictResolution,
+  ): Promise<ConflictResolveResult> {
+    return (await this.#json(`${API_PREFIX}/sync/conflicts/resolve`, {
+      method: 'POST',
+      body: {
+        repo: repoId,
+        path,
+        resolution: resolution.resolution,
+        ...(resolution.content === undefined ? {} : { content: resolution.content }),
+        ...(resolution.body === undefined ? {} : { body: resolution.body }),
+        ...(resolution.fields === undefined ? {} : { fields: resolution.fields }),
+        ...(resolution.hunks === undefined ? {} : { hunks: resolution.hunks }),
+        ...(resolution.hunkText === undefined ? {} : { hunkText: resolution.hunkText }),
+        ...(resolution.continue === undefined ? {} : { continue: resolution.continue }),
+      },
+    })) as ConflictResolveResult;
   }
 
   subscribe(handler: (event: ChangeEvent) => void): Unsubscribe {

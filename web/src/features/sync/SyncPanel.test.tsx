@@ -119,6 +119,57 @@ describe('SyncPanel', () => {
     expect(alert).toHaveTextContent('docs/.pmngr/boards/team.md (content)');
   });
 
+  it('offers the resolver for every conflicted file and opens it', async () => {
+    const provider = new FakeProvider();
+    const path = 'docs/.pmngr/stories/DEMO-US-0001-guest-checkout.md';
+    provider.syncStatuses = [
+      {
+        repo: 'demo',
+        path: '/tmp/demo',
+        git: true,
+        pending: 0,
+        status: {
+          ...blankStatus(),
+          clean: false,
+          state: 'conflicted',
+          operation: 'rebase',
+          conflicted: [{ path, kind: 'content' }],
+        },
+      },
+    ];
+    provider.conflicts.set(`demo:${path}`, {
+      repo: 'demo',
+      path,
+      kind: 'content',
+      operation: 'rebase',
+      versions: {
+        path,
+        kind: 'content',
+        ours: 'mine',
+        theirs: 'theirs',
+        hasBase: true,
+        hasOurs: true,
+        hasTheirs: true,
+        binary: false,
+      },
+      merge: {
+        path,
+        structured: true,
+        content: '---\ntype: story\n---\n\nMerged.\n',
+        conflicted: 0,
+        review: 0,
+        clean: true,
+      },
+    });
+    renderPanel(provider);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Resolve' }));
+
+    expect(await screen.findByLabelText(`Conflict in ${path}`)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Keep mine' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Abort and restore' })).toBeInTheDocument();
+  });
+
   it('explains a runtime that cannot sync instead of offering the buttons', async () => {
     const provider = new FakeProvider();
     provider.syncSettings = {

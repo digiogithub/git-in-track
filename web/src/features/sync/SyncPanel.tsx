@@ -19,6 +19,7 @@ import { useOptionalProvider } from '@/api/provider-context';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { ConflictResolver } from '@/features/sync/ConflictResolver';
 import { CredentialPrompt } from '@/features/sync/CredentialPrompt';
 import { forgetCredentials, sessionCredentialCount } from '@/git/credentials';
 
@@ -47,6 +48,8 @@ export function SyncPanel() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tokens, setTokens] = useState(0);
+  /** The conflicted file the resolver is open on, `<repo>:<path>`. */
+  const [resolving, setResolving] = useState<{ repo: string; path: string } | null>(null);
 
   const load = useCallback(async () => {
     if (!provider) return;
@@ -120,8 +123,25 @@ export function SyncPanel() {
           busy={busy}
           enabled={settings?.supported !== false}
           onRun={run}
+          onResolve={(path) => {
+            setResolving({ repo: repo.repo, path });
+          }}
         />
       ))}
+
+      {resolving ? (
+        <ConflictResolver
+          repoId={resolving.repo}
+          path={resolving.path}
+          onResolved={() => {
+            void load();
+          }}
+          onClose={() => {
+            setResolving(null);
+            void load();
+          }}
+        />
+      ) : null}
 
       {tokens > 0 ? (
         <p className="flex items-center gap-3 text-sm text-muted-foreground">
@@ -154,12 +174,14 @@ function RepoRow({
   busy,
   enabled,
   onRun,
+  onResolve,
 }: {
   repo: SyncRepoStatus;
   result: SyncResult | undefined;
   busy: string | null;
   enabled: boolean;
   onRun: (repoId: string, dryRun: boolean) => void;
+  onResolve: (path: string) => void;
 }) {
   const status = repo.status;
   const state = status?.state ?? 'no_remote';
@@ -215,10 +237,48 @@ function RepoRow({
           </p>
         ) : null}
 
+        {conflictedPaths(repo, result).length > 0 ? (
+          <div className="space-y-2 rounded-md border border-destructive/40 p-3">
+            <p className="text-destructive">
+              {conflictedPaths(repo, result).length} file(s) need a decision before this
+              {' '}
+              {repo.status?.operation ?? 'integration'} can finish. Nothing was pushed and the
+              repository can still be restored.
+            </p>
+            <ul className="space-y-1">
+              {conflictedPaths(repo, result).map((path) => (
+                <li key={path} className="flex items-center justify-between gap-3">
+                  <span className="font-mono text-xs">{path}</span>
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      onResolve(path);
+                    }}
+                  >
+                    Resolve
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
         {result ? <Report result={result} /> : null}
       </CardContent>
     </Card>
   );
+}
+
+/**
+ * The conflicted paths of a repository: the ones its status reports, plus the
+ * ones the last run named. Browser mode rolls a conflicting merge back, so its
+ * conflicts only ever reach the panel through the run's report.
+ */
+function conflictedPaths(repo: SyncRepoStatus, result: SyncResult | undefined): string[] {
+  const paths = new Set<string>();
+  for (const conflict of repo.status?.conflicted ?? []) paths.add(conflict.path);
+  for (const conflict of result?.conflicts ?? []) paths.add(conflict.path);
+  return [...paths].sort();
 }
 
 /** One labelled counter. */
