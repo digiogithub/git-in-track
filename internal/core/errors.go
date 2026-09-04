@@ -74,6 +74,20 @@ const (
 	CodeTeamKeyMismatch       Code = "W-TEAM-KEY-MISMATCH"
 	CodeTeamWebURL            Code = "W-TEAM-WEB-URL"
 
+	// Board codes (docs/04 section 5.10). The WIP condition is live and is
+	// reported by the rendered view, never by a file check.
+	CodeBoardID              Code = "E-BOARD-ID"
+	CodeBoardKind            Code = "E-BOARD-KIND"
+	CodeBoardColumns         Code = "E-BOARD-COLUMNS"
+	CodeBoardColMapping      Code = "E-BOARD-COL-MAPPING"
+	CodeBoardStatusAmbiguous Code = "E-BOARD-STATUS-AMBIGUOUS"
+	CodeBoardSprintKind      Code = "E-BOARD-SPRINT-KIND"
+	CodeBoardUnknownProject  Code = "W-BOARD-UNKNOWN-PROJECT"
+	CodeBoardRefFormat       Code = "W-BOARD-REF-FORMAT"
+	CodeBoardRefDead         Code = "W-BOARD-REF-DEAD"
+	CodeBoardWipExceeded     Code = "W-BOARD-WIP-EXCEEDED"
+	CodeBoardUnmappedStatus  Code = "W-BOARD-UNMAPPED-STATUS"
+
 	CodeWarnNoDone       Code = "W-PROJ-NO-DONE"
 	CodeWarnLabelDup     Code = "W-PROJ-LABEL-DUP"
 	CodeWarnCounterStale Code = "W-PROJ-COUNTER-STALE"

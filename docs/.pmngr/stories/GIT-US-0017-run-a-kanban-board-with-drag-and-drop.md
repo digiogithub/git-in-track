@@ -2,9 +2,9 @@
 id: GIT-US-0017
 type: story
 title: Run a Kanban board with drag and drop
-status: backlog
+status: in_progress
 created: 2026-09-03T00:00:00Z
-updated: 2026-09-03T00:00:00Z
+updated: 2026-09-04
 author: team
 priority: critical
 parent: GIT-EP-0004
