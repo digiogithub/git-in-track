@@ -2,9 +2,10 @@
 id: GIT-EP-0002
 type: epic
 title: Browser-only MVP
-status: in_progress
+status: done
 created: 2026-09-03T00:00:00Z
-updated: 2026-09-03T21:47:06Z
+updated: 2026-09-04T05:06:40Z
+closed: 2026-09-04T05:06:40Z
 started: 2026-09-03T21:47:06Z
 author: team
 priority: critical

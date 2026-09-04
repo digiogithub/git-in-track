@@ -2,9 +2,10 @@
 id: GIT-M-0003
 type: milestone
 title: Phase 2 — Companion CLI
-status: backlog
+status: in_progress
 created: 2026-09-03T00:00:00Z
-updated: 2026-09-03T00:00:00Z
+updated: 2026-09-04T05:06:40Z
+started: 2026-09-04T05:06:40Z
 author: team
 labels: [cli, server]
 links:
