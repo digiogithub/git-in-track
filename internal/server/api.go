@@ -50,6 +50,10 @@ func (s *Server) mountAPI(api chi.Router) {
 		p.Get("/teams/{key}", s.handleTeam)
 		p.Route("/teams/{key}/kb", s.mountKB)
 		p.Get("/refs", s.handleResolveRef)
+		// Committed index snapshots: what a board renders for a project this
+		// machine has not cloned (docs/04 section 6).
+		p.Get("/snapshots", s.handleSnapshotList)
+		p.Post("/snapshots", s.handleSnapshotRefresh)
 		// The flat form addresses the knowledge base by vault path, with an
 		// optional ?project= to disambiguate a multi-project repository.
 		p.Route("/kb", s.mountKB)

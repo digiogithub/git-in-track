@@ -209,11 +209,13 @@ func (w *Workspace) ResolveRef(ref core.Ref) refResolution {
 
 func (w *Workspace) resolveRef(ref core.Ref) refResolution {
 	var team *core.TeamRef
+	var snapshots *core.SnapshotSet
 	if m, ok := w.teamMount(); ok {
 		team = m.Vault.Team()
+		snapshots = m.Vault.Snapshots()
 	}
 	if m, ok := w.mountForProject(ref.Project); ok {
-		return m.Vault.ResolveRef(ref, m.ID, team)
+		return m.Vault.ResolveRef(ref, m.ID, team, snapshots)
 	}
 	out := refResolution{
 		Ref:      ref.String(),
@@ -225,6 +227,7 @@ func (w *Workspace) resolveRef(ref core.Ref) refResolution {
 	if team != nil && team.Config != nil {
 		_, out.Declared = team.Config.Project(ref.Project)
 	}
+	describeRemoteRef(&out, ref, team, snapshots)
 	return out
 }
 
@@ -248,7 +251,7 @@ func (w *Workspace) Team() (teamSummary, bool) {
 		}
 		return "", core.ProjectRef{}, false
 	}
-	return teamSummaryOf(m.Vault.Team(), m.ID, lookup), true
+	return teamSummaryOf(m.Vault.Team(), m.ID, m.Vault.Snapshots(), lookup), true
 }
 
 // Search ranks results across every open repository, keeping the source of each

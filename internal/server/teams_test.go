@@ -273,3 +273,105 @@ func TestWorkspaceEndpoint(t *testing.T) {
 		}
 	}
 }
+
+// snapshotRow is the documented shape of one entry of /api/v1/snapshots.
+type snapshotRow struct {
+	Project string `json:"project"`
+	Path    string `json:"path"`
+	Status  string `json:"status"`
+	Items   int    `json:"items"`
+	Reason  string `json:"reason"`
+	Info    struct {
+		Present   bool   `json:"present"`
+		Freshness string `json:"freshness"`
+		Stale     bool   `json:"stale"`
+		Items     int    `json:"items"`
+	} `json:"info"`
+}
+
+// snapshotBody is the answer of both snapshot routes.
+type snapshotBody struct {
+	Snapshots []snapshotRow `json:"snapshots"`
+	Writes    []struct {
+		VaultID string `json:"vaultId"`
+		Written []struct {
+			Path string `json:"path"`
+		} `json:"written"`
+	} `json:"writes"`
+	DryRun bool `json:"dryRun"`
+}
+
+// rowOf returns the entry of a project key.
+func rowOf(t *testing.T, body snapshotBody, key string) snapshotRow {
+	t.Helper()
+	for _, row := range body.Snapshots {
+		if row.Project == key {
+			return row
+		}
+	}
+	t.Fatalf("no entry for %s in %+v", key, body.Snapshots)
+	return snapshotRow{}
+}
+
+func TestSnapshotEndpoints(t *testing.T) {
+	s := newTeamServer(t)
+
+	t.Run("the listing reports the committed snapshot of every project", func(t *testing.T) {
+		var body snapshotBody
+		decode(t, send(t, s, request{method: http.MethodGet, target: "/api/v1/snapshots"}), http.StatusOK, &body)
+		if len(body.Snapshots) != 2 {
+			t.Fatalf("snapshots = %+v", body.Snapshots)
+		}
+		web := rowOf(t, body, "WEB")
+		if !web.Info.Present || web.Info.Items != 4 || web.Info.Freshness != "ageing" {
+			t.Fatalf("WEB = %+v", web.Info)
+		}
+		if demo := rowOf(t, body, "DEMO"); demo.Info.Present {
+			t.Errorf("the fixture commits no DEMO snapshot: %+v", demo.Info)
+		}
+	})
+
+	t.Run("a dry run reports what would change and writes nothing", func(t *testing.T) {
+		var body snapshotBody
+		decode(t, send(t, s, request{
+			method: http.MethodPost, target: "/api/v1/snapshots",
+			body: map[string]any{"dryRun": true, "generatedBy": "jose"},
+		}), http.StatusOK, &body)
+		if !body.DryRun || len(body.Writes) != 0 {
+			t.Fatalf("body = %+v", body)
+		}
+		if row := rowOf(t, body, "DEMO"); row.Status != "written" {
+			t.Fatalf("DEMO = %+v", row)
+		}
+	})
+
+	t.Run("a refresh writes the snapshot of the cloned project", func(t *testing.T) {
+		var body snapshotBody
+		decode(t, send(t, s, request{
+			method: http.MethodPost, target: "/api/v1/snapshots",
+			body: map[string]any{"generatedBy": "jose"},
+		}), http.StatusOK, &body)
+		if row := rowOf(t, body, "DEMO"); row.Status != "written" || !row.Info.Present {
+			t.Fatalf("DEMO = %+v", row)
+		}
+		if row := rowOf(t, body, "WEB"); row.Status != "skipped" {
+			t.Fatalf("WEB = %+v", row)
+		}
+		if len(body.Writes) != 1 || body.Writes[0].VaultID != teamRepoID {
+			t.Fatalf("writes = %+v", body.Writes)
+		}
+	})
+
+	t.Run("regenerating an unchanged snapshot writes nothing", func(t *testing.T) {
+		var body snapshotBody
+		decode(t, send(t, s, request{
+			method: http.MethodPost, target: "/api/v1/snapshots", body: map[string]any{},
+		}), http.StatusOK, &body)
+		if row := rowOf(t, body, "DEMO"); row.Status != "unchanged" {
+			t.Fatalf("DEMO = %+v", row)
+		}
+		if len(body.Writes) != 0 {
+			t.Fatalf("writes = %+v", body.Writes)
+		}
+	})
+}

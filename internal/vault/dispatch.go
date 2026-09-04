@@ -96,6 +96,14 @@ func (w *Workspace) Dispatch(ctx context.Context, method string, raw []byte) (an
 			return nil, err
 		}
 		return w.MoveCard(ctx, p)
+	case "snapshot.list":
+		return w.SnapshotList()
+	case "snapshot.refresh":
+		p, err := decodeParams[SnapshotRefreshParams](raw)
+		if err != nil {
+			return nil, err
+		}
+		return w.RefreshSnapshots(ctx, p)
 	case "project.list":
 		return w.Projects(ctx)
 	case "search":

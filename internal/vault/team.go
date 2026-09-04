@@ -24,6 +24,13 @@ type teamProjectSummary struct {
 	VaultID string `json:"vaultId,omitempty"`
 	// LocalDocsPath is the documentation folder inside that repository.
 	LocalDocsPath string `json:"localDocsPath,omitempty"`
+	// Snapshot describes the committed index snapshot of this project: whether
+	// there is one, when it was generated and whether it is stale. It is what
+	// the UI shows next to a project nobody cloned (docs/04 section 6).
+	Snapshot core.SnapshotInfo `json:"snapshot"`
+	// WebURL is where the project can be browsed, derived from `repo` when
+	// team.yaml declares none (R-URL-3). Empty disables the host links.
+	BrowseURL string `json:"browseUrl,omitempty"`
 	// Diagnostics are the findings about this project alone, such as a clone
 	// whose project.yaml declares another key (W-TEAM-KEY-MISMATCH).
 	Diagnostics []core.Diagnostic `json:"diagnostics,omitempty"`
@@ -62,6 +69,14 @@ type refResolution struct {
 	// Found is the item itself, present only when the project is cloned and the
 	// item exists in it.
 	Found *core.Item `json:"found,omitempty"`
+	// Snapshot is the read-only summary a committed index snapshot carries for
+	// an item of a project nobody cloned (docs/04 section 7.2).
+	Snapshot *core.ProjectSnapshotItem `json:"snapshot,omitempty"`
+	// SnapshotInfo describes the file that summary came from: when it was
+	// generated and whether it is stale.
+	SnapshotInfo *core.SnapshotInfo `json:"snapshotInfo,omitempty"`
+	// URL is the item's file on the git host, empty when no link can be built.
+	URL string `json:"url,omitempty"`
 	// Reason explains an unresolved reference in one sentence, for the UI.
 	Reason string `json:"reason,omitempty"`
 }
@@ -84,7 +99,7 @@ func (v *Vault) teamGet() (any, error) {
 			local[p.Key] = p
 		}
 	}
-	return teamSummaryOf(v.team, "", func(key core.ProjectKey) (string, core.ProjectRef, bool) {
+	return teamSummaryOf(v.team, "", v.snapshots(), func(key core.ProjectKey) (string, core.ProjectRef, bool) {
 		ref, ok := local[key]
 		return "", ref, ok
 	}), nil
@@ -96,6 +111,7 @@ func (v *Vault) teamGet() (any, error) {
 func teamSummaryOf(
 	team *core.TeamRef,
 	vaultID string,
+	snapshots *core.SnapshotSet,
 	lookup func(core.ProjectKey) (string, core.ProjectRef, bool),
 ) teamSummary {
 	out := teamSummary{
@@ -120,8 +136,13 @@ func teamSummaryOf(
 	out.Snapshots = cfg.Snapshots
 	out.Members = append(out.Members, cfg.Members...)
 
+	out.Diagnostics = append(out.Diagnostics, snapshots.Diagnostics()...)
 	for _, p := range cfg.Projects {
-		entry := teamProjectSummary{TeamProject: p}
+		entry := teamProjectSummary{
+			TeamProject: p,
+			Snapshot:    snapshots.Info(p.Key),
+			BrowseURL:   p.BrowseURL(),
+		}
 		if id, ref, ok := lookup(p.Key); ok {
 			entry.Cloned = true
 			entry.VaultID = id
@@ -152,20 +173,24 @@ func (v *Vault) refResolve(raw []byte) (any, error) {
 	if parseErr != nil {
 		return nil, failf("invalid_request", "%v", parseErr)
 	}
-	return v.resolveRef(ref, "", v.team), nil
+	return v.resolveRef(ref, "", v.team, v.snapshots()), nil
 }
 
 // ResolveRef looks a reference up in this vault, taking its lock. team may be
 // the team repository of another vault, which is how a workspace answers
 // "declared" for a project this vault knows nothing about.
-func (v *Vault) ResolveRef(ref core.Ref, vaultID string, team *core.TeamRef) refResolution {
+func (v *Vault) ResolveRef(
+	ref core.Ref, vaultID string, team *core.TeamRef, snapshots *core.SnapshotSet,
+) refResolution {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	return v.resolveRef(ref, vaultID, team)
+	return v.resolveRef(ref, vaultID, team, snapshots)
 }
 
 // resolveRef looks a reference up in this vault. The caller holds the lock.
-func (v *Vault) resolveRef(ref core.Ref, vaultID string, team *core.TeamRef) refResolution {
+func (v *Vault) resolveRef(
+	ref core.Ref, vaultID string, team *core.TeamRef, snapshots *core.SnapshotSet,
+) refResolution {
 	out := refResolution{
 		Ref:     ref.String(),
 		Project: string(ref.Project),
@@ -183,6 +208,7 @@ func (v *Vault) resolveRef(ref core.Ref, vaultID string, team *core.TeamRef) ref
 	}
 	if !found {
 		out.Reason = fmt.Sprintf("project %s is not cloned on this machine", ref.Project)
+		describeRemoteRef(&out, ref, team, snapshots)
 		return out
 	}
 	out.Cloned = true
@@ -212,4 +238,39 @@ func decodeRefParams(raw []byte) (core.Ref, error) {
 		return core.Ref{}, failf("invalid_request", "%v", err)
 	}
 	return ref, nil
+}
+
+// describeRemoteRef fills in what a committed snapshot knows about a reference
+// into a project nobody cloned: the read-only summary, the age of the file it
+// came from and the link to the item on the git host (docs/04 section 7).
+func describeRemoteRef(
+	out *refResolution, ref core.Ref, team *core.TeamRef, snapshots *core.SnapshotSet,
+) {
+	if snapshots == nil {
+		return
+	}
+	info := snapshots.Info(ref.Project)
+	out.SnapshotInfo = &info
+	entry, ok := snapshots.Item(ref.Project, ref.Item)
+	if !ok {
+		if info.Present {
+			out.Reason = fmt.Sprintf(
+				"project %s is not cloned on this machine and %s is not in its index snapshot",
+				ref.Project, ref.Item)
+		}
+		return
+	}
+	out.Snapshot = &entry
+	if team != nil && team.Config != nil {
+		if project, found := team.Config.Project(ref.Project); found {
+			out.URL = project.FileURL(entry.Path)
+		}
+	}
+	generated := "in the team repository"
+	if !info.Generated.IsZero() {
+		generated = "on " + info.Generated.Format("2006-01-02")
+	}
+	out.Reason = fmt.Sprintf(
+		"project %s is not cloned on this machine; this read-only summary comes from the index snapshot generated %s",
+		ref.Project, generated)
 }

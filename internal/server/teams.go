@@ -81,3 +81,35 @@ func (s *Server) handleWorkspaceTree(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, r, http.StatusOK, result)
 }
+
+// handleSnapshotList serves GET /api/v1/snapshots: the committed index snapshot
+// of every project team.yaml declares, with its age and its staleness.
+func (s *Server) handleSnapshotList(w http.ResponseWriter, r *http.Request) {
+	result, err := s.repos.workspace().Dispatch(r.Context(), "snapshot.list", nil)
+	if err != nil {
+		writeVaultError(w, r, err)
+		return
+	}
+	writeJSON(w, r, http.StatusOK, result)
+}
+
+// handleSnapshotRefresh serves POST /api/v1/snapshots: regenerate the snapshots
+// of the projects this machine has cloned and write the ones that changed into
+// the team repository. It is the companion-side form of `gintrack snapshot`.
+func (s *Server) handleSnapshotRefresh(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Projects      []string `json:"projects,omitempty"`
+		GeneratedBy   string   `json:"generatedBy,omitempty"`
+		IncludeClosed *bool    `json:"includeClosed,omitempty"`
+		DryRun        bool     `json:"dryRun,omitempty"`
+	}
+	if r.ContentLength > 0 && !decodeBody(w, r, &body) {
+		return
+	}
+	result, err := s.repos.workspace().Dispatch(r.Context(), "snapshot.refresh", mustJSON(body))
+	if err != nil {
+		writeVaultError(w, r, err)
+		return
+	}
+	writeJSON(w, r, http.StatusOK, result)
+}

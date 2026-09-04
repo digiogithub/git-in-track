@@ -175,6 +175,14 @@ func (v *Vault) Projects() []core.ProjectRef {
 	return out
 }
 
+// BaseFS returns the file system the vault is mounted on, untracked. It is what
+// a caller reads with when the read must not show up in the next WriteSet.
+func (v *Vault) BaseFS() core.FS {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.base
+}
+
 // Team returns the team repository this vault is, or nil when its root holds no
 // team.yaml.
 func (v *Vault) Team() *core.TeamRef {

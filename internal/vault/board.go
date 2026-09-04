@@ -294,7 +294,11 @@ func (v *Vault) boardGet(ctx context.Context, raw []byte) (any, error) {
 		return nil, err
 	}
 	declared, configs := v.teamScope()
-	input := core.BoardInput{Declared: declared}
+	snapshots := v.snapshots()
+	input := core.BoardInput{Declared: declared, Snapshots: snapshots}
+	if v.team != nil && v.team.Config != nil {
+		input.Projects = append(input.Projects, v.team.Config.Projects...)
+	}
 	for _, key := range declared {
 		if source, ok := v.boardSource(key, ""); ok {
 			input.Sources = append(input.Sources, source)
@@ -302,6 +306,7 @@ func (v *Vault) boardGet(ctx context.Context, raw []byte) (any, error) {
 	}
 	view := core.BuildBoardView(board, input)
 	view.Diagnostics = append(view.Diagnostics, board.Validate(declared, configs)...)
+	view.Diagnostics = append(view.Diagnostics, snapshots.Diagnostics()...)
 	return view, nil
 }
 
@@ -350,6 +355,11 @@ type boardContext struct {
 	declared []core.ProjectKey
 	configs  map[core.ProjectKey]*core.ProjectConfig
 	owners   map[core.ProjectKey]*Mount
+	// projects are the team.yaml declarations, which is what a link to a
+	// remote item's file is built from (docs/04 section 7.3).
+	projects []core.TeamProject
+	// snapshots resolve the cards of the projects nobody cloned.
+	snapshots *core.SnapshotSet
 }
 
 // boardContext gathers the repositories a board is rendered over.
@@ -369,6 +379,8 @@ func (w *Workspace) boardContext() (boardContext, error) {
 			out.declared = append(out.declared, p.Key)
 		}
 	}
+	out.projects = m.Vault.TeamProjects()
+	out.snapshots = m.Vault.Snapshots()
 	for _, key := range out.declared {
 		owner, ok := w.MountForProject(key)
 		if !ok {
@@ -384,7 +396,10 @@ func (w *Workspace) boardContext() (boardContext, error) {
 
 // input builds the render input of a board: one source per cloned project.
 func (c boardContext) input() core.BoardInput {
-	in := core.BoardInput{Declared: c.declared, TeamVaultID: c.team.ID}
+	in := core.BoardInput{
+		Declared: c.declared, TeamVaultID: c.team.ID,
+		Projects: c.projects, Snapshots: c.snapshots,
+	}
 	for _, key := range c.declared {
 		owner, ok := c.owners[key]
 		if !ok {
@@ -435,6 +450,7 @@ func (w *Workspace) BoardView(ctx context.Context, id string) (core.BoardView, e
 func (c boardContext) render(board *core.Board) core.BoardView {
 	view := core.BuildBoardView(board, c.input())
 	view.Diagnostics = append(view.Diagnostics, board.Validate(c.declared, c.configs)...)
+	view.Diagnostics = append(view.Diagnostics, c.snapshots.Diagnostics()...)
 	return view
 }
 
