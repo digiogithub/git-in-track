@@ -88,6 +88,14 @@ const (
 	CodeBoardWipExceeded     Code = "W-BOARD-WIP-EXCEEDED"
 	CodeBoardUnmappedStatus  Code = "W-BOARD-UNMAPPED-STATUS"
 
+	// Index-snapshot codes (docs/04 section 6). A snapshot is a cache, so only
+	// a file that cannot be used at all is an error; the rest is advisory.
+	CodeSnapMalformed   Code = "E-SNAP-MALFORMED"
+	CodeSnapKeyMismatch Code = "W-SNAP-KEY-MISMATCH"
+	CodeSnapStale       Code = "W-SNAP-STALE"
+	CodeSnapDirty       Code = "W-SNAP-DIRTY"
+	CodeSnapMissing     Code = "W-SNAP-MISSING"
+
 	CodeWarnNoDone       Code = "W-PROJ-NO-DONE"
 	CodeWarnLabelDup     Code = "W-PROJ-LABEL-DUP"
 	CodeWarnCounterStale Code = "W-PROJ-COUNTER-STALE"

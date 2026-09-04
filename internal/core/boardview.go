@@ -41,6 +41,20 @@ type BoardCard struct {
 	Path      string    `json:"path,omitempty"`
 	Rev       Rev       `json:"rev,omitempty"`
 
+	// Source is where the card was read from: "live" for a local clone,
+	// "snapshot" for a committed `.pmngr/index/<KEY>.json` (docs/04 section 6).
+	// It is empty for a remote card no snapshot could resolve.
+	Source string `json:"source,omitempty"`
+	// SnapshotAt is when the snapshot the card came from was generated.
+	SnapshotAt Timestamp `json:"snapshotAt,omitempty"`
+	// Stale reports a snapshot older than the team's `snapshots.max_age_days`
+	// (R-SNAP-9). The card still renders; it is badged.
+	Stale bool `json:"stale,omitempty"`
+	// RemoteURL is the item's file on the git host, built from the project's
+	// web_url and default branch (docs/04 section 7.3). Empty when no link can
+	// be built.
+	RemoteURL string `json:"remoteUrl,omitempty"`
+
 	// Reason explains, in one sentence, why a card cannot be edited here.
 	Reason string `json:"reason,omitempty"`
 }
@@ -66,7 +80,34 @@ func cardOf(key ProjectKey, vaultID string, it *Item) BoardCard {
 		Updated:   it.Updated,
 		Path:      it.Path,
 		Rev:       it.Rev,
+		Source:    CardSourceLive,
 	}
+}
+
+// snapshotCardOf projects one entry of a committed snapshot onto a card: the
+// same fields a live card carries, plus where they came from and how old they
+// are. The card is never editable, and it says so (R-REM-1, R-REM-3).
+func snapshotCardOf(key ProjectKey, entry ProjectSnapshotItem, info SnapshotInfo, project TeamProject) BoardCard {
+	it := entry.Item()
+	card := cardOf(key, "", &it)
+	card.VaultID = ""
+	card.Remote = true
+	card.Source = CardSourceSnapshot
+	card.SnapshotAt = info.Generated
+	card.Stale = info.Stale
+	card.RemoteURL = project.FileURL(entry.Path)
+	card.Reason = fmt.Sprintf(
+		"%s is not cloned on this machine: this card is read from the index snapshot of %s and cannot be edited here",
+		key, formatSnapshotAge(info))
+	return card
+}
+
+// formatSnapshotAge renders the age of a snapshot for a card's explanation.
+func formatSnapshotAge(info SnapshotInfo) string {
+	if info.Generated.IsZero() || info.AgeSeconds <= 0 {
+		return "the team repository"
+	}
+	return humanAge(info.Age()) + " ago"
 }
 
 // BoardColumnView is one rendered column.
@@ -124,6 +165,23 @@ type BoardInput struct {
 	Sources []BoardSource
 	// TeamVaultID names the repository the board file lives in.
 	TeamVaultID string
+	// Projects are the team.yaml declarations, used to build the link to a
+	// remote item's file on its git host (docs/04 section 7.3).
+	Projects []TeamProject
+	// Snapshots resolves the cards of the projects nobody cloned. A nil set
+	// renders those cards as the bare reference, which is what a team with
+	// `snapshots.enabled: false` sees (R-SNAP-10).
+	Snapshots *SnapshotSet
+}
+
+// project returns the team.yaml declaration of a key.
+func (in BoardInput) project(key ProjectKey) TeamProject {
+	for _, p := range in.Projects {
+		if p.Key == key {
+			return p
+		}
+	}
+	return TeamProject{}
 }
 
 // BuildBoardView renders a board: it applies the filters, assigns every item to
@@ -192,6 +250,46 @@ func BuildBoardView(b *Board, in BoardInput) BoardView {
 		}
 	}
 
+	// Projects nobody cloned: their cards come from the committed snapshot,
+	// read-only, stale-dated and mapped to a column by the status the snapshot
+	// published (docs/04 sections 6 and 7).
+	known := map[string]bool{}
+	for _, key := range scope {
+		if _, cloned := sources[key]; cloned {
+			continue
+		}
+		snap, ok := in.Snapshots.Snapshot(key)
+		if !ok {
+			continue
+		}
+		cfg := in.Snapshots.Config(key)
+		info := in.Snapshots.Info(key)
+		project := in.project(key)
+		for _, entry := range snap.Items {
+			card := snapshotCardOf(key, entry, info, project)
+			card.Declared = containsKey(in.Declared, key)
+			known[card.Ref] = true
+			it := entry.Item()
+			if !b.matches(&it, cfg) {
+				continue
+			}
+			index := -1
+			for ci, c := range b.Columns {
+				if c.Shows(key, cfg, entry.Status) {
+					index = ci
+					break
+				}
+			}
+			if index < 0 {
+				card.Reason = fmt.Sprintf("status %s maps to no column of this board", entry.Status)
+				view.Unmapped = append(view.Unmapped, card)
+				continue
+			}
+			buckets[index] = append(buckets[index], card)
+			placed[card.Ref] = true
+		}
+	}
+
 	// Refs the order list carries for projects nobody cloned. They keep the
 	// position the board gives them, because nothing else can tell where they
 	// belong (docs/04 section 7).
@@ -221,12 +319,35 @@ func BuildBoardView(b *Board, in BoardInput) BoardView {
 				}
 				continue
 			}
+			if known[ref.String()] {
+				// The snapshot knows the item; the board filters it out or its
+				// status maps to no column. R-ORD-2 ignores such a ref on read,
+				// exactly as it does for a cloned project.
+				continue
+			}
 			card := BoardCard{
 				Ref: ref.String(), Project: ref.Project, Item: ref.Item,
 				Declared: declared, Remote: true,
 			}
 			if declared {
-				card.Reason = fmt.Sprintf("project %s is not cloned on this machine; clone it to move this card", ref.Project)
+				info := in.Snapshots.Info(ref.Project)
+				card.SnapshotAt = info.Generated
+				card.Stale = info.Stale
+				switch {
+				case info.Error != "":
+					card.Reason = fmt.Sprintf("the index snapshot of %s cannot be read (%s); clone the project to see this card",
+						ref.Project, info.Error)
+				case info.Present:
+					card.Source = CardSourceSnapshot
+					card.Reason = fmt.Sprintf("%s is not in the index snapshot of %s; it may be closed, or the snapshot may be out of date",
+						ref.Item, ref.Project)
+				case !info.Enabled:
+					card.Reason = fmt.Sprintf("project %s is not cloned and this team publishes no index snapshots; clone it to see this card",
+						ref.Project)
+				default:
+					card.Reason = fmt.Sprintf("project %s is not cloned on this machine and has no index snapshot yet; clone it to move this card",
+						ref.Project)
+				}
 			} else {
 				card.Reason = fmt.Sprintf("project %s is not declared in %s", ref.Project, TeamFileName)
 				view.Diagnostics = append(view.Diagnostics, Diagnostic{
@@ -465,7 +586,10 @@ func PlanMove(b *Board, view BoardView, move BoardMove, cfg *ProjectConfig) (Boa
 	if !found {
 		return BoardMovePlan{}, fmt.Errorf("board %s does not show %s", b.ID, ref)
 	}
-	if current.Remote {
+	if current.Remote && plan.FromColumn != column.ID {
+		// Everything whose state lives in the project repository is read-only
+		// for a remote card; the order list lives in the team repository, so a
+		// re-order inside one column stays allowed (R-REM-1).
 		return BoardMovePlan{}, fmt.Errorf("%s: %s", ref, current.Reason)
 	}
 

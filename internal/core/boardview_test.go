@@ -90,14 +90,14 @@ func TestBuildBoardView(t *testing.T) {
 			},
 		},
 		{
-			name: "a card of a project nobody cloned is remote and inert",
+			name: "a card of a project nobody cloned and with no snapshot is inert",
 			check: func(t *testing.T) {
 				card := columnOf(view, "todo").Cards[1]
 				if !card.Remote || !card.Declared {
 					t.Fatalf("card = %+v", card)
 				}
 				if card.Title != "" || card.Status != "" {
-					t.Fatalf("a remote card carries no item state yet: %+v", card)
+					t.Fatalf("without a snapshot a remote card carries no item state: %+v", card)
 				}
 				if !strings.Contains(card.Reason, "not cloned") {
 					t.Fatalf("reason = %q", card.Reason)
@@ -563,4 +563,202 @@ filters:
 			}
 		})
 	}
+}
+
+// snapshotInput is the fixture workspace plus the committed snapshot of the
+// project nobody cloned: what a team board looks like once GIT-US-0019 is in.
+func snapshotInput(t *testing.T) BoardInput {
+	t.Helper()
+	fsys := snapshotFS(t, nil)
+	in := fixtureInput()
+	in.Projects = []TeamProject{
+		{Key: "DEMO", Name: "Demo Shop", Repo: "https://github.com/example/demo-shop.git",
+			DocsPath: "docs", Host: "github", WebURL: "https://github.com/example/demo-shop"},
+		{Key: "WEB", Name: "Marketing Website", Repo: "https://gitlab.com/example/website.git",
+			DocsPath: "documentation", Host: "gitlab", WebURL: "https://gitlab.com/example/website"},
+	}
+	in.Snapshots = ReadSnapshots(fsys, ".pmngr", []ProjectKey{"DEMO", "WEB"}, freshPolicy(), fixtureNow)
+	return in
+}
+
+// cardOfRef returns a rendered card by reference, from any column.
+func cardOfRef(view BoardView, ref string) (BoardCard, bool) {
+	for _, c := range view.Columns {
+		for _, card := range c.Cards {
+			if card.Ref == ref {
+				return card, true
+			}
+		}
+	}
+	for _, card := range view.Unmapped {
+		if card.Ref == ref {
+			return card, true
+		}
+	}
+	return BoardCard{}, false
+}
+
+func TestBuildBoardViewFromSnapshots(t *testing.T) {
+	board := readFixtureBoard(t)
+	view := BuildBoardView(board, snapshotInput(t))
+
+	tests := []struct {
+		name  string
+		check func(t *testing.T)
+	}{
+		{
+			name: "a remote card carries the fields the snapshot published",
+			check: func(t *testing.T) {
+				card, ok := cardOfRef(view, "WEB/WEB-US-0031")
+				if !ok {
+					t.Fatal("the remote story is missing from the board")
+				}
+				if !card.Remote || card.Source != CardSourceSnapshot {
+					t.Fatalf("card = %+v", card)
+				}
+				if card.Title != "Rewrite the hero section" || card.Status != "next" ||
+					card.Priority != PriorityHigh || card.Estimate == nil || *card.Estimate != 5 {
+					t.Fatalf("card = %+v", card)
+				}
+				if len(card.Assignees) != 2 || len(card.Labels) != 1 {
+					t.Fatalf("card = %+v", card)
+				}
+			},
+		},
+		{
+			name: "a remote card links to the file on the git host",
+			check: func(t *testing.T) {
+				card, _ := cardOfRef(view, "WEB/WEB-US-0031")
+				const want = "https://gitlab.com/example/website/-/blob/main/" +
+					"documentation/.pmngr/stories/WEB-US-0031-rewrite-the-hero-section.md"
+				if card.RemoteURL != want {
+					t.Fatalf("remote url = %q", card.RemoteURL)
+				}
+			},
+		},
+		{
+			name: "a remote card is dated and explains that it is read-only",
+			check: func(t *testing.T) {
+				card, _ := cardOfRef(view, "WEB/WEB-T-0007")
+				if card.SnapshotAt.IsZero() || card.Stale {
+					t.Fatalf("card = %+v", card)
+				}
+				if !strings.Contains(card.Reason, "cannot be edited here") {
+					t.Fatalf("reason = %q", card.Reason)
+				}
+			},
+		},
+		{
+			name: "the snapshot status decides the column",
+			check: func(t *testing.T) {
+				if got := refsOf(columnOf(view, "todo")); got[len(got)-1] != "WEB/WEB-US-0031" {
+					t.Fatalf("todo = %v", got)
+				}
+				if got := refsOf(columnOf(view, "in_progress")); got[len(got)-1] != "WEB/WEB-T-0007" {
+					t.Fatalf("in_progress = %v", got)
+				}
+				if got := refsOf(columnOf(view, "done")); len(got) != 1 || got[0] != "WEB/WEB-US-0032" {
+					t.Fatalf("done = %v", got)
+				}
+			},
+		},
+		{
+			name: "the board filters apply to snapshot items too",
+			check: func(t *testing.T) {
+				if _, ok := cardOfRef(view, "WEB/WEB-EP-0002"); ok {
+					t.Fatal("an epic passed a types: [story, task] filter")
+				}
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) { tc.check(t) })
+	}
+}
+
+func TestBuildBoardViewDegradesOnABrokenSnapshot(t *testing.T) {
+	board := readFixtureBoard(t)
+
+	tests := []struct {
+		name    string
+		set     func(t *testing.T) *SnapshotSet
+		wantAbo string
+	}{
+		{
+			name: "a malformed snapshot leaves a placeholder card",
+			set: func(t *testing.T) *SnapshotSet {
+				fsys := NewMemFSFromMap(map[string]string{".pmngr/index/WEB.json": "{ nope"})
+				return ReadSnapshots(fsys, ".pmngr", []ProjectKey{"WEB"}, freshPolicy(), fixtureNow)
+			},
+			wantAbo: "cannot be read",
+		},
+		{
+			name: "a missing snapshot leaves a placeholder card",
+			set: func(t *testing.T) *SnapshotSet {
+				return ReadSnapshots(NewMemFS(), ".pmngr", []ProjectKey{"WEB"}, freshPolicy(), fixtureNow)
+			},
+			wantAbo: "no index snapshot yet",
+		},
+		{
+			name: "an item the snapshot omits says so",
+			set: func(t *testing.T) *SnapshotSet {
+				fsys := NewMemFSFromMap(map[string]string{
+					".pmngr/index/WEB.json": `{"schema": 1, "project": {"key": "WEB"}, "items": []}`,
+				})
+				return ReadSnapshots(fsys, ".pmngr", []ProjectKey{"WEB"}, freshPolicy(), fixtureNow)
+			},
+			wantAbo: "not in the index snapshot",
+		},
+		{
+			name: "snapshots turned off leave the reference bare",
+			set: func(t *testing.T) *SnapshotSet {
+				return ReadSnapshots(NewMemFS(), ".pmngr", []ProjectKey{"WEB"}, SnapshotPolicy{}, fixtureNow)
+			},
+			wantAbo: "publishes no index snapshots",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			in := fixtureInput()
+			in.Snapshots = tc.set(t)
+			view := BuildBoardView(board, in)
+			card, ok := cardOfRef(view, "WEB/WEB-US-0031")
+			if !ok {
+				t.Fatal("a broken snapshot must still leave the reference on the board")
+			}
+			if !card.Remote || card.Title != "" {
+				t.Fatalf("card = %+v", card)
+			}
+			if !strings.Contains(card.Reason, tc.wantAbo) {
+				t.Fatalf("reason = %q, want something about %q", card.Reason, tc.wantAbo)
+			}
+		})
+	}
+}
+
+func TestPlanMoveOnARemoteCard(t *testing.T) {
+	board := readFixtureBoard(t)
+	view := BuildBoardView(board, snapshotInput(t))
+
+	t.Run("a move between columns is refused with the reason", func(t *testing.T) {
+		_, err := PlanMove(board, view, BoardMove{
+			Ref: Ref{Project: "WEB", Item: "WEB-US-0031"}, ToColumn: "in_progress", Position: 0,
+		}, nil)
+		if err == nil || !strings.Contains(err.Error(), "not cloned") {
+			t.Fatalf("err = %v", err)
+		}
+	})
+
+	t.Run("a re-order inside one column is allowed, because the order lives in the team repo", func(t *testing.T) {
+		plan, err := PlanMove(board, view, BoardMove{
+			Ref: Ref{Project: "WEB", Item: "WEB-US-0031"}, ToColumn: "todo", Position: 0,
+		}, nil)
+		if err != nil {
+			t.Fatalf("PlanMove: %v", err)
+		}
+		if plan.StatusChanged {
+			t.Fatalf("a re-order must not touch the item: %+v", plan)
+		}
+	})
 }
