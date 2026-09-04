@@ -906,10 +906,14 @@ bearer token this prevents drive-by localhost attacks from arbitrary web pages.
   content hash (`sha256:` + first 16 hex chars of the canonical file bytes) and the same
   value in the `ETag` header. Mutations require `If-Match: <rev>`; a mismatch returns
   `412 Precondition Failed` with the `stale_revision` problem, which carries `currentRev`
-  so that the client can merge without a second round trip. A mutation that omits the
-  header on something that already exists returns `428 Precondition Required`
+  and `conflicts[]` — the fields the refused write would still have changed against the
+  content on disk now — so that the client can merge without a second round trip. A mutation
+  that omits the header on something that already exists returns `428 Precondition Required`
   (`precondition_required`), because a write with no revision is a lost update waiting to
-  happen. `If-Match: *` bypasses the check (documented as unsafe).
+  happen. `If-Match: *` bypasses the check (documented as unsafe). The contract itself is
+  defined once, in `03-data-model.md` section 5; this section only says how HTTP spells it.
+  Posting a comment creates a new file and therefore needs no `If-Match`; when one is sent it
+  is honored against the *item's* revision, which is what the MCP surface requires of agents.
 - **Pagination** — `?limit=` (default 50, max 500) and `?offset=`, plus `X-Total-Count`.
   Cursor pagination (`?cursor=`) is available on `/items` for large backlogs and is what
   the MCP layer uses.
@@ -936,12 +940,19 @@ Content type `application/problem+json`.
   "code": "stale_revision",
   "requestId": "01J9Z6Q2K7",
   "currentRev": "sha256:9b21…7ce",
+  "conflicts": [
+    { "field": "status", "current": "in_progress", "proposed": "in_review" },
+    { "field": "assignees", "current": "marta", "proposed": "jose" }
+  ],
   "errors": []
 }
 ```
 
 Field notes: `code` is a stable machine string (clients switch on it, not on `type`);
-`errors[]` carries per-field validation problems.
+`errors[]` carries per-field validation problems; `conflicts[]` appears on `stale_revision`
+only and lists the fields the refused write would still have changed, judged against the
+content on disk now (`03-data-model.md` R-REV-3a). An empty `conflicts[]` on a stale
+revision means the change had already been made by whoever wrote first.
 
 ```json
 {
@@ -1148,7 +1159,7 @@ PUT    /api/v1/items/{id}               If-Match: <rev>   (full replace incl. bo
 DELETE /api/v1/items/{id}               If-Match: <rev>
 POST   /api/v1/items/{id}/move          If-Match: <rev>   {"status":"in_review"}
 GET    /api/v1/items/{id}/comments
-POST   /api/v1/items/{id}/comments
+POST   /api/v1/items/{id}/comments   If-Match: <item rev> optional, honored when sent
 GET    /api/v1/items/{id}/links
 POST   /api/v1/items/{id}/links         {"relation":"blocks","target":"ACME-T-0500"}
 DELETE /api/v1/items/{id}/links/{relation}/{target}

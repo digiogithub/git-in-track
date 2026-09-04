@@ -391,10 +391,25 @@ Example: `rev: "sha256:9f2b1c7d0a4e5b31"`.
 
 - **R-REV-2** 64 bits of hash is sufficient: the population is "versions of one file that two clients
   hold at the same moment", not an adversarial corpus.
-- **R-REV-3** Writes are conditional. `PUT /api/items/ACME-US-0042` with `If-Match: sha256:9f2b…`
-  (or MCP `update_story{expected_rev: …}`) MUST fail with `409 rev_mismatch` if the on-disk `rev`
-  differs. The error payload includes the current `rev` and the current front matter so a client or
-  agent can retry a merge without a second round trip.
+- **R-REV-3** Writes are conditional. `PATCH /api/v1/items/ACME-US-0042` with
+  `If-Match: sha256:9f2b…` (or the MCP `update_item{rev: …}`) MUST fail with the
+  `stale_revision` problem — `412 Precondition Failed` over HTTP — if the on-disk `rev` differs.
+  The failure carries `currentRev` and `conflicts[]` so a client or agent can retry a merge
+  without a second round trip.
+- **R-REV-3a** The conflict report is one shape on every surface. `currentRev` is the revision the
+  file holds now. `conflicts[]` lists the fields the refused write **would still have changed**,
+  judged against that current content: `{ "field": "status", "current": "in_progress",
+  "proposed": "in_review" }`. It is not a diff against the caller's base version — the base is a
+  hash, not a document, so no reader holds it — and an empty list therefore means the write had
+  already been made by whoever won the race, so the caller has nothing left to do. The body is
+  reported as the bare field name `body`, never quoted back.
+- **R-REV-3b** Omitting the revision is not the same as waiving the check. A surface that serves
+  unattended writers MUST refuse a write that carries no revision (`precondition_required`); the
+  waiver is spelled explicitly as `If-Match: *` over HTTP and `rev: "*"` over MCP, and is
+  documented as unsafe. Creating something that does not exist yet needs no revision.
+- **R-REV-3c** A write that changes several fields, or fields *and* status, is one conditional
+  write against one revision. A surface MUST NOT split it into two writes, because the second
+  would have to quote a revision the caller never saw and would accept a stale caller silently.
 - **R-REV-4** `rev` is *not* a version number and MUST NOT be persisted, compared for ordering, or
   used as a cache key across machines beyond its purpose (it is a pure function of content, so it is
   in fact a perfectly good cross-machine cache key — but nothing may assume monotonicity).
@@ -403,7 +418,12 @@ Example: `rev: "sha256:9f2b1c7d0a4e5b31"`.
   tree. `rev` is therefore computed from the working tree, independently of git.
 - **R-REV-6** `rev` covers the whole file, front matter and body. A body-only edit changes `rev`.
   Comment files have their own `rev`; the parent item's `rev` does not change when a comment is
-  added.
+  added. A comment is a new file and can overwrite nothing, so the revision quoted when adding one
+  is the *item's*: it does not protect the thread, it proves the writer has seen the item it is
+  commenting on. It is required of agents (docs/08) and optional for a human in the UI.
+
+This section is the single definition of the locking contract; `07-cli-and-api.md` section 5.3 and
+`08-mcp-server.md` section 3.5 describe how each surface spells it, and neither adds a rule.
 
 ---
 
