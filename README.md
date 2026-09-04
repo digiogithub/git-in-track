@@ -143,6 +143,50 @@ Tasks live in `.pmngr/tasks/` with `parent` pointing at a story; comments live i
 `.pmngr/comments/<ITEM-ID>/<timestamp>-<author>.md`. See
 [docs/03-data-model.md](docs/03-data-model.md) for the full schema.
 
+## Installation
+
+> Until the first `v*` tag is pushed, none of these channels exist yet: build from
+> source with `make build`.
+
+Every channel is published from the same tag by the release workflow
+([docs/09-ci-cd-and-releases.md](docs/09-ci-cd-and-releases.md) §10). Releases are
+unsigned archives with `checksums.txt`, by design ([ADR-011](docs/adr/ADR-011-goreleaser-unsigned-artifacts.md)).
+
+```bash
+# macOS — Homebrew, the recommended route: it clears the quarantine attribute
+brew install digiogithub/tap/gintrack
+
+# Windows — Scoop
+scoop bucket add digiogithub https://github.com/digiogithub/scoop-bucket
+scoop install gintrack
+
+# Linux, or any platform — the release archive
+#   https://github.com/digiogithub/git-in-track/releases/latest
+tar -xzf gintrack_*_linux_amd64.tar.gz && sudo install gintrack /usr/local/bin/
+
+# Docker — serve a working tree without installing anything
+docker run --rm -p 127.0.0.1:7317:7317 -v "$PWD:/work" \
+  --user "$(id -u):$(id -g)" ghcr.io/digiogithub/git-in-track:latest
+
+# Developers — no embedded web UI unless you build the frontend first
+go install github.com/digiogithub/git-in-track/cmd/gintrack@latest
+```
+
+The container prints its bearer token on start; open the URL it logs. It binds
+`0.0.0.0` inside the container because a published port cannot reach a loopback
+bind — the `-p 127.0.0.1:…` mapping is what keeps it off your network. `brew` is
+macOS-only here: the tap ships a cask, not a formula
+([ADR-016](docs/adr/ADR-016-homebrew-cask-instead-of-formula.md)). `go install`
+builds from source without `web/dist`, so `gintrack serve` reports no embedded UI;
+`gintrack mcp` and the file commands work normally.
+
+Verify a downloaded archive before running it:
+
+```bash
+sha256sum -c checksums.txt --ignore-missing        # Linux
+shasum -a 256 -c checksums.txt --ignore-missing    # macOS
+```
+
 ## Quick start
 
 > **Early development.** Phases 0 to 5 are implemented: the shared Go core, the
@@ -155,8 +199,7 @@ Tasks live in `.pmngr/tasks/` with `parent` pointing at a story; comments live i
 > from source with `make build`.
 
 ```bash
-# 1. Download the gintrack release binary for your platform and put it on PATH
-#    (GitHub Releases: archives + checksums, unsigned)
+# 1. Install gintrack (see Installation above) and put it on PATH
 
 # 2. Register a project repository you already have cloned
 gintrack add ./my-repo
@@ -201,7 +244,7 @@ wasm/                    # WASM entry point (main_js.go) + JS glue
 web/                     # React + Vite + TypeScript app
 docs/                    # planning docs, ADRs, and this project's own .pmngr backlog
 .github/workflows/       # ci.yml, release.yml
-Makefile, go.mod, .goreleaser.yaml
+Makefile, go.mod, .goreleaser.yaml, Dockerfile
 ```
 
 ## Documentation

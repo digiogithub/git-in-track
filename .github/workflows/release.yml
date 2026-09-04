@@ -25,7 +25,7 @@ jobs:
       - name: Check the expected layout
         run: |
           missing=0
-          for path in go.mod go.sum .goreleaser.yaml cmd/gintrack wasm \
+          for path in go.mod go.sum .goreleaser.yaml Dockerfile cmd/gintrack wasm \
                       web/package.json web/package-lock.json web/dist/.gitkeep; do
             if [ ! -e "$path" ]; then
               echo "::error::missing $path"
@@ -39,8 +39,29 @@ jobs:
     runs-on: ubuntu-latest
     needs: [preflight]
     permissions:
+      # contents: write publishes the GitHub Release; packages: write pushes the
+      # images to ghcr.io. The tap and the bucket live in other repositories, so
+      # GITHUB_TOKEN cannot reach them and they use their own secrets below.
       contents: write
+      packages: write
     steps:
+      # Fail before anything is built rather than half way through publishing.
+      # A missing token would otherwise produce a GitHub Release with no formula
+      # and no manifest, which is worse than no release at all.
+      - name: Verify the publishing credentials
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          SCOOP_BUCKET_TOKEN: ${{ secrets.SCOOP_BUCKET_TOKEN }}
+        run: |
+          missing=0
+          for name in HOMEBREW_TAP_TOKEN SCOOP_BUCKET_TOKEN; do
+            if [ -z "${!name}" ]; then
+              echo "::error::repository secret $name is not set. Create a fine-grained personal access token with Contents:read+write on the target repository (digiogithub/homebrew-tap for HOMEBREW_TAP_TOKEN, digiogithub/scoop-bucket for SCOOP_BUCKET_TOKEN) and store it as an Actions secret. See docs/09-ci-cd-and-releases.md section 10."
+              missing=1
+            fi
+          done
+          exit "$missing"
+
       - name: Checkout (full history for changelog)
         uses: actions/checkout@v4
         with:
@@ -82,6 +103,23 @@ jobs:
       - name: Validate the GoReleaser configuration
         run: go run github.com/goreleaser/goreleaser/v2@latest check
 
+      # The arm64 image runs `apk add` for its own architecture, so the runner
+      # needs binfmt emulation; the amd64 image does not.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # GITHUB_TOKEN plus `packages: write` is enough for ghcr.io in the
+      # repository's own namespace; no separate registry secret is needed.
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:
@@ -90,3 +128,7 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Cross-repository writes: the tap and the bucket are separate
+          # repositories that GITHUB_TOKEN has no access to.
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          SCOOP_BUCKET_TOKEN: ${{ secrets.SCOOP_BUCKET_TOKEN }}

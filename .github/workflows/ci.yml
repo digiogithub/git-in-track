@@ -36,7 +36,7 @@ jobs:
         run: |
           missing=0
           for path in go.mod go.sum Makefile .goreleaser.yaml .golangci.yaml \
-                      cmd/gintrack wasm web/package.json web/package-lock.json \
+                      Dockerfile cmd/gintrack wasm web/package.json web/package-lock.json \
                       web/dist/.gitkeep scripts/wasm-smoke.mjs; do
             if [ ! -e "$path" ]; then
               echo "::error::missing $path"

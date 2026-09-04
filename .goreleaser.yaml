@@ -98,6 +98,132 @@ changelog:
       - Merge remote-tracking branch
       - Merge branch
 
+# --- Distribution channels (docs/09-ci-cd-and-releases.md, section 10) --------
+#
+# Every block below is skipped automatically on a snapshot build, so
+# `make release-snapshot` never talks to a tap, a bucket or a registry. The
+# tokens are read from the environment and are supplied by the release workflow
+# from GitHub Actions secrets; they are never written down here.
+
+# Multi-arch images. Each entry builds one architecture from the release binary
+# that GoReleaser has already cross-compiled, and docker_manifests below joins
+# them under a single tag.
+dockers:
+  - id: linux-amd64
+    ids:
+      - gintrack
+    image_templates:
+      - "ghcr.io/digiogithub/git-in-track:{{ .Version }}-amd64"
+    dockerfile: Dockerfile
+    use: buildx
+    goos: linux
+    goarch: amd64
+    extra_files:
+      - LICENSE
+      - README.md
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.title={{ .ProjectName }}"
+      - "--label=org.opencontainers.image.description=Git-native, markdown-first project management for teams"
+      - "--label=org.opencontainers.image.url=https://github.com/digiogithub/git-in-track"
+      - "--label=org.opencontainers.image.source=https://github.com/digiogithub/git-in-track"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.created={{ .Date }}"
+      - "--label=org.opencontainers.image.licenses=MIT"
+
+  - id: linux-arm64
+    ids:
+      - gintrack
+    image_templates:
+      - "ghcr.io/digiogithub/git-in-track:{{ .Version }}-arm64"
+    dockerfile: Dockerfile
+    use: buildx
+    goos: linux
+    goarch: arm64
+    extra_files:
+      - LICENSE
+      - README.md
+    build_flag_templates:
+      - "--platform=linux/arm64"
+      - "--label=org.opencontainers.image.title={{ .ProjectName }}"
+      - "--label=org.opencontainers.image.description=Git-native, markdown-first project management for teams"
+      - "--label=org.opencontainers.image.url=https://github.com/digiogithub/git-in-track"
+      - "--label=org.opencontainers.image.source=https://github.com/digiogithub/git-in-track"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.created={{ .Date }}"
+      - "--label=org.opencontainers.image.licenses=MIT"
+
+docker_manifests:
+  - name_template: "ghcr.io/digiogithub/git-in-track:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/digiogithub/git-in-track:{{ .Version }}-amd64"
+      - "ghcr.io/digiogithub/git-in-track:{{ .Version }}-arm64"
+  # `latest` must keep pointing at the newest stable release, so a `-rc.N` tag
+  # publishes its version tag and leaves this one where it is.
+  - name_template: "ghcr.io/digiogithub/git-in-track:latest"
+    skip_push: auto
+    image_templates:
+      - "ghcr.io/digiogithub/git-in-track:{{ .Version }}-amd64"
+      - "ghcr.io/digiogithub/git-in-track:{{ .Version }}-arm64"
+
+# Homebrew. A cask, not a formula: GoReleaser deprecated `brews` in v2.10 and
+# `goreleaser check` now fails on it, because Homebrew wants pre-built binaries
+# distributed as casks. Casks are macOS-only, which is the trade-off recorded in
+# ADR-016; Linux Homebrew users take the tarball, `go install` or the image.
+# The post-install hook clears the quarantine attribute that the unsigned-artifact
+# policy of ADR-011 leaves on a downloaded archive — the whole reason Homebrew is
+# the recommended macOS route.
+homebrew_casks:
+  - name: gintrack
+    ids:
+      - default
+    binaries:
+      - gintrack
+    repository:
+      owner: digiogithub
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Casks
+    homepage: https://github.com/digiogithub/git-in-track
+    description: Git-native, markdown-first project management for teams
+    license: MIT
+    # `auto` leaves the tap untouched for a pre-release tag, so `brew install`
+    # never resolves to an rc.
+    skip_upload: auto
+    commit_author:
+      name: goreleaser-bot
+      email: bot@digio.es
+    commit_msg_template: "brew: gintrack {{ .Tag }}"
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr",
+                           args: ["-dr", "com.apple.quarantine", "#{staged_path}/gintrack"]
+          end
+
+scoops:
+  - name: gintrack
+    ids:
+      - default
+    repository:
+      owner: digiogithub
+      name: scoop-bucket
+      branch: main
+      token: "{{ .Env.SCOOP_BUCKET_TOKEN }}"
+    directory: bucket
+    homepage: https://github.com/digiogithub/git-in-track
+    description: Git-native, markdown-first project management for teams
+    license: MIT
+    skip_upload: auto
+    commit_author:
+      name: goreleaser-bot
+      email: bot@digio.es
+    commit_msg_template: "scoop: gintrack {{ .Tag }}"
+
 release:
   github:
     owner: digiogithub

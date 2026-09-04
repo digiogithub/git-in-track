@@ -2,8 +2,7 @@
 
 This document defines how **git-in-track** is built, verified and released. It explains the
 committed GitHub Actions workflows and the GoReleaser configuration, and adds the
-versioning policy, branch strategy, release checklist and the distribution channels planned
-for later phases.
+versioning policy, branch strategy, release checklist and the distribution channels.
 
 > Status: implemented. `.github/workflows/ci.yml`, `.github/workflows/release.yml`,
 > `.goreleaser.yaml`, `.golangci.yaml` and the `Makefile` are committed and are the source
@@ -46,7 +45,7 @@ graph LR
   B --> G
   C --> G
   G --> H{tag v*?}
-  H -- yes --> I[GoReleaser -> GitHub Release]
+  H -- yes --> I[GoReleaser -> Release, tap, bucket, GHCR]
   H -- no --> J[artifact upload only]
 ```
 
@@ -77,7 +76,7 @@ failed lint or test never produces a downloadable artifact.
 
 The Phase 0 scaffold has landed, so the guard no longer skips the pipeline when `go.mod`
 and `web/package.json` are missing. It now asserts the layout — `go.mod`, `go.sum`,
-`Makefile`, `.goreleaser.yaml`, `.golangci.yaml`, `cmd/gintrack`, `wasm`, the web
+`Makefile`, `.goreleaser.yaml`, `.golangci.yaml`, `Dockerfile`, `cmd/gintrack`, `wasm`, the web
 workspace, `web/dist/.gitkeep` and `scripts/wasm-smoke.mjs` — and **fails** when something
 is gone, which is a real regression rather than a reason to stay green. Downstream jobs
 therefore no longer carry an `if:` condition, and the required status checks of §8 always
@@ -138,12 +137,18 @@ publishes the GitHub Release.
 
 | Job         | Steps                                                                                 |
 | ----------- | ------------------------------------------------------------------------------------- |
-| `preflight` | asserts the repository layout GoReleaser needs                                          |
-| `release`   | checkout with `fetch-depth: 0` → setup Go/Node → `make wasm` → `node scripts/wasm-smoke.mjs` → `npm ci && npm run build` → verify embedded assets → `goreleaser check` → `goreleaser release --clean` |
+| `preflight` | asserts the repository layout GoReleaser needs (including `Dockerfile`)                 |
+| `release`   | verify the publishing credentials → checkout with `fetch-depth: 0` → setup Go/Node → `make wasm` → `node scripts/wasm-smoke.mjs` → `npm ci && npm run build` → verify embedded assets → `goreleaser check` → QEMU + Buildx + `ghcr.io` login → `goreleaser release --clean` |
 
 Permissions follow least privilege: the workflow is `contents: read` at the top level and
-only the `release` job raises itself to `contents: write`, which is what GoReleaser needs
-to create the GitHub Release. `fetch-depth: 0` is required for the generated changelog.
+only the `release` job raises itself to `contents: write` (to create the GitHub Release)
+and `packages: write` (to push the images to GHCR). `fetch-depth: 0` is required for the
+generated changelog.
+
+The first step of the `release` job checks that `HOMEBREW_TAP_TOKEN` and
+`SCOOP_BUCKET_TOKEN` are present and fails the run with the fix in the message when either
+is not, before a single binary is built — see §10 for what each one is and why
+`GITHUB_TOKEN` cannot stand in for them.
 
 ### Snapshot build (local, or optional for `main`)
 
@@ -245,8 +250,9 @@ The `ldflags` set the four variables declared in `cmd/gintrack/main.go` — `mai
 
 The rest of the file configures the 3×2 `goos`/`goarch` matrix, `tar.gz` archives with a
 `zip` override for Windows, `checksums.txt` (SHA-256), the grouped Conventional-Commits
-changelog, and the release notes template that repeats the Gatekeeper and SmartScreen
-instructions of §4 on every release.
+changelog, the release notes template that repeats the Gatekeeper and SmartScreen
+instructions of §4 on every release, and the distribution channels — `homebrew_casks:`,
+`scoops:`, `dockers:` and `docker_manifests:` — documented in §10.
 
 There is no `-tags=embed` build tag: `web/embed.go` embeds `web/dist` unconditionally and
 reports `Built() == false` when the directory holds nothing but its `.gitkeep`, which is
@@ -415,7 +421,12 @@ by the pipeline; the rest are the maintainer's responsibility.
       touches the watcher or path handling).
 - [ ] `make wasm-smoke` passes: `core.wasm` instantiates and answers outside a browser.
 - [ ] `make release-check` validates `.goreleaser.yaml`.
-- [ ] `make release-snapshot` succeeds and produces all 6 archives plus `checksums.txt`.
+- [ ] `make release-snapshot` succeeds and produces all 6 archives plus `checksums.txt`,
+      `dist/homebrew/Casks/gintrack.rb`, `dist/scoop/bucket/gintrack.json` and both images.
+      (It needs a Docker daemon, and binfmt emulation for the arm64 image:
+      `docker run --privileged --rm tonistiigi/binfmt --install arm64`.)
+- [ ] `digiogithub/homebrew-tap` and `digiogithub/scoop-bucket` exist, and the
+      `HOMEBREW_TAP_TOKEN` and `SCOOP_BUCKET_TOKEN` secrets are set and unexpired (§10).
 - [ ] The snapshot binary runs: `./dist/gintrack_linux_amd64_v1/gintrack version`,
       `gintrack serve` starts and the embedded web app loads at `http://127.0.0.1:7317`.
 - [ ] Data model changes, if any, are accompanied by a migration and a `schemaVersion`
@@ -440,7 +451,11 @@ by the pipeline; the rest are the maintainer's responsibility.
 - [ ] *(automated)* Release workflow builds WASM + web + 6 binaries.
 - [ ] *(automated)* GoReleaser publishes the GitHub Release with archives, `checksums.txt`
       and the generated changelog.
+- [ ] *(automated)* The cask lands in the tap, the manifest in the bucket, and the
+      multi-arch images in GHCR with an updated `latest` (stable tags only).
 - [ ] Download one archive per OS family and verify its checksum.
+- [ ] `brew install digiogithub/tap/gintrack` on macOS, `scoop install gintrack` on
+      Windows, and the documented `docker run` all give a working `gintrack version`.
 - [ ] Smoke test the macOS artifact through the documented Gatekeeper bypass and the
       Windows artifact through the SmartScreen bypass.
 - [ ] Announce: GitHub Release notes, repository Discussions, project README badge.
@@ -453,122 +468,168 @@ by the pipeline; the rest are the maintainer's responsibility.
 
 ---
 
-## 10. Distribution channels (later phases)
+## 10. Distribution channels
 
-Only the GitHub Release exists for Phases 0–5. The following channels are added as part of
-Phase 6 (polish and 1.0), each as its own user story.
+Phases 0–5 shipped the GitHub Release only. Phase 6 (GIT-US-0029) added the three
+package channels below; all of them are produced by the **same GoReleaser run**
+from the same tag, so there is no second workflow and no manual publishing step.
+
+| Channel        | Where it is published                    | Configured in            | Credential            |
+| -------------- | ---------------------------------------- | ------------------------ | --------------------- |
+| GitHub Release | `digiogithub/git-in-track` releases       | `release:`               | `GITHUB_TOKEN`        |
+| Homebrew       | `digiogithub/homebrew-tap` (`Casks/`)     | `homebrew_casks:`        | `HOMEBREW_TAP_TOKEN`  |
+| Scoop          | `digiogithub/scoop-bucket` (`bucket/`)    | `scoops:`                | `SCOOP_BUCKET_TOKEN`  |
+| Docker         | `ghcr.io/digiogithub/git-in-track`        | `dockers:` + `docker_manifests:` | `GITHUB_TOKEN` (`packages: write`) |
+| `go install`   | the module proxy                          | nothing                  | none                  |
+
+A pre-release tag (`vX.Y.Z-rc.N`) publishes the GitHub Release and the
+version-tagged images, but `skip_upload: auto` keeps it out of the tap and the
+bucket and `skip_push: auto` keeps the `latest` image tag where it is. So an rc
+is never what `brew install`, `scoop install` or `docker run …:latest` resolves to.
+
+### Secrets and repositories a maintainer must create first
+
+The release workflow verifies both tokens **before** it builds anything and fails
+the run with an actionable message when either is missing, because a release that
+publishes archives but no formula is worse than no release at all.
+
+| Secret / resource | What it is | Permissions |
+| --- | --- | --- |
+| `digiogithub/homebrew-tap` | public repository, default branch `main`, holding `Casks/gintrack.rb` | — |
+| `digiogithub/scoop-bucket` | public repository, default branch `main`, holding `bucket/gintrack.json` | — |
+| `HOMEBREW_TAP_TOKEN` | Actions secret on `git-in-track`: a fine-grained PAT scoped to `digiogithub/homebrew-tap` | `Contents: read and write` |
+| `SCOOP_BUCKET_TOKEN` | Actions secret on `git-in-track`: a fine-grained PAT scoped to `digiogithub/scoop-bucket` | `Contents: read and write` |
+| GHCR | no secret: `secrets.GITHUB_TOKEN` with the job's `packages: write` publishes to the repository's own namespace | `packages: write` |
+
+Two separate tokens rather than one for both taps: each is scoped to exactly one
+repository, so a leaked token cannot rewrite the other channel. The workflow stays
+`contents: read` at the top level and only the `release` job raises itself to
+`contents: write` and `packages: write`.
 
 ### `go install` — available from day one
 
-Works without any extra infrastructure, but produces a binary **without** the embedded web
-app unless the frontend was built first, so it is documented as the "developer install":
+Works without any extra infrastructure, but produces a binary **without** the
+embedded web app, so it is documented as the "developer install":
 
 ```bash
 go install github.com/digiogithub/git-in-track/cmd/gintrack@latest
 ```
 
-`web/embed.go` embeds `web/dist` unconditionally, and a checkout that was never built ships
-only the directory's `.gitkeep`. `web.Built()` then reports `false`: the CLI still runs
-`gintrack mcp` and the file-based commands, and `gintrack serve` reports that no embedded
-UI is available and points at the released binaries.
+`web/embed.go` embeds `web/dist` unconditionally, and a checkout that was never
+built ships only the directory's `.gitkeep`. `web.Built()` then reports `false`:
+the CLI still runs `gintrack mcp` and every file-based command, and
+`gintrack serve` reports that no embedded UI is available and points at the
+released binaries. To get the UI from source, clone and run `make build`.
 
-### Homebrew tap
+### Homebrew tap — a cask, on macOS
 
-A separate repository `digiogithub/homebrew-tap` holds the formula. GoReleaser publishes
-it automatically on each release by adding to `.goreleaser.yaml`:
-
-```yaml
-brews:
-  - name: gintrack
-    repository:
-      owner: digiogithub
-      name: homebrew-tap
-      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
-    directory: Formula
-    homepage: https://github.com/digiogithub/git-in-track
-    description: Git-native, markdown-first project management for teams
-    license: MIT
-    test: |
-      system "#{bin}/gintrack", "version"
+```bash
+brew install digiogithub/tap/gintrack
+brew upgrade digiogithub/tap/gintrack
 ```
 
-Install: `brew install digiogithub/tap/gintrack`. Homebrew removes the quarantine
-attribute, so this is the recommended macOS path.
+The `homebrew_casks:` block writes `Casks/gintrack.rb` into
+`digiogithub/homebrew-tap` on every stable tag. It is a **cask, not a formula**:
+GoReleaser deprecated `brews:` in v2.10 and `goreleaser check` — which this
+workflow runs before publishing — now exits non-zero on it. The consequence is
+that **`brew install` is macOS-only**; Homebrew on Linux cannot install a cask.
+Linux users take the tarball, `go install` or the image. That trade-off, and the
+alternatives rejected, are recorded in
+[ADR-016](adr/ADR-016-homebrew-cask-instead-of-formula.md).
 
-### Scoop bucket
+Homebrew is still the recommended macOS route, for the reason ADR-011 gives: it
+removes the quarantine attribute an unsigned download carries. The cask makes
+that explicit instead of incidental, with a `postflight` hook:
 
-A `digiogithub/scoop-bucket` repository, also published by GoReleaser:
-
-```yaml
-scoops:
-  - name: gintrack
-    repository:
-      owner: digiogithub
-      name: scoop-bucket
-      token: "{{ .Env.SCOOP_BUCKET_TOKEN }}"
-    homepage: https://github.com/digiogithub/git-in-track
-    description: Git-native, markdown-first project management for teams
-    license: MIT
+```ruby
+postflight do
+  if OS.mac?
+    system_command "/usr/bin/xattr",
+                   args: ["-dr", "com.apple.quarantine", "#{staged_path}/gintrack"]
+  end
+end
 ```
 
-Install: `scoop bucket add digiogithub https://github.com/digiogithub/scoop-bucket` then
-`scoop install gintrack`.
+### Scoop bucket — Windows
+
+```powershell
+scoop bucket add digiogithub https://github.com/digiogithub/scoop-bucket
+scoop install gintrack
+```
+
+The `scoops:` block writes `bucket/gintrack.json` with the `windows_amd64` and
+`windows_arm64` archives and their SHA-256 hashes. Scoop verifies that hash on
+install, which is the SmartScreen-free path of §4.
 
 ### Docker image
 
-Published to GitHub Container Registry as `ghcr.io/digiogithub/git-in-track`. Useful for
-running the companion server against a repository mounted into the container, and for CI
-of downstream projects. Added to `.goreleaser.yaml`:
+Published to GHCR as `ghcr.io/digiogithub/git-in-track`, tagged
+`:X.Y.Z-amd64`, `:X.Y.Z-arm64`, `:X.Y.Z` (a manifest list over both) and
+`:latest` (stable tags only).
 
-```yaml
-dockers:
-  - image_templates:
-      - "ghcr.io/digiogithub/git-in-track:{{ .Version }}-amd64"
-    dockerfile: Dockerfile
-    use: buildx
-    goarch: amd64
-    build_flag_templates:
-      - "--platform=linux/amd64"
-      - "--label=org.opencontainers.image.source=https://github.com/digiogithub/git-in-track"
-  - image_templates:
-      - "ghcr.io/digiogithub/git-in-track:{{ .Version }}-arm64"
-    dockerfile: Dockerfile
-    use: buildx
-    goarch: arm64
-    build_flag_templates:
-      - "--platform=linux/arm64"
+The image is built from [`Dockerfile`](../Dockerfile) at the repository root, but
+**not from source**: GoReleaser's build context already holds the cross-compiled
+binary for the target architecture — the same binary the archives carry, with
+`web/dist` embedded — so the Dockerfile only copies it onto `alpine:3.21`
+alongside `ca-certificates` and `git`. `docker build .` at the repository root
+therefore fails by design; `make release-snapshot` reproduces the image locally.
 
-docker_manifests:
-  - name_template: "ghcr.io/digiogithub/git-in-track:{{ .Version }}"
-    image_templates:
-      - "ghcr.io/digiogithub/git-in-track:{{ .Version }}-amd64"
-      - "ghcr.io/digiogithub/git-in-track:{{ .Version }}-arm64"
-  - name_template: "ghcr.io/digiogithub/git-in-track:latest"
-    image_templates:
-      - "ghcr.io/digiogithub/git-in-track:{{ .Version }}-amd64"
-      - "ghcr.io/digiogithub/git-in-track:{{ .Version }}-arm64"
-```
+Because `apk add` runs for the target architecture, the arm64 image needs binfmt
+emulation on the runner: the release workflow calls `docker/setup-qemu-action@v3`
+and `docker/setup-buildx-action@v3` before GoReleaser, and logs in to `ghcr.io`
+with `docker/login-action@v3`.
 
-The release workflow then also needs `packages: write` permission and a
-`docker/login-action` step against `ghcr.io`.
-
-Usage:
+#### Running it
 
 ```bash
-docker run --rm -p 7317:7317 \
+docker run --rm \
+  -p 127.0.0.1:7317:7317 \
   -v "$PWD:/work" \
-  ghcr.io/digiogithub/git-in-track:latest \
-  serve --addr 0.0.0.0:7317 --root /work
+  --user "$(id -u):$(id -g)" \
+  ghcr.io/digiogithub/git-in-track:latest
 ```
 
-Note that binding to `0.0.0.0` inside a container is acceptable because the port mapping
-controls exposure; the native binary defaults to `127.0.0.1` and refuses non-loopback
-addresses unless `--allow-remote` is passed. See
-[10-development-guidelines.md](./10-development-guidelines.md) §8.
+The container serves the working tree mounted at `/work`; that mount is the whole
+point of the image, since git-in-track has no server and no database and reads
+files. Add `:ro` to the mount for a read-only browse. The token to sign in with is
+printed in the container log on start, or supply your own with
+`-e GINTRACK_TOKEN=…`.
+
+Three things about this command are deliberate:
+
+- **The default command binds `0.0.0.0`, and that is safe only because of the port
+  mapping.** A process bound to `127.0.0.1` inside a container is reachable by
+  nothing, so a container that serves anything must bind the wildcard address;
+  what controls exposure is `-p 127.0.0.1:7317:7317`, which publishes the port on
+  the host loopback only. Writing `-p 7317:7317` instead publishes it on **every**
+  host interface — that is the choice the native binary makes you make explicitly,
+  and in the container it moved from the bind flag to the port mapping.
+- **Authentication is not optional here.** `internal/server` refuses to serve a
+  non-loopback bind without a bearer token (`--token none` is accepted on loopback
+  only), so the container always runs authenticated: a token is generated at start
+  and printed unless `GINTRACK_TOKEN` supplies one. If you deliberately expose the
+  port to a network, that token is the only thing in front of your repository.
+- **`--user "$(id -u):$(id -g)"`** lets the container write to a tree owned by you
+  on the host. The image runs as uid 10001 by default and keeps its configuration
+  under `$XDG_CONFIG_HOME=/tmp/gintrack`, which is world-writable, so overriding
+  the user does not break start-up. Container configuration is ephemeral by
+  design — the mounted working tree is the only source of truth.
+
+Known limitation: file watching depends on inotify events crossing the bind mount.
+That works on Linux; on Docker Desktop for macOS and Windows it does not, and the
+UI shows changes only on reload. Pass `--watch=false` there to stop the watcher
+retrying.
+
+#### GoReleaser's `dockers:` is on notice
+
+GoReleaser is replacing `dockers:` and `docker_manifests:` with a single
+`dockers_v2:` block that builds images in the publish phase. `dockers:` still
+validates and still builds; when `dockers_v2` stops being new, migrating is a
+mechanical change to `.goreleaser.yaml` and nothing else.
 
 ### Deliberately out of scope
 
-Linux distribution packages (`.deb`, `.rpm`, AUR, nixpkgs), winget, and Snap/Flatpak are
-not planned before 1.0. They add maintenance load without reaching an audience the GitHub
-Release does not already serve. GoReleaser can produce `.deb`/`.rpm` with `nfpms:` if
-demand appears.
+Linux distribution packages (`.deb`, `.rpm`, AUR, nixpkgs), winget, and
+Snap/Flatpak are not planned before 1.0. They add maintenance load without
+reaching an audience the GitHub Release does not already serve. GoReleaser can
+produce `.deb`/`.rpm` with `nfpms:` if demand appears.
