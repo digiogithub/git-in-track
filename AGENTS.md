@@ -99,7 +99,7 @@ make web      # vite build -> web/dist
 make wasm     # GOOS=js GOARCH=wasm build -> web/public/core.wasm
 make build    # go build with go:embed of web/dist -> gintrack binary
 make test     # go test ./... + web unit tests
-make lint     # go vet, golangci-lint, eslint, tsc --noEmit
+make lint     # go vet, golangci-lint (go run fallback), eslint, tsc --noEmit
 ```
 
 Useful during development:
