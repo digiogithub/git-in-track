@@ -42,6 +42,8 @@ import type {
   RepoInfo,
   SearchHit,
   SearchQuery,
+  SnapshotRefresh,
+  SnapshotResult,
   TeamSummary,
   Unsubscribe,
   UpdateOp,
@@ -498,6 +500,35 @@ export class BrowserProvider implements DataProvider {
       this.#emit({ kind: 'items', repoId: mount.id, ids: [result.item.id] });
     }
     return result;
+  }
+
+  // ----------------------------------------------------------------- snapshots
+
+  async listSnapshots(): Promise<SnapshotResult[]> {
+    const result = await this.#call('snapshot.list', undefined);
+    return result.snapshots;
+  }
+
+  /**
+   * Regenerating a snapshot writes one file into the team repository, so the
+   * write set comes back the way a card move's does and is persisted through
+   * the same directory handle.
+   */
+  async refreshSnapshots(input: SnapshotRefresh = {}): Promise<SnapshotResult[]> {
+    if (!input.dryRun) await this.#ensureWritable();
+    const result = await this.#call('snapshot.refresh', {
+      ...(input.projects === undefined ? {} : { projects: input.projects }),
+      ...(input.generatedBy === undefined ? {} : { generatedBy: input.generatedBy }),
+      ...(input.includeClosed === undefined ? {} : { includeClosed: input.includeClosed }),
+      ...(input.dryRun === undefined ? {} : { dryRun: input.dryRun }),
+    });
+    for (const set of result.writes) {
+      const mount = this.#mounts.get(set.vaultId);
+      if (!mount) continue;
+      await this.#persist(mount, { written: set.written, removed: set.removed });
+      this.#emit({ kind: 'repo', repoId: mount.id });
+    }
+    return result.snapshots;
   }
 
   // ------------------------------------------------------------------- events

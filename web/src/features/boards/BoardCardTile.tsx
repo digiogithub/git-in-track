@@ -1,12 +1,13 @@
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { Link } from '@tanstack/react-router';
-import { CloudOff, GripVertical } from 'lucide-react';
+import { CloudOff, ExternalLink, GripVertical } from 'lucide-react';
 
 import type { BoardCard, ProjectSummary } from '@/api/provider';
 import { Badge } from '@/components/ui/badge';
 import { LabelChip, PriorityBadge } from '@/features/backlog/Badges';
 import { bareItemId } from '@/features/backlog/item-meta';
+import { snapshotCaption } from '@/features/boards/snapshot-age';
 import { cn } from '@/lib/cn';
 
 export type BoardCardTileProps = {
@@ -30,8 +31,11 @@ function shows(fields: string[], field: string): boolean {
  * One card of a board.
  *
  * A card whose project nobody cloned is muted, badged "remote" and cannot be
- * dragged; its tooltip says how to make it editable (docs/04 §7). Everything
- * else is a normal card: id, title, assignees, labels, priority and estimate.
+ * dragged; its tooltip says how to make it editable (docs/04 §7). Its fields
+ * come from the committed index snapshot of the team repository, so it also
+ * carries the age of that snapshot and a link to the item's file on the git
+ * host. Everything else is a normal card: id, title, assignees, labels,
+ * priority and estimate.
  */
 export function BoardCardTile({ card, project, show, actions, draggable }: BoardCardTileProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -39,6 +43,8 @@ export function BoardCardTile({ card, project, show, actions, draggable }: Board
     disabled: !draggable,
     data: { type: 'card', ref: card.ref },
   });
+
+  const caption = snapshotCaption(card);
 
   const style = {
     transform: CSS.Translate.toString(transform),
@@ -111,41 +117,61 @@ export function BoardCardTile({ card, project, show, actions, draggable }: Board
             {card.title ?? <span className="italic">Title unavailable until the repo is cloned</span>}
           </p>
 
+          <div className="flex flex-wrap items-center gap-1">
+            {shows(show, 'priority') || shows(show, 'key') ? (
+              <PriorityBadge priority={card.priority} />
+            ) : null}
+            {shows(show, 'estimate') && card.estimate !== undefined ? (
+              <Badge variant="outline" size="sm" className="font-normal">
+                {card.estimate} pts
+              </Badge>
+            ) : null}
+            {shows(show, 'assignee')
+              ? (card.assignees ?? []).map((handle) => (
+                  <Badge key={handle} variant="default" size="sm" className="font-normal">
+                    {handle}
+                  </Badge>
+                ))
+              : null}
+            {shows(show, 'labels')
+              ? (card.labels ?? []).map((label) => (
+                  <LabelChip
+                    key={label}
+                    label={label}
+                    color={project?.labels.find((l) => l.name === label)?.color}
+                  />
+                ))
+              : null}
+            {shows(show, 'due') && card.due ? (
+              <Badge variant="outline" size="sm" className="font-normal">
+                due {card.due}
+              </Badge>
+            ) : null}
+          </div>
+
           {card.remote ? (
-            <p className="text-xs text-muted-foreground">{card.reason}</p>
-          ) : (
-            <div className="flex flex-wrap items-center gap-1">
-              {shows(show, 'priority') || shows(show, 'key') ? (
-                <PriorityBadge priority={card.priority} />
+            <div className="space-y-1 text-xs text-muted-foreground">
+              {caption ? (
+                <p>
+                  <span data-stale={card.stale ? 'true' : undefined} className={cn(card.stale && 'text-amber-600')}>
+                    {caption}
+                  </span>
+                </p>
               ) : null}
-              {shows(show, 'estimate') && card.estimate !== undefined ? (
-                <Badge variant="outline" size="sm" className="font-normal">
-                  {card.estimate} pts
-                </Badge>
-              ) : null}
-              {shows(show, 'assignee')
-                ? (card.assignees ?? []).map((handle) => (
-                    <Badge key={handle} variant="default" size="sm" className="font-normal">
-                      {handle}
-                    </Badge>
-                  ))
-                : null}
-              {shows(show, 'labels')
-                ? (card.labels ?? []).map((label) => (
-                    <LabelChip
-                      key={label}
-                      label={label}
-                      color={project?.labels.find((l) => l.name === label)?.color}
-                    />
-                  ))
-                : null}
-              {shows(show, 'due') && card.due ? (
-                <Badge variant="outline" size="sm" className="font-normal">
-                  due {card.due}
-                </Badge>
+              <p>{card.reason}</p>
+              {card.remoteUrl ? (
+                <a
+                  href={card.remoteUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 text-accent underline-offset-4 hover:underline"
+                >
+                  <ExternalLink aria-hidden="true" className="h-3 w-3" />
+                  Open on the host
+                </a>
               ) : null}
             </div>
-          )}
+          ) : null}
 
           {actions}
         </div>

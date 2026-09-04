@@ -34,6 +34,10 @@ import type {
   RepoInfo,
   SearchHit,
   SearchQuery,
+  SnapshotInfo,
+  SnapshotItemSummary,
+  SnapshotRefresh,
+  SnapshotResult,
   TeamSummary,
   Unsubscribe,
   UpdateOp,
@@ -107,6 +111,95 @@ const writableCapabilities: Capabilities = {
 };
 
 /**
+ * The committed index snapshot of the project nobody cloned: what a remote card
+ * renders from (docs/04 §6). `generated` is a day old, so the card is dated but
+ * not stale.
+ */
+export const sampleRemoteItems: SnapshotItemSummary[] = [
+  {
+    id: 'WEB-US-0031',
+    type: 'story',
+    title: 'Rewrite the hero section',
+    status: 'in_progress',
+    category: 'in_progress',
+    priority: 'high',
+    assignees: ['marta'],
+    labels: ['frontend'],
+    estimate: 5,
+    updated: '2026-09-01T08:30:00Z',
+    path: 'documentation/.pmngr/stories/WEB-US-0031-rewrite-the-hero-section.md',
+    rev: 'sha256:00000000000000c1',
+  },
+];
+
+/** The state of that snapshot, as the team surface reports it. */
+export const sampleSnapshotInfo: SnapshotInfo = {
+  project: 'WEB',
+  path: '.pmngr/index/WEB.json',
+  present: true,
+  enabled: true,
+  generated: '2026-09-03T06:00:00Z',
+  generatedBy: 'marta',
+  generator: 'gintrack-core',
+  items: sampleRemoteItems.length,
+  ageSeconds: 30 * 3600,
+  freshness: 'ageing',
+  stale: false,
+};
+
+/**
+ * One card of a project nobody cloned, read from the committed snapshot: the
+ * fields the snapshot published, the age of the file and a link to the item on
+ * the git host, never an editable card (docs/04 §7).
+ */
+function remoteCard(ref: string, project: string, id: string, declared: boolean): BoardCard {
+  const entry = sampleRemoteItems.find((item) => item.id === id);
+  if (!entry) {
+    return {
+      ref,
+      project,
+      item: id,
+      declared,
+      remote: true,
+      reason: `project ${project} is not cloned on this machine and has no index snapshot yet; clone it to move this card`,
+    };
+  }
+  return {
+    ref,
+    project,
+    item: id,
+    declared,
+    remote: true,
+    source: 'snapshot',
+    snapshotAt: sampleSnapshotInfo.generated ?? '',
+    stale: sampleSnapshotInfo.stale,
+    remoteUrl: `https://gitlab.com/acme/website/-/blob/main/${entry.path}`,
+    title: entry.title,
+    type: entry.type,
+    ...(entry.status === undefined ? {} : { status: entry.status }),
+    ...(entry.priority === undefined ? {} : { priority: entry.priority }),
+    ...(entry.assignees ? { assignees: entry.assignees } : {}),
+    ...(entry.labels ? { labels: entry.labels } : {}),
+    ...(entry.estimate === undefined ? {} : { estimate: entry.estimate }),
+    ...(entry.updated === undefined ? {} : { updated: entry.updated }),
+    path: entry.path,
+    rev: entry.rev,
+    reason: `${project} is not cloned on this machine: this card is read from the index snapshot of 1 day ago and cannot be edited here`,
+  };
+}
+
+/** A project whose snapshot has never been generated. */
+const missingSnapshot = (project: string): SnapshotInfo => ({
+  project,
+  path: `.pmngr/index/${project}.json`,
+  present: false,
+  enabled: true,
+  items: 0,
+  freshness: 'unknown',
+  stale: false,
+});
+
+/**
  * A team repository declaring two projects: one the workspace has open and one
  * nobody cloned, which is the shape docs/04 §7 asks the UI to render.
  */
@@ -140,6 +233,8 @@ export const sampleTeam: TeamSummary = {
       cloned: true,
       vaultId: 'repo-1',
       localDocsPath: 'docs',
+      snapshot: missingSnapshot('ACME'),
+      browseUrl: 'https://github.com/acme/platform',
     },
     {
       key: 'WEB',
@@ -149,6 +244,8 @@ export const sampleTeam: TeamSummary = {
       host: 'gitlab',
       webUrl: 'https://gitlab.com/acme/website',
       cloned: false,
+      snapshot: sampleSnapshotInfo,
+      browseUrl: 'https://gitlab.com/acme/website',
     },
   ],
   policies: { definition_of_done: 'knowledge/ways-of-working/definition-of-done.md' },
@@ -768,6 +865,33 @@ export class FakeProvider implements DataProvider {
    * priority. A ref into a project the workspace has not opened stays where the
    * board puts it and is marked remote.
    */
+  listSnapshots(): Promise<SnapshotResult[]> {
+    return Promise.resolve(this.snapshotRows('unchanged'));
+  }
+
+  refreshSnapshots(input: SnapshotRefresh = {}): Promise<SnapshotResult[]> {
+    if (!input.dryRun) this.assertWritable();
+    const rows = this.snapshotRows('written').filter(
+      (row) => !input.projects?.length || input.projects.includes(row.project),
+    );
+    return Promise.resolve(rows);
+  }
+
+  /** One row per declared project: cloned ones are regenerated, the rest skipped. */
+  private snapshotRows(status: 'written' | 'unchanged'): SnapshotResult[] {
+    const cloned = new Set(this.projects.map((p) => p.key));
+    return (this.team?.projects ?? []).map((project) => ({
+      project: project.key,
+      path: project.snapshot.path,
+      status: cloned.has(project.key) ? status : 'skipped',
+      items: project.snapshot.items,
+      ...(cloned.has(project.key)
+        ? {}
+        : { reason: 'no open repository serves this project; clone it to refresh its snapshot' }),
+      info: project.snapshot,
+    }));
+  }
+
   private renderBoard(board: FakeBoard): BoardView {
     const declared = this.team?.projects.map((p) => p.key) ?? board.projects;
     const cloned = new Set(this.projects.map((p) => p.key));
@@ -809,14 +933,7 @@ export class FakeProvider implements DataProvider {
         if (placed.has(ref)) continue;
         const [project = '', id = ''] = ref.split('/');
         if (cloned.has(project)) continue;
-        cards.push({
-          ref,
-          project,
-          item: id,
-          declared: declared.includes(project),
-          remote: true,
-          reason: `project ${project} is not cloned on this machine; clone it to move this card`,
-        });
+        cards.push(remoteCard(ref, project, id, declared.includes(project)));
         placed.add(ref);
       }
       const order = board.order[column.id] ?? [];

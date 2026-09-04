@@ -229,6 +229,10 @@ export type TeamProjectSummary = {
   cloned: boolean;
   vaultId?: string;
   localDocsPath?: string;
+  /** The committed index snapshot of this project, present or not. */
+  snapshot: SnapshotInfo;
+  /** Where the project can be browsed; empty disables the host links. */
+  browseUrl?: string;
   diagnostics?: Diagnostic[];
 };
 
@@ -262,8 +266,45 @@ export type RefResolution = {
   vaultId?: string;
   /** The item itself, without its body; absent when the reference is remote. */
   found?: Item;
+  /** The read-only summary a committed snapshot carries for a remote item. */
+  snapshot?: SnapshotItemSummary;
+  /** The file that summary came from. */
+  snapshotInfo?: SnapshotInfo;
+  /** The item's file on the git host, empty when no link can be built. */
+  url?: string;
   /** One sentence explaining an unresolved reference. */
   reason?: string;
+};
+
+/** One item of a committed snapshot: front-matter-derived fields only. */
+export type SnapshotItemSummary = {
+  id: string;
+  type: ItemType;
+  title: string;
+  status?: string;
+  category?: string;
+  priority?: Priority;
+  parent?: string;
+  milestone?: string;
+  sprint?: string;
+  assignees?: string[];
+  labels?: string[];
+  estimate?: number;
+  due?: string;
+  updated?: string;
+  path: string;
+  rev: string;
+  ac?: { total: number; done: number };
+};
+
+/** What happened to one project's snapshot during a refresh. */
+export type SnapshotResult = {
+  project: string;
+  path: string;
+  status: 'written' | 'unchanged' | 'skipped';
+  items: number;
+  reason?: string;
+  info: SnapshotInfo;
 };
 
 export type BoardKind = 'kanban' | 'scrum';
@@ -292,8 +333,48 @@ export type BoardCard = {
   updated?: string;
   path?: string;
   rev?: string;
+  /**
+   * Where the card was read from: `live` for a local clone, `snapshot` for the
+   * committed `.pmngr/index/<projectKey>.json` of the team repository. Absent
+   * on a remote card no snapshot could resolve (docs/04 §6).
+   */
+  source?: CardSource;
+  /** When the snapshot the card came from was generated. */
+  snapshotAt?: string;
+  /** The snapshot is older than the team's `snapshots.max_age_days`. */
+  stale?: boolean;
+  /** The item's file on the git host, absent when no link can be built. */
+  remoteUrl?: string;
   /** One sentence explaining why the card cannot be edited here. */
   reason?: string;
+};
+
+/** Where a card's fields came from. */
+export type CardSource = 'live' | 'snapshot';
+
+/** How old a committed snapshot is, graded against the team policy (R-SNAP-9). */
+export type SnapshotFreshness = 'unknown' | 'fresh' | 'ageing' | 'stale';
+
+/** What is known about one project's committed index snapshot (docs/04 §6). */
+export type SnapshotInfo = {
+  project: string;
+  /** Where the file lives, or would live, in the team repository. */
+  path: string;
+  present: boolean;
+  /** The team publishes snapshots at all (`snapshots.enabled`). */
+  enabled: boolean;
+  generated?: string;
+  generatedBy?: string;
+  generator?: string;
+  commit?: string;
+  /** The snapshot was generated from a dirty working tree (R-SNAP-4). */
+  dirty?: boolean;
+  items: number;
+  ageSeconds?: number;
+  freshness: SnapshotFreshness;
+  stale: boolean;
+  /** Why a file that exists could not be used. */
+  error?: string;
 };
 
 /** One rendered column, with the live WIP condition recomputed on every read. */
@@ -480,6 +561,30 @@ export type CoreApi = {
       force?: boolean;
     };
     result: BoardMoveResult;
+  };
+
+  /**
+   * The committed index snapshot of every project the team declares, with its
+   * age and its staleness (docs/04 §6).
+   */
+  'snapshot.list': {
+    params: undefined;
+    result: { snapshots: SnapshotResult[]; writes: VaultWriteSet[]; dryRun?: boolean };
+  };
+  /**
+   * Regenerate the snapshots of the projects an open repository serves and
+   * write the ones whose content changed into the team repository. A file that
+   * did not change is not rewritten, so a refresh that finds nothing new
+   * produces no commit.
+   */
+  'snapshot.refresh': {
+    params: {
+      projects?: string[];
+      generatedBy?: string;
+      includeClosed?: boolean;
+      dryRun?: boolean;
+    };
+    result: { snapshots: SnapshotResult[]; writes: VaultWriteSet[]; dryRun?: boolean };
   };
 
   'item.list': { params: ItemFilter; result: ItemPage };

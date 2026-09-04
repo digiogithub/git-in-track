@@ -155,7 +155,9 @@ describe('BoardView', () => {
     await user.click(screen.getByRole('button', { name: 'Clear' }));
     await user.selectOptions(screen.getByLabelText('Filter by assignee'), 'marta');
     await waitFor(async () => {
-      expect(refsIn(await column('todo'))).toEqual([]);
+      // The remote card carries the assignees its snapshot published, so it is
+      // filtered like any other card (GIT-US-0019).
+      expect(refsIn(await column('todo'))).toEqual(['WEB/WEB-US-0031']);
     });
     expect(refsIn(await column('in_progress'))).toEqual(['ACME/ACME-US-0042']);
   });

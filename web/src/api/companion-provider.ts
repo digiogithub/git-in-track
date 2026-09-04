@@ -54,6 +54,8 @@ import type {
   RepoInfo,
   SearchHit,
   SearchQuery,
+  SnapshotRefresh,
+  SnapshotResult,
   TeamSummary,
   Unsubscribe,
   UpdateOp,
@@ -963,6 +965,33 @@ export class CompanionProvider implements DataProvider {
       },
     );
     return body as BoardMoveResult;
+  }
+
+  // ----------------------------------------------------------------- snapshots
+
+  async listSnapshots(): Promise<SnapshotResult[]> {
+    const body = await this.#json(`${API_PREFIX}/snapshots`);
+    const record = asRecord(body);
+    return asArray(record ? record['snapshots'] : body) as SnapshotResult[];
+  }
+
+  /**
+   * Regenerating a snapshot writes into the team repository, so it is a POST
+   * with no optimistic lock: the file is derived data the core rewrites whole,
+   * and an unchanged one is not written at all.
+   */
+  async refreshSnapshots(input: SnapshotRefresh = {}): Promise<SnapshotResult[]> {
+    const body = await this.#json(`${API_PREFIX}/snapshots`, {
+      method: 'POST',
+      body: {
+        ...(input.projects === undefined ? {} : { projects: input.projects }),
+        ...(input.generatedBy === undefined ? {} : { generatedBy: input.generatedBy }),
+        ...(input.includeClosed === undefined ? {} : { includeClosed: input.includeClosed }),
+        ...(input.dryRun === undefined ? {} : { dryRun: input.dryRun }),
+      },
+    });
+    const record = asRecord(body);
+    return asArray(record ? record['snapshots'] : body) as SnapshotResult[];
   }
 
   /** Sequential, so one rejected rev does not abort the rest of the batch. */

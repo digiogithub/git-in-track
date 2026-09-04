@@ -35,6 +35,9 @@ import type {
   ProjectSummary,
   RefResolution,
   SearchHit,
+  SnapshotInfo,
+  SnapshotItemSummary,
+  SnapshotResult,
   TeamMember,
   TeamProjectSummary,
   TeamSummary,
@@ -64,6 +67,9 @@ export type {
   ProjectSummary,
   RefResolution,
   SearchHit,
+  SnapshotInfo,
+  SnapshotItemSummary,
+  SnapshotResult,
   TeamMember,
   TeamProjectSummary,
   TeamSummary,
@@ -225,9 +231,34 @@ export interface DataProvider {
    */
   moveCard(move: CardMove): Promise<BoardMoveResult>;
 
+  // index snapshots (docs/04-team-repository.md §6)
+  /**
+   * The committed `.pmngr/index/<projectKey>.json` of every project the team
+   * declares: whether there is one, when it was generated and how stale it is.
+   */
+  listSnapshots(): Promise<SnapshotResult[]>;
+  /**
+   * Regenerates the snapshots of the projects an open repository serves and
+   * writes the ones whose content changed into the team repository. A project
+   * nobody cloned comes back `skipped` with a reason.
+   */
+  refreshSnapshots(input?: SnapshotRefresh): Promise<SnapshotResult[]>;
+
   // events
   subscribe(handler: (event: ChangeEvent) => void): Unsubscribe;
 }
+
+/** What to regenerate on a snapshot refresh. */
+export type SnapshotRefresh = {
+  /** Project keys to limit the run to; empty means every cloned project. */
+  projects?: string[];
+  /** Handle recorded in the file. */
+  generatedBy?: string;
+  /** Overrides the team's `snapshots.include_closed` for this run. */
+  includeClosed?: boolean;
+  /** Reports what would change without writing anything. */
+  dryRun?: boolean;
+};
 
 /** One card move: where the card goes and which locks the caller holds. */
 export type CardMove = {
