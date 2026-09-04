@@ -129,7 +129,20 @@ jobs:
 
       - name: go test (race + coverage)
         run: |
-          go list ./... | grep -v '/web/node_modules/' |
+          # Report the toolchain layout: a runner whose GOROOT is missing
+          # pkg/tool/*/covdata fails the coverage run with `no such tool
+          # "covdata"`, which is otherwise indistinguishable from a test failure.
+          echo "GOROOT=$(go env GOROOT)"
+          ls "$(go env GOROOT)/pkg/tool/$(go env GOOS)_$(go env GOARCH)" |
+            tr '\n' ' '
+          echo
+          # wasm/ and web/ hold no tests: wasm/ is built and smoke-tested by the
+          # `wasm` job and web/ only embeds web/dist. Covering a package with no
+          # test files makes the go command shell out to `go tool covdata`, so
+          # excluding them keeps this step independent of the runner's tool
+          # directory without losing a single covered statement.
+          go list ./... |
+            grep -vE '/web/node_modules/|^github\.com/digiogithub/git-in-track/(wasm|web)$' |
             xargs go test -race -covermode=atomic -coverprofile=coverage.out
 
       - name: Upload coverage artifact
