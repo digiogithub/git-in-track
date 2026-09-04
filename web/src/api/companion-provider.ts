@@ -50,6 +50,10 @@ import type {
   MountInput,
   Priority,
   ProjectSummary,
+  GitCommit,
+  GitRepoStatus,
+  GitSettings,
+  GitSettingsPatch,
   ProviderErrorCode,
   RefResolution,
   RepoInfo,
@@ -606,6 +610,38 @@ export function toIndexStats(value: unknown): IndexStats {
   };
 }
 
+/**
+ * `GET|PATCH /git/settings` → the settings the UI shows. The companion always
+ * supports committing, so `supported` is true whenever it answered at all.
+ */
+export function toGitSettings(value: unknown): GitSettings {
+  const record = asRecord(value) ?? {};
+  const backend = asString(record['backend']) ?? 'auto';
+  return {
+    commitOnSave: asBoolean(record['commitOnSave']) ?? false,
+    commitDebounceMs: asNumber(record['commitDebounceMs']) ?? 2000,
+    messageTemplate: asString(record['messageTemplate']) ?? '',
+    backend: backend as GitSettings['backend'],
+    resolvedBackend: asString(record['resolvedBackend']) ?? backend,
+    ...optional('gitVersion', asString(record['gitVersion'])),
+    ...optional('authorName', asString(record['authorName'])),
+    ...optional('authorEmail', asString(record['authorEmail'])),
+    signCommits: asBoolean(record['signCommits']) ?? false,
+    pending: asNumber(record['pending']) ?? 0,
+    ...optional('persisted', asBoolean(record['persisted'])),
+    supported: true,
+  };
+}
+
+/**
+ * Drops a key whose value is undefined, which is what
+ * `exactOptionalPropertyTypes` needs: "absent" and "present but undefined" are
+ * different types, and the wire has only the first.
+ */
+function optional<K extends string, V>(key: K, value: V | undefined): Record<K, V> | object {
+  return value === undefined ? {} : ({ [key]: value });
+}
+
 /** `GET /capabilities` → the object the UI branches on. */
 export function toCapabilities(value: unknown): Capabilities {
   const record = asRecord(value) ?? {};
@@ -1107,6 +1143,47 @@ export class CompanionProvider implements DataProvider {
    * Opens the event socket on the first subscriber and closes it with the
    * last one, so an idle tab holds no connection.
    */
+  // ---------------------------------------------------------------------- git
+
+  /** `GET /api/v1/git/settings` (docs/07 §5.5, story GIT-US-0020). */
+  async getGitSettings(): Promise<GitSettings> {
+    return toGitSettings(await this.#json(`${API_PREFIX}/git/settings`));
+  }
+
+  /**
+   * `PATCH /api/v1/git/settings`. The companion validates the template before
+   * it applies anything, so a rejected patch leaves the running settings and
+   * the configuration file untouched.
+   */
+  async updateGitSettings(patch: GitSettingsPatch): Promise<GitSettings> {
+    return toGitSettings(
+      await this.#json(`${API_PREFIX}/git/settings`, { method: 'PATCH', body: patch }),
+    );
+  }
+
+  /** `GET /api/v1/git/status`. */
+  async getGitStatus(repoId?: string): Promise<GitRepoStatus[]> {
+    const body = await this.#json(`${API_PREFIX}/git/status${buildQuery({ repo: repoId })}`);
+    const record = asRecord(body);
+    return asArray(record ? record['repos'] : body) as GitRepoStatus[];
+  }
+
+  /** `POST /api/v1/git/commit`; with no paths it flushes the batched edits. */
+  async commitNow(input: { repoId?: string; paths?: string[]; message?: string } = {}): Promise<
+    GitCommit[]
+  > {
+    const body = await this.#json(`${API_PREFIX}/git/commit`, {
+      method: 'POST',
+      body: {
+        ...(input.repoId === undefined ? {} : { repo: input.repoId }),
+        ...(input.paths === undefined ? {} : { paths: input.paths }),
+        ...(input.message === undefined ? {} : { message: input.message }),
+      },
+    });
+    const record = asRecord(body);
+    return asArray(record ? record['commits'] : body) as GitCommit[];
+  }
+
   subscribe(handler: (event: ChangeEvent) => void): Unsubscribe {
     this.#handlers.add(handler);
     if (this.#handlers.size === 1) this.#connect();

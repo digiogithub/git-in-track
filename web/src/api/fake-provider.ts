@@ -21,6 +21,10 @@ import type {
   Comment,
   DataProvider,
   Diagnostic,
+  GitCommit,
+  GitRepoStatus,
+  GitSettings,
+  GitSettingsPatch,
   IndexStats,
   Item,
   ItemDraft,
@@ -55,6 +59,7 @@ import type {
   UpdateOp,
 } from '@/api/provider';
 import { ProviderError, readOnlyCapabilities } from '@/api/provider';
+import { DEFAULT_COMMIT_TEMPLATE, validateCommitTemplate } from '@/git/message';
 
 export type FakeData = {
   projects?: ProjectSummary[];
@@ -524,6 +529,8 @@ export class FakeProvider implements DataProvider {
   private today: string;
   private handlers = new Set<(event: ChangeEvent) => void>();
   private revCounter = 1000;
+  /** Commit-on-save settings, in memory (story GIT-US-0020). */
+  private git: GitSettings;
 
   constructor(data: FakeData = {}, opts: { readOnly?: boolean } = {}) {
     this.capabilities = opts.readOnly ? readOnlyCapabilities : writableCapabilities;
@@ -539,6 +546,17 @@ export class FakeProvider implements DataProvider {
       (data.sprints ?? [sampleSprint]).map((s) => [s.id, structuredClone(s)]),
     );
     this.today = data.today ?? '2026-09-02';
+    this.git = {
+      commitOnSave: false,
+      commitDebounceMs: 2000,
+      messageTemplate: DEFAULT_COMMIT_TEMPLATE,
+      backend: 'auto',
+      resolvedBackend: 'go-git',
+      signCommits: false,
+      pending: 0,
+      supported: !opts.readOnly,
+      ...(opts.readOnly ? { reason: 'This vault is read-only.' } : {}),
+    };
     this.repos = data.repos ?? [
       {
         id: 'repo-1',
@@ -1496,6 +1514,75 @@ export class FakeProvider implements DataProvider {
     this.pages.set(path, page);
     this.emit({ kind: 'kb', repoId: 'repo-1', paths: [path] });
     return Promise.resolve(structuredClone(page));
+  }
+
+  // ---------------------------------------------------------------------- git
+
+  /**
+   * Commit-on-save, in memory. The fake keeps the settings and renders the
+   * subject with the same rules as the runtimes, so a component test can prove
+   * the form works without a git repository anywhere near it.
+   */
+  getGitSettings(): Promise<GitSettings> {
+    return Promise.resolve({ ...this.git });
+  }
+
+  updateGitSettings(patch: GitSettingsPatch): Promise<GitSettings> {
+    const next = { ...this.git, ...patch };
+    if (next.commitDebounceMs < 0) {
+      return Promise.reject(
+        new ProviderError('validation_failed', 'commitDebounceMs must not be negative'),
+      );
+    }
+    try {
+      validateCommitTemplate(next.messageTemplate);
+    } catch (error) {
+      return Promise.reject(
+        new ProviderError(
+          'validation_failed',
+          error instanceof Error ? error.message : String(error),
+        ),
+      );
+    }
+    this.git = { ...next, persisted: true };
+    return Promise.resolve({ ...this.git });
+  }
+
+  getGitStatus(repoId?: string): Promise<GitRepoStatus[]> {
+    return Promise.resolve(
+      this.repos
+        .filter((repo) => repoId === undefined || repo.id === repoId)
+        .map((repo) => ({
+          repo: repo.id,
+          path: repo.location,
+          git: true,
+          backend: 'go-git',
+          identity: 'Test User <test@example.com>',
+          capabilities: {
+            backend: 'go-git',
+            hooks: false,
+            signing: false,
+            credentialHelpers: false,
+            pathspecCommit: false,
+          },
+        })),
+    );
+  }
+
+  commitNow(input: { repoId?: string; paths?: string[]; message?: string } = {}): Promise<
+    GitCommit[]
+  > {
+    const repo = input.repoId ?? this.repos[0]?.id ?? 'default';
+    this.git = { ...this.git, pending: 0 };
+    return Promise.resolve([
+      {
+        repo,
+        sha: 'fake0000',
+        subject: input.message ?? 'pmngr: update 1 item',
+        empty: false,
+        paths: input.paths ?? [],
+      },
+    ]);
   }
 
   subscribe(handler: (event: ChangeEvent) => void): Unsubscribe {

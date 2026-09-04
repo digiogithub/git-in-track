@@ -103,6 +103,99 @@ export type {
 
 export type ProviderKind = 'browser' | 'companion';
 
+/**
+ * Commit-on-save settings (docs/06-git-sync.md §3.3, story GIT-US-0020).
+ *
+ * The same shape in both modes: the companion reads and writes the `git:`
+ * section of its configuration file, the browser keeps it per workspace. What
+ * differs is `supported` — browser-only mode cannot commit until isomorphic-git
+ * arrives with GIT-US-0021 — and the UI branches on that, never on the mode.
+ */
+export type GitSettings = {
+  /** Off by default. */
+  commitOnSave: boolean;
+  /** How long rapid saves of one item are coalesced for. */
+  commitDebounceMs: number;
+  /**
+   * Go `text/template` source. Both the documented field form
+   * (`{{.ItemID}}`) and the short form (`{{action}} {{id}}: {{title}}`) work.
+   */
+  messageTemplate: string;
+  /** What the user configured: `auto`, `go-git` or `system`. */
+  backend: 'auto' | 'go-git' | 'system' | 'isomorphic-git';
+  /** What `auto` actually resolved to. */
+  resolvedBackend: string;
+  /** System git version, when the system backend was resolved. */
+  gitVersion?: string;
+  authorName?: string;
+  authorEmail?: string;
+  /** Signed commits; the system backend only. */
+  signCommits: boolean;
+  /** Batched edits waiting to be committed. */
+  pending: number;
+  /** Whether the last change reached durable storage. */
+  persisted?: boolean;
+  /**
+   * False when this runtime cannot commit at all. `reason` says why, so the UI
+   * explains instead of offering a switch that does nothing.
+   */
+  supported: boolean;
+  reason?: string;
+};
+
+/** The fields a settings change may carry; an absent one is left alone. */
+export type GitSettingsPatch = {
+  commitOnSave?: boolean;
+  commitDebounceMs?: number;
+  messageTemplate?: string;
+  authorName?: string;
+  authorEmail?: string;
+  signCommits?: boolean;
+};
+
+/** One repository's git state (`GET /api/v1/git/status`). */
+export type GitRepoStatus = {
+  repo: string;
+  path: string;
+  /** False when the folder is not a git working tree; `reason` says so. */
+  git: boolean;
+  reason?: string;
+  backend?: string;
+  /** `Name <email>` the commits are attributed to. */
+  identity?: string;
+  /** Set when no identity resolves, which blocks committing entirely. */
+  identityError?: string;
+  status?: {
+    branch: string;
+    detached: boolean;
+    clean: boolean;
+    staged: string[];
+    modified: string[];
+    untracked: string[];
+  };
+  capabilities: {
+    backend: string;
+    version?: string;
+    hooks: boolean;
+    signing: boolean;
+    credentialHelpers: boolean;
+    pathspecCommit: boolean;
+  };
+};
+
+/** One commit made by commit-on-save or by an explicit commit. */
+export type GitCommit = {
+  repo: string;
+  sha?: string;
+  subject?: string;
+  /** True when nothing had changed, so no commit was made. */
+  empty: boolean;
+  paths?: string[];
+  /** Machine code of a failure, for example `git_hook_failed`. */
+  code?: string;
+  message?: string;
+};
+
 /** Statuses are configured per project in `project.yaml`; the UI never hardcodes them. */
 export type ItemStatus = string;
 
@@ -304,7 +397,22 @@ export interface DataProvider {
    */
   refreshSnapshots(input?: SnapshotRefresh): Promise<SnapshotResult[]>;
 
-  // events
+  // git (docs/06-git-sync.md §3.3)
+  /** The effective commit-on-save settings of this runtime. */
+  getGitSettings(): Promise<GitSettings>;
+  /**
+   * Changes them. An invalid message template is refused with
+   * `validation_failed` before anything is applied, so a broken template can
+   * never reach a commit.
+   */
+  updateGitSettings(patch: GitSettingsPatch): Promise<GitSettings>;
+  /** Per-repository git state: backend, identity and dirty set. */
+  getGitStatus(repoId?: string): Promise<GitRepoStatus[]>;
+  /**
+   * Commits now. With no `paths` it flushes what commit-on-save has batched,
+   * which is the "Commit N changes" action of the sync panel.
+   */
+  commitNow(input?: { repoId?: string; paths?: string[]; message?: string }): Promise<GitCommit[]>;
   subscribe(handler: (event: ChangeEvent) => void): Unsubscribe;
 }
 

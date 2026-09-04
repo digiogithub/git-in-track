@@ -55,6 +55,10 @@ import type {
   TeamSummary,
   Unsubscribe,
   UpdateOp,
+  GitCommit,
+  GitRepoStatus,
+  GitSettings,
+  GitSettingsPatch,
 } from '@/api/provider';
 import { ProviderError } from '@/api/provider';
 import { hydrateOrBuild } from '@/cache/index-cache';
@@ -81,6 +85,11 @@ import {
   type RepoHandleRecord,
   type VaultFS,
 } from '@/fs';
+import {
+  BROWSER_GIT_REASON,
+  readGitSettings,
+  writeGitSettings,
+} from '@/git/settings-store';
 
 type MountedRepo = {
   id: string;
@@ -95,6 +104,11 @@ type MountedRepo = {
 export type BrowserProviderOptions = {
   /** Injected by tests; production shares the app-wide worker client. */
   client?: CoreClient;
+  /**
+   * Namespaces the per-workspace commit-on-save settings in browser storage
+   * (docs/06-git-sync.md §3.3). Defaults to `default`.
+   */
+  workspace?: string;
 };
 
 /** Core error codes that map onto a provider code; everything else is internal. */
@@ -147,9 +161,12 @@ export class BrowserProvider implements DataProvider {
   readonly #mounts = new Map<string, MountedRepo>();
   readonly #handlers = new Set<(event: ChangeEvent) => void>();
   #activeRepoId: string | null = null;
+  /** Namespaces the per-workspace git settings in browser storage. */
+  readonly #workspaceName: string;
 
   constructor(options: BrowserProviderOptions = {}) {
     this.#client = options.client ?? coreClient;
+    this.#workspaceName = options.workspace ?? 'default';
   }
 
   #capabilities: Capabilities | null = null;
@@ -629,6 +646,57 @@ export class BrowserProvider implements DataProvider {
       this.#emit({ kind: 'repo', repoId: mount.id });
     }
     return result.snapshots;
+  }
+
+  // ---------------------------------------------------------------------- git
+
+  /**
+   * The commit-on-save settings of this workspace. Browser-only mode stores
+   * them and renders the message with them, but cannot commit until
+   * isomorphic-git lands with GIT-US-0021, which is what `supported` reports.
+   */
+  async getGitSettings(): Promise<GitSettings> {
+    return Promise.resolve(readGitSettings(this.#workspaceName));
+  }
+
+  async updateGitSettings(patch: GitSettingsPatch): Promise<GitSettings> {
+    try {
+      return await Promise.resolve(writeGitSettings(patch, this.#workspaceName));
+    } catch (error) {
+      throw new ProviderError(
+        'validation_failed',
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  }
+
+  /**
+   * Browser-only mode has no git backend to inspect yet, so every mounted
+   * repository reports why rather than pretending to be a working tree.
+   */
+  async getGitStatus(repoId?: string): Promise<GitRepoStatus[]> {
+    const mounts = [...this.#mounts.values()].filter(
+      (mount) => repoId === undefined || mount.id === repoId,
+    );
+    return Promise.resolve(
+      mounts.map((mount) => ({
+        repo: mount.id,
+        path: mount.name,
+        git: false,
+        reason: BROWSER_GIT_REASON,
+        capabilities: {
+          backend: 'isomorphic-git',
+          hooks: false,
+          signing: false,
+          credentialHelpers: false,
+          pathspecCommit: false,
+        },
+      })),
+    );
+  }
+
+  commitNow(): Promise<GitCommit[]> {
+    return Promise.reject(new ProviderError('read_only', BROWSER_GIT_REASON));
   }
 
   // ------------------------------------------------------------------- events

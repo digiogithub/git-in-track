@@ -847,3 +847,87 @@ describe('CompanionProvider event stream', () => {
     expect(states).toEqual(['idle', 'connecting', 'open', 'closed']);
   });
 });
+
+// -------------------------------------------------------------- git settings
+
+describe('CompanionProvider git surface (story GIT-US-0020)', () => {
+  const settingsBody = {
+    commitOnSave: true,
+    commitDebounceMs: 2000,
+    messageTemplate: 'pmngr: update {{.ItemID}} "{{.Title}}"',
+    backend: 'auto',
+    resolvedBackend: 'system',
+    gitVersion: '2.45.2',
+    signCommits: false,
+    pending: 3,
+    persisted: true,
+  };
+
+  it('reads the settings from GET /git/settings', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(response(settingsBody));
+    const settings = await provider(fetchImpl).getGitSettings();
+
+    expect(lastCall(fetchImpl).url).toBe(`${BASE}/api/v1/git/settings`);
+    expect(settings).toMatchObject({
+      commitOnSave: true,
+      commitDebounceMs: 2000,
+      resolvedBackend: 'system',
+      gitVersion: '2.45.2',
+      pending: 3,
+      supported: true,
+    });
+  });
+
+  it('patches the settings and sends only what changed', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(response({ ...settingsBody, commitOnSave: false }));
+    const settings = await provider(fetchImpl).updateGitSettings({ commitOnSave: false });
+
+    const { url, init } = lastCall(fetchImpl);
+    expect(url).toBe(`${BASE}/api/v1/git/settings`);
+    expect(init.method).toBe('PATCH');
+    expect(bodyOf(init)).toEqual({ commitOnSave: false });
+    expect(settings.commitOnSave).toBe(false);
+  });
+
+  it('turns a refused template into a typed provider error', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      response(
+        { code: 'invalid_request', detail: 'messageTemplate: the template does not parse' },
+        { status: 400 },
+      ),
+    );
+
+    await expect(
+      provider(fetchImpl).updateGitSettings({ messageTemplate: '{{nope}}' }),
+    ).rejects.toBeInstanceOf(ProviderError);
+  });
+
+  it('reads the per-repository status', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      response({
+        repos: [{ repo: 'acme', path: '/code/acme', git: true, backend: 'system' }],
+        settings: settingsBody,
+      }),
+    );
+    const repos = await provider(fetchImpl).getGitStatus('acme');
+
+    expect(lastCall(fetchImpl).url).toBe(`${BASE}/api/v1/git/status?repo=acme`);
+    expect(repos).toHaveLength(1);
+    expect(repos[0]).toMatchObject({ repo: 'acme', git: true, backend: 'system' });
+  });
+
+  it('flushes the batched edits with an empty commit request', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(response({ commits: [{ repo: 'acme', sha: 'abc123', empty: false }] }));
+    const commits = await provider(fetchImpl).commitNow();
+
+    const { url, init } = lastCall(fetchImpl);
+    expect(url).toBe(`${BASE}/api/v1/git/commit`);
+    expect(init.method).toBe('POST');
+    expect(bodyOf(init)).toEqual({});
+    expect(commits[0]).toMatchObject({ repo: 'acme', sha: 'abc123' });
+  });
+});
