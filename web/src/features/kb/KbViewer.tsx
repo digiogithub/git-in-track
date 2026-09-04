@@ -77,6 +77,15 @@ export function KbViewer() {
   );
   const markdown = useMarkdown(page?.body ?? '', renderOptions);
 
+  // The document usually opens with its own `# Title`. Rendering the chrome
+  // heading as well would duplicate it, for readers and for screen readers
+  // alike, so the document wins when it already states the title.
+  const firstHeading = markdown.result?.headings[0];
+  const documentOwnsTitle =
+    firstHeading?.depth === 1 &&
+    page !== undefined &&
+    firstHeading.text.trim().toLowerCase() === page.title.trim().toLowerCase();
+
   const loadAsset = useCallback(
     (assetPath: string) => provider.readAsset(scope, assetPath),
     [provider, scope],
@@ -148,7 +157,9 @@ export function KbViewer() {
               ) : null}
             </div>
           </div>
-          {page ? <h1 className="text-2xl font-semibold tracking-tight">{page.title}</h1> : null}
+          {page && !documentOwnsTitle ? (
+            <h1 className="text-2xl font-semibold tracking-tight">{page.title}</h1>
+          ) : null}
         </header>
 
         {pageQuery.isPending && path !== '' ? <PageSkeleton /> : null}

@@ -4,7 +4,7 @@ type: story
 title: Auto-detect the companion and upgrade the web app
 status: in_progress
 created: 2026-09-03T00:00:00Z
-updated: 2026-09-04T05:06:40Z
+updated: 2026-09-04T05:30:00Z
 started: 2026-09-04T05:06:40Z
 author: team
 priority: high
@@ -33,10 +33,10 @@ place rather than discovered by surprise.
 
 ## Acceptance Criteria
 
-- [ ] The app detects a running companion within 2 seconds of startup.
-- [ ] Switching adapters preserves the current route, filters and scroll position.
-- [ ] No page reload is required in either direction.
-- [ ] The current mode and its capabilities are visible in the UI.
-- [ ] Losing the companion mid-session degrades without data loss or an error page.
-- [ ] Detection never blocks first paint and fails silently when the port is closed.
-- [ ] Adapter swapping is covered by tests with a mocked health endpoint.
+- [x] The app detects a running companion within 2 seconds of startup.
+- [x] Switching adapters preserves the current route, filters and scroll position.
+- [x] No page reload is required in either direction.
+- [x] The current mode and its capabilities are visible in the UI.
+- [x] Losing the companion mid-session degrades without data loss or an error page.
+- [x] Detection never blocks first paint and fails silently when the port is closed.
+- [x] Adapter swapping is covered by tests with a mocked health endpoint.

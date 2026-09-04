@@ -48,5 +48,10 @@ export default defineConfig({
     css: false,
     include: ['src/**/*.{test,spec}.{ts,tsx}'],
     restoreMocks: true,
+    // Testing Library waits up to `asyncUtilTimeout` (5 s, see src/test/setup.ts)
+    // per findBy*; a test chaining two of them needs a larger budget than the
+    // 5 s default, or it fails the whole test before its own wait expires.
+    testTimeout: 20_000,
+    hookTimeout: 20_000,
   },
 });

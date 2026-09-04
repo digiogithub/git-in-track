@@ -148,77 +148,68 @@ version: 1
 # Active workspace, used when a command omits --workspace.
 defaultWorkspace: work
 
+# Workspaces group registered repositories by id. A workspace that lists no
+# repos stands for every registered repository, which is what a configuration
+# with a single workspace wants.
 workspaces:
   - name: work
-    # Repositories registered in this workspace.
-    repos:
-      - path: ~/code/acme-team          # absolute or ~-relative path to a git working tree
-        role: team                      # project | team
-        # For team repos the docs/knowledge folder is the team KB.
-        docs: knowledge
-        enabled: true
-      - path: ~/code/acme-api
-        role: project
-        docs: docs                      # folder marked as the project KB; holds .pmngr/
-        key: ACME                       # optional override; normally read from project.yaml
-        enabled: true
-      - path: ~/code/acme-web
-        role: project
-        docs: documentation
-        enabled: true
+    repos: [acme-api, acme-web, acme-team]
   - name: oss
-    repos:
-      - path: ~/src/git-in-track
-        role: project
-        docs: docs
+    repos: [git-in-track]
+
+# The repository registry. `gintrack add <path>` appends an entry here,
+# `gintrack rm <id>` removes one, and every other command addresses a
+# repository by its id.
+repos:
+  - id: acme-api                    # slug of the folder name, deduplicated
+    path: /home/jose/code/acme-api  # absolute path of the git working tree
+    role: project                   # project | team
+    docsFolder: docs                # folder holding .pmngr/, "." for the root
+    enabled: true                   # false keeps the entry but skips indexing
+  - id: acme-team
+    path: /home/jose/code/acme-team
+    role: team
+    docsFolder: knowledge
+    enabled: true
 
 server:
   bind: 127.0.0.1        # never bind 0.0.0.0 without reading the security notes
   port: 7317
-  openBrowser: true
-  # Auth token for the REST/WS API. Generated on first run (32 random bytes, base64url).
-  # Regenerate with `gintrack serve --token new` or by deleting the line.
+  # Auth token for the REST/WS API. Generated on first run (32 random bytes,
+  # base64url). Regenerate with `gintrack serve --token new`.
   token: "s7Q1e...redacted...9Zk"
-  # Extra allowed CORS origins beyond the embedded origin and the dev server.
-  extraOrigins: []
-  # Shut down after N minutes with no client connected. 0 = never.
-  idleTimeoutMinutes: 0
+  idleTimeout: 0s        # Go duration; 0 never shuts down
+  openBrowser: true
 
 git:
   backend: auto          # auto | go-git | system
-  # Used by `gintrack sync` and commit-on-save.
   commitOnSave: false
-  # Shipped default is the `pmngr:` form documented in 06-git-sync.md
-  # ('pmngr: update {{.ItemID}} "{{.Title}}"'); the value below is the
-  # conventional-commits variant teams often prefer when the docs folder
-  # sits next to code. Both render from the same template context.
-  commitMessageTemplate: "docs({{.ProjectKey}}): update {{.ItemID}} — {{.Title}}"
-  authorName: ""         # empty -> read from repo/global git config
+  # The shipped default is the `pmngr:` form of 06-git-sync.md; teams whose docs
+  # folder sits next to code often prefer the conventional-commits variant
+  # "docs({{.ProjectKey}}): update {{.ItemID}} — {{.Title}}".
+  messageTemplate: 'pmngr: update {{.ItemID}} "{{.Title}}"'
+  authorName: ""         # empty -> read from the repo/global git config
   authorEmail: ""
-  signCommits: false     # only honored by the system backend
-  pushOnSync: true
-  pullStrategy: rebase   # rebase | merge
 
 index:
-  # Watcher and indexer tuning.
-  debounceMs: 250
-  ignore:
-    - ".git/**"
-    - "node_modules/**"
-    - "**/*.tmp"
-    - "**/.DS_Store"
-  # Persist the index between runs so `serve` starts warm.
-  cache: true
-  maxFileSizeKB: 2048
+  cacheDir: ""           # empty -> the directory the configuration file is in
+  watch: true            # let `gintrack serve` run the file watcher
+  debounce: 250ms        # Go duration
+
+mcp:
+  enabled: false
+  allowWrite: false      # write tools stay off until this is true
 
 log:
   level: info            # debug | info | warn | error
   format: text           # text | json
-  file: ""               # empty -> stderr only
-
-telemetry:
-  enabled: false         # always false; no network calls are made. Present for explicitness.
 ```
+
+The file is written with `gintrack config init` or by the first `gintrack add`,
+always with mode `0600`. Keys this build does not know are ignored rather than
+rejected, so a file written by a newer binary still opens: the later phases add
+`server.extraOrigins`, `git.signCommits`, `git.pushOnSync`, `git.pullStrategy`,
+`index.ignore`, `index.maxFileSizeKB` and `log.file` to the same sections.
 
 ### 3.3 Precedence and environment variables
 
@@ -233,10 +224,14 @@ Effective value = flag > environment variable > config file > built-in default.
 | `GINTRACK_TOKEN`         | `server.token`      |
 | `GINTRACK_GIT_BACKEND`   | `git.backend`       |
 | `GINTRACK_LOG_LEVEL`     | `log.level`         |
+| `GINTRACK_LOG_FORMAT`    | `log.format`        |
 | `NO_COLOR`               | disables ANSI color |
 
-Global flags available on every command: `--config`, `--workspace/-w`, `--json`,
-`--quiet/-q`, `--verbose/-v`, `--no-color`, `--help/-h`.
+Global flags available on every command: `--config`, `--workspace/-w`,
+`--quiet/-q`, `--verbose/-v`, `--log-level`, `--no-color`, `--help/-h`. Naming a
+workspace that does not exist creates it. `--json` is declared by every command
+that has machine-readable output rather than globally, so that `gintrack --help`
+never offers it where it would mean nothing.
 
 ### 3.4 Git backend selection
 
@@ -318,30 +313,34 @@ gintrack add <path> [flags]
 
   --team              Register as a team repository (role: team)
   --docs string       Documentation/KB folder relative to the repo root
-                      (default: auto-detected — docs/, doc/, documentation/, knowledge/)
-  --key string        Project key override (normally read from project.yaml)
+                      (default: auto-detected)
+  --no-git            Register a folder that is not a git working tree
   --workspace string  Target workspace (created if it does not exist)
-  --init              Create the missing scaffold (.pmngr/, project.yaml or team.yaml)
+  --json              Machine-readable output
 ```
 
-Behavior: validates the path is a git working tree, detects `role` (a `team.yaml` at the
-repository root is the team-repo discovery marker; a `<docs>/.pmngr/project.yaml` is the
-project-repo marker), reads `project.yaml` for the key, refuses duplicates by canonical
-path, and appends to `workspaces[].repos`.
+Behavior: resolves the path (`~` included) to an absolute one, checks it is a git working
+tree (a `.git` directory or file) unless `--no-git` says otherwise, detects `role` (a
+`team.yaml` at the repository root is the team-repo discovery marker), detects the
+documentation folder by looking for `<folder>/.pmngr/project.yaml` at most four levels
+deep and preferring `docs/`, assigns the id (the slug of the folder name, deduplicated
+with `-2`, `-3`), refuses a duplicate by canonical path, appends to `repos` and joins the
+active workspace. Nothing inside the repository is written.
 
 ```bash
-$ gintrack add ~/code/acme-api --docs docs
-added project repository ACME  ~/code/acme-api  (docs: docs, 214 items)
+$ gintrack add ~/code/acme-api
+added project repository acme-api  /home/jose/code/acme-api  (docs: docs, 214 items)
+  ACME  Acme API  docs/.pmngr
+configuration: /home/jose/.config/gintrack/config.yaml
 
 $ gintrack add ~/code/acme-team --team
-added team repository "Platform Team"  ~/code/acme-team  (knowledge: knowledge, 3 boards)
-
-$ gintrack add ~/code/new-service --init --key NSVC
-created docs/.pmngr/{project.yaml,epics,stories,tasks,milestones,comments}
-added project repository NSVC  ~/code/new-service
+added team repository acme-team  /home/jose/code/acme-team  (docs: knowledge, 41 items)
 ```
 
-A matching `gintrack rm <path|key>` removes a registration (never touching files on disk).
+`gintrack rm <id>` removes a registration (never touching files on disk).
+
+`--key` and `--init` (create the missing `.pmngr/` scaffold) are deferred: writing a new
+project.yaml is a core concern the scaffolding story owns.
 
 ### 4.3 `gintrack ls`
 
@@ -353,12 +352,16 @@ gintrack ls [flags]
   --json              Machine-readable output
 ```
 
+Every listed repository is indexed to count what it holds, so the command is as fast as an
+index build. The git columns (`branch`, `clean`, `ahead`, `behind`) arrive with the git
+backend in Phase 4; until then `git` only reports whether the folder is a working tree.
+
 ```
 $ gintrack ls
-WORKSPACE  KEY    ROLE     PATH                  DOCS        BRANCH   STATUS       ITEMS
-work       ACME   project  ~/code/acme-api       docs        main     clean          214
-work       AWEB   project  ~/code/acme-web       documentation main   3 modified     176
-work       —      team     ~/code/acme-team      knowledge   main     clean           41
+ID         ROLE     PATH                   DOCS           KEYS  ITEMS
+acme-api   project  /home/jose/code/acme-api   docs        ACME    214
+acme-web   project  /home/jose/code/acme-web   documentation AWEB  176
+acme-team  team     /home/jose/code/acme-team  knowledge   —        41
 ```
 
 ```json
@@ -367,51 +370,55 @@ $ gintrack ls --json
   "workspace": "work",
   "repos": [
     {
-      "key": "ACME",
-      "role": "project",
+      "id": "acme-api",
       "path": "/home/jose/code/acme-api",
+      "role": "project",
       "docs": "docs",
-      "branch": "main",
-      "clean": true,
-      "ahead": 0,
-      "behind": 2,
+      "enabled": true,
+      "workspace": "work",
+      "git": true,
+      "projects": ["ACME"],
       "items": 214,
-      "lastIndexed": "2026-09-03T09:14:02Z"
+      "pages": 37,
+      "errors": 0,
+      "warnings": 2
     }
   ]
 }
 ```
 
-### 4.4 `gintrack index [--watch]`
+### 4.4 `gintrack index [id]`
 
 Builds (or rebuilds) the index for the workspace.
 
 ```
-gintrack index [flags]
-  --watch             Stay running, re-index incrementally on file changes
-  --repo string       Limit to one repository (key or path)
+gintrack index [id] [flags]
   --full              Ignore the cache and re-parse every file
-  --out string        Write the index snapshot to a file (default: config cache dir)
-  --snapshot          Also write .pmngr/index/<projectKey>.json into the team repo
-                      (remote reference snapshots consumed by team boards, Phase 3)
-  --stats             Print per-repository timing and counts
+  --json              Machine-readable output, with the diagnostics per repository
 ```
 
 ```
-$ gintrack index --full --stats
-ACME  214 items  1,102 files  parsed in 212ms  (12 epics, 58 stories, 138 tasks, 6 milestones)
-AWEB  176 items    884 files  parsed in 158ms
-TEAM   41 pages      3 boards    2 sprints    5 retros
-warnings: 2 (see `gintrack doctor`)
-index written to ~/.config/gintrack/state.db (431 items, 1.8 MB)
+$ gintrack index --full
+acme-api  214 items  1102 files  parsed in 212ms  (12 epics, 58 stories, 138 tasks, 6 milestones)
+acme-web  176 items   884 files  parsed in 158ms  (9 epics, 41 stories, 120 tasks, 6 milestones)
+0 errors, 2 warnings
+run `gintrack doctor` for the details
 ```
 
-`--watch` is what `serve` uses internally; running it standalone is useful for keeping the
-snapshot file fresh for editors or scripts.
+The positional argument limits the run to one registered repository. `--watch` (stay
+running and re-index on file changes) belongs to `gintrack serve`, which drives the same
+indexer behind the file watcher; `--out`, `--snapshot` and the persisted index cache
+arrive with the cache and the team boards.
 
 ### 4.5 `gintrack item …`
 
-Scriptable CRUD over backlog items. Every subcommand supports `--json`.
+Scriptable CRUD over backlog items. Every subcommand supports `--json`, and every write
+subcommand supports `--dry-run`, which runs the real write path over an in-memory overlay
+and prints the files it would have produced.
+
+An item is addressed by its id alone: the project key in the id says which repository of
+the workspace holds it. `--project` is only needed by `item new`, and only when the
+workspace holds more than one project.
 
 ```
 gintrack item list [flags]
@@ -429,6 +436,7 @@ gintrack item list [flags]
   --limit int             Default 50
   --offset int
   --fields string         Comma-separated fields for --json output
+  --all                   Include soft-deleted items
 ```
 
 ```
@@ -467,9 +475,11 @@ $ gintrack item list --project ACME --status todo --limit 2 --json
 ```
 gintrack item get <id> [flags]
   --body                  Include the Markdown body (default true; --body=false for front matter only)
-  --render                Render the body to HTML instead of Markdown
   --comments              Include comments
 ```
+
+`--render` (the body as HTML) waits for the renderer to move into the core: the CLI must
+not grow a second Markdown pipeline.
 
 ```
 gintrack item new [flags]
@@ -486,9 +496,10 @@ gintrack item new [flags]
   --milestone string
   --due string            YYYY-MM-DD
   --body string           Body Markdown ("-" reads stdin)
-  --template string       Body template name from project.yaml
   --dry-run               Print the file that would be written, write nothing
 ```
+
+`--template` waits for body templates to exist in `project.yaml`.
 
 ```bash
 $ gintrack item new --project ACME --type task --title "Wire OIDC discovery endpoint" \
@@ -508,16 +519,20 @@ gintrack item edit <id> [flags]
   --add-assignee / --remove-assignee  Incremental assignee edits
   --body string                       Replace the body ("-" reads stdin)
   --append string                     Append to the body
+  --unset string                      Clear a front-matter field (repeatable)
   --rev string                        Optimistic lock; fails with exit 5 on mismatch
-  --editor                            Open $EDITOR on the file, validate on save
-  --dry-run                           Show the unified diff, write nothing
+  --dry-run                           Print the file that would be written, write nothing
 ```
+
+`--editor` (open `$EDITOR` on the file and validate on save) is deferred: it is the one
+flag of this surface that cannot be scripted or tested headlessly.
 
 ```
 gintrack item move <id> <status> [flags]
   --rev string        Optimistic lock
   --comment string    Add a comment describing the transition
   --force             Bypass workflow transition validation (recorded in the commit body)
+  --dry-run           Print the files that would be written, write nothing
 ```
 
 ```bash
@@ -536,7 +551,8 @@ as specified in the data model, so the CLI and the web app never disagree about 
 
 `gintrack item link <id> <relation> <target>` manages typed relations
 (`blocks`, `blocked_by`, `relates_to`, `duplicates`), with `--remove` to drop one. The
-inverse relation is written on the counterpart item when both live in the same workspace.
+inverse relation is written on the counterpart item when both live in the same workspace;
+`--inverse=false` writes only the side that was named.
 
 ### 4.6 `gintrack board …`
 
@@ -616,9 +632,18 @@ Health check across configuration, repositories, and content.
 gintrack doctor [flags]
   --fix         Apply safe automatic fixes
   --renumber    Repair duplicate/colliding IDs (destructive, never implied by --fix)
-  --repo string Limit to one repository
+  --yes         Do not ask for confirmation before a renumbering
+  --repo string Limit to one repository (registration id)
   --strict      Treat warnings as errors (exit 3); useful in CI
+  --json        Machine-readable output, with the diagnostics grouped by file
 ```
+
+The command exits 3 when it found an error, and with `--strict` when it found a warning.
+This build implements the checks that need no git backend: the configuration file and its
+permissions, the readability of every registered path, the presence and validity of
+`project.yaml`, every content diagnostic the indexer produces, and duplicate ids. The
+`--fix` class is currently front matter rewritten in canonical key order and files whose
+slug drifted from the title.
 
 Checks performed:
 
@@ -697,6 +722,32 @@ completions are registered for item IDs, project keys, status names (read from t
 project workflow), labels, board slugs and workspace names, so `gintrack item move ACME-T-<TAB>`
 is useful.
 
+### 4.12 `gintrack config`
+
+```
+gintrack config path [--json]   Print the resolved configuration file path
+gintrack config show [--json]   Print the effective configuration
+gintrack config init [--force]  Write a default configuration file
+```
+
+`config path` prints the file the precedence chain of section 3.1 selected, whether or not
+it exists; with `--json` it also reports the state and cache directories and the active
+workspace. `config show` prints the configuration after the flags, the environment and the
+file have been layered on the defaults, which is the fastest way to see why a command is
+looking at the wrong port or workspace. `config init` creates the file with mode `0600`,
+and refuses to replace an existing one without `--force`.
+
+```
+$ gintrack config path
+/home/jose/.config/gintrack/config.yaml
+
+$ gintrack config show | head -4
+# /home/jose/.config/gintrack/config.yaml
+version: 1
+defaultWorkspace: work
+workspaces:
+```
+
 ---
 
 ## 5. Local REST API
@@ -755,7 +806,11 @@ bearer token this prevents drive-by localhost attacks from arbitrary web pages.
 - **Optimistic concurrency** — every item, page and board response carries `rev`, a
   content hash (`sha256:` + first 16 hex chars of the canonical file bytes) and the same
   value in the `ETag` header. Mutations require `If-Match: <rev>`; a mismatch returns
-  `409 Conflict`. `If-Match: *` bypasses the check (documented as unsafe).
+  `412 Precondition Failed` with the `stale_revision` problem, which carries `currentRev`
+  so that the client can merge without a second round trip. A mutation that omits the
+  header on something that already exists returns `428 Precondition Required`
+  (`precondition_required`), because a write with no revision is a lost update waiting to
+  happen. `If-Match: *` bypasses the check (documented as unsafe).
 - **Pagination** — `?limit=` (default 50, max 500) and `?offset=`, plus `X-Total-Count`.
   Cursor pagination (`?cursor=`) is available on `/items` for large backlogs and is what
   the MCP layer uses.
@@ -776,7 +831,7 @@ Content type `application/problem+json`.
 {
   "type": "https://git-in-track.dev/problems/stale-revision",
   "title": "Stale revision",
-  "status": 409,
+  "status": 412,
   "detail": "Item ACME-US-0042 was modified on disk since revision sha256:6f1c…a09.",
   "instance": "/api/v1/items/ACME-US-0042",
   "code": "stale_revision",
@@ -805,10 +860,14 @@ Field notes: `code` is a stable machine string (clients switch on it, not on `ty
 }
 ```
 
-Catalog of `code` values: `unauthorized`, `forbidden`, `not_found`, `validation_failed`,
-`stale_revision`, `conflict`, `workflow_transition_denied`, `repo_not_registered`,
-`repo_not_cloned`, `git_dirty`, `git_auth_failed`, `git_conflict`, `index_unavailable`,
-`rate_limited`, `internal`.
+Catalog of `code` values: `unauthorized`, `forbidden`, `not_found`, `invalid_request`,
+`validation_failed`, `invalid_front_matter`, `precondition_required`, `stale_revision`,
+`conflict`, `duplicate_id`, `workflow_transition_denied`, `read_only`,
+`repo_not_registered`, `repo_not_cloned`, `git_dirty`, `git_auth_failed`, `git_conflict`,
+`index_unavailable`, `rate_limited`, `not_implemented`, `internal`.
+
+`not_implemented` (HTTP 501) is what a route of a later phase answers: the path exists so
+that a client learns "not yet" from the code instead of guessing from a 404.
 
 ### 5.5 Endpoints
 
@@ -893,7 +952,14 @@ GET /api/v1/projects/{key}/kb/tree      ?depth=3
 GET /api/v1/projects/{key}/kb/page?path=architecture/overview.md&format=raw|html|both
 PUT /api/v1/projects/{key}/kb/page      If-Match; body {"path":…,"content":"…"}
 GET /api/v1/teams/{key}/kb/tree         # team knowledge/ folder, same shape
+GET /api/v1/kb/tree                     ?project=ACME    # flat form, vault-relative
+GET /api/v1/kb/page?path=docs/index.md  ?project=ACME
+PUT /api/v1/kb/page                     If-Match; body {"path":…,"content":"…"}
 ```
+
+The flat `/api/v1/kb/…` form addresses a page by its vault-relative path and needs
+`?project=` only when the repository holds more than one project. Writing a page that does
+not exist yet needs no `If-Match`; overwriting one does.
 
 ```json
 GET /api/v1/projects/ACME/kb/page?path=architecture/overview.md&format=both
@@ -1199,6 +1265,7 @@ originating tab can skip its own optimistic-update echo.
 
 ```
 cmd/gintrack/           cobra command tree, flag binding, config loading, exit codes
+internal/config/        the configuration file: schema, defaults, precedence, registry
 internal/server/        chi router, middleware, handlers, WS hub, embedded assets
 internal/watcher/       fsnotify wrapper, debouncer, ignore matcher
 internal/gitops/        go-git and system-git backends behind one interface
@@ -1211,17 +1278,31 @@ wasm/                   GOOS=js GOARCH=wasm entry point + JS bridge
 
 ```
 cmd/gintrack/
-  main.go          // sets version vars via -ldflags, calls cli.Execute()
-  root.go          // persistent flags, config loading, logger setup
-  serve.go add.go ls.go index.go item.go board.go sync.go doctor.go mcp.go version.go
-  completion.go
+  main.go          // sets version vars via -ldflags, calls Execute(), exits with the code
+  root.go          // persistent flags, configuration resolution, logger setup
+  exit.go          // the exit codes of section 4 and the mapping from core errors
+  workspace.go     // opens the registered repositories and indexes them
+  mountfs.go       // mounts every repository of a workspace as one core.FS
+  overlayfs.go     // in-memory overlay that makes --dry-run run the real write path
+  format.go        // the small text helpers the commands share
+  serve.go add.go ls.go rm.go index.go doctor.go config.go version.go completion.go
+  item.go item_list.go item_get.go item_new.go item_edit.go item_move.go
+  item_comment.go item_link.go
   output/          // table + json renderers shared by all commands
 ```
 
 Rules: command files contain *no* business logic — they parse flags, build a
-`core.Query`/`core.Mutation`, call the core or a server-side service, and render. This keeps
-CLI and HTTP handlers behaviorally identical and makes both testable against the same
-golden fixtures.
+`core.Filter`/`core.ItemDraft`/`core.ItemPatch`, call the core or a server-side service, and
+render. This keeps CLI and HTTP handlers behaviorally identical and makes both testable
+against the same golden fixtures.
+
+Two pieces of plumbing keep that rule affordable. `mountFS` presents the repositories of a
+workspace side by side under their registration ids, so that one `core.Index` sorts,
+filters and paginates across all of them instead of the command line stitching per-repository
+results together; item paths are reported as `<repo>:<path inside the repository>`.
+`overlayFS` buffers writes in memory over the same file system, so `--dry-run` executes the
+real `core.FileStore` write path and then reports what it would have written, instead of a
+second implementation that could disagree with the first.
 
 ### 6.2 `internal/server`
 

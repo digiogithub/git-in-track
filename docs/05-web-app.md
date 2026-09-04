@@ -384,6 +384,25 @@ on the stable `code` field, never on the HTTP status alone, and maps it to a typ
 Schema mismatch (`capabilities.schema` newer than the bundle's) shows a blocking dialog:
 "Update the web app / use the embedded UI at 127.0.0.1:7317".
 
+**As implemented (story GIT-US-0015).** `src/api/detect.ts` owns the probe
+(`probeCompanion`, `detectCompanion`, `watchCompanion`, `probeCompanionNow`) and
+`src/api/provider-factory.ts` builds the matching provider. Three details differ from the
+sketch above and are deliberate:
+
+- The upgrade is applied directly with a **non-blocking notice** ("Companion detected —
+  native indexing and file watching enabled") instead of an Enable / Not now / Never
+  prompt; the downgrade shows its own notice. Both are dismissible and never block a
+  route. Re-probing runs on a 30 s interval and on `visibilitychange` (throttled), and
+  `AppProviders` rebuilds the provider and invalidates the TanStack Query cache on a flip.
+- The bearer token (docs/07 §5.1) lives in `src/api/token.ts`: read once from `?token=`
+  and stripped from the URL with `history.replaceState`, kept in `sessionStorage`, sent as
+  `Authorization: Bearer` and as the `?token=` query parameter on the WebSocket. A `401`
+  clears it and raises `CompanionUnauthorizedError`, which surfaces as an actionable
+  banner plus a token field in Settings.
+- The event stream degrades to a plain interval refresh signal when the WebSocket cannot
+  be opened (three failed attempts, or no `WebSocket` at all), and keeps trying to upgrade
+  back to the socket. Settings shows the live connection state.
+
 ---
 
 ## 5. State management

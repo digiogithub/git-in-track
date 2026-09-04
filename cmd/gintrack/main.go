@@ -23,13 +23,14 @@ var (
 )
 
 func main() {
-	if err := Execute(buildInfo{
+	err := Execute(buildInfo{
 		Version: version,
 		Commit:  commit,
 		Date:    date,
 		BuiltBy: builtBy,
-	}); err != nil {
+	})
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "gintrack:", err)
-		os.Exit(1)
 	}
+	os.Exit(exitCode(err))
 }

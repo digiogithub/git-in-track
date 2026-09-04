@@ -9,7 +9,7 @@
  * every parent render re-renders the document.
  */
 
-import { startTransition, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { renderMarkdown } from '@/markdown/pipeline';
 import type { RenderOptions, RenderResult } from '@/markdown/types';
@@ -32,7 +32,10 @@ export function useMarkdown(source: string, options: RenderOptions = {}): Markdo
     renderMarkdown(source, options).then(
       (result) => {
         if (cancelled) return;
-        startTransition(() => setState({ status: 'ready', result, error: null }));
+        // Deliberately not a transition: React may starve a low-priority update
+        // under load, which left the previous document on screen indefinitely.
+        // Continuity is already provided by keeping `result` while pending.
+        setState({ status: 'ready', result, error: null });
       },
       (error: unknown) => {
         if (cancelled) return;

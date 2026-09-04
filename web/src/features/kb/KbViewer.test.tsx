@@ -89,11 +89,24 @@ const richPage: KbPage = {
   backlinks: ['docs/index.md', 'ACME-US-0042'],
 };
 
+/**
+ * Waits for the page heading to settle.
+ *
+ * The viewer shows a placeholder title until the document is rendered and then
+ * yields to the document's own `# Title` (KbViewer suppresses the duplicate),
+ * so an assertion must re-query rather than hold on to the first match.
+ */
+async function expectPageHeading(name: string) {
+  await waitFor(() => {
+    expect(screen.getByRole('heading', { name, level: 1 })).toBeVisible();
+  });
+}
+
 describe('KbViewer', () => {
   it('renders the requested page and its file tree', async () => {
     renderKb('/p/ACME/kb/docs/index.md');
 
-    expect(await screen.findByRole('heading', { name: 'ACME Platform', level: 1 })).toBeVisible();
+    await expectPageHeading('ACME Platform');
 
     const tree = screen.getByRole('navigation', { name: /knowledge base pages/i });
     expect(within(tree).getByRole('link', { name: /acme platform/i })).toHaveAttribute(
@@ -110,7 +123,7 @@ describe('KbViewer', () => {
 
   it('opens the scope index page when the route carries no path', async () => {
     renderKb('/p/ACME/kb/');
-    expect(await screen.findByRole('heading', { name: 'ACME Platform', level: 1 })).toBeVisible();
+    await expectPageHeading('ACME Platform');
   });
 
   it('navigates to another page from the tree', async () => {
@@ -121,9 +134,7 @@ describe('KbViewer', () => {
     await user.click(within(tree).getByRole('button', { name: 'architecture' }));
     await user.click(within(tree).getByRole('link', { name: /architecture overview/i }));
 
-    expect(
-      await screen.findByRole('heading', { name: 'Architecture overview', level: 1 }),
-    ).toBeVisible();
+    await expectPageHeading('Architecture overview');
     // The GFM table of that page renders too.
     expect(await screen.findByRole('table')).toBeVisible();
   });
@@ -136,9 +147,7 @@ describe('KbViewer', () => {
     expect(link).toHaveAttribute('href', '/p/ACME/kb/docs/architecture/overview.md');
 
     await user.click(link);
-    expect(
-      await screen.findByRole('heading', { name: 'Architecture overview', level: 1 }),
-    ).toBeVisible();
+    await expectPageHeading('Architecture overview');
   });
 
   it('resolves a wikilink to a backlog item and follows it', async () => {
@@ -204,7 +213,7 @@ describe('KbViewer', () => {
     const user = userEvent.setup();
     renderKb('/p/ACME/kb/docs/architecture/overview.md');
 
-    await screen.findByRole('heading', { name: 'Architecture overview', level: 1 });
+    await expectPageHeading('Architecture overview');
     expect(screen.queryByText(/> \[!NOTE\]/)).toBeNull();
 
     await user.click(screen.getByRole('button', { name: /open raw/i }));
@@ -224,7 +233,7 @@ describe('KbViewer', () => {
     const provider = new FakeProvider({ pages: samplePages });
     renderKb('/p/ACME/kb/docs/index.md', provider);
 
-    await screen.findByRole('heading', { name: 'ACME Platform', level: 1 });
+    await expectPageHeading('ACME Platform');
 
     await provider.writePage(
       { kind: 'project', projectKey: 'ACME' },
@@ -232,14 +241,12 @@ describe('KbViewer', () => {
       '# Rewritten by someone else\n',
     );
 
-    expect(
-      await screen.findByRole('heading', { name: 'Rewritten by someone else', level: 1 }),
-    ).toBeVisible();
+    await expectPageHeading('Rewritten by someone else');
   });
 
   it('does not offer an Edit link while the edit route does not exist', async () => {
     renderKb('/p/ACME/kb/docs/index.md');
-    await screen.findByRole('heading', { name: 'ACME Platform', level: 1 });
+    await expectPageHeading('ACME Platform');
     expect(screen.queryByRole('link', { name: 'Edit' })).toBeNull();
   });
 });

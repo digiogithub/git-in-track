@@ -1,11 +1,16 @@
-// Package server exposes the companion HTTP surface: the local REST API and the
-// embedded web application.
+// Package server exposes the companion HTTP surface: the local REST API, the
+// WebSocket event stream and the embedded web application.
 //
-// Phase 0 ships the skeleton the later phases hang handlers on: the router and
-// its middleware chain, the unauthenticated health probe, bearer-token
-// authentication with RFC 7807 problem responses, security headers and the SPA
-// fallback that serves the embedded frontend. Items, boards, git operations and
-// the WebSocket event stream arrive with the companion CLI in Phase 2.
+// Every repository the companion serves is mounted as an internal/vault.Vault
+// over an internal/core/osfs file system, and every endpoint is a thin adapter
+// over vault.Dispatch — the same implementation the browser build runs in
+// WebAssembly. That is deliberate: the two operating modes answer with the same
+// JSON because they run the same code, not because two implementations agree.
+//
+// The file watcher folds file-system changes into those vaults and the hub fans
+// the resulting events out to the connected UIs. Boards, sprints, retrospectives
+// and the git surface belong to Phases 3 and 4; their routes exist and answer
+// with a `not_implemented` problem.
 //
 // All domain logic lives in internal/core; this package only adapts it to HTTP.
 package server
@@ -28,6 +33,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+
+	"github.com/digiogithub/git-in-track/internal/config"
 )
 
 // DefaultPort is the loopback port the companion listens on.
@@ -73,6 +80,27 @@ type Options struct {
 	UI fs.FS
 	// Logger receives request and lifecycle logs. Defaults to slog.Default().
 	Logger *slog.Logger
+
+	// Repos are the repositories to mount. Each one becomes a vault over the
+	// files on disk; a repository that cannot be opened is reported as broken
+	// instead of stopping the server.
+	Repos []Repo
+	// Workspace is the name of the workspace being served, reported by
+	// /capabilities and /workspaces.
+	Workspace string
+	// Watch enables the file watcher and, with it, live updates over the
+	// WebSocket.
+	Watch bool
+	// Debounce is the watcher coalescing window; zero means the watcher default.
+	Debounce time.Duration
+	// ExtraOrigins are additional browser origins allowed through CORS.
+	ExtraOrigins []string
+	// NewWatcher builds the watcher. Tests replace it; production leaves it nil
+	// and gets the fsnotify-backed one.
+	NewWatcher WatcherFactory
+	// Now is the clock stamping events and index timestamps. Nil means
+	// time.Now.
+	Now func() time.Time
 }
 
 // Server owns the router and the HTTP listener.
@@ -81,6 +109,14 @@ type Server struct {
 	router  chi.Router
 	log     *slog.Logger
 	started time.Time
+	now     func() time.Time
+
+	// repos holds the mounted repositories and their vaults.
+	repos *registry
+	// hub fans events out to the connected event streams.
+	hub *Hub
+	// watch owns the file watcher, when there is one.
+	watch watchState
 
 	// mu guards addr, which changes once when the listener resolves a
 	// wildcard port and is read concurrently by callers printing the URL.
@@ -114,14 +150,57 @@ func New(opts Options) (*Server, error) {
 		return nil, fmt.Errorf("refusing to serve %s without a token: authentication may only be disabled on loopback", opts.Bind)
 	}
 
+	if opts.Workspace == "" {
+		opts.Workspace = config.DefaultWorkspaceName
+	}
+	now := opts.Now
+	if now == nil {
+		now = time.Now
+	}
+
 	s := &Server{
 		opts:    opts,
 		log:     opts.Logger,
-		started: time.Now(),
+		started: now(),
+		now:     now,
 		addr:    net.JoinHostPort(opts.Bind, fmt.Sprint(opts.Port)),
+	}
+	s.repos = newRegistry(opts.Repos, now)
+	s.hub = newHub(opts.Workspace, now)
+	for _, m := range s.repos.all() {
+		if m.err != nil {
+			s.log.Warn("repository mounted with errors", "repo", m.id, "path", m.path, "error", m.err)
+		}
 	}
 	s.router = s.routes()
 	return s, nil
+}
+
+// Repos reports the mounted repositories: their id, their path and the project
+// keys they expose. `gintrack serve` prints it as the startup banner.
+func (s *Server) Repos() []RepoStatus {
+	out := make([]RepoStatus, 0, len(s.repos.all()))
+	for _, m := range s.repos.all() {
+		status := RepoStatus{ID: m.id, Path: m.path, Role: m.role, Projects: m.projectKeys(), Err: m.err}
+		if m.ready() {
+			stats := m.vlt.Stats()
+			status.Items, status.Pages, status.Comments = stats.Items, stats.Pages, stats.Comments
+		}
+		out = append(out, status)
+	}
+	return out
+}
+
+// RepoStatus is what a mounted repository looks like to the command line.
+type RepoStatus struct {
+	ID       string
+	Path     string
+	Role     string
+	Projects []string
+	Items    int
+	Pages    int
+	Comments int
+	Err      error
 }
 
 // GenerateToken returns a fresh bearer token: 32 random bytes, base64url.
@@ -157,6 +236,9 @@ func (s *Server) Start(ctx context.Context) error {
 	s.mu.Lock()
 	s.addr = listener.Addr().String()
 	s.mu.Unlock()
+
+	s.startWatch(ctx)
+	defer s.stopWatch()
 
 	srv := &http.Server{
 		Handler:           s.router,
@@ -199,21 +281,30 @@ func (s *Server) routes() chi.Router {
 	// loopback, where the peer address is already the truth.
 	r.Use(s.requestLogger)
 	r.Use(middleware.Recoverer)
-	r.Use(middleware.Timeout(requestTimeout))
+	r.Use(s.corsMiddleware)
 	r.Use(securityHeaders)
+	// The request deadline is applied per route rather than globally: the event
+	// stream is a long-lived connection, not a request that must finish.
+	r.Use(s.timeoutExceptStream)
 
-	r.Route(apiPrefix, func(api chi.Router) {
-		api.Get("/health", s.handleHealth)
-		api.Group(func(private chi.Router) {
-			private.Use(s.bearerAuth)
-			private.Get("/capabilities", s.handleCapabilities)
-		})
-		api.NotFound(s.handleAPINotFound)
-		api.MethodNotAllowed(s.handleAPINotFound)
-	})
+	r.Route(apiPrefix, s.mountAPI)
 
 	r.NotFound(s.spaHandler())
+	r.MethodNotAllowed(s.spaHandler())
 	return r
+}
+
+// timeoutExceptStream applies the request deadline to everything but the
+// WebSocket endpoint.
+func (s *Server) timeoutExceptStream(next http.Handler) http.Handler {
+	bounded := middleware.Timeout(requestTimeout)(next)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == apiPrefix+"/events" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		bounded.ServeHTTP(w, r)
+	})
 }
 
 // handleHealth is the unauthenticated liveness probe.
@@ -229,20 +320,37 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 // handleCapabilities reports what this build can do, so that the web app can
 // upgrade itself from browser-only mode to companion mode.
 func (s *Server) handleCapabilities(w http.ResponseWriter, r *http.Request) {
+	projects := make([]string, 0, len(s.repos.all()))
+	for _, m := range s.repos.ready() {
+		projects = append(projects, m.projectKeys()...)
+	}
 	writeJSON(w, r, http.StatusOK, map[string]any{
 		"version": s.opts.Version,
 		"commit":  s.opts.Commit,
 		"schema":  "v1",
 		"mode":    s.opts.Mode,
 		"ui":      s.uiState(),
-		"features": map[string]bool{
-			// Phase 0 ships the skeleton only; each feature is switched on by
-			// the phase that implements it.
-			"watcher": false,
+		"features": map[string]any{
+			"watcher":      s.watching(),
+			"nativeIndex":  true,
+			"write":        true,
+			"search":       "core",
+			"renderer":     "client",
+			"openInEditor": false,
+			// Phases 3 and 4.
 			"git":     false,
-			"mcp":     false,
-			"write":   false,
+			"mcpHttp": false,
+			"boards":  false,
 		},
+		"limits": map[string]int{
+			"maxItemsPerPage": maxItemsPerPage,
+			"maxBatchWrite":   50,
+			"maxUploadBytes":  maxRequestBody,
+		},
+		"workspaces":      []string{s.opts.Workspace},
+		"activeWorkspace": s.opts.Workspace,
+		"repos":           len(s.repos.all()),
+		"projects":        projects,
 	})
 }
 
@@ -292,7 +400,10 @@ func presentedToken(r *http.Request) string {
 		}
 		return ""
 	}
-	return r.URL.Query().Get("token")
+	if token := r.URL.Query().Get("token"); token != "" {
+		return token
+	}
+	return subprotocolToken(r)
 }
 
 // tokenMatches compares two tokens in constant time.
@@ -322,6 +433,13 @@ func securityHeaders(next http.Handler) http.Handler {
 func (s *Server) requestLogger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
+		if isUpgrade(r) {
+			// A wrapped writer would hide the hijacker the WebSocket upgrade
+			// needs; a long-lived stream is logged when it ends, not by status.
+			next.ServeHTTP(w, r)
+			s.log.Debug("stream closed", "path", r.URL.Path, "duration", time.Since(start).String())
+			return
+		}
 		ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
 		next.ServeHTTP(ww, r)
 		attrs := []any{
@@ -340,6 +458,11 @@ func (s *Server) requestLogger(next http.Handler) http.Handler {
 	})
 }
 
+// isUpgrade reports whether a request asks for a protocol upgrade.
+func isUpgrade(r *http.Request) bool {
+	return strings.EqualFold(r.Header.Get("Upgrade"), "websocket")
+}
+
 // writeJSON writes a JSON response with the request id echoed back.
 func writeJSON(w http.ResponseWriter, r *http.Request, status int, payload any) {
 	if id := middleware.GetReqID(r.Context()); id != "" {
@@ -350,40 +473,6 @@ func writeJSON(w http.ResponseWriter, r *http.Request, status int, payload any) 
 	if err := json.NewEncoder(w).Encode(payload); err != nil {
 		// The response is already on the wire; there is nothing left to do but
 		// let the request logger record the truncated body.
-		_ = err
-	}
-}
-
-// problem is an RFC 7807 problem document, with the machine-readable `code`
-// clients switch on (docs/07 section 5.4).
-type problem struct {
-	Type      string `json:"type"`
-	Title     string `json:"title"`
-	Status    int    `json:"status"`
-	Detail    string `json:"detail,omitempty"`
-	Instance  string `json:"instance,omitempty"`
-	Code      string `json:"code"`
-	RequestID string `json:"requestId,omitempty"`
-}
-
-// writeProblem writes an application/problem+json response.
-func writeProblem(w http.ResponseWriter, r *http.Request, status int, code, title, detail string) {
-	id := middleware.GetReqID(r.Context())
-	if id != "" {
-		w.Header().Set("X-Request-Id", id)
-	}
-	w.Header().Set("Content-Type", "application/problem+json; charset=utf-8")
-	w.WriteHeader(status)
-	body := problem{
-		Type:      problemBase + strings.ReplaceAll(code, "_", "-"),
-		Title:     title,
-		Status:    status,
-		Detail:    detail,
-		Instance:  r.URL.Path,
-		Code:      code,
-		RequestID: id,
-	}
-	if err := json.NewEncoder(w).Encode(body); err != nil {
 		_ = err
 	}
 }
