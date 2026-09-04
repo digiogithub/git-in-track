@@ -200,7 +200,7 @@ index:
   debounce: 250ms        # Go duration
 
 mcp:
-  enabled: false
+  enabled: false         # mount POST /mcp on `gintrack serve` (same as --mcp-http)
   allowWrite: false      # write tools stay off until this is true
 
 log:
@@ -293,15 +293,20 @@ gintrack serve [flags]
   --idle-timeout dur  Exit after this idle duration (e.g. 30m); 0 disables
   --dev               Development mode: allow http://localhost:5173, verbose CORS logs,
                       do not serve embedded assets (proxy to Vite instead)
+  --repo path         Serve this repository without registering it; repeatable
+  --mcp-http          Serve the Model Context Protocol at POST /mcp (doc 08 §2.2)
+  --mcp-allow-write   Advertise the MCP write tools; without it /mcp is read-only
+  --mcp-agent name    Agent name recorded as the author of comments written through /mcp
 ```
 
 On start it prints:
 
 ```
-$ gintrack serve
+$ gintrack serve --mcp-http
 git-in-track 0.4.0 (commit 9f2c1ab, ui: embedded, git: system 2.45.2)
 workspace: work — 3 repositories (2 project, 1 team)
 indexing… 1,284 files, 431 items in 340ms
+mcp:        http://127.0.0.1:7317/mcp (read-only)
 listening on http://127.0.0.1:7317
 token:      s7Q1e...9Zk   (also stored in ~/.config/gintrack/config.yaml)
 open:       http://127.0.0.1:7317/?token=s7Q1e...9Zk
@@ -710,18 +715,46 @@ $ gintrack doctor
 2 errors, 2 warnings
 ```
 
-### 4.9 `gintrack mcp [--http]`
+### 4.9 `gintrack mcp`
 
-Runs the Model Context Protocol server. Full specification in `08-mcp-server.md`.
+Runs the Model Context Protocol server over stdin and stdout, so that an agent runtime can
+spawn it as a tool server. Full specification in `08-mcp-server.md`.
 
 ```
 gintrack mcp [flags]
-  --http              Serve streamable HTTP at /mcp on the local server instead of stdio
-  --allow-write       Enable write tools (default: read-only)
-  --dry-run           Write tools validate and return the would-be diff without writing
-  --agent string      Agent name recorded in the audit log and the `Agent:` commit trailer
-  --workspace string
+  --allow-write          Advertise the write tools (default: read-only)
+  --agent string         Agent name recorded as the author of comments it writes
+  --repo path            Serve this repository without registering it; repeatable
+  --list-tools           Print the tools this server would advertise, and exit
+  -w, --workspace string Workspace to expose
 ```
+
+```
+$ gintrack mcp --list-tools
+add_comment
+create_epic
+create_story
+create_task
+get_item
+get_kb_page
+list_items
+list_kb_pages
+move_on_board
+search_items
+search_kb
+update_item
+
+$ gintrack mcp --agent claude-code
+gintrack mcp 0.4.0: workspace work, 2 repositories, 6 tools (read-only)
+```
+
+Nothing but JSON-RPC frames is written to stdout; the startup line and every log go to
+stderr. Without `--allow-write` the six write tools are absent from `tools/list`, not merely
+refused.
+
+The **same twelve tools** are served over streamable HTTP at `POST /mcp` by
+`gintrack serve --mcp-http` (section 4.1), which is what to use when the companion is already
+running: one index and one watcher, shared with the web UI.
 
 ### 4.10 `gintrack version`
 
@@ -969,6 +1002,8 @@ GET /api/v1/capabilities
     "gitBackend": "system",
     "gitVersion": "2.45.2",
     "mcpHttp": false,
+    "mcpWrite": false,
+    "mcpTools": [],
     "search": "bleve",
     "renderer": "goldmark",
     "write": true
@@ -1727,7 +1762,7 @@ r.Route("/api/v1", func(api chi.Router) {
         p.Get("/events", h.Events)                  // websocket upgrade
     })
 })
-r.Mount("/mcp", mcpHTTPHandler)                     // only when --http / mcpHttp enabled
+r.Mount("/mcp", mcpHTTPHandler)                     // behind bearerAuth; 501 when disabled
 r.NotFound(spaHandler(webFS))                       // SPA fallback
 ```
 
