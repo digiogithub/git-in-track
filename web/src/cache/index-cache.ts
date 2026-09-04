@@ -158,6 +158,12 @@ export type HydrateOptions = {
   onHydrated?: (stats: IndexStats) => void;
   /** Passed through to `CoreClient.loadVault`. */
   rootLabel?: string;
+  /**
+   * Repository the snapshot belongs to inside the core workspace. It is
+   * normally the same string as the cache key, and it is passed separately so
+   * that the cache never has to assume the two are one (GIT-US-0016).
+   */
+  vaultId?: string;
 };
 
 /**
@@ -187,10 +193,10 @@ export async function hydrateOrBuild(
   let cached: IndexStats | null = null;
   if (entry) {
     try {
-      cached = await client.loadSnapshot({
-        fingerprint: entry.fingerprint,
-        json: entry.snapshotJson,
-      });
+      cached = await client.loadSnapshot(
+        { fingerprint: entry.fingerprint, json: entry.snapshotJson },
+        options.vaultId,
+      );
       options.onHydrated?.(cached);
     } catch {
       cached = null;
@@ -199,15 +205,15 @@ export async function hydrateOrBuild(
     }
   }
 
-  const stats = await client.loadVault(
-    files,
-    options.rootLabel === undefined ? {} : { rootLabel: options.rootLabel },
-  );
+  const stats = await client.loadVault(files, {
+    ...(options.rootLabel === undefined ? {} : { rootLabel: options.rootLabel }),
+    ...(options.vaultId === undefined ? {} : { vaultId: options.vaultId }),
+  });
 
   let resaved = false;
   if (!entry || entry.fingerprint !== stats.fingerprint) {
     try {
-      const blob = await client.exportSnapshot();
+      const blob = await client.exportSnapshot(options.vaultId);
       await saveSnapshot(vaultId, blob);
       resaved = true;
     } catch {

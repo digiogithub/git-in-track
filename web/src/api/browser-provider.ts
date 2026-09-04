@@ -34,9 +34,11 @@ import type {
   KbScope,
   MountInput,
   ProjectSummary,
+  RefResolution,
   RepoInfo,
   SearchHit,
   SearchQuery,
+  TeamSummary,
   Unsubscribe,
   UpdateOp,
 } from '@/api/provider';
@@ -201,6 +203,26 @@ export class BrowserProvider implements DataProvider {
   }
 
   /**
+   * The team repository among the open folders. `team.get` fails with
+   * `not_found` when none is open, which is a normal state, not an error the
+   * UI has to show.
+   */
+  async getTeam(): Promise<TeamSummary | null> {
+    await this.#ensureActive();
+    try {
+      return await this.#call('team.get', undefined);
+    } catch (error) {
+      if (error instanceof ProviderError && error.code === 'not_found') return null;
+      throw error;
+    }
+  }
+
+  async resolveRef(ref: string): Promise<RefResolution> {
+    await this.#ensureActive();
+    return this.#call('ref.resolve', { ref });
+  }
+
+  /**
    * Mounts a folder the user already picked. `MountInput.location` is the id
    * returned by `registerVault` (see `fs/vault-registry.ts`), which keeps
    * browser handles out of the provider interface.
@@ -254,7 +276,15 @@ export class BrowserProvider implements DataProvider {
 
   async unmountRepo(repoId: string): Promise<void> {
     this.#mounts.delete(repoId);
-    if (this.#activeRepoId === repoId) this.#activeRepoId = null;
+    if (this.#activeRepoId === repoId) {
+      this.#activeRepoId = [...this.#mounts.keys()][0] ?? null;
+    }
+    try {
+      await this.#call('workspace.unmount', { vaultId: repoId });
+    } catch (error) {
+      // A folder the core never loaded is already unmounted as far as it knows.
+      if (!(error instanceof ProviderError && error.code === 'not_found')) throw error;
+    }
     await removeHandleRecord(repoId);
     this.#emit({ kind: 'repo', repoId });
   }
@@ -269,11 +299,11 @@ export class BrowserProvider implements DataProvider {
 
     const events = await this.#vaultCall(() => mount.vault.rescan());
     const stats = events.length
-      ? await this.#call('vault.apply', { events })
-      : await this.#call('vault.stats', undefined);
+      ? await this.#call('vault.apply', { events, vaultId: repoId })
+      : await this.#call('vault.stats', { vaultId: repoId });
 
     mount.lastIndexedAt = new Date().toISOString();
-    mount.projects = (await this.#call('project.list', undefined)).map((project) => project.key);
+    mount.projects = await this.#projectsOf(repoId);
     await this.#touchRecord(mount);
 
     this.#emit({ kind: 'index', repoId, stats });
@@ -305,20 +335,27 @@ export class BrowserProvider implements DataProvider {
     return this.#call('comment.list', { id });
   }
 
+  /**
+   * A team scope reads the `knowledge/` folder of the team repository. Both
+   * scopes are addressed by key: the core indexes the team knowledge base under
+   * the team key exactly as it indexes a project's docs folder under its
+   * project key (docs/04 §4).
+   */
   async listKbTree(scope: KbScope): Promise<KbNode[]> {
     await this.#ensureActive();
-    // TODO(GIT-US-0016): team scopes read `knowledge/` from the team repository.
-    return this.#call('kb.tree', scope.kind === 'project' ? { project: scope.projectKey } : {});
+    return this.#call('kb.tree', {
+      project: scope.kind === 'project' ? scope.projectKey : scope.teamId,
+    });
   }
 
-  async getPage(_scope: KbScope, path: string): Promise<KbPage> {
+  async getPage(scope: KbScope, path: string): Promise<KbPage> {
     await this.#ensureActive();
-    return this.#call('kb.page', { path });
+    return this.#call('kb.page', { path, ...this.#scopeVault(scope) });
   }
 
   /** Binary reads never go through the core: the bytes come from the vault. */
-  async readAsset(_scope: KbScope, path: string): Promise<Blob> {
-    const mount = await this.#ensureActive();
+  async readAsset(scope: KbScope, path: string): Promise<Blob> {
+    const mount = (await this.#mountForScope(scope)) ?? (await this.#ensureActive());
     return this.#vaultCall(() => mount.vault.readBinary(path));
   }
 
@@ -339,15 +376,16 @@ export class BrowserProvider implements DataProvider {
   // -------------------------------------------------------------------- write
 
   async createItem(input: ItemDraft): Promise<Item> {
-    const mount = await this.#ensureWritable();
+    const active = await this.#ensureWritable();
     const { item, writes } = await this.#call('item.create', input);
+    const mount = this.#mountForItem(item.id, active);
     await this.#persist(mount, writes);
     this.#emit({ kind: 'items', repoId: mount.id, ids: [item.id] });
     return item;
   }
 
   async updateItem(id: string, patch: ItemPatch, rev: string): Promise<Item> {
-    const mount = await this.#ensureWritable();
+    const mount = this.#mountForItem(id, await this.#ensureWritable());
     const { item, writes } = await this.#call('item.update', { id, patch, rev });
     await this.#persist(mount, writes);
     this.#emit({ kind: 'items', repoId: mount.id, ids: [item.id] });
@@ -355,7 +393,7 @@ export class BrowserProvider implements DataProvider {
   }
 
   async moveItem(id: string, status: ItemStatus, rev: string): Promise<Item> {
-    const mount = await this.#ensureWritable();
+    const mount = this.#mountForItem(id, await this.#ensureWritable());
     const { item, writes } = await this.#call('item.move', { id, status, rev });
     await this.#persist(mount, writes);
     this.#emit({ kind: 'items', repoId: mount.id, ids: [item.id] });
@@ -377,25 +415,27 @@ export class BrowserProvider implements DataProvider {
   }
 
   async deleteItem(id: string, rev: string): Promise<void> {
-    const mount = await this.#ensureWritable();
+    const mount = this.#mountForItem(id, await this.#ensureWritable());
     const { writes } = await this.#call('item.delete', { id, rev });
     await this.#persist(mount, writes);
     this.#emit({ kind: 'items', repoId: mount.id, ids: [id] });
   }
 
   async addComment(id: string, body: string, author = 'me'): Promise<Comment> {
-    const mount = await this.#ensureWritable();
+    const mount = this.#mountForItem(id, await this.#ensureWritable());
     const { comment, writes } = await this.#call('comment.add', { id, author, body });
     await this.#persist(mount, writes);
     this.#emit({ kind: 'items', repoId: mount.id, ids: [id] });
     return comment;
   }
 
-  async writePage(_scope: KbScope, path: string, content: string, rev?: string): Promise<KbPage> {
-    const mount = await this.#ensureWritable();
+  async writePage(scope: KbScope, path: string, content: string, rev?: string): Promise<KbPage> {
+    const active = await this.#ensureWritable();
+    const mount = (await this.#mountForScope(scope)) ?? active;
     const { page, writes } = await this.#call('kb.write', {
       path,
       text: content,
+      vaultId: mount.id,
       ...(rev === undefined ? {} : { rev }),
     });
     await this.#persist(mount, writes);
@@ -438,22 +478,37 @@ export class BrowserProvider implements DataProvider {
     }
   }
 
-  /** Pushes the whole folder into the core and refreshes the mount record. */
+  /**
+   * Pushes the whole folder into the core and refreshes the mount record.
+   *
+   * Every folder gets its own repository inside the core workspace, keyed by
+   * the same id the handle store uses, so that a team repository and several
+   * project clones are open at the same time (GIT-US-0016). Loading one folder
+   * no longer evicts the others.
+   */
   async #load(
     repoId: string,
     vault: VaultFS,
     meta: { kind: RepoInfo['kind']; docsFolder: string },
   ): Promise<IndexStats> {
     const files = await this.#vaultCall(async () => vault.cachedFiles() ?? vault.readTextFiles());
+    await this.#call('workspace.mount', {
+      vaultId: repoId,
+      role: meta.kind,
+      rootLabel: vault.name,
+    });
     // The IndexedDB snapshot cache (GIT-US-0007) paints the vault structure
     // before the files are parsed again, then the real index replaces it.
     let stats: IndexStats;
     try {
-      ({ stats } = await hydrateOrBuild(this.#client, repoId, files, { rootLabel: vault.name }));
+      ({ stats } = await hydrateOrBuild(this.#client, repoId, files, {
+        rootLabel: vault.name,
+        vaultId: repoId,
+      }));
     } catch (error) {
       throw toProviderError(error);
     }
-    const projects = (await this.#call('project.list', undefined)).map((project) => project.key);
+    const projects = await this.#projectsOf(repoId);
 
     const mount: MountedRepo = {
       id: repoId,
@@ -468,6 +523,46 @@ export class BrowserProvider implements DataProvider {
     this.#activeRepoId = repoId;
     await this.#touchRecord(mount);
     return stats;
+  }
+
+  /** Project keys one repository of the workspace exposes. */
+  async #projectsOf(repoId: string): Promise<string[]> {
+    const summary = await this.#call('workspace.list', undefined);
+    const entry = summary.vaults.find((v) => v.id === repoId);
+    return entry?.projects ?? [];
+  }
+
+  /** The repository a knowledge-base scope reads from, when it is known. */
+  async #mountForScope(scope: KbScope): Promise<MountedRepo | undefined> {
+    if (scope.kind === 'project') return this.#mountForProject(scope.projectKey);
+    const summary = await this.#call('workspace.list', undefined);
+    const teamVault = summary.vaults.find((v) => v.team);
+    return teamVault ? this.#mounts.get(teamVault.id) : undefined;
+  }
+
+  /** `vaultId` for a knowledge-base scope, so a page read hits the right folder. */
+  #scopeVault(scope: KbScope): { vaultId?: string } {
+    if (scope.kind !== 'project') return {};
+    const mount = this.#mountForProject(scope.projectKey);
+    return mount ? { vaultId: mount.id } : {};
+  }
+
+  /** The folder holding a project, by the key its items are prefixed with. */
+  #mountForProject(key: string): MountedRepo | undefined {
+    for (const mount of this.#mounts.values()) {
+      if (mount.projects.includes(key)) return mount;
+    }
+    return undefined;
+  }
+
+  /**
+   * The folder that owns an item id. The project key is the id's own prefix,
+   * which is what lets a write land in the right repository without the caller
+   * having to say which one it meant.
+   */
+  #mountForItem(id: string, fallback: MountedRepo): MountedRepo {
+    const key = id.split('-')[0] ?? '';
+    return this.#mountForProject(key) ?? fallback;
   }
 
   /** Keeps the persisted record in step with what the last index found. */

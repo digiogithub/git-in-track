@@ -46,9 +46,11 @@ import type {
   Priority,
   ProjectSummary,
   ProviderErrorCode,
+  RefResolution,
   RepoInfo,
   SearchHit,
   SearchQuery,
+  TeamSummary,
   Unsubscribe,
   UpdateOp,
 } from '@/api/provider';
@@ -560,6 +562,10 @@ export function toSearchHits(value: unknown): SearchHit[] {
         score: asNumber(hit['score']) ?? 0,
       };
       put(mapped, 'id', asString(hit['id']));
+      // A workspace-wide search says which project — and which repository —
+      // answered, so the UI can label every row (GIT-US-0016).
+      put(mapped, 'project', asString(hit['project']));
+      put(mapped, 'vaultId', asString(hit['vaultId']));
       return mapped;
     })
     .filter((entry): entry is SearchHit => entry !== null);
@@ -757,6 +763,24 @@ export class CompanionProvider implements DataProvider {
     const record = asRecord(body);
     const entries = record ? asArray(record['projects'] ?? record['items']) : asArray(body);
     return entries.map(toProjectSummary);
+  }
+
+  /**
+   * The team repository of the workspace. The companion serves one at most, so
+   * an empty list means "no team repository is registered", which is a normal
+   * state rather than an error.
+   */
+  async getTeam(): Promise<TeamSummary | null> {
+    const body = await this.#json(`${API_PREFIX}/teams`);
+    const record = asRecord(body);
+    const entries = record ? asArray(record['teams'] ?? record['items']) : asArray(body);
+    const first = entries[0];
+    return first === undefined ? null : (first as TeamSummary);
+  }
+
+  async resolveRef(ref: string): Promise<RefResolution> {
+    const body = await this.#json(`${API_PREFIX}/refs${buildQuery({ ref })}`);
+    return body as RefResolution;
   }
 
   async mountRepo(input: MountInput): Promise<RepoInfo> {

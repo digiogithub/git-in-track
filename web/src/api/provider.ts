@@ -27,7 +27,13 @@ import type {
   KbPage,
   Priority,
   ProjectSummary,
+  RefResolution,
   SearchHit,
+  TeamMember,
+  TeamProjectSummary,
+  TeamSummary,
+  WorkspaceSummary,
+  WorkspaceVault,
 } from '@/core-bridge/api';
 
 export type {
@@ -44,7 +50,13 @@ export type {
   KbPage,
   Priority,
   ProjectSummary,
+  RefResolution,
   SearchHit,
+  TeamMember,
+  TeamProjectSummary,
+  TeamSummary,
+  WorkspaceSummary,
+  WorkspaceVault,
 };
 
 export type ProviderKind = 'browser' | 'companion';
@@ -93,7 +105,10 @@ export type MountInput = {
   docsFolder?: string;
 };
 
-/** A knowledge base scope: a project's docs folder (team `knowledge/` arrives in Phase 3). */
+/**
+ * A knowledge base scope: a project's docs folder, or the `knowledge/` folder
+ * of the team repository. `teamId` is the team key of `team.yaml`.
+ */
 export type KbScope = { kind: 'project'; projectKey: string } | { kind: 'team'; teamId: string };
 
 export type SearchQuery = {
@@ -144,6 +159,18 @@ export interface DataProvider {
   // workspace
   listRepos(): Promise<RepoInfo[]>;
   listProjects(): Promise<ProjectSummary[]>;
+  /**
+   * The team repository of the workspace, or `null` when none is open. Every
+   * project it declares is listed, whether or not a clone of it is open: a
+   * project with `cloned: false` is remote, not missing (docs/04 §7).
+   */
+  getTeam(): Promise<TeamSummary | null>;
+  /**
+   * Resolves a `<projectKey>/<itemId>` reference across every open repository.
+   * A reference into a project nobody cloned resolves to `cloned: false` with a
+   * reason, never to a failure.
+   */
+  resolveRef(ref: string): Promise<RefResolution>;
   mountRepo(input: MountInput): Promise<RepoInfo>;
   unmountRepo(repoId: string): Promise<void>;
   reindex(repoId: string, opts?: { full?: boolean }): Promise<IndexStats>;

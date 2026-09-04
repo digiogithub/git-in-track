@@ -24,9 +24,11 @@ import type {
   KbScope,
   MountInput,
   ProjectSummary,
+  RefResolution,
   RepoInfo,
   SearchHit,
   SearchQuery,
+  TeamSummary,
   Unsubscribe,
   UpdateOp,
 } from '@/api/provider';
@@ -38,12 +40,66 @@ export type FakeData = {
   comments?: Comment[];
   pages?: KbPage[];
   repos?: RepoInfo[];
+  /** The team repository of the workspace; omit for a workspace without one. */
+  team?: TeamSummary | null;
 };
 
 const writableCapabilities: Capabilities = {
   ...readOnlyCapabilities,
   write: true,
   maxBatchWrite: 50,
+};
+
+/**
+ * A team repository declaring two projects: one the workspace has open and one
+ * nobody cloned, which is the shape docs/04 §7 asks the UI to render.
+ */
+export const sampleTeam: TeamSummary = {
+  key: 'ACME-TEAM',
+  name: 'ACME Delivery Team',
+  description: 'Squad owning the platform and the marketing website.',
+  timezone: 'Europe/Madrid',
+  root: '.',
+  knowledgePath: 'knowledge',
+  vaultId: 'repo-team',
+  members: [
+    {
+      handle: 'jose',
+      name: 'Jose Ruiz',
+      role: 'lead',
+      emails: ['jose@example.com'],
+      active: true,
+    },
+    { handle: 'marta', name: 'Marta Alonso', role: 'dev', active: true },
+    { handle: 'laura', name: 'Laura Prat', role: 'dev', active: false },
+  ],
+  projects: [
+    {
+      key: 'ACME',
+      name: 'ACME Platform',
+      repo: 'https://github.com/acme/platform.git',
+      docsPath: 'docs',
+      host: 'github',
+      webUrl: 'https://github.com/acme/platform',
+      cloned: true,
+      vaultId: 'repo-1',
+      localDocsPath: 'docs',
+    },
+    {
+      key: 'WEB',
+      name: 'Marketing Website',
+      repo: 'https://gitlab.com/acme/website.git',
+      docsPath: 'documentation',
+      host: 'gitlab',
+      webUrl: 'https://gitlab.com/acme/website',
+      cloned: false,
+    },
+  ],
+  policies: { definition_of_done: 'knowledge/ways-of-working/definition-of-done.md' },
+  cadence: { sprintLengthDays: 14 },
+  defaults: { board: 'delivery' },
+  snapshots: { enabled: true, maxAgeDays: 7 },
+  diagnostics: [],
 };
 
 export const sampleProject: ProjectSummary = {
@@ -206,6 +262,7 @@ export class FakeProvider implements DataProvider {
   private comments: Comment[];
   private pages: Map<string, KbPage>;
   private repos: RepoInfo[];
+  private team: TeamSummary | null;
   private handlers = new Set<(event: ChangeEvent) => void>();
   private revCounter = 1000;
 
@@ -215,6 +272,7 @@ export class FakeProvider implements DataProvider {
     this.items = new Map((data.items ?? sampleItems).map((i) => [i.id, structuredClone(i)]));
     this.comments = structuredClone(data.comments ?? sampleComments);
     this.pages = new Map((data.pages ?? samplePages).map((p) => [p.path, structuredClone(p)]));
+    this.team = data.team ?? null;
     this.repos = data.repos ?? [
       {
         id: 'repo-1',
@@ -249,6 +307,30 @@ export class FakeProvider implements DataProvider {
 
   listProjects(): Promise<ProjectSummary[]> {
     return Promise.resolve(structuredClone(this.projects));
+  }
+
+  getTeam(): Promise<TeamSummary | null> {
+    return Promise.resolve(this.team ? structuredClone(this.team) : null);
+  }
+
+  resolveRef(ref: string): Promise<RefResolution> {
+    const [project = '', item = ''] = ref.split('/');
+    const declared = this.team?.projects.some((p) => p.key === project) ?? false;
+    const found = this.items.get(item);
+    const resolution: RefResolution = {
+      ref,
+      project,
+      item,
+      declared,
+      cloned: this.projects.some((p) => p.key === project),
+    };
+    if (found) return Promise.resolve({ ...resolution, found: structuredClone(found) });
+    return Promise.resolve({
+      ...resolution,
+      reason: resolution.cloned
+        ? `project ${project} is open but has no item ${item}`
+        : `project ${project} is not cloned on this machine`,
+    });
   }
 
   mountRepo(input: MountInput): Promise<RepoInfo> {

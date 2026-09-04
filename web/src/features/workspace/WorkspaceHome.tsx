@@ -11,6 +11,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { FsaVault, getHandleRecord, registerVault, requestPermission } from '@/fs';
 
 import { FolderPickers } from './FolderPickers';
+import { TeamPanel } from './TeamPanel';
+import { WorkspaceSearch } from './WorkspaceSearch';
 
 const STATE_LABELS: Record<RepoInfo['state'], string> = {
   ready: 'Ready',
@@ -148,6 +150,10 @@ export function WorkspaceHome() {
           {error}
         </p>
       ) : null}
+
+      <TeamPanel />
+
+      <WorkspaceSearch />
 
       <section aria-labelledby="repos-heading" className="space-y-3">
         <h2 id="repos-heading" className="text-lg font-semibold tracking-tight">

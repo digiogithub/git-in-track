@@ -102,6 +102,8 @@ export type ProjectSummary = {
   labels: { name: string; color?: string; description?: string }[];
   priorities: Priority[];
   itemCounts: Record<ItemType, number>;
+  /** Repository the project was discovered in; set by a workspace-wide answer. */
+  vaultId?: string;
   /** Initial status and transition map (`from -> [to...]`); absent transitions mean any. */
   workflow?: { initial?: string; transitions?: Record<string, string[]> };
   /** `project.yaml` estimation settings. */
@@ -190,6 +192,96 @@ export type SearchHit = {
   title: string;
   snippet: string;
   score: number;
+  /** Project key the hit belongs to; the team key for a team knowledge-base page. */
+  project?: string;
+  /** Repository the hit came from, set by a workspace-wide search. */
+  vaultId?: string;
+};
+
+/** One member of `team.yaml` (docs/04-team-repository.md §3.2). */
+export type TeamMember = {
+  handle: string;
+  name?: string;
+  role?: string;
+  emails?: string[];
+  gitNames?: string[];
+  handles?: Record<string, string>;
+  capacity?: number;
+  active: boolean;
+};
+
+/**
+ * One project declared in `team.yaml`, plus what the workspace knows about it
+ * locally. `cloned: false` is the normal state of a project nobody on this
+ * machine has checked out (docs/04 §7).
+ */
+export type TeamProjectSummary = {
+  key: string;
+  name: string;
+  repo: string;
+  defaultBranch?: string;
+  docsPath: string;
+  host?: string;
+  webUrl?: string;
+  color?: string;
+  archived?: boolean;
+  localHints?: string[];
+  cloned: boolean;
+  vaultId?: string;
+  localDocsPath?: string;
+  diagnostics?: Diagnostic[];
+};
+
+/** The team repository of the workspace (docs/04 §3). */
+export type TeamSummary = {
+  key: string;
+  name: string;
+  description?: string;
+  timezone?: string;
+  root: string;
+  knowledgePath: string;
+  vaultId?: string;
+  members: TeamMember[];
+  projects: TeamProjectSummary[];
+  policies?: Record<string, string>;
+  cadence: { sprintLengthDays?: number; sprintStartWeekday?: string; retroAfterSprint?: boolean };
+  defaults: { board?: string; sprintLengthDays?: number; capacityHoursPerDay?: number };
+  snapshots: { enabled: boolean; maxAgeDays?: number; includeClosed?: boolean };
+  diagnostics: Diagnostic[];
+};
+
+/** Where a `<projectKey>/<itemId>` reference points, and whether it can be read. */
+export type RefResolution = {
+  ref: string;
+  project: string;
+  item: string;
+  /** `team.yaml` lists the project. */
+  declared: boolean;
+  /** A repository exposing the project is open. */
+  cloned: boolean;
+  vaultId?: string;
+  /** The item itself, without its body; absent when the reference is remote. */
+  found?: Item;
+  /** One sentence explaining an unresolved reference. */
+  reason?: string;
+};
+
+/** One repository of the workspace. */
+export type WorkspaceVault = {
+  id: string;
+  role: 'project' | 'team';
+  label: string;
+  projects: string[];
+  team: boolean;
+  teamKey?: string;
+  stats: IndexStats;
+};
+
+/** Every open repository, the team among them, and the cross-repository findings. */
+export type WorkspaceSummary = {
+  vaults: WorkspaceVault[];
+  team?: TeamSummary;
+  diagnostics: Diagnostic[];
 };
 
 export type IndexStats = {
@@ -209,14 +301,36 @@ export type CoreApi = {
   ping: { params: undefined; result: { pong: true; wasm: boolean } };
   version: { params: undefined; result: { protocol: number; core: string | null } };
 
-  /** Replace the in-memory vault with these files (full load). */
-  'vault.load': { params: { files: VaultFile[]; rootLabel?: string }; result: IndexStats };
+  /**
+   * Replace the in-memory vault with these files (full load). `vaultId` names
+   * the repository inside the workspace; a call that omits it goes to the
+   * default one, and a `vault.load` for an unknown id creates it.
+   */
+  'vault.load': {
+    params: { files: VaultFile[]; rootLabel?: string; vaultId?: string };
+    result: IndexStats;
+  };
   /** Apply incremental file events (from a rescan diff or a watcher). */
-  'vault.apply': { params: { events: FileEvent[] }; result: IndexStats };
-  'vault.stats': { params: undefined; result: IndexStats };
+  'vault.apply': { params: { events: FileEvent[]; vaultId?: string }; result: IndexStats };
+  'vault.stats': { params: { vaultId?: string } | undefined; result: IndexStats };
   /** Serialised index for the IndexedDB cache; `snapshot.load` hydrates without files. */
-  'snapshot.export': { params: undefined; result: SnapshotBlob };
-  'snapshot.load': { params: SnapshotBlob; result: IndexStats };
+  'snapshot.export': { params: { vaultId?: string } | undefined; result: SnapshotBlob };
+  'snapshot.load': { params: SnapshotBlob & { vaultId?: string }; result: IndexStats };
+
+  /** Every open repository, plus the team repository among them. */
+  'workspace.list': { params: undefined; result: WorkspaceSummary };
+  /** Open an empty repository the host then fills with `vault.load`. */
+  'workspace.mount': {
+    params: { vaultId: string; role?: 'project' | 'team'; rootLabel?: string };
+    result: WorkspaceVault;
+  };
+  /** Drop a repository from the workspace; it never touches files. */
+  'workspace.unmount': { params: { vaultId: string }; result: { unmounted: string } };
+
+  /** The team repository of the workspace; fails with `not_found` when none is open. */
+  'team.get': { params: undefined; result: TeamSummary };
+  /** Resolve `<projectKey>/<itemId>` across every open repository. */
+  'ref.resolve': { params: { ref: string }; result: RefResolution };
 
   'project.list': { params: undefined; result: ProjectSummary[] };
 
@@ -246,10 +360,10 @@ export type CoreApi = {
     result: { comment: Comment; writes: WriteSet };
   };
 
-  'kb.tree': { params: { project?: string }; result: KbNode[] };
-  'kb.page': { params: { path: string }; result: KbPage };
+  'kb.tree': { params: { project?: string; vaultId?: string }; result: KbNode[] };
+  'kb.page': { params: { path: string; vaultId?: string }; result: KbPage };
   'kb.write': {
-    params: { path: string; text: string; rev?: string };
+    params: { path: string; text: string; rev?: string; vaultId?: string };
     result: { page: KbPage; writes: WriteSet };
   };
 
