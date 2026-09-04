@@ -84,22 +84,47 @@ Off by default in Phase 1–3; the setting becomes meaningful in Phase 4.
 Settings live in the `git:` section of the companion config (doc 07 §3.2); the
 browser stores the same keys per workspace in IndexedDB.
 
+**Implemented in GIT-US-0020** for companion mode; browser mode is §6.5.
+
 ```yaml
 git:
   commitOnSave: true                # false = leave changes in the working tree
-  commitDebounceMs: 2000            # coalesce rapid saves of the same file (extends doc 07)
-  commitMessageTemplate: 'pmngr: update {{.ItemID}} "{{.Title}}"'
+  commitDebounce: 2s                # coalesce rapid saves of the same item
+  messageTemplate: 'pmngr: update {{.ItemID}} "{{.Title}}"'
   authorName: ""                    # empty -> repo/global git config
   authorEmail: ""
   signCommits: false                # gpg/ssh signing, system backend only
   pushAfterCommit: false            # push immediately, or wait for an explicit sync
 ```
 
+Two spellings that this document used to give differently, settled by the
+implementation:
+
+- the key is `commitDebounce` and its value is a Go duration (`2s`), matching
+  `index.debounce` in the same file; `commitDebounceMs` is the same setting in
+  milliseconds and is what the REST and provider surfaces use, because JSON has
+  no duration type;
+- the key is `messageTemplate`, as doc 07 §3.2 already spelled it.
+
 The template is Go `text/template`, evaluated against a struct with
 `.ItemID`, `.Title`, `.Type`, `.Status`, `.PrevStatus`, `.ProjectKey`, `.Board`,
 `.Action` (create|update|delete|move|comment), `.Count` (for batches), `.User`,
-`.Date`. Rendering strips newlines; the subject is truncated to 72 characters with
-the full title kept in the body. The shipped default is the `pmngr:` form above;
+`.Date`. Every one of them also has a short lowercase spelling bound as a
+template function, so `{{action}} {{id}}: {{title}}` and
+`{{.Action}} {{.ItemID}}: {{.Title}}` render identically: `id`, `title`, `type`,
+`status`, `prevStatus`, `project`, `board`, `action`, `count`, `user`, `date`.
+A template naming anything else is refused when it is configured, not when a
+commit is attempted. Rendering strips newlines; the subject is truncated to 72
+characters with the full title kept in the body.
+
+**Batching.** The coalescing key is the repository plus the item the write is
+about. A burst of saves of one item is one commit; two items edited in the same
+window are two commits; and one call that writes many files — `updateMany`, a
+card move, a sprint edit — is one commit per repository whatever the file count.
+A pending batch is never postponed by more than 15 seconds, so steady typing
+still produces commits. A batch that covers several items has no single id to
+interpolate, so the subject falls back to the built-in `pmngr: <action> N items`
+and the body carries `Items: N`. The shipped default is the `pmngr:` form above;
 doc 07 §3.2 shows a conventional-commits variant
 (`docs({{.ProjectKey}}): update {{.ItemID}} — {{.Title}}`) that teams whose docs
 folder sits next to code often prefer. Rendered examples per action:
@@ -124,6 +149,18 @@ Type: story
 Status: todo -> in_progress
 Tool: gintrack 0.4.1 (companion)
 ```
+
+**Cross-repository writes.** Moving a card writes the item in its project clone
+and the board in the team repository. Those are two repositories, so they are two
+commits, one in each, and never one commit spanning both — which is also why they
+are not atomic (§9.4).
+
+**A failed commit never loses content.** The commit runs after the write has
+already reached disk, so it cannot fail a save. A refused commit — a hook, a
+missing identity, a broken template — leaves the working tree exactly as the
+write left it and is reported as a `git.commit` event and by
+`GET /api/v1/git/status`, with the hook's own output when there is one. Because
+the commit is debounced it is not part of the write response.
 
 Author selection: empty `authorName`/`authorEmail` uses the repo's
 `user.name`/`user.email`
@@ -344,6 +381,17 @@ since they are YAML documents with a known schema.
 
 ## 6. Browser-only mode: `isomorphic-git`
 
+### 6.0 What ships when
+
+Browser-mode git — including commit-on-save — lands with **GIT-US-0021**, which
+owns the isomorphic-git integration and the CORS-proxy handling. GIT-US-0020
+ships the parts of commit-on-save that are runtime-independent: the settings are
+stored per workspace, the message format is implemented a second time in
+`web/src/git/message.ts` against the same cases as the Go renderer, and the
+settings UI reports that this runtime cannot commit yet instead of offering a
+switch that would do nothing. Nothing about the format has to be revisited when
+the commits themselves start happening.
+
 ### 6.1 What works
 
 `isomorphic-git` runs over the File System Access handles via a small `fs` adapter
@@ -413,6 +461,23 @@ operation (`git` object writes are content-addressed, so partial state is inert)
 
 `git.backend` selects between them: `auto` (the default — use system git when a
 compatible binary is on `PATH`, else go-git), `go-git`, or `system`.
+
+`internal/gitops` binds one `Backend` to one working tree, so the caller passes
+no repository path per call. It exposes `Name`, `Path`, `Capabilities`,
+`Identity`, `Status` and `Commit` today; `Fetch`, `Integrate`, `Push` and the
+conflict surface are added by GIT-US-0021 and GIT-US-0022 rather than declared
+and left unimplemented.
+
+Two go-git gaps that matter to commit-on-save, both invisible with the default
+`auto` backend on a machine that has git:
+
+- **no hooks and no signing.** `signCommits: true` with the go-git backend fails
+  with `git_unsupported` instead of writing an unsigned commit that pretends to
+  be signed;
+- **no pathspec commit.** go-git commits the whole index, so a change the user
+  staged by hand before the debounce window elapsed is swept into our commit.
+  The system backend uses `git commit --only -- <paths>` and does not have this
+  problem.
 
 `auto` matters because system git brings things go-git does not: credential
 helpers, `~/.gitconfig` includes, `insteadOf` rewrites, LFS, sparse checkout,
@@ -798,13 +863,13 @@ git:
   pullStrategy: rebase          # rebase | merge (forced to merge in browser-only mode)
   pushOnSync: true
   commitOnSave: false
-  commitMessageTemplate: 'pmngr: update {{.ItemID}} "{{.Title}}"'
+  messageTemplate: 'pmngr: update {{.ItemID}} "{{.Title}}"'
   authorName: ""                # empty -> repo/global git config
   authorEmail: ""
   signCommits: false            # system backend only
+  commitDebounce: 2s            # coalesce rapid saves of the same item
 
   # --- new in this document ---
-  commitDebounceMs: 2000        # (new) coalesce rapid saves of the same file
   pushAfterCommit: false        # (new) push right after a commit-on-save
   branchMode: default           # (new) default | user-branch
   userBranchTemplate: 'pmngr/{{.User}}'   # (new)
@@ -847,7 +912,7 @@ on the team repo.
 | 1 | Atomic writes, canonical serialisation, `rev` computation and checks. No git yet |
 | 2 | fsnotify watcher, debounce, WS change events, external-change detection including `.git/HEAD` |
 | 3 | Team-index snapshot generation and its deterministic merge rule; cross-repo operation journal |
-| 4 | Full sync pipeline (fetch/rebase/merge/push, retries, branch policy), commit-on-save, front-matter-aware merge, conflict UI, ID collision repair, isomorphic-git browser mode + CORS proxy guidance, credential storage in both runtimes |
+| 4 | Commit-on-save and the two native backends (GIT-US-0020, done); full sync pipeline (fetch/rebase/merge/push, retries, branch policy) and isomorphic-git browser mode + CORS proxy guidance (GIT-US-0021); front-matter-aware merge, conflict UI, ID collision repair (GIT-US-0022); credential storage in both runtimes (GIT-US-0023) |
 | 5 | MCP writes go through exactly the same write path and `rev` checks; agent-authored commits carry a `Tool:` trailer identifying the agent |
 | 6 | Auto-sync interval, WebAuthn-protected browser credentials, sync metrics in the dashboard, force-push recovery flow polish |
 

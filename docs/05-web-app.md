@@ -327,8 +327,13 @@ export interface DataProvider {
   getRetro(teamId: string, id: string): Promise<Retro>;
   updateRetro(teamId: string, id: string, patch: RetroPatch, rev: string): Promise<Retro>;
 
-  // git (Phase 4)
-  gitStatus(repoId: string): Promise<GitStatus>;
+  // git — commit on save (GIT-US-0020, implemented)
+  getGitSettings(): Promise<GitSettings>;
+  updateGitSettings(patch: GitSettingsPatch): Promise<GitSettings>;
+  getGitStatus(repoId?: string): Promise<GitRepoStatus[]>;
+  commitNow(input?: { repoId?: string; paths?: string[]; message?: string }): Promise<GitCommit[]>;
+
+  // git — sync (Phase 4, GIT-US-0021 and GIT-US-0022)
   sync(repoId: string, opts: SyncOptions): Promise<SyncResult>;
   listConflicts(repoId: string): Promise<Conflict[]>;
   resolveConflict(repoId: string, id: string, resolution: Resolution): Promise<void>;
@@ -352,6 +357,19 @@ interface Capabilities {
   maxBatchWrite: number;
 }
 ```
+
+`GitSettings` carries `commitOnSave`, `commitDebounceMs`, `messageTemplate`,
+the configured and the resolved backend, and a `supported` flag with a `reason`.
+The UI branches on `supported`, never on `kind`: browser-only mode stores the
+settings and renders the preview but cannot commit until `isomorphic-git`
+arrives with GIT-US-0021, and the Settings card says so instead of offering a
+switch that would do nothing.
+
+Message rendering is the one thing implemented twice on purpose. The companion
+renders with Go `text/template` in `internal/gitops`; the browser cannot run that
+code (ADR-006), so `src/git/message.ts` implements the documented format of
+doc 06 §3.3 — the placeholders in both spellings, the 72-character subject, the
+trailers — and both implementations are tested against the same cases.
 
 ### 4.1 BrowserProvider
 
@@ -989,7 +1007,7 @@ and the Chromium e2e project on every PR; the full browser matrix runs nightly.
 | 1 | File System Access mount, WASM worker bridge, KB viewer with the full markdown pipeline, item table/detail/editor, epic tree, milestones, IndexedDB index cache, read-only fallback |
 | 2 | `CompanionProvider`, health probe + upgrade toast, WS-driven invalidation, contract test suite across providers |
 | 3 | Team repo mounting, boards (kanban + scrum) with dnd-kit, sprint planning, remote reference cards, multi-project item table |
-| 4 | Sync panel, conflict resolver UI, commit-on-save settings, credentials screen, git activity strips |
+| 4 | Commit-on-save settings card with a live message preview and per-repository git status (GIT-US-0020, done); sync panel, conflict resolver UI, credentials screen, git activity strips (GIT-US-0021 … GIT-US-0023) |
 | 5 | Agent/MCP status screen, call log, agent-oriented empty states and AGENTS.md surfacing in the KB |
 | 6 | Retro board, action promotion, metrics (burndown, CFD), link graph view, PWA polish, visual/a11y test gates, 1.0 |
 
