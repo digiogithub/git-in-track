@@ -266,6 +266,19 @@ offering an action that would fail. Both buttons are disabled while a run is in
 flight; per-row progress from `sync.progress` and the link into
 ConflictResolver arrive with GIT-US-0022.
 
+*As built (GIT-US-0023).* The panel also owns the credential prompt of
+browser-only mode. It is a modal that opens only when a transport actually asks
+for a credential — never at mount time — and it names the host, shows the
+redacted remote URL, warns which configured CORS proxy the request (and its
+`Authorization` header) will travel through, and takes the token in a password
+field. What the user types goes to the pending `onAuth` call and into memory for
+that origin only; it is never written to `localStorage`, `sessionStorage`,
+IndexedDB, a cookie or a file, which `credentials.test.ts` asserts by spying on
+those APIs. While a token is held, the panel shows how many there are — never
+the value — and a **Forget tokens** button; a reload, a sign-out and unmounting
+a repository forget them too. Native mode never shows the prompt: the companion
+delegates to the user's credential helper and ssh-agent (doc 06 §8.1).
+
 **ConflictResolver (`/sync/conflicts/$conflictId`)** — Front matter conflicts
 render as a field-by-field table (ours / theirs / merged, with the auto-merge
 result preselected). Body conflicts render side-by-side with a CodeMirror merge
@@ -275,7 +288,11 @@ view. "Accept merged" writes the resolved file and stages it.
 re-index, clear caches), per-repo (docs folder, project key, default branch,
 ignored globs), appearance (§12), sync (branch policy, commit-on-save toggle and
 message template with live preview, author name/email override), credentials
-(§ doc 06 §7 — storage mode, CORS proxy URL, "forget credentials"), agents.
+(§ doc 06 §7 — storage mode, CORS proxy URL, "forget credentials"), agents. As
+built, there is no credentials storage mode to choose: native mode uses the
+user's helper and browser mode keeps a per-session token in memory only
+(GIT-US-0023), so the CORS proxy is the only credential-adjacent setting and it
+lives on the sync settings card.
 
 **Agents / MCP status (`/settings/agents`)** — Companion mode only (Phase 5).
 Shows whether `gintrack mcp` is reachable (stdio child or streamable HTTP),
@@ -1028,7 +1045,7 @@ and the Chromium e2e project on every PR; the full browser matrix runs nightly.
 | 1 | File System Access mount, WASM worker bridge, KB viewer with the full markdown pipeline, item table/detail/editor, epic tree, milestones, IndexedDB index cache, read-only fallback |
 | 2 | `CompanionProvider`, health probe + upgrade toast, WS-driven invalidation, contract test suite across providers |
 | 3 | Team repo mounting, boards (kanban + scrum) with dnd-kit, sprint planning, remote reference cards, multi-project item table |
-| 4 | Commit-on-save settings card with a live message preview and per-repository git status (GIT-US-0020, done); sync panel with the status indicator and the dry-run preview, over the companion API and over isomorphic-git in the browser (GIT-US-0021, done); conflict resolver UI, credentials screen, git activity strips (GIT-US-0022, GIT-US-0023) |
+| 4 | Commit-on-save settings card with a live message preview and per-repository git status (GIT-US-0020, done); sync panel with the status indicator and the dry-run preview, over the companion API and over isomorphic-git in the browser (GIT-US-0021, done); credential prompt in the sync panel, per-session in-memory tokens and the redaction rules (GIT-US-0023, done); conflict resolver UI and git activity strips (GIT-US-0022) |
 | 5 | Agent/MCP status screen, call log, agent-oriented empty states and AGENTS.md surfacing in the KB |
 | 6 | Retro board, action promotion, metrics (burndown, CFD), link graph view, PWA polish, visual/a11y test gates, 1.0 |
 

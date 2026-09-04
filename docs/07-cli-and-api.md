@@ -244,7 +244,9 @@ never offers it where it would mean nothing.
 ### 3.4 Git backend selection
 
 `git.backend: auto` resolves at startup: if a `git` executable ≥ 2.20 is on `PATH`, use
-`system` (better credential-helper, SSH agent, LFS, hook and signing support); otherwise
+`system` (better credential-helper, SSH agent, LFS, hook and signing support; every
+invocation is pinned non-interactive so a missing credential fails with
+`git_auth_required` instead of waiting on a prompt — doc 06 §8.1); otherwise
 fall back to `go-git` (pure Go, no external dependency, no hooks, limited credential
 handling). The resolved backend is reported by `gintrack doctor` and by
 `GET /api/v1/capabilities` (`features.gitBackend`, `features.gitVersion`), and
@@ -1517,6 +1519,15 @@ happened and what to do next. The codes are the `git_*` set of doc 06 §12:
 `git_host_key_unverified`, `git_conflict`, `git_push_rejected`, `git_cancelled`.
 `POST /api/v1/sync/abort` undoes a half-finished rebase or merge and answers with the
 repository's fresh status.
+
+`git_auth_required` is the credential case (GIT-US-0023, doc 06 §8.1). The
+companion never prompts for or stores a secret: it delegates to the user's
+credential helper and ssh-agent, so the message names the repository, the remote,
+the host and the command that fixes it, and distinguishes "no helper answered"
+from "the host refused what the helper supplied". No credential ever reaches a
+response, an event or a log line: URL userinfo, `token=`/`password=` parameters
+and `Authorization` headers are redacted out of everything git prints before it
+is reported.
 
 ### 5.6 WebSocket event stream
 

@@ -47,7 +47,7 @@ func (b *systemBackend) SyncStatus(ctx context.Context) (SyncStatus, error) {
 
 	out.Remote = b.remoteOf(ctx, out.Branch)
 	if out.Remote != "" {
-		out.RemoteURL = redactURL(strings.TrimSpace(mustRun(b.run(ctx, "remote", "get-url", out.Remote))))
+		out.RemoteURL = redactURL(b.remoteURL(ctx, out.Remote))
 	}
 	out.Operation = b.operationInProgress(ctx)
 	out.resolveState()
@@ -104,6 +104,15 @@ func (b *systemBackend) remoteOf(ctx context.Context, branch string) string {
 	return ""
 }
 
+// remoteURL reads a remote's URL. It is the raw configured value, credential
+// and all, so every caller redacts it before it reaches a message or the UI.
+func (b *systemBackend) remoteURL(ctx context.Context, remote string) string {
+	if remote == "" {
+		return ""
+	}
+	return strings.TrimSpace(mustRun(b.run(ctx, "remote", "get-url", remote)))
+}
+
 // operationInProgress reports a half-finished rebase or merge.
 func (b *systemBackend) operationInProgress(ctx context.Context) string {
 	for _, probe := range []struct{ path, op string }{
@@ -153,7 +162,8 @@ func (b *systemBackend) Fetch(ctx context.Context, req FetchRequest) (FetchResul
 		args = append(args, branch)
 	}
 	if _, err := b.run(ctx, args...); err != nil {
-		if classified := classifyTransport("fetch", err, outputOf(err)); classified != nil {
+		tc := transportContext{Op: "fetch", Path: b.path, Remote: remote, URL: b.remoteURL(ctx, remote)}
+		if classified := classifyTransport(tc, err, outputOf(err)); classified != nil {
 			return FetchResult{}, classified
 		}
 		return FetchResult{}, &Error{
@@ -269,16 +279,17 @@ func (b *systemBackend) Push(ctx context.Context, req PushRequest) (PushResult, 
 	}
 	args = append(args, remote, "HEAD:refs/heads/"+branch)
 	if _, err := b.run(ctx, args...); err != nil {
-		return PushResult{}, b.pushError(err, remote, branch)
+		return PushResult{}, b.pushError(ctx, err, remote, branch)
 	}
 	return PushResult{Remote: remote, Branch: branch, Pushed: st.Ahead, UpToDate: st.Ahead == 0}, nil
 }
 
 // pushError classifies a refused push. A rejection is not a broken repository:
 // every local commit is still there, which is what the message says.
-func (b *systemBackend) pushError(err error, remote, branch string) *Error {
+func (b *systemBackend) pushError(ctx context.Context, err error, remote, branch string) *Error {
 	output := outputOf(err)
-	if classified := classifyTransport("push", err, output); classified != nil {
+	tc := transportContext{Op: "push", Path: b.path, Remote: remote, URL: b.remoteURL(ctx, remote)}
+	if classified := classifyTransport(tc, err, output); classified != nil {
 		return classified
 	}
 	text := strings.ToLower(output)

@@ -93,6 +93,7 @@ import {
 } from '@/fs';
 import type { DirectoryHandleLike } from '@/fs/types';
 import { readSyncStatus, runSync } from '@/git/browser-sync';
+import { createAuthCallback, createAuthFailureCallback, forgetCredentials } from '@/git/credentials';
 import {
   BROWSER_GIT_REASON,
   readGitSettings,
@@ -325,6 +326,8 @@ export class BrowserProvider implements DataProvider {
 
   async unmountRepo(repoId: string): Promise<void> {
     this.#mounts.delete(repoId);
+    // Unmounting is one of the "forget credentials" triggers of docs/06 §8.2.
+    forgetCredentials();
     if (this.#activeRepoId === repoId) {
       this.#activeRepoId = [...this.#mounts.keys()][0] ?? null;
     }
@@ -791,6 +794,10 @@ export class BrowserProvider implements DataProvider {
         push: opts.push ?? settings.pushOnSync,
         ...(settings.corsProxy ? { corsProxy: settings.corsProxy } : {}),
         ...(author ? { author } : {}),
+        // The token, when a host asks for one, is prompted for and held in
+        // memory for this tab only (GIT-US-0023, docs/06 §8.2).
+        onAuth: createAuthCallback(settings.corsProxy ? { corsProxy: settings.corsProxy } : {}),
+        onAuthFailure: createAuthFailureCallback(),
       });
       if (result.phase === 'done' && !result.dryRun && result.pulled > 0) {
         // Incoming work changed files under our feet: reload the vault so the

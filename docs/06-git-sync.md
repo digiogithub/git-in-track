@@ -435,6 +435,19 @@ Worker of §6.4 is not split out yet: the operations run on the main thread with
 the same abort semantics, which is enough for a backlog-sized repository and is
 the next thing to move when it is not.
 
+**As built (GIT-US-0023).** The credential half is `web/src/git/credentials.ts`
+plus the prompt in `web/src/features/sync/CredentialPrompt.tsx`. A token is
+asked for only when `onAuth` fires — that is, when a host actually refuses an
+anonymous request — and what the user types goes back to that call and into a
+module-level `Map` keyed by the remote's origin. That map is the only place it
+exists: there is no code path from it to `localStorage`, `sessionStorage`,
+IndexedDB, a cookie, a URL or a file, and `credentials.test.ts` spies on those
+APIs and fails if one is touched. The dialog names the configured CORS proxy
+before the token is typed, because that proxy sees the `Authorization` header
+(§6.3). A refused token is dropped through `onAuthFailure` instead of being
+replayed, and "Forget tokens" in the sync panel, unmounting a repository and
+closing the tab all clear the map.
+
 ### 6.1 What works
 
 `isomorphic-git` runs over the File System Access handles via a small `fs` adapter
@@ -553,6 +566,15 @@ go-git uses `golang.org/x/crypto/ssh`:
   unknown host fails with the fingerprint shown and a CLI command to accept it;
   we never auto-accept.
 
+**As built (GIT-US-0023).** The system backend appends `-o BatchMode=yes` to
+whatever `GIT_SSH_COMMAND` the user already configured (rather than replacing
+it, so a custom ssh binary or `-F` config keeps working), which turns a
+passphrase question or an unknown host key into an immediate, classified
+failure instead of a hang. The go-git backend offers `SSH_AUTH_SOCK` and
+nothing else: if the agent has no key the host accepts, we fail with
+`git_auth_required` naming the host and the `ssh-add` that fixes it. We never
+read a private key file ourselves and never ask for a passphrase.
+
 ### 7.3 HTTPS and credential helpers
 
 With the `system` backend, credentials come from the configured `credential.helper`
@@ -561,7 +583,15 @@ read the same helpers ourselves by invoking `git credential fill` when a git
 binary exists; otherwise we fall back to our own keychain storage (§8.1). Tokens
 are always sent as HTTP basic (`x-access-token:<token>` for GitHub-style hosts,
 `oauth2:<token>` for GitLab); the exact username shape is per-host and lives in
-`internal/gitops/hosts.go`.
+`internal/gitops/credentials.go`.
+
+**As built (GIT-US-0023).** The system backend needs nothing from us: `git`
+itself runs the helper. The go-git backend calls `git credential fill` over
+stdin and stdout when a git binary exists — the helper is told the protocol,
+host and path and nothing else — and the answer is used for one fetch or push
+and then dropped. There is no `hosts.go`: the two username shapes above live
+next to the rest of the credential code. We never fall back to a keychain of our
+own (§8.1).
 
 ---
 
@@ -571,18 +601,35 @@ are always sent as HTTP basic (`x-access-token:<token>` for GitHub-style hosts,
 
 Order of preference:
 
-1. `git credential fill` (the user's existing helper) — nothing new is stored.
-2. OS keychain via `go-keyring` (macOS Keychain, Windows Credential Manager,
-   libsecret/kwallet on Linux) under service `gintrack`, account
-   `<scheme>://<host>/<owner>`.
-3. Environment variables (`GINTRACK_TOKEN`, `GITHUB_TOKEN`, …) for CI and
-   headless use.
-4. Prompt on the terminal, with an explicit "save to keychain?" question.
+1. The user's own credential helper — `git` runs it itself with the `system`
+   backend, and `git credential fill` does it for the `go-git` backend. Nothing
+   new is stored.
+2. The SSH agent (`SSH_AUTH_SOCK`) for SSH remotes, §7.2.
+3. Environment variables (`GINTRACK_TOKEN`, and `GITHUB_TOKEN`/`GITLAB_TOKEN`
+   for those hosts) for CI and headless use, HTTPS only. They are read per call
+   and never copied anywhere.
 
-On Linux without a secret service, we refuse to write a plaintext credentials file
-by default; `--allow-plaintext-credentials` writes `~/.config/gintrack/credentials`
-with mode 0600 and a loud warning. Tokens are never logged, never included in
-error messages, and are redacted from remote URLs before display.
+**As built (GIT-US-0023), this list is the whole of it.** There is no keychain
+of our own, no terminal prompt and no plaintext credentials file: the keychain,
+prompt and `--allow-plaintext-credentials` steps this document used to give are
+deliberately not implemented. Each of them would make gintrack a place a
+credential can leak from, and the user's helper already solves the problem.
+
+Every git invocation is pinned non-interactive — `GIT_TERMINAL_PROMPT=0`, an
+empty `GIT_ASKPASS` and `SSH_ASKPASS` (which also neutralizes a GUI askpass the
+user configured), `GCM_INTERACTIVE=never` and ssh in batch mode — so a missing
+credential fails in milliseconds with `git_auth_required` instead of hanging a
+background process on a terminal nobody is watching. The message names the
+repository, the remote, the host and the next command to run, and it
+distinguishes "no helper answered" from "the helper answered and the host said
+no", because those need different reactions.
+
+Tokens are never logged, never included in error messages, and are redacted from
+remote URLs before display. Redaction is applied to everything git prints, not
+only to URLs we format ourselves: userinfo, `token=`/`password=` parameters and
+`Authorization` headers are masked in the `Detail` of every error, which is what
+the CLI shows, what the API returns in its problem document, what a
+`sync.progress` event carries and what the companion logs.
 
 ### 8.2 Browser
 
@@ -591,7 +638,11 @@ Two modes, chosen by the user at first git operation:
 - **Session only** (default): the token lives in memory for the tab's lifetime,
   in a closure inside the git worker, never in `localStorage`/`sessionStorage`.
   Reloading asks again.
-- **Encrypted at rest**: the token is encrypted with AES-GCM using a key derived
+  *(As built in GIT-US-0023: this is the mode that ships, and the token lives in
+  the closure of `web/src/git/credentials.ts` rather than in a worker, because
+  the worker of §6.4 is not split out yet. It is keyed by the remote's origin,
+  so a token entered for one host is never offered to another.)*
+- **Encrypted at rest** *(not implemented)*: the token would be encrypted with AES-GCM using a key derived
   from a user passphrase via PBKDF2-SHA-256 (≥ 600 000 iterations) or Argon2id
   (WASM) with a random 16-byte salt, and stored in IndexedDB as
   `{ salt, iv, ciphertext, kdf, iterations, createdAt }`. The passphrase is asked
@@ -605,8 +656,10 @@ Two modes, chosen by the user at first git operation:
 - Tokens are scoped as narrowly as the host allows (repo-scoped fine-grained PAT
   on GitHub, project access token on GitLab) — the docs tell the user exactly
   which scopes are needed (`contents: read/write` only).
-- "Forget credentials" clears both the in-memory copy and the IndexedDB record,
-  and is also triggered by unmounting the repo.
+- "Forget credentials" clears the in-memory copy (and, once the encrypted mode
+  exists, its IndexedDB record). It is also triggered by unmounting the repo, by
+  a reload and by closing the tab. In the shipped build it is the "Forget
+  tokens" button of the sync panel, which appears only while a token is held.
 
 ---
 
@@ -940,8 +993,12 @@ git:
                                 # than in this file, which the companion owns
   cloneDepth: 50                # (new) browser-mode shallow clone depth
 
-credentials:                    # (new section)
-  store: keychain               # keychain | helper | env | prompt | plaintext(unsafe)
+credentials:                    # (new section) — declarative only, not read.
+  store: helper                 # As built (GIT-US-0023) the resolution order is
+                                # fixed: the user's credential helper, then the
+                                # ssh-agent, then a token in the environment.
+                                # `keychain`, `prompt` and `plaintext` are not
+                                # implemented, so there is nothing to configure.
 
 snapshot:                       # (new section, see §10)
   enabled: true
@@ -971,7 +1028,7 @@ on the team repo.
 | 1 | Atomic writes, canonical serialisation, `rev` computation and checks. No git yet |
 | 2 | fsnotify watcher, debounce, WS change events, external-change detection including `.git/HEAD` |
 | 3 | Team-index snapshot generation and its deterministic merge rule; cross-repo operation journal |
-| 4 | Commit-on-save and the two native backends (GIT-US-0020, done); the sync pipeline — fetch, rebase or merge, push, retries, dry run, status indicator — plus isomorphic-git browser sync and the CORS-proxy handling (GIT-US-0021, done; branch policy §4.3 deferred); front-matter-aware merge, conflict UI, ID collision repair (GIT-US-0022); credential storage in both runtimes (GIT-US-0023) |
+| 4 | Commit-on-save and the two native backends (GIT-US-0020, done); the sync pipeline — fetch, rebase or merge, push, retries, dry run, status indicator — plus isomorphic-git browser sync and the CORS-proxy handling (GIT-US-0021, done; branch policy §4.3 deferred); front-matter-aware merge, conflict UI, ID collision repair (GIT-US-0022); credential handling in both runtimes (GIT-US-0023, done — delegation to the user's helper and ssh-agent natively, a per-session in-memory token in the browser, and redaction everywhere) |
 | 5 | MCP writes go through exactly the same write path and `rev` checks; agent-authored commits carry a `Tool:` trailer identifying the agent |
 | 6 | Auto-sync interval, WebAuthn-protected browser credentials, sync metrics in the dashboard, force-push recovery flow polish |
 

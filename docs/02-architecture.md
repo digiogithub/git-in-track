@@ -514,7 +514,7 @@ Makefile, go.mod, .goreleaser.yaml
 | `internal/vault/` | The CoreApi contract of `web/src/core-bridge/api.ts` implemented once, over a `core.FS` the host injects: `NewInMemory()` for the browser (files pushed in with `vault.load`), `Open(fsys, root)` for the companion process (files read through `internal/core/osfs`). Exposes `Call` (JSON envelope, for the WASM glue) and `Dispatch` (typed result and error, for the REST layer). **Must not import** `os`, `path/filepath` or `syscall/js`. |
 | `internal/server/` | chi router, REST handlers, WebSocket hub, static file serving of the embedded `web/dist`, localhost binding, token middleware, origin checks. Translates core errors into HTTP status codes. |
 | `internal/watcher/` | fsnotify wrapper: recursive watch registration, ignore rules (`.git/`, `node_modules/`, editor swap files), debouncing, event coalescing, and rename detection. |
-| `internal/gitops/` | Status, add, commit, fetch, merge/rebase, push, conflict enumeration, credential resolution. Two backends behind one interface: `go-git` (pure Go, always available) and `system-git` (`os/exec`, used when present and configured). A `Backend` is bound to one working tree; a `Committer` batches writes so one logical edit is one commit. Native-only: it uses `os/exec` and the filesystem, so nothing here may be imported from `internal/core`. Implemented for commit-on-save in GIT-US-0020; status, fetch, integrate (rebase or merge), push, abort, continue and the sync pipeline over them in GIT-US-0021, whose go-git half fast-forwards only and refuses what it cannot do correctly. Conflict enumeration beyond naming the paths, and credential resolution, follow in GIT-US-0022 and GIT-US-0023. |
+| `internal/gitops/` | Status, add, commit, fetch, merge/rebase, push, conflict enumeration, credential resolution. Two backends behind one interface: `go-git` (pure Go, always available) and `system-git` (`os/exec`, used when present and configured). A `Backend` is bound to one working tree; a `Committer` batches writes so one logical edit is one commit. Native-only: it uses `os/exec` and the filesystem, so nothing here may be imported from `internal/core`. Implemented for commit-on-save in GIT-US-0020; status, fetch, integrate (rebase or merge), push, abort, continue and the sync pipeline over them in GIT-US-0021, whose go-git half fast-forwards only and refuses what it cannot do correctly. Credential resolution — the user's helper and ssh-agent, a non-interactive environment that can never hang on a prompt, and redaction of every secret shape from git's own output — landed in GIT-US-0023. Conflict enumeration beyond naming the paths follows in GIT-US-0022. |
 | `internal/mcp/` | MCP tool definitions, JSON schemas, stdio transport, and the streamable HTTP handler mounted by `internal/server`. Tools delegate to `internal/core`. |
 | `wasm/` | `main_js.go` (WASM entry, `//go:build js && wasm`) and nothing else: it marshals strings in and out of JavaScript and delegates every method to `internal/vault`. The TypeScript glue copied into the web build lives here too. Built to `web/public/core.wasm`. |
 | `web/` | The React application. `web/src/core-bridge/` is the only place that talks to the worker or the REST client; `web/src/datasource/` exposes the mode-agnostic interface; feature folders sit above it. Built to `web/dist`, embedded by `internal/server`. |
@@ -703,8 +703,8 @@ user's OS account.
 | Mode | Mechanism |
 |------|-----------|
 | Companion + system git | Preferred. Credentials never touch git-in-track: the OS credential helper, SSH agent, or `~/.gitconfig` handles them. Signed commits and LFS also keep working. |
-| Companion + go-git | HTTPS tokens are read from the git credential helper via `git credential fill` when available; otherwise the user is prompted per session and the value is kept in memory only. SSH uses keys from the agent or an explicit key path. |
-| Browser-only | A personal access token entered by the user. Stored in IndexedDB **only** if the user opts in with an explicit checkbox; otherwise session memory. Tokens are never logged, never included in error reports, and are redacted from any diagnostic bundle. The UI states plainly that browser storage is not encrypted. |
+| Companion + go-git | HTTPS tokens are read from the git credential helper via `git credential fill` when available, then from `GINTRACK_TOKEN`/`GITHUB_TOKEN`/`GITLAB_TOKEN` for headless use; the value lives in a local variable for one fetch or push. SSH uses the keys the agent holds. Nothing is prompted for and nothing is stored. |
+| Browser-only | A personal access token the user types when a host actually asks for one. It lives in memory for the tab's lifetime, scoped to the origin it was entered for, and is forgotten on reload, sign-out and unmount. Tokens are never logged, never included in error reports, and are redacted from any diagnostic bundle. Encryption at rest in IndexedDB (docs/06 §8.2) is a later option and is not implemented. |
 
 We never invent our own credential storage format, and we never write a token into
 a repository file. `.pmngr/` files are checked for accidental secrets by
@@ -785,7 +785,10 @@ Repository content is untrusted input. Consequences:
 - Every request gets a correlation id, propagated to WebSocket events and included
   in error responses so a user-reported error can be found in the log.
 - **Never logged:** tokens, credentials, remote URLs containing credentials, or file
-  bodies. Paths are logged relative to the project root.
+  bodies. Paths are logged relative to the project root. This is enforced rather
+  than promised: `internal/gitops` redacts URL userinfo, `token=`/`password=`
+  parameters and `Authorization` headers out of everything git prints before it
+  can reach an error, a log line, a `sync.progress` event or the UI.
 - In the browser, a ring buffer of the last N structured log records is kept in
   memory and can be exported by the user as a diagnostics bundle — explicitly, with
   a preview of what it contains.

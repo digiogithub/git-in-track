@@ -19,6 +19,8 @@ import { useOptionalProvider } from '@/api/provider-context';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { CredentialPrompt } from '@/features/sync/CredentialPrompt';
+import { forgetCredentials, sessionCredentialCount } from '@/git/credentials';
 
 /** How each state reads to a human, and how loud it looks. */
 const STATE_LABELS: Record<
@@ -44,11 +46,13 @@ export function SyncPanel() {
   const [results, setResults] = useState<Record<string, SyncResult>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [tokens, setTokens] = useState(0);
 
   const load = useCallback(async () => {
     if (!provider) return;
     setSettings(await provider.getSyncSettings());
     setRepos(await provider.getSyncStatus());
+    setTokens(sessionCredentialCount());
   }, [provider]);
 
   useEffect(() => {
@@ -74,6 +78,7 @@ export function SyncPanel() {
       })
       .finally(() => {
         setBusy(null);
+        setTokens(sessionCredentialCount());
       });
   };
 
@@ -117,6 +122,27 @@ export function SyncPanel() {
           onRun={run}
         />
       ))}
+
+      {tokens > 0 ? (
+        <p className="flex items-center gap-3 text-sm text-muted-foreground">
+          <span>
+            {tokens} git token(s) are held in this tab’s memory. They are never written to storage
+            and a reload forgets them.
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              forgetCredentials();
+              setTokens(0);
+            }}
+          >
+            Forget tokens
+          </Button>
+        </p>
+      ) : null}
+
+      <CredentialPrompt />
     </div>
   );
 }

@@ -648,31 +648,33 @@ func redactURL(raw string) string {
 // UI can offer the right next step: credentials, connectivity or a real bug.
 // The text is matched case-insensitively because every backend words it
 // differently.
-func classifyTransport(op string, err error, output string) *Error {
+//
+// Every message it builds names the repository, the remote and the host, and
+// every detail it carries goes through redactSecrets first: what git quotes
+// back at us on an authentication failure is the remote URL, which is exactly
+// where a token pasted into `git remote add` would be (GIT-US-0023).
+func classifyTransport(tc transportContext, err error, output string) *Error {
 	text := strings.ToLower(output + " " + err.Error())
 	switch {
 	case containsAny(text, "authentication required", "authentication failed",
-		"could not read username", "invalid username or password", "403 forbidden",
-		"401 unauthorized", "permission denied (publickey", "access denied",
-		"terminal prompts disabled"):
-		return &Error{
-			Code: CodeAuthRequired, Op: op, Err: err, Detail: output,
-			Message: "the git host refused the credentials for this remote: " +
-				"store a token or key for it and try again (nothing was changed locally)",
-		}
+		"could not read username", "could not read password", "invalid username or password",
+		"403 forbidden", "401 unauthorized", "permission denied (publickey", "access denied",
+		"terminal prompts disabled", "no askpass"):
+		return tc.authError(err, output, text)
 	case containsAny(text, "could not resolve host", "connection refused", "network is unreachable",
 		"connection timed out", "temporary failure in name resolution", "no such host",
 		"failed to connect", "operation timed out"):
 		return &Error{
-			Code: CodeNetwork, Op: op, Err: err, Detail: output,
-			Message: "the git host is unreachable: your local work is safe and committed, " +
-				"sync again when you are online",
+			Code: CodeNetwork, Op: tc.Op, Err: err, Detail: redactSecrets(output),
+			Message: "the git host " + tc.host() + " is unreachable from " + tc.describe() +
+				": your local work is safe and committed, sync again when you are online",
 		}
 	case containsAny(text, "host key verification failed", "known_hosts"):
 		return &Error{
-			Code: CodeHostKey, Op: op, Err: err, Detail: output,
-			Message: "the SSH host key of this remote is not trusted yet: accept it " +
-				"once on the terminal (`ssh <host>`), then sync again",
+			Code: CodeHostKey, Op: tc.Op, Err: err, Detail: redactSecrets(output),
+			Message: "the SSH host key of " + tc.host() + " is not trusted yet: accept it " +
+				"once on the terminal (`ssh " + tc.host() + "`), then sync again — " +
+				"we never accept a host key for you",
 		}
 	}
 	return nil

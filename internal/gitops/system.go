@@ -246,14 +246,12 @@ func (b *systemBackend) hasCommitHook(ctx context.Context) bool {
 	return false
 }
 
-// env is the environment every git invocation runs with: the caller's, plus the
-// switches that keep git non-interactive. A prompt inside a background commit
-// would hang the companion.
+// env is the environment every git invocation runs with: the caller's, plus
+// the switches of credentials.go that keep git non-interactive. A prompt inside
+// a background commit or a sync would hang the companion forever, so a missing
+// credential has to fail instead of asking (GIT-US-0023).
 func (b *systemBackend) env() []string {
-	return append(os.Environ(),
-		"GIT_TERMINAL_PROMPT=0",
-		"GIT_OPTIONAL_LOCKS=0",
-	)
+	return nonInteractiveEnv(os.Environ())
 }
 
 // run executes git in the working tree and returns its standard output.
@@ -275,7 +273,7 @@ func (b *systemBackend) runWith(ctx context.Context, env []string, stdin string,
 	if err := cmd.Run(); err != nil {
 		return stdout.String(), &commandError{
 			args:   args,
-			output: strings.TrimSpace(stderr.String() + "\n" + stdout.String()),
+			output: redactSecrets(strings.TrimSpace(stderr.String() + "\n" + stdout.String())),
 			err:    err,
 		}
 	}

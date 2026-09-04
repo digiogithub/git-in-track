@@ -18,7 +18,11 @@
  * caller's closure (§8.2, and GIT-US-0023 for the storage choices).
  */
 
-import git, { type AuthCallback, type ReadCommitResult } from 'isomorphic-git';
+import git, {
+  type AuthCallback,
+  type AuthFailureCallback,
+  type ReadCommitResult,
+} from 'isomorphic-git';
 import http from 'isomorphic-git/http/web';
 
 import type { SyncCommit, SyncConflict, SyncOptions, SyncResult, SyncStatus } from '@/api/provider';
@@ -51,8 +55,17 @@ export const SSH_REMOTE_REASON =
 export type BrowserGitOptions = {
   /** The configured CORS proxy; empty means git over the network is off. */
   corsProxy?: string;
-  /** Supplies a token per call. Nothing it returns is ever persisted. */
+  /**
+   * Supplies a token per call, prompting for one when a host actually asks
+   * (GIT-US-0023). Nothing it returns is ever persisted: the credential lives
+   * in the caller's closure for the tab's lifetime and nowhere else.
+   */
   onAuth?: AuthCallback;
+  /**
+   * Called when the host refused what `onAuth` supplied, so the caller can drop
+   * the rejected credential instead of replaying it.
+   */
+  onAuthFailure?: AuthFailureCallback;
   /** Author of a merge commit; falls back to the repository's git config. */
   author?: { name: string; email: string };
 };
@@ -157,6 +170,7 @@ export async function runSync(
       singleBranch: true,
       ...(opts.corsProxy ? { corsProxy: opts.corsProxy } : {}),
       ...(opts.onAuth ? { onAuth: opts.onAuth } : {}),
+      ...(opts.onAuthFailure ? { onAuthFailure: opts.onAuthFailure } : {}),
     });
 
     const after = await readSyncStatus(root);
@@ -270,6 +284,7 @@ async function push(fs: GitFs, status: SyncStatus, opts: BrowserGitOptions): Pro
     ref: status.branch,
     ...(opts.corsProxy ? { corsProxy: opts.corsProxy } : {}),
     ...(opts.onAuth ? { onAuth: opts.onAuth } : {}),
+    ...(opts.onAuthFailure ? { onAuthFailure: opts.onAuthFailure } : {}),
   });
   const rejection =
     result.error ?? Object.values(result.refs ?? {}).find((ref) => ref.error)?.error;

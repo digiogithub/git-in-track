@@ -105,6 +105,22 @@ func (b *goGitBackend) fillRemote(out *SyncStatus) {
 	}
 }
 
+// remoteURL reads a remote's configured URL. It is the raw value, credential
+// and all, so every caller redacts it before it reaches a message or the UI.
+func (b *goGitBackend) remoteURL(remote string) string {
+	if remote == "" {
+		return ""
+	}
+	cfg, err := b.repo.Config()
+	if err != nil {
+		return ""
+	}
+	if r, ok := cfg.Remotes[remote]; ok && len(r.URLs) > 0 {
+		return r.URLs[0]
+	}
+	return ""
+}
+
 // fillCounters computes ahead and behind against the tracking ref.
 func (b *goGitBackend) fillCounters(out *SyncStatus) {
 	if out.Upstream == "" {
@@ -274,23 +290,24 @@ func (b *goGitBackend) Fetch(ctx context.Context, req FetchRequest) (FetchResult
 	upstream := remote + "/" + branch
 	before := b.revision(upstream)
 
-	err = b.repo.FetchContext(ctx, &git.FetchOptions{
+	tc := transportContext{Op: "fetch", Path: b.path, Remote: remote, URL: b.remoteURL(remote)}
+	opts := &git.FetchOptions{
 		RemoteName: remote,
 		Prune:      req.Prune,
 		Tags:       git.NoTags,
-	})
+	}
+	// The credentials come from the user's own helper or ssh-agent and live
+	// only for this call (GIT-US-0023, docs/06 section 8.1).
+	opts.Auth = authFor(ctx, tc.URL, b.opts.GitBinary)
+	err = b.repo.FetchContext(ctx, opts)
 	switch {
 	case err == nil, errors.Is(err, git.NoErrAlreadyUpToDate):
 	default:
-		if classified := classifyTransport("fetch", err, err.Error()); classified != nil {
+		if classified := classifyTransport(tc, err, redactSecrets(err.Error())); classified != nil {
 			return FetchResult{}, classified
 		}
 		if errors.Is(err, transport.ErrAuthenticationRequired) || errors.Is(err, transport.ErrAuthorizationFailed) {
-			return FetchResult{}, &Error{
-				Code: CodeAuthRequired, Op: "fetch", Err: err,
-				Message: "the git host refused the credentials for " + remote +
-					": store a token or key for it and try again (nothing was changed locally)",
-			}
+			return FetchResult{}, tc.authError(err, redactSecrets(err.Error()), "authentication required")
 		}
 		return FetchResult{}, wrap("fetch", CodeFetchFailed, err,
 			"could not fetch %s in %s (nothing was changed locally)", remote, b.path)
@@ -380,10 +397,12 @@ func (b *goGitBackend) Push(ctx context.Context, req PushRequest) (PushResult, e
 		branch = st.Branch
 	}
 	spec := config.RefSpec("refs/heads/" + st.Branch + ":refs/heads/" + branch)
+	tc := transportContext{Op: "push", Path: b.path, Remote: remote, URL: b.remoteURL(remote)}
 	err = b.repo.PushContext(ctx, &git.PushOptions{
 		RemoteName:        remote,
 		RefSpecs:          []config.RefSpec{spec},
 		RequireRemoteRefs: []config.RefSpec{}, // no lease: we never force-push
+		Auth:              authFor(ctx, tc.URL, b.opts.GitBinary),
 	})
 	switch {
 	case errors.Is(err, git.NoErrAlreadyUpToDate):
@@ -391,8 +410,11 @@ func (b *goGitBackend) Push(ctx context.Context, req PushRequest) (PushResult, e
 	case err == nil:
 		return PushResult{Remote: remote, Branch: branch, Pushed: st.Ahead}, nil
 	}
-	if classified := classifyTransport("push", err, err.Error()); classified != nil {
+	if classified := classifyTransport(tc, err, redactSecrets(err.Error())); classified != nil {
 		return PushResult{}, classified
+	}
+	if errors.Is(err, transport.ErrAuthenticationRequired) || errors.Is(err, transport.ErrAuthorizationFailed) {
+		return PushResult{}, tc.authError(err, redactSecrets(err.Error()), "authentication required")
 	}
 	if errors.Is(err, git.ErrNonFastForwardUpdate) ||
 		containsAny(strings.ToLower(err.Error()), "non-fast-forward", "fetch first", "rejected") {
