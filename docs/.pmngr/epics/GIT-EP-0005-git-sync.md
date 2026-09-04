@@ -2,9 +2,9 @@
 id: GIT-EP-0005
 type: epic
 title: Git sync
-status: backlog
+status: in_progress
 created: 2026-09-03T00:00:00Z
-updated: 2026-09-03T00:00:00Z
+updated: 2026-09-04
 author: team
 priority: critical
 milestone: GIT-M-0005
