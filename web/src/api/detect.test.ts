@@ -2,7 +2,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useAppStore } from '@/app/store';
 
-import { detectMode, HEALTH_PATH, probeCompanion, PROBE_TIMEOUT_MS } from './detect';
+import {
+  COMPANION_ORIGIN,
+  detectMode,
+  HEALTH_PATH,
+  probeCompanion,
+  probeCompanionNow,
+  PROBE_TIMEOUT_MS,
+  resolveCompanionBaseUrl,
+  watchCompanion,
+} from './detect';
+
+const health = { status: 'ok', version: '0.4.0', uptimeSeconds: 1 };
 
 function jsonResponse(body: unknown, init: { ok?: boolean; status?: number } = {}): Response {
   const { ok = true, status = 200 } = init;
@@ -97,5 +108,99 @@ describe('detectMode', () => {
     await expect(detectMode({ fetchImpl })).resolves.toBe('browser');
     expect(useAppStore.getState().mode).toBe('browser');
     expect(useAppStore.getState().companionVersion).toBeNull();
+  });
+});
+
+describe('resolveCompanionBaseUrl', () => {
+  it('points at the documented loopback origin off the embedded server', () => {
+    // jsdom is not the companion origin, and the suite runs in dev mode.
+    expect(resolveCompanionBaseUrl()).toBe(COMPANION_ORIGIN);
+  });
+});
+
+describe('watchCompanion', () => {
+  beforeEach(() => {
+    useAppStore.getState().reset();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('upgrades a running tab when a later probe finds the companion', async () => {
+    vi.useFakeTimers();
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValue(jsonResponse(health));
+
+    await expect(detectMode({ fetchImpl })).resolves.toBe('browser');
+
+    const onChange = vi.fn();
+    const stop = watchCompanion({ fetchImpl, intervalMs: 1_000, onChange });
+
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith({
+      mode: 'companion',
+      version: '0.4.0',
+      baseUrl: COMPANION_ORIGIN,
+    });
+    expect(useAppStore.getState().mode).toBe('companion');
+    expect(useAppStore.getState().companionVersion).toBe('0.4.0');
+    expect(useAppStore.getState().companionUrl).toBe(COMPANION_ORIGIN);
+
+    // A second confirming probe is not a flip: the UI is not notified again.
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(onChange).toHaveBeenCalledTimes(1);
+
+    stop();
+  });
+
+  it('downgrades when the companion goes away', async () => {
+    vi.useFakeTimers();
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse(health))
+      .mockRejectedValue(new TypeError('Failed to fetch'));
+
+    await expect(detectMode({ fetchImpl })).resolves.toBe('companion');
+
+    const onChange = vi.fn();
+    const stop = watchCompanion({ fetchImpl, intervalMs: 1_000, onChange });
+
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ mode: 'browser', version: null }),
+    );
+    expect(useAppStore.getState().mode).toBe('browser');
+    expect(useAppStore.getState().companionUrl).toBeNull();
+
+    stop();
+  });
+
+  it('stops probing once cancelled', async () => {
+    vi.useFakeTimers();
+    const fetchImpl = vi.fn<typeof fetch>().mockRejectedValue(new TypeError('Failed to fetch'));
+
+    const stop = watchCompanion({ fetchImpl, intervalMs: 1_000 });
+    stop();
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('probes on demand for the "Check again" button', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(health));
+    const onChange = vi.fn();
+    const stop = watchCompanion({ fetchImpl, intervalMs: 60_000, onChange });
+
+    await probeCompanionNow();
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(useAppStore.getState().mode).toBe('companion');
+    stop();
   });
 });

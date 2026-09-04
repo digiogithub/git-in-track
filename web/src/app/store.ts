@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 
+import type { ConnectionState } from '@/api/companion-provider';
 import type { Capabilities } from '@/api/provider';
 import { readOnlyCapabilities } from '@/api/provider';
 
@@ -43,6 +44,18 @@ export function sameCapabilities(a: Capabilities, b: Capabilities): boolean {
 export type AppMode = 'browser' | 'companion' | 'detecting';
 
 /**
+ * A mode flip the user should know about but must not be interrupted by: the
+ * companion appearing while the tab is open, or going away again.
+ */
+export type ModeNotice = 'companion-detected' | 'companion-lost';
+
+/**
+ * Whether the companion accepted our bearer token. `required` is what the UI
+ * shows after a `401` cleared it, or when none was ever supplied.
+ */
+export type CompanionAuth = 'ok' | 'required';
+
+/**
  * Workspace slice: the folder the user picked but has not mounted yet, the id
  * of the repository the UI is looking at, and whether the read-only notice was
  * dismissed. Repository *data* is provider state and lives in TanStack Query.
@@ -62,8 +75,20 @@ export type ModeSlice = {
   mode: AppMode;
   /** Version reported by the companion, when one answered the probe. */
   companionVersion: string | null;
+  /** Base URL the companion answers on; `null` in browser-only mode. */
+  companionUrl: string | null;
+  /** State of the companion event socket (`idle` while none is open). */
+  connection: ConnectionState;
+  /** Pending non-blocking notice about an upgrade or a downgrade. */
+  modeNotice: ModeNotice | null;
+  companionAuth: CompanionAuth;
   capabilities: Capabilities;
   setMode: (mode: AppMode, companionVersion?: string | null) => void;
+  setCompanionUrl: (companionUrl: string | null) => void;
+  setConnection: (connection: ConnectionState) => void;
+  setModeNotice: (modeNotice: ModeNotice | null) => void;
+  dismissModeNotice: () => void;
+  setCompanionAuth: (companionAuth: CompanionAuth) => void;
   setCapabilities: (capabilities: Capabilities) => void;
   reset: () => void;
 };
@@ -73,6 +98,10 @@ export type AppState = ModeSlice & WorkspaceSlice;
 const initialState = {
   mode: 'detecting' as AppMode,
   companionVersion: null,
+  companionUrl: null,
+  connection: 'idle' as ConnectionState,
+  modeNotice: null,
+  companionAuth: 'ok' as CompanionAuth,
   capabilities: readOnlyCapabilities,
   pendingVaultId: null,
   pendingVaultName: null,
@@ -82,6 +111,10 @@ const initialState = {
   AppState,
   | 'mode'
   | 'companionVersion'
+  | 'companionUrl'
+  | 'connection'
+  | 'modeNotice'
+  | 'companionAuth'
   | 'capabilities'
   | 'pendingVaultId'
   | 'pendingVaultName'
@@ -109,6 +142,21 @@ export const useAppStore = create<AppState>((set) => ({
             : null
           : companionVersion,
     }));
+  },
+  setCompanionUrl: (companionUrl) => {
+    set({ companionUrl });
+  },
+  setConnection: (connection) => {
+    set((state) => (state.connection === connection ? state : { connection }));
+  },
+  setModeNotice: (modeNotice) => {
+    set({ modeNotice });
+  },
+  dismissModeNotice: () => {
+    set({ modeNotice: null });
+  },
+  setCompanionAuth: (companionAuth) => {
+    set((state) => (state.companionAuth === companionAuth ? state : { companionAuth }));
   },
   setCapabilities: (capabilities) => {
     set((state) => (sameCapabilities(state.capabilities, capabilities) ? state : { capabilities }));

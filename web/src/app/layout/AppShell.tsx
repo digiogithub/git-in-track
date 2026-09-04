@@ -1,10 +1,19 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link, Outlet } from '@tanstack/react-router';
-import { BookOpen, Boxes, LayoutDashboard, ListChecks, Lock, Settings, X } from 'lucide-react';
+import {
+  BookOpen,
+  Boxes,
+  LayoutDashboard,
+  ListChecks,
+  Lock,
+  Plug,
+  Settings,
+  X,
+} from 'lucide-react';
 import { useEffect, type ReactNode } from 'react';
 
 import { useOptionalProvider } from '@/api/provider-context';
-import { useAppStore } from '@/app/store';
+import { useAppStore, type AppMode } from '@/app/store';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/cn';
 
@@ -26,6 +35,8 @@ const COMPANION_DOWNLOAD_URL = 'https://github.com/digiogithub/git-in-track/rele
 /** Application shell: skip link, sidebar navigation and the routed main region. */
 export function AppShell() {
   const mode = useAppStore((state) => state.mode);
+  const companionVersion = useAppStore((state) => state.companionVersion);
+  const companionUrl = useAppStore((state) => state.companionUrl);
   const capabilities = useAppStore((state) => state.capabilities);
   const setCapabilities = useAppStore((state) => state.setCapabilities);
   const provider = useOptionalProvider();
@@ -61,7 +72,11 @@ export function AppShell() {
       <aside className="hidden w-60 shrink-0 border-r border-border p-4 md:block">
         <div className="mb-6 flex flex-wrap items-center gap-2">
           <span className="font-semibold tracking-tight">git-in-track</span>
-          <span className="rounded-full bg-secondary px-2 py-0.5 text-[11px] uppercase text-secondary-foreground">
+          <span
+            data-testid="mode-badge"
+            className="rounded-full bg-secondary px-2 py-0.5 text-[11px] uppercase text-secondary-foreground"
+            title={modeTooltip(mode, companionVersion, companionUrl)}
+          >
             {mode}
           </span>
           {capabilities.write ? null : (
@@ -139,11 +154,90 @@ export function AppShell() {
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
+        <ModeNoticeBanner />
+        <TokenRequiredBanner />
         <ReadOnlyBanner />
         <main id="main" className="flex-1 p-6">
           <Outlet />
         </main>
       </div>
+    </div>
+  );
+}
+
+/** Badge tooltip: which runtime, which companion version, and where it runs. */
+function modeTooltip(
+  mode: AppMode,
+  companionVersion: string | null,
+  companionUrl: string | null,
+): string {
+  if (mode === 'detecting') return 'Looking for the gintrack companion…';
+  if (mode === 'browser') {
+    return 'Browser-only mode: File System Access and the WebAssembly core.';
+  }
+  const version = companionVersion === null ? 'unknown version' : `version ${companionVersion}`;
+  const where = companionUrl === null || companionUrl === '' ? 'this origin' : companionUrl;
+  return `Companion ${version} at ${where} — native indexing and file watching enabled.`;
+}
+
+/**
+ * Non-blocking notice for a mode flip while the tab is open: the companion
+ * appearing (upgrade) or going away (downgrade), per docs/05-web-app.md §4.3.
+ */
+function ModeNoticeBanner() {
+  const notice = useAppStore((state) => state.modeNotice);
+  const dismiss = useAppStore((state) => state.dismissModeNotice);
+
+  if (notice === null) return null;
+
+  const upgraded = notice === 'companion-detected';
+
+  return (
+    <div
+      role="status"
+      className="flex items-start gap-3 border-b border-border bg-secondary px-6 py-3 text-sm"
+    >
+      <Plug aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />
+      <p className="flex-1">
+        {upgraded ? (
+          <strong className="font-medium">
+            Companion detected — native indexing and file watching enabled.
+          </strong>
+        ) : (
+          <>
+            <strong className="font-medium">Companion disconnected.</strong> Back to browser-only
+            mode: the WebAssembly core keeps everything working from this tab.
+          </>
+        )}
+      </p>
+      <Button variant="ghost" size="icon" aria-label="Dismiss companion notice" onClick={dismiss}>
+        <X aria-hidden="true" className="h-4 w-4" />
+      </Button>
+    </div>
+  );
+}
+
+/** A missing or rejected token is an actionable state, never a silent failure. */
+function TokenRequiredBanner() {
+  const mode = useAppStore((state) => state.mode);
+  const auth = useAppStore((state) => state.companionAuth);
+
+  if (mode !== 'companion' || auth !== 'required') return null;
+
+  return (
+    <div
+      role="alert"
+      className="flex items-start gap-3 border-b border-destructive/40 bg-destructive/10 px-6 py-3 text-sm text-destructive"
+    >
+      <Lock aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />
+      <p className="flex-1">
+        <strong className="font-medium">The companion needs an access token.</strong> Copy the token
+        printed by <code>gintrack serve</code> and paste it in{' '}
+        <Link to="/settings" className="underline underline-offset-4">
+          Settings
+        </Link>
+        .
+      </p>
     </div>
   );
 }

@@ -1,27 +1,43 @@
 /**
  * Builds the `DataProvider` for the detected runtime (docs/05-web-app.md §4.3).
  *
- * Phase 1 ships one implementation. The companion REST client is Phase 2, so
- * companion mode currently also gets the `BrowserProvider`: the app keeps
- * working against local folders while the probe result only drives the mode
- * badge.
+ * Companion mode gets the REST client over `/api/v1`; every other mode gets the
+ * browser provider (File System Access plus the WASM core). Nothing else in the
+ * app knows which one it is talking to.
  */
 
 import { BrowserProvider } from '@/api/browser-provider';
+import { CompanionProvider, type CompanionProviderOptions } from '@/api/companion-provider';
 import type { DataProvider } from '@/api/provider';
 import type { AppMode } from '@/app/store';
 import type { CoreClient } from '@/core-bridge/client';
 
 export type ProviderFactoryOptions = {
   mode: AppMode;
-  /** Injected by tests. */
+  /** Injected by tests; the browser provider shares the app-wide worker client. */
   client?: CoreClient;
+  /** Injected by tests; production reads the base URL and token from the page. */
+  companion?: CompanionProviderOptions;
 };
 
-export function createDataProvider({ mode, client }: ProviderFactoryOptions): DataProvider {
-  // TODO(GIT-US-0014): `mode === 'companion'` must return a `CompanionProvider`
-  // backed by the REST client and the WebSocket event stream once the Phase 2
-  // API lands; until then every mode is served by the browser provider.
-  void mode;
+export function createDataProvider({
+  mode,
+  client,
+  companion,
+}: ProviderFactoryOptions): DataProvider {
+  if (mode === 'companion') return new CompanionProvider(companion ?? {});
   return new BrowserProvider(client ? { client } : {});
+}
+
+/**
+ * Waits for whatever a freshly built provider needs before the UI reads its
+ * capabilities. Only the companion has such a step (`GET /capabilities`).
+ */
+export async function whenProviderReady(provider: DataProvider): Promise<void> {
+  if (provider instanceof CompanionProvider) await provider.ready;
+}
+
+/** Releases a provider that is being replaced by a mode flip. */
+export function disposeProvider(provider: DataProvider | null): void {
+  if (provider instanceof CompanionProvider) provider.dispose();
 }
