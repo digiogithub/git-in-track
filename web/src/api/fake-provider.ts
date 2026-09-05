@@ -19,6 +19,7 @@ import type {
   CardMove,
   Capabilities,
   CreateProjectInput,
+  CreateTeamInput,
   ChangeEvent,
   Comment,
   ConflictAnalysis,
@@ -97,6 +98,11 @@ export type FakeData = {
   repos?: RepoInfo[];
   /** The team repository of the workspace; omit for a workspace without one. */
   team?: TeamSummary | null;
+  /**
+   * Every team repository of the workspace, for the multi-team surface of
+   * GIT-US-0036. `team` stays the single-team shorthand for it.
+   */
+  teams?: TeamSummary[];
   /** The boards of the team repository; omit for the sample boards. */
   boards?: FakeBoard[];
   /** The sprints of the team repository; omit for the sample sprint. */
@@ -115,6 +121,8 @@ export type FakeData = {
  */
 export type FakeRetro = {
   id: string;
+  /** The team repository holding it; omit to belong to every team. */
+  team?: string;
   title: string;
   sprint?: string;
   board?: string;
@@ -140,6 +148,8 @@ export type FakeRetro = {
  */
 export type FakeBoard = {
   id: string;
+  /** The team repository holding it; omit to belong to every team. */
+  team?: string;
   kind: 'kanban' | 'scrum';
   title: string;
   description?: string;
@@ -167,6 +177,8 @@ export type FakeBoard = {
  */
 export type FakeSprint = {
   id: string;
+  /** The team repository holding it; omit to belong to every team. */
+  team?: string;
   title: string;
   board: string;
   state: SprintState;
@@ -674,7 +686,7 @@ export class FakeProvider implements DataProvider {
   private comments: Comment[];
   private pages: Map<string, KbPage>;
   private repos: RepoInfo[];
-  private team: TeamSummary | null;
+  private teams: TeamSummary[];
   private boards: Map<string, FakeBoard>;
   private sprints: Map<string, FakeSprint>;
   private retros: Map<string, FakeRetro>;
@@ -690,7 +702,7 @@ export class FakeProvider implements DataProvider {
     this.items = new Map((data.items ?? sampleItems).map((i) => [i.id, structuredClone(i)]));
     this.comments = structuredClone(data.comments ?? sampleComments);
     this.pages = new Map((data.pages ?? samplePages).map((p) => [p.path, structuredClone(p)]));
-    this.team = data.team ?? null;
+    this.teams = data.teams ?? (data.team ? [data.team] : []);
     this.boards = new Map(
       (data.boards ?? [sampleBoard, sampleScrumBoard]).map((b) => [b.id, structuredClone(b)]),
     );
@@ -744,13 +756,65 @@ export class FakeProvider implements DataProvider {
     return Promise.resolve(structuredClone(this.projects));
   }
 
-  getTeam(): Promise<TeamSummary | null> {
-    return Promise.resolve(this.team ? structuredClone(this.team) : null);
+  getTeam(team?: string): Promise<TeamSummary | null> {
+    const found = this.resolveTeam(team);
+    return Promise.resolve(found ? structuredClone(found) : null);
+  }
+
+  listTeams(): Promise<TeamSummary[]> {
+    return Promise.resolve(structuredClone(this.teams));
+  }
+
+  createTeam(input: CreateTeamInput): Promise<TeamSummary> {
+    this.assertWritable();
+    if (!/^[A-Z][A-Z0-9-]{1,15}$/.test(input.key)) {
+      return Promise.reject(
+        new ProviderError('validation_failed', `${input.key} does not match [A-Z][A-Z0-9-]{1,15}`),
+      );
+    }
+    const repo = this.repos.find((r) => r.id === input.repoId) ?? this.repos[0];
+    if (this.teams.some((t) => t.vaultId === repo?.id)) {
+      return Promise.reject(
+        new ProviderError('team_exists', `${repo?.location} already holds a team.yaml`),
+      );
+    }
+    const team: TeamSummary = {
+      key: input.key,
+      name: input.name ?? input.key,
+      root: '.',
+      knowledgePath: input.knowledgePath ?? 'knowledge',
+      ...(repo ? { vaultId: repo.id } : {}),
+      members: input.members ?? [],
+      projects: [],
+      cadence: {},
+      defaults: {},
+      snapshots: { enabled: true, maxAgeDays: 7 },
+      diagnostics: [],
+    };
+    this.teams.push(team);
+    if (repo) {
+      repo.kind = 'team';
+      this.emit({ kind: 'repo', repoId: repo.id });
+    }
+    return Promise.resolve(structuredClone(team));
+  }
+
+  /** The named team, or the first open one when nothing is named. */
+  private resolveTeam(team?: string): TeamSummary | undefined {
+    if (team === undefined || team === '') return this.teams[0];
+    return this.teams.find((t) => t.key === team || t.vaultId === team);
+  }
+
+  /** Whether an artifact of the fake team repository belongs to `team`. */
+  private inTeam(owner: string | undefined, team?: string): boolean {
+    if (owner === undefined) return true;
+    const resolved = this.resolveTeam(team);
+    return resolved !== undefined && (owner === resolved.key || owner === resolved.vaultId);
   }
 
   resolveRef(ref: string): Promise<RefResolution> {
     const [project = '', item = ''] = ref.split('/');
-    const declared = this.team?.projects.some((p) => p.key === project) ?? false;
+    const declared = this.teams[0]?.projects.some((p) => p.key === project) ?? false;
     const found = this.items.get(item);
     const resolution: RefResolution = {
       ref,
@@ -1065,10 +1129,12 @@ export class FakeProvider implements DataProvider {
 
   // -------------------------------------------------------------------- boards
 
-  listBoards(): Promise<BoardSummary[]> {
-    if (!this.team) return Promise.resolve([]);
+  listBoards(team?: string): Promise<BoardSummary[]> {
+    if (this.resolveTeam(team) === undefined) return Promise.resolve([]);
     return Promise.resolve(
-      [...this.boards.values()].map((b) => ({
+      [...this.boards.values()]
+        .filter((b) => this.inTeam(b.team, team))
+        .map((b) => ({
         id: b.id,
         kind: b.kind,
         title: b.title,
@@ -1078,13 +1144,13 @@ export class FakeProvider implements DataProvider {
         vaultId: 'repo-team',
         projects: b.projects,
         columns: b.columns.length,
-        ...(b.sprint === undefined ? {} : { sprint: b.sprint }),
-        diagnostics: [],
-      })),
+          ...(b.sprint === undefined ? {} : { sprint: b.sprint }),
+          diagnostics: [],
+        })),
     );
   }
 
-  getBoard(slug: string): Promise<BoardView> {
+  getBoard(slug: string, _team?: string): Promise<BoardView> {
     const board = this.boards.get(slug);
     if (!board) return Promise.reject(new ProviderError('not_found', `No board ${slug}`));
     return Promise.resolve(this.renderBoard(board));
@@ -1201,7 +1267,7 @@ export class FakeProvider implements DataProvider {
       board.projects =
         patch.projects.length > 0
           ? [...patch.projects]
-          : (this.team?.projects.map((p) => p.key) ?? []);
+          : (this.teams[0]?.projects.map((p) => p.key) ?? []);
     }
     if (patch.filters !== undefined) board.filters = { ...patch.filters };
     if (patch.columns !== undefined) {
@@ -1242,7 +1308,7 @@ export class FakeProvider implements DataProvider {
       kind,
       title: draft.title,
       ...(draft.description === undefined ? {} : { description: draft.description }),
-      projects: draft.projects ?? (this.team?.projects.map((p) => p.key) ?? []),
+      projects: draft.projects ?? (this.teams[0]?.projects.map((p) => p.key) ?? []),
       columns,
       ...(draft.filters === undefined ? {} : { filters: draft.filters }),
       order: {},
@@ -1277,8 +1343,9 @@ export class FakeProvider implements DataProvider {
 
   // ------------------------------------------------------------------- retros
 
-  listRetros(filter: RetroFilter = {}): Promise<RetroListing> {
+  listRetros(filter: RetroFilter = {}, team?: string): Promise<RetroListing> {
     const rows = [...this.retros.values()]
+      .filter((r) => this.inTeam(r.team, team))
       .filter((r) => (filter.sprint ? r.sprint === filter.sprint : true))
       .filter((r) => (filter.board ? r.board === filter.board : true))
       .filter((r) => (filter.state ? r.state === filter.state : true))
@@ -1292,7 +1359,7 @@ export class FakeProvider implements DataProvider {
     });
   }
 
-  getRetro(id: string): Promise<RetroView> {
+  getRetro(id: string, _team?: string): Promise<RetroView> {
     const retro = this.retros.get(id);
     if (!retro) return Promise.reject(new ProviderError('not_found', `No retro ${id}`));
     return Promise.resolve(this.renderRetro(retro));
@@ -1547,9 +1614,10 @@ export class FakeProvider implements DataProvider {
 
   // ------------------------------------------------------------------- sprints
 
-  listSprints(filter: SprintFilter = {}): Promise<SprintSummary[]> {
-    if (!this.team) return Promise.resolve([]);
+  listSprints(filter: SprintFilter = {}, team?: string): Promise<SprintSummary[]> {
+    if (this.resolveTeam(team) === undefined) return Promise.resolve([]);
     const rows = [...this.sprints.values()]
+      .filter((s) => this.inTeam(s.team, team))
       .filter((s) => (filter.board ? s.board === filter.board : true))
       .filter((s) => (filter.state ? s.state === filter.state : true))
       .sort((a, b) => a.id.localeCompare(b.id))
@@ -1557,7 +1625,7 @@ export class FakeProvider implements DataProvider {
     return Promise.resolve(rows);
   }
 
-  getSprint(id: string): Promise<SprintView> {
+  getSprint(id: string, _team?: string): Promise<SprintView> {
     const sprint = this.sprints.get(id);
     if (!sprint) return Promise.reject(new ProviderError('not_found', `No sprint ${id}`));
     return Promise.resolve(this.renderSprint(sprint));
@@ -1847,7 +1915,7 @@ export class FakeProvider implements DataProvider {
   /** One card of a sprint scope, live or read from the committed snapshot. */
   private refCard(ref: string): BoardCard {
     const [project = '', id = ''] = ref.split('/');
-    const declared = (this.team?.projects.map((p) => p.key) ?? []).includes(project);
+    const declared = (this.teams[0]?.projects.map((p) => p.key) ?? []).includes(project);
     if (!this.projects.some((p) => p.key === project)) {
       return remoteCard(ref, project, id, declared);
     }
@@ -1867,7 +1935,7 @@ export class FakeProvider implements DataProvider {
 
   private cardFor(ref: string, sprint: FakeSprint): BoardCard {
     const [project = '', id = ''] = ref.split('/');
-    const declared = (this.team?.projects.map((p) => p.key) ?? []).includes(project);
+    const declared = (this.teams[0]?.projects.map((p) => p.key) ?? []).includes(project);
     const cloned = new Set(this.projects.map((p) => p.key));
     const committed = (sprint.committed ?? []).includes(ref);
     if (!cloned.has(project)) {
@@ -1956,7 +2024,7 @@ export class FakeProvider implements DataProvider {
   /** One row per declared project: cloned ones are regenerated, the rest skipped. */
   private snapshotRows(status: 'written' | 'unchanged'): SnapshotResult[] {
     const cloned = new Set(this.projects.map((p) => p.key));
-    return (this.team?.projects ?? []).map((project) => ({
+    return (this.teams[0]?.projects ?? []).map((project) => ({
       project: project.key,
       path: project.snapshot.path,
       status: cloned.has(project.key) ? status : 'skipped',
@@ -1969,7 +2037,7 @@ export class FakeProvider implements DataProvider {
   }
 
   private renderBoard(board: FakeBoard): BoardView {
-    const declared = this.team?.projects.map((p) => p.key) ?? board.projects;
+    const declared = this.teams[0]?.projects.map((p) => p.key) ?? board.projects;
     const cloned = new Set(this.projects.map((p) => p.key));
     const rank: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
     // A scrum board shows the scope of its sprint, plus the candidates the

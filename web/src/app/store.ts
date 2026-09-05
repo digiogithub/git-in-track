@@ -25,6 +25,39 @@ function writeSessionFlag(key: string, value: boolean): void {
   }
 }
 
+/** Prefix the active team of a workspace is remembered under (GIT-US-0036). */
+const ACTIVE_TEAM_KEY = 'gintrack:active-team:';
+
+/**
+ * The workspace a team choice belongs to: the companion this tab talks to, or
+ * the browser profile itself in browser-only mode. Two workspaces open on one
+ * machine therefore remember their own active team instead of overwriting each
+ * other's (ADR-019).
+ */
+export function workspaceScope(companionUrl: string | null): string {
+  return companionUrl ?? 'browser';
+}
+
+/** The team last chosen for a workspace, or `null` when none was ever chosen. */
+export function readActiveTeam(companionUrl: string | null): string | null {
+  try {
+    return globalThis.localStorage?.getItem(ACTIVE_TEAM_KEY + workspaceScope(companionUrl)) ?? null;
+  } catch {
+    // Private modes and sandboxes can throw: the app falls back to the first team.
+    return null;
+  }
+}
+
+function writeActiveTeam(companionUrl: string | null, teamKey: string | null): void {
+  const key = ACTIVE_TEAM_KEY + workspaceScope(companionUrl);
+  try {
+    if (teamKey === null) globalThis.localStorage?.removeItem(key);
+    else globalThis.localStorage?.setItem(key, teamKey);
+  } catch {
+    // The choice still holds for this tab; only its persistence is lost.
+  }
+}
+
 /**
  * Providers may expose `capabilities` as a getter that builds a fresh object on
  * every access; comparing by value keeps the store (and every subscriber) from
@@ -65,9 +98,17 @@ export type WorkspaceSlice = {
   pendingVaultId: string | null;
   pendingVaultName: string | null;
   activeRepoId: string | null;
+  /**
+   * The team repository boards, sprints, retros and the team knowledge base are
+   * read through. `null` means "nothing chosen yet", which the UI resolves to
+   * the first open team (GIT-US-0036).
+   */
+  activeTeamKey: string | null;
   readOnlyNoticeDismissed: boolean;
   setPendingVault: (id: string | null, name?: string | null) => void;
   setActiveRepo: (repoId: string | null) => void;
+  /** Chooses the active team and remembers it for this workspace. */
+  setActiveTeam: (teamKey: string | null) => void;
   dismissReadOnlyNotice: () => void;
 };
 
@@ -106,6 +147,7 @@ const initialState = {
   pendingVaultId: null,
   pendingVaultName: null,
   activeRepoId: null,
+  activeTeamKey: null,
   readOnlyNoticeDismissed: false,
 } satisfies Pick<
   AppState,
@@ -119,6 +161,7 @@ const initialState = {
   | 'pendingVaultId'
   | 'pendingVaultName'
   | 'activeRepoId'
+  | 'activeTeamKey'
   | 'readOnlyNoticeDismissed'
 >;
 
@@ -129,7 +172,7 @@ const initialState = {
  * Components read it through selectors (`useAppStore((s) => s.mode)`) so a
  * change to one field does not re-render everything.
  */
-export const useAppStore = create<AppState>((set) => ({
+export const useAppStore = create<AppState>((set, get) => ({
   ...initialState,
   readOnlyNoticeDismissed: readSessionFlag(READ_ONLY_NOTICE_KEY),
   setMode: (mode, companionVersion) => {
@@ -166,6 +209,10 @@ export const useAppStore = create<AppState>((set) => ({
   },
   setActiveRepo: (activeRepoId) => {
     set({ activeRepoId });
+  },
+  setActiveTeam: (activeTeamKey) => {
+    writeActiveTeam(get().companionUrl, activeTeamKey);
+    set((state) => (state.activeTeamKey === activeTeamKey ? state : { activeTeamKey }));
   },
   dismissReadOnlyNotice: () => {
     writeSessionFlag(READ_ONLY_NOTICE_KEY, true);

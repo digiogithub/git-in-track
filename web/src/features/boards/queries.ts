@@ -26,27 +26,34 @@ import type {
 } from '@/api/provider';
 import { useProvider } from '@/api/provider-context';
 import { backlogKeys } from '@/features/backlog/queries';
+import { useActiveTeamKey } from '@/features/workspace/active-team';
 
-/** Key factory. Every board key lives under the `boards` prefix. */
+/**
+ * Key factory. Every board key lives under the `boards` prefix, and carries the
+ * team repository it was read from: switching the active team must show the
+ * other team's boards rather than the cached ones (GIT-US-0036).
+ */
 export const boardKeys = {
   all: () => ['boards'] as const,
-  list: () => ['boards', 'list'] as const,
-  detail: (slug: string) => ['boards', 'detail', slug] as const,
+  list: (team = '') => ['boards', 'list', team] as const,
+  detail: (slug: string, team = '') => ['boards', 'detail', slug, team] as const,
 };
 
 export function useBoards() {
   const provider = useProvider();
+  const team = useActiveTeamKey();
   return useQuery<BoardSummary[]>({
-    queryKey: boardKeys.list(),
-    queryFn: () => provider.listBoards(),
+    queryKey: boardKeys.list(team),
+    queryFn: () => provider.listBoards(team),
   });
 }
 
 export function useBoard(slug: string) {
   const provider = useProvider();
+  const team = useActiveTeamKey();
   return useQuery<BoardView>({
-    queryKey: boardKeys.detail(slug),
-    queryFn: () => provider.getBoard(slug),
+    queryKey: boardKeys.detail(slug, team),
+    queryFn: () => provider.getBoard(slug, team),
     enabled: slug.length > 0,
   });
 }
@@ -55,15 +62,16 @@ export function useBoard(slug: string) {
 export function useBoardEvents(slug: string): void {
   const provider = useProvider();
   const queryClient = useQueryClient();
+  const team = useActiveTeamKey();
 
   useEffect(
     () =>
       provider.subscribe((event) => {
         if (event.kind === 'items' || event.kind === 'index' || event.kind === 'repo') {
-          void queryClient.invalidateQueries({ queryKey: boardKeys.detail(slug) });
+          void queryClient.invalidateQueries({ queryKey: boardKeys.detail(slug, team) });
         }
       }),
-    [provider, queryClient, slug],
+    [provider, queryClient, slug, team],
   );
 }
 
@@ -75,11 +83,12 @@ export function useBoardEvents(slug: string): void {
 export function useCreateBoard(): UseMutationResult<BoardView, Error, BoardDraft> {
   const provider = useProvider();
   const queryClient = useQueryClient();
+  const team = useActiveTeamKey();
   return useMutation<BoardView, Error, BoardDraft>({
-    mutationFn: (draft) => provider.createBoard(draft),
+    mutationFn: (draft) => provider.createBoard(draft, team),
     onSuccess: (view) => {
-      queryClient.setQueryData(boardKeys.detail(view.id), view);
-      void queryClient.invalidateQueries({ queryKey: boardKeys.list() });
+      queryClient.setQueryData(boardKeys.detail(view.id, team), view);
+      void queryClient.invalidateQueries({ queryKey: boardKeys.list(team) });
     },
   });
 }
@@ -96,11 +105,12 @@ export type BoardEdit = { slug: string; patch: BoardPatch; rev?: string | undefi
 export function useUpdateBoard(): UseMutationResult<BoardView, Error, BoardEdit> {
   const provider = useProvider();
   const queryClient = useQueryClient();
+  const team = useActiveTeamKey();
   return useMutation<BoardView, Error, BoardEdit>({
-    mutationFn: (edit) => provider.updateBoard(edit.slug, edit.patch, edit.rev),
+    mutationFn: (edit) => provider.updateBoard(edit.slug, edit.patch, edit.rev, team),
     onSuccess: (view) => {
-      queryClient.setQueryData(boardKeys.detail(view.id), view);
-      void queryClient.invalidateQueries({ queryKey: boardKeys.list() });
+      queryClient.setQueryData(boardKeys.detail(view.id, team), view);
+      void queryClient.invalidateQueries({ queryKey: boardKeys.list(team) });
     },
   });
 }
@@ -113,11 +123,12 @@ export function useDeleteBoard(): UseMutationResult<
 > {
   const provider = useProvider();
   const queryClient = useQueryClient();
+  const team = useActiveTeamKey();
   return useMutation<void, Error, { slug: string; rev?: string | undefined }>({
-    mutationFn: (input) => provider.deleteBoard(input.slug, input.rev),
+    mutationFn: (input) => provider.deleteBoard(input.slug, input.rev, team),
     onSuccess: (_result, input) => {
-      queryClient.removeQueries({ queryKey: boardKeys.detail(input.slug) });
-      void queryClient.invalidateQueries({ queryKey: boardKeys.list() });
+      queryClient.removeQueries({ queryKey: boardKeys.detail(input.slug, team) });
+      void queryClient.invalidateQueries({ queryKey: boardKeys.list(team) });
     },
   });
 }
@@ -134,31 +145,32 @@ export function useMoveCard(
 ): UseMutationResult<BoardMoveResult, Error, CardMove, MoveContext> {
   const provider = useProvider();
   const queryClient = useQueryClient();
+  const team = useActiveTeamKey();
 
   return useMutation<BoardMoveResult, Error, CardMove, MoveContext>({
-    mutationFn: (move) => provider.moveCard(move),
+    mutationFn: (move) => provider.moveCard({ ...move, ...(team === undefined ? {} : { team }) }),
     onMutate: async (move) => {
-      await queryClient.cancelQueries({ queryKey: boardKeys.detail(slug) });
-      const previous = queryClient.getQueryData<BoardView>(boardKeys.detail(slug));
+      await queryClient.cancelQueries({ queryKey: boardKeys.detail(slug, team) });
+      const previous = queryClient.getQueryData<BoardView>(boardKeys.detail(slug, team));
       if (previous) {
-        queryClient.setQueryData(boardKeys.detail(slug), applyMoveToView(previous, move));
+        queryClient.setQueryData(boardKeys.detail(slug, team), applyMoveToView(previous, move));
       }
       return { previous };
     },
     onError: (_error, _move, context) => {
       if (context?.previous) {
-        queryClient.setQueryData(boardKeys.detail(slug), context.previous);
+        queryClient.setQueryData(boardKeys.detail(slug, team), context.previous);
       }
     },
     onSuccess: (result) => {
-      queryClient.setQueryData(boardKeys.detail(slug), result.board);
+      queryClient.setQueryData(boardKeys.detail(slug, team), result.board);
       if (result.item) {
         const project = result.item.id.split('-')[0] ?? '';
         void queryClient.invalidateQueries({ queryKey: backlogKeys.project(project) });
       }
     },
     onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: boardKeys.detail(slug) });
+      void queryClient.invalidateQueries({ queryKey: boardKeys.detail(slug, team) });
     },
   });
 }

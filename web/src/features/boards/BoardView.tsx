@@ -10,7 +10,6 @@ import {
 } from '@dnd-kit/core';
 import { restrictToWindowEdges } from '@dnd-kit/modifiers';
 import { sortableKeyboardCoordinates } from '@dnd-kit/sortable';
-import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
 import { useMemo, useState } from 'react';
 
@@ -36,6 +35,7 @@ import { BoardSettingsDialog } from '@/features/boards/BoardSettingsDialog';
 import { NewSprintDialog } from '@/features/boards/NewSprintDialog';
 import { useBoard, useBoardEvents, useMoveCard } from '@/features/boards/queries';
 import { SprintPanel } from '@/features/boards/SprintPanel';
+import { useActiveTeam } from '@/features/workspace/active-team';
 
 /** A move waiting for the user to confirm that it may exceed a WIP limit. */
 type PendingMove = { move: CardMove; column: string; limit: number };
@@ -87,7 +87,7 @@ export function BoardCanvas({ slug }: { slug: string }) {
   const [dragging, setDragging] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [openingSprint, setOpeningSprint] = useState(false);
-  const team = useQuery({ queryKey: ['team'], queryFn: () => provider.getTeam() });
+  const team = useActiveTeam();
 
   useBoardEvents(slug);
 
@@ -198,7 +198,7 @@ export function BoardCanvas({ slug }: { slug: string }) {
     <div className="space-y-4">
       <header className="space-y-1">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h1 className="text-2xl font-semibold tracking-tight">{view.title}</h1>
+          <h1 className="page-title">{view.title}</h1>
           <Button
             size="sm"
             variant="outline"
@@ -268,7 +268,7 @@ export function BoardCanvas({ slug }: { slug: string }) {
 
       <BoardSettingsDialog
         view={view}
-        projects={(team.data?.projects ?? []).map((project) => project.key)}
+        projects={(team.team?.projects ?? []).map((project) => project.key)}
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
       />

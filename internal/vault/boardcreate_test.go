@@ -143,7 +143,7 @@ func TestWorkspaceBoardDelete(t *testing.T) {
 			if code != SprintActiveCode {
 				t.Fatalf("code = %q (%s), want %q", code, message, SprintActiveCode)
 			}
-			if _, err := w.BoardView(t.Context(), "demo-scrum"); err != nil {
+			if _, err := w.BoardView(t.Context(), "", "demo-scrum"); err != nil {
 				t.Fatalf("the board must still be there: %v", err)
 			}
 		})

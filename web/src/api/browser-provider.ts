@@ -31,6 +31,7 @@ import type {
   ConflictResolution,
   ConflictResolveResult,
   CreateProjectInput,
+  CreateTeamInput,
   DataProvider,
   Diagnostic,
   IndexStats,
@@ -80,7 +81,7 @@ import type {
   SyncSettingsPatch,
   SyncStatus,
 } from '@/api/provider';
-import { ProviderError } from '@/api/provider';
+import { ProviderError, teamScope } from '@/api/provider';
 import { hydrateOrBuild } from '@/cache/index-cache';
 import type {
   ConflictResolutionParams,
@@ -152,6 +153,7 @@ const CORE_ERROR_CODES: Record<string, ProviderError['code']> = {
   wip_limit_exceeded: 'wip_limit_exceeded',
   repo_not_cloned: 'repo_not_cloned',
   project_exists: 'project_exists',
+  team_exists: 'team_exists',
   rev_mismatch: 'stale_revision',
   conflict: 'stale_revision',
   validation_failed: 'validation_failed',
@@ -291,14 +293,21 @@ export class BrowserProvider implements DataProvider {
    * `not_found` when none is open, which is a normal state, not an error the
    * UI has to show.
    */
-  async getTeam(): Promise<TeamSummary | null> {
+  async getTeam(team?: string): Promise<TeamSummary | null> {
     await this.#ensureActive();
     try {
-      return await this.#call('team.get', undefined);
+      return await this.#call('team.get', teamScope(team));
     } catch (error) {
       if (error instanceof ProviderError && error.code === 'not_found') return null;
       throw error;
     }
+  }
+
+  /** Every open team repository, in mount order; empty when none is open. */
+  async listTeams(): Promise<TeamSummary[]> {
+    await this.#ensureActive();
+    const result = await this.#call('team.list', undefined);
+    return result.teams;
   }
 
   async resolveRef(ref: string): Promise<RefResolution> {
@@ -398,6 +407,40 @@ export class BrowserProvider implements DataProvider {
 
     this.#emit({ kind: 'repo', repoId });
     return project;
+  }
+
+  /**
+   * Turns a mounted folder into a team repository. Like `createProject` the
+   * core writes into its in-memory vault and reports a write set; this method
+   * persists that set through the folder handle, so `team.yaml` reaches the
+   * disk exactly like any other write of browser-only mode.
+   */
+  async createTeam(input: CreateTeamInput): Promise<TeamSummary> {
+    const repoId = input.repoId ?? this.#activeRepoId;
+    if (!repoId) throw new ProviderError('not_found', 'No repository is open.');
+    const mount = await this.#ensureMounted(repoId);
+    if (!mount.vault.capabilities.write) {
+      throw new ProviderError(
+        'read_only',
+        'This folder was opened read-only, so a team repository cannot be written into it. ' +
+          'Reopen it with "Open folder" in a Chromium browser, or run the companion.',
+      );
+    }
+    const { team, writes } = await this.#call('team.create', {
+      vaultId: repoId,
+      key: input.key,
+      ...(input.root === undefined ? {} : { root: input.root }),
+      ...(input.name === undefined ? {} : { name: input.name }),
+      ...(input.description === undefined ? {} : { description: input.description }),
+      ...(input.timezone === undefined ? {} : { timezone: input.timezone }),
+      ...(input.knowledgePath === undefined ? {} : { knowledgePath: input.knowledgePath }),
+      ...(input.members === undefined ? {} : { members: input.members }),
+    });
+    await this.#persist(mount, writes);
+    await this.#touchRecord(mount);
+
+    this.#emit({ kind: 'repo', repoId });
+    return team;
   }
 
   async unmountRepo(repoId: string): Promise<void> {
@@ -581,10 +624,10 @@ export class BrowserProvider implements DataProvider {
    * The boards of the team repository. Without one open there is nothing to
    * list, which is a state rather than an error.
    */
-  async listBoards(): Promise<BoardSummary[]> {
+  async listBoards(team?: string): Promise<BoardSummary[]> {
     await this.#ensureActive();
     try {
-      const result = await this.#call('board.list', undefined);
+      const result = await this.#call('board.list', teamScope(team));
       return result.boards;
     } catch (error) {
       if (error instanceof ProviderError && error.code === 'not_found') return [];
@@ -592,9 +635,9 @@ export class BrowserProvider implements DataProvider {
     }
   }
 
-  async getBoard(slug: string): Promise<BoardView> {
+  async getBoard(slug: string, team?: string): Promise<BoardView> {
     await this.#ensureActive();
-    return this.#call('board.get', { board: slug });
+    return this.#call('board.get', { board: slug, ...teamScope(team) });
   }
 
   /**
@@ -604,6 +647,7 @@ export class BrowserProvider implements DataProvider {
   async moveCard(move: CardMove): Promise<BoardMoveResult> {
     await this.#ensureWritable();
     const result = await this.#call('board.move', {
+      ...teamScope(move.team),
       board: move.board,
       ref: move.ref,
       toColumn: move.toColumn,
@@ -625,12 +669,18 @@ export class BrowserProvider implements DataProvider {
    * Edits the board file of the team repository and nothing else: one write,
    * persisted through the team repository's directory handle.
    */
-  async updateBoard(slug: string, patch: BoardPatch, rev?: string): Promise<BoardView> {
+  async updateBoard(
+    slug: string,
+    patch: BoardPatch,
+    rev?: string,
+    team?: string,
+  ): Promise<BoardView> {
     await this.#ensureWritable();
     const result = await this.#call('board.update', {
       board: slug,
       patch,
       ...(rev === undefined ? {} : { rev }),
+      ...teamScope(team),
     });
     await this.#persistSets(result.writes);
     return result.board;
@@ -641,19 +691,20 @@ export class BrowserProvider implements DataProvider {
    * is one new file, and the cards it will show are the ones its scope and its
    * filters select.
    */
-  async createBoard(draft: BoardDraft): Promise<BoardView> {
+  async createBoard(draft: BoardDraft, team?: string): Promise<BoardView> {
     await this.#ensureWritable();
-    const result = await this.#call('board.create', draft);
+    const result = await this.#call('board.create', { ...draft, ...teamScope(team) });
     await this.#persistSets(result.writes);
     return result.board;
   }
 
   /** Deletes a board file, and nothing else: no item is touched. */
-  async deleteBoard(slug: string, rev?: string): Promise<void> {
+  async deleteBoard(slug: string, rev?: string, team?: string): Promise<void> {
     await this.#ensureWritable();
     const result = await this.#call('board.delete', {
       board: slug,
       ...(rev === undefined ? {} : { rev }),
+      ...teamScope(team),
     });
     await this.#persistSets(result.writes);
   }
@@ -664,12 +715,13 @@ export class BrowserProvider implements DataProvider {
    * The sprints of the team repository. Without one open there is nothing to
    * list, which is a state rather than an error.
    */
-  async listSprints(filter: SprintFilter = {}): Promise<SprintSummary[]> {
+  async listSprints(filter: SprintFilter = {}, team?: string): Promise<SprintSummary[]> {
     await this.#ensureActive();
     try {
       const result = await this.#call('sprint.list', {
         ...(filter.board === undefined ? {} : { board: filter.board }),
         ...(filter.state === undefined ? {} : { state: filter.state }),
+        ...teamScope(team),
       });
       return result.sprints;
     } catch (error) {
@@ -678,46 +730,70 @@ export class BrowserProvider implements DataProvider {
     }
   }
 
-  async getSprint(id: string): Promise<SprintView> {
+  async getSprint(id: string, team?: string): Promise<SprintView> {
     await this.#ensureActive();
-    return this.#call('sprint.get', { id });
+    return this.#call('sprint.get', { id, ...teamScope(team) });
   }
 
-  async getSprintMetrics(id: string): Promise<SprintMetricsView> {
+  async getSprintMetrics(id: string, team?: string): Promise<SprintMetricsView> {
     await this.#ensureActive();
-    return this.#call('sprint.metrics', { id });
+    return this.#call('sprint.metrics', { id, ...teamScope(team) });
   }
 
-  async createSprint(input: SprintDraft): Promise<SprintResult> {
-    await this.#ensureWritable();
-    return this.#persistSprint(await this.#call('sprint.create', input));
-  }
-
-  async updateSprint(id: string, patch: SprintPatch, rev?: string): Promise<SprintResult> {
+  async createSprint(input: SprintDraft, team?: string): Promise<SprintResult> {
     await this.#ensureWritable();
     return this.#persistSprint(
-      await this.#call('sprint.update', { id, patch, ...(rev === undefined ? {} : { rev }) }),
+      await this.#call('sprint.create', { ...input, ...teamScope(team) }),
     );
   }
 
-  async startSprint(id: string, rev?: string, force?: boolean): Promise<SprintResult> {
+  async updateSprint(
+    id: string,
+    patch: SprintPatch,
+    rev?: string,
+    team?: string,
+  ): Promise<SprintResult> {
+    await this.#ensureWritable();
+    return this.#persistSprint(
+      await this.#call('sprint.update', {
+        id,
+        patch,
+        ...(rev === undefined ? {} : { rev }),
+        ...teamScope(team),
+      }),
+    );
+  }
+
+  async startSprint(
+    id: string,
+    rev?: string,
+    force?: boolean,
+    team?: string,
+  ): Promise<SprintResult> {
     await this.#ensureWritable();
     return this.#persistSprint(
       await this.#call('sprint.start', {
         id,
         ...(rev === undefined ? {} : { rev }),
         ...(force === undefined ? {} : { force }),
+        ...teamScope(team),
       }),
     );
   }
 
-  async closeSprint(id: string, carry?: SprintCarry[], rev?: string): Promise<SprintResult> {
+  async closeSprint(
+    id: string,
+    carry?: SprintCarry[],
+    rev?: string,
+    team?: string,
+  ): Promise<SprintResult> {
     await this.#ensureWritable();
     return this.#persistSprint(
       await this.#call('sprint.close', {
         id,
         ...(carry === undefined ? {} : { carry }),
         ...(rev === undefined ? {} : { rev }),
+        ...teamScope(team),
       }),
     );
   }
@@ -728,13 +804,14 @@ export class BrowserProvider implements DataProvider {
    * The retros of the team repository. Without one open there is nothing to
    * list, which is a state rather than an error.
    */
-  async listRetros(filter: RetroFilter = {}): Promise<RetroListing> {
+  async listRetros(filter: RetroFilter = {}, team?: string): Promise<RetroListing> {
     await this.#ensureActive();
     try {
       return await this.#call('retro.list', {
         ...(filter.sprint === undefined ? {} : { sprint: filter.sprint }),
         ...(filter.board === undefined ? {} : { board: filter.board }),
         ...(filter.state === undefined ? {} : { state: filter.state }),
+        ...teamScope(team),
       });
     } catch (error) {
       if (error instanceof ProviderError && error.code === 'not_found') {
@@ -744,27 +821,38 @@ export class BrowserProvider implements DataProvider {
     }
   }
 
-  async getRetro(id: string): Promise<RetroView> {
+  async getRetro(id: string, team?: string): Promise<RetroView> {
     await this.#ensureActive();
-    return this.#call('retro.get', { id });
+    return this.#call('retro.get', { id, ...teamScope(team) });
   }
 
-  async createRetro(input: RetroDraft): Promise<RetroResult> {
+  async createRetro(input: RetroDraft, team?: string): Promise<RetroResult> {
     await this.#ensureWritable();
-    return this.#persistRetro(await this.#call('retro.create', input));
+    return this.#persistRetro(await this.#call('retro.create', { ...input, ...teamScope(team) }));
   }
 
-  async updateRetro(id: string, patch: RetroPatch, rev?: string): Promise<RetroResult> {
+  async updateRetro(
+    id: string,
+    patch: RetroPatch,
+    rev?: string,
+    team?: string,
+  ): Promise<RetroResult> {
     await this.#ensureWritable();
     return this.#persistRetro(
-      await this.#call('retro.update', { id, patch, ...(rev === undefined ? {} : { rev }) }),
+      await this.#call('retro.update', {
+        id,
+        patch,
+        ...(rev === undefined ? {} : { rev }),
+        ...teamScope(team),
+      }),
     );
   }
 
-  async promoteRetroAction(input: RetroPromotion): Promise<RetroResult> {
+  async promoteRetroAction(input: RetroPromotion, team?: string): Promise<RetroResult> {
     await this.#ensureWritable();
     return this.#persistRetro(
       await this.#call('retro.promote', {
+        ...teamScope(team),
         id: input.retro,
         action: input.action,
         project: input.project,

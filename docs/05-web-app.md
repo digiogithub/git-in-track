@@ -176,13 +176,12 @@ a workspace the same title can exist in two repositories. Below the repos: "Rece
 index, `updated desc`, limit 20), "Assigned to me" (matching `team.yaml` identity
 or the configured git author email), and a sync health strip.
 
-**AddRepositoryWizard (`/onboarding`)** — Four steps.
-1. *Kind*: project repository or team repository.
-2. *Location*: in browser-only mode, "Choose folder" invokes
+**AddRepositoryWizard (`/repos/add`)** — Three steps.
+1. *Location*: in browser-only mode, "Choose folder" invokes
    `showDirectoryPicker()`; in companion mode, a path input with server-side
    autocompletion plus a "clone from URL" option. Firefox/Safari get the
    `webkitdirectory` read-only fallback with an explicit banner.
-3. *Detection*: the provider scans for `.git` and for `project.yaml`/`team.yaml`
+2. *Role and detection*: the provider scans for `.git` and for `project.yaml`/`team.yaml`
    (`fs/detect-project.ts`, four levels down) and lists every documentation folder
    it found, `docs/` first. Detection is deliberately deeper than discovery, which
    reaches the repository root and its first-level directories only (doc 03 §2.1,
@@ -199,7 +198,25 @@ or the configured git author email), and a sync health strip.
    `<docsFolder>/.pmngr/project.yaml` and the layout of doc 03 §2.2 through the
    shared core. *Mount it anyway* stays available as an explicit choice, for
    someone who wants to browse the Markdown without starting a backlog.
-4. *Confirm*: shows what will be written, then runs the initial index with a
+
+   **The role is a deliberate choice, not an assumption** (story GIT-US-0035).
+   `fs/detect-team.ts` looks for a `team.yaml` at the folder root — the discovery
+   marker of doc 04 R-TEAM-LOC-1 — and reads its key and name; the radio group
+   starts on the role the markers imply and the user can say otherwise. Choosing
+   *team repository* mounts with `kind: 'team'`, which is what makes the
+   workspace read boards, sprints and retrospectives out of the folder. When the
+   folder holds no `team.yaml`, the wizard offers to create one
+   (`features/workspace/CreateTeamForm.tsx`, story GIT-US-0034) instead of a dead
+   end: it asks for the team key, validated against `[A-Z][A-Z0-9-]{1,15}`, the
+   name and an optional description, then mounts the folder and calls
+   `provider.createTeam()`.
+
+   **In companion mode the wizard cannot register anything**, and says so with the
+   exact `gintrack add` command to run: the workspace is the configuration file
+   the companion read at startup, and only the CLI writes that file. `POST
+   /api/v1/repos` answers 501 carrying that same command
+   ([ADR-020](./adr/ADR-020-creating-a-team-repository.md)).
+3. *Confirm*: shows what will be written, then runs the initial index with a
    progress bar (files scanned / items found / errors).
 
 **KbViewer (`/p/$projectKey/kb/*`)** — Two panes. The team knowledge base uses the
@@ -396,18 +413,23 @@ export interface DataProvider {
   addComment(ref: ItemRef, body: string): Promise<Comment>;
   writeKbPage(scope: KbScope, path: string, content: string, rev?: string): Promise<KbPage>;
 
+  // teams (docs/04 §3, GIT-US-0036)
+  listTeams(): Promise<TeamSummary[]>;
+  // `team` is the key of a team.yaml or the id of the repository holding it.
+  // It may be omitted while the workspace holds a single team.
+  getTeam(team?: string): Promise<TeamSummary | null>;
+
   // boards (implemented) / sprints / retros
-  // A workspace holds at most one team repository, so no teamId is needed.
-  listBoards(): Promise<BoardSummary[]>;
-  getBoard(slug: string): Promise<BoardView>;
+  // Every team-scoped call takes the active team; see ADR-019.
+  listBoards(team?: string): Promise<BoardSummary[]>;
+  getBoard(slug: string, team?: string): Promise<BoardView>;
   // CardMove carries `board`, `ref`, `toColumn`, `position` and the two
   // revisions (`rev` for the board, `itemRev` for the item), plus `force`.
   moveCard(move: CardMove): Promise<BoardMoveResult>;
   getSprint(teamId: string, id: string): Promise<Sprint>;
   updateSprint(teamId: string, id: string, patch: SprintPatch, rev: string): Promise<Sprint>;
-  // A workspace holds at most one team repository here too, so no teamId.
-  listRetros(filter?: RetroFilter): Promise<RetroListing>;
-  getRetro(id: string): Promise<RetroView>;
+  listRetros(filter?: RetroFilter, team?: string): Promise<RetroListing>;
+  getRetro(id: string, team?: string): Promise<RetroView>;
   createRetro(input: RetroDraft): Promise<RetroResult>;
   updateRetro(id: string, patch: RetroPatch, rev?: string): Promise<RetroResult>;
   // Creates the task in the named project and writes the ref back into the retro.
@@ -975,7 +997,12 @@ Code: `features/boards/` — `BoardList`, `BoardView` (the route plus the
 one; both render the same `BoardFormFields`, and `features/boards/board-form.ts`
 translates that form into the `board.create` draft and the `board.update` patch.
 A read-only workspace, and a workspace with no team repository open, disable the
-controls rather than hiding them.
+controls rather than hiding them — **and say why** (story GIT-US-0035): the
+disabled control carries the reason, and the board empty state offers a link into
+the add-repository wizard instead of asking the user to "mount a team repository"
+by some means the UI does not have. `RetroList` does the same: "Start a retro" is
+disabled with the same reason rather than being enabled and failing with a raw
+`not_found` from the workspace.
 
 - **Creating** asks for the name, the kind, the projects in scope, the filters
   and the columns. The core turns the name into the slug, refuses a slug that is
@@ -1223,5 +1250,14 @@ the set.
 3. Whether the read-only fallback should attempt an OPFS copy of the selected
    folder to enable local-only editing without the File System Access API
    (writes would then need an explicit "export changes" step).
-4. Multi-team workspaces: the router already namespaces by `teamId`, but the
-   settings UI currently assumes one team. Revisit in Phase 3.
+4. ~~Multi-team workspaces: the router already namespaces by `teamId`, but the
+   settings UI currently assumes one team. Revisit in Phase 3.~~ **Answered by
+   GIT-US-0036 (ADR-019).** A workspace holds as many team repositories as the
+   user mounts. One of them is *active*: chosen in the team selector, remembered
+   in `localStorage` per workspace (`gintrack:active-team:<companion URL or
+   `browser`>`), and passed as `team` on every call that reads or writes a
+   board, a sprint, a retro or a team knowledge base. The choice is client
+   state; neither host holds one, so the companion and browser-only mode behave
+   identically. The team is **not** in the URL yet: a shared `/boards/<slug>`
+   link resolves against the active team of whoever opens it, and moving it into
+   the route is the open question that replaces this one.

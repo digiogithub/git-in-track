@@ -10,6 +10,8 @@ import { useToast } from '@/components/ui/toast';
 import { useSprints } from '@/features/boards/sprint-queries';
 import { OpenActionList } from '@/features/retros/OpenActionList';
 import { useCreateRetro, useRetros } from '@/features/retros/retro-queries';
+import { useActiveTeam } from '@/features/workspace/active-team';
+import { TeamSelector } from '@/features/workspace/TeamSelector';
 
 /**
  * Retro index (docs/05-web-app.md §4, docs/04-team-repository.md §9).
@@ -23,8 +25,20 @@ export function RetroList() {
   const retros = useRetros();
   const sprints = useSprints();
   const create = useCreateRetro();
+  const team = useActiveTeam();
   const { toast } = useToast();
   const [title, setTitle] = useState('');
+
+  /**
+   * Why a retro cannot be started, or null when it can. Retros live in a team
+   * repository: with none open the call used to fail with a raw `not_found`
+   * from the workspace, so the buttons are disabled with the reason instead
+   * (story GIT-US-0035).
+   */
+  const blocked =
+    team.isPending ? 'Loading the team repositories…'
+    : team.team === undefined ? 'Retros live in a team repository, and none is open.'
+    : null;
 
   const listing = retros.data;
   const covered = new Set((listing?.retros ?? []).map((retro) => retro.sprint).filter(Boolean));
@@ -53,7 +67,10 @@ export function RetroList() {
   return (
     <div className="space-y-6">
       <header className="space-y-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Retrospectives</h1>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h1 className="page-title">Retrospectives</h1>
+          <TeamSelector />
+        </div>
         <p className="text-sm text-muted-foreground">
           Retros live in the team repository, next to the work they are about.
         </p>
@@ -73,10 +90,12 @@ export function RetroList() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
+          {blocked ? <p className="text-sm text-muted-foreground">{blocked}</p> : null}
           <Input
             aria-label="Retro title"
             placeholder="Title (optional)"
             value={title}
+            disabled={blocked !== null}
             onChange={(event) => setTitle(event.target.value)}
           />
           <div className="flex flex-wrap gap-2">
@@ -84,13 +103,20 @@ export function RetroList() {
               <Button
                 key={sprint.id}
                 size="sm"
-                disabled={create.isPending}
+                disabled={create.isPending || blocked !== null}
+                title={blocked ?? undefined}
                 onClick={() => start(sprint.id)}
               >
                 Retro for {sprint.title}
               </Button>
             ))}
-            <Button size="sm" variant="outline" disabled={create.isPending} onClick={() => start()}>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={create.isPending || blocked !== null}
+              title={blocked ?? undefined}
+              onClick={() => start()}
+            >
               Retro without a sprint
             </Button>
           </div>
@@ -102,11 +128,24 @@ export function RetroList() {
       {!retros.isPending && (listing?.retros ?? []).length === 0 ? (
         <Card>
           <CardHeader>
-            <CardTitle>No retro yet</CardTitle>
+            <CardTitle>{team.team ? 'No retro yet' : 'No team repository is open'}</CardTitle>
+            <CardDescription>
+              {team.team
+                ? 'Start one above; a retro for a closed sprint inherits its board and participants.'
+                : 'Retrospectives live in a team repository — a folder holding a team.yaml.'}
+            </CardDescription>
           </CardHeader>
-          <CardContent className="text-sm text-muted-foreground">
-            Mount a team repository with <code>.pmngr/retros/</code>, or start one above.
-          </CardContent>
+          {team.team ? null : (
+            <CardContent className="space-y-3 text-sm text-muted-foreground">
+              <p>Add one from a folder on this device, or create one where there is none yet.</p>
+              <Link
+                to="/repos/add"
+                className="inline-flex items-center gap-1 rounded-full border border-border px-3 py-1 text-xs hover:bg-secondary"
+              >
+                Add or create a team repository
+              </Link>
+            </CardContent>
+          )}
         </Card>
       ) : null}
 

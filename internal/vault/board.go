@@ -52,6 +52,8 @@ type BoardListResult struct {
 
 // BoardMoveParams is the input of "board.move".
 type BoardMoveParams struct {
+	// TeamScope names the team repository this call acts on.
+	TeamScope
 	Board string `json:"board"`
 	Ref   string `json:"ref"`
 	// ToColumn is the target column id.
@@ -114,6 +116,8 @@ type BoardMoveResult struct {
 
 // BoardParams is the input of "board.get".
 type BoardParams struct {
+	// TeamScope names the team repository this call acts on.
+	TeamScope
 	Board string `json:"board"`
 }
 
@@ -369,20 +373,21 @@ type boardContext struct {
 	now time.Time
 }
 
-// boardContext gathers the repositories a board is rendered over.
-func (w *Workspace) boardContext() (boardContext, error) {
-	m, ok := w.TeamMount()
-	if !ok {
-		return boardContext{}, failf("not_found", "no open repository holds a %s", core.TeamFileName)
+// boardContext gathers the repositories a board is rendered over. `team` names
+// the team repository the call acts on, empty when the workspace holds one.
+func (w *Workspace) boardContext(team string) (boardContext, error) {
+	m, err := w.TeamMount(team)
+	if err != nil {
+		return boardContext{}, err
 	}
 	out := boardContext{
 		team:    m,
 		configs: map[core.ProjectKey]*core.ProjectConfig{},
 		owners:  map[core.ProjectKey]*Mount{},
 	}
-	team := m.Vault.Team()
-	if team != nil && team.Config != nil {
-		for _, p := range team.Config.Projects {
+	ref := m.Vault.Team()
+	if ref != nil && ref.Config != nil {
+		for _, p := range ref.Config.Projects {
 			out.declared = append(out.declared, p.Key)
 		}
 	}
@@ -420,9 +425,9 @@ func (c boardContext) input(ctx context.Context) core.BoardInput {
 	return in
 }
 
-// Boards lists every board of the team repository.
-func (w *Workspace) Boards(ctx context.Context) (BoardListResult, error) {
-	c, err := w.boardContext()
+// Boards lists every board of the named team repository.
+func (w *Workspace) Boards(ctx context.Context, team string) (BoardListResult, error) {
+	c, err := w.boardContext(team)
 	if err != nil {
 		return BoardListResult{}, err
 	}
@@ -441,8 +446,8 @@ func (w *Workspace) Boards(ctx context.Context) (BoardListResult, error) {
 }
 
 // BoardView renders one board over every open repository.
-func (w *Workspace) BoardView(ctx context.Context, id string) (core.BoardView, error) {
-	c, err := w.boardContext()
+func (w *Workspace) BoardView(ctx context.Context, team, id string) (core.BoardView, error) {
+	c, err := w.boardContext(team)
 	if err != nil {
 		return core.BoardView{}, err
 	}
@@ -495,7 +500,7 @@ func (w *Workspace) MoveCard(ctx context.Context, p BoardMoveParams) (BoardMoveR
 	if err != nil {
 		return BoardMoveResult{}, failf("invalid_request", "%v", err)
 	}
-	c, err := w.boardContext()
+	c, err := w.boardContext(p.Team)
 	if err != nil {
 		return BoardMoveResult{}, err
 	}
@@ -654,6 +659,8 @@ type BoardPatch struct {
 
 // BoardUpdateParams is the input of "board.update".
 type BoardUpdateParams struct {
+	// TeamScope names the team repository this call acts on.
+	TeamScope
 	Board string     `json:"board"`
 	Rev   string     `json:"rev,omitempty"`
 	Patch BoardPatch `json:"patch"`
@@ -671,7 +678,7 @@ type BoardUpdateResult struct {
 // `backlog_column`, a sprint on a kanban board, a sprint the repository does
 // not hold — so that the UI never has to repair a board it has just broken.
 func (w *Workspace) UpdateBoard(ctx context.Context, p BoardUpdateParams) (BoardUpdateResult, error) {
-	c, err := w.boardContext()
+	c, err := w.boardContext(p.Team)
 	if err != nil {
 		return BoardUpdateResult{}, err
 	}
@@ -758,6 +765,8 @@ const BoardInUseCode = "board_in_use"
 // never seeded here — a board starts with no manual order and acquires one card
 // at a time.
 type BoardCreateParams struct {
+	// TeamScope names the team repository this call acts on.
+	TeamScope
 	ID            string                 `json:"id,omitempty"`
 	Kind          string                 `json:"kind,omitempty"`
 	Title         string                 `json:"title"`
@@ -780,6 +789,8 @@ type BoardCreateResult struct {
 
 // BoardDeleteParams is the input of "board.delete".
 type BoardDeleteParams struct {
+	// TeamScope names the team repository this call acts on.
+	TeamScope
 	Board string `json:"board"`
 	Rev   string `json:"rev,omitempty"`
 }
@@ -841,7 +852,7 @@ func (v *Vault) DeleteBoardFile(ctx context.Context, id string, expected core.Re
 // it shows are the ones its project scope and its filters select
 // (internal/core/boardview.go).
 func (w *Workspace) CreateBoard(ctx context.Context, p BoardCreateParams) (BoardCreateResult, error) {
-	c, err := w.boardContext()
+	c, err := w.boardContext(p.Team)
 	if err != nil {
 		return BoardCreateResult{}, err
 	}
@@ -885,7 +896,7 @@ func (w *Workspace) CreateBoard(ctx context.Context, p BoardCreateParams) (Board
 // A board a sprint of any state points at is refused, because the sprint file
 // would then name a board this repository no longer holds (E-SPRINT-BOARD).
 func (w *Workspace) DeleteBoard(ctx context.Context, p BoardDeleteParams) (BoardDeleteResult, error) {
-	c, err := w.boardContext()
+	c, err := w.boardContext(p.Team)
 	if err != nil {
 		return BoardDeleteResult{}, err
 	}

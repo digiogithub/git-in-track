@@ -12,6 +12,13 @@ const teamFixtureRoot = "../../testdata/fixtures/team-basic"
 // teamRepoID is the id the team fixture is mounted under.
 const teamRepoID = "demo-team"
 
+// secondTeamFixtureRoot is the other team repository of the multi-team tests,
+// and secondTeamRepoID the id it is registered under.
+const (
+	secondTeamFixtureRoot = "../../testdata/fixtures/team-second"
+	secondTeamRepoID      = "platform-team"
+)
+
 // teamBody is the documented shape of GET /api/v1/teams/{key}.
 type teamBody struct {
 	Key           string `json:"key"`
@@ -137,6 +144,122 @@ func TestTeamEndpoints(t *testing.T) {
 			if !names[want] {
 				t.Errorf("the team knowledge base is missing %q; got %v", want, names)
 			}
+		}
+	})
+}
+
+// newTwoTeamServer registers both team fixtures next to the project clone: the
+// workspace GIT-US-0036 made legal, where the client says which team it means.
+func newTwoTeamServer(t *testing.T) *Server {
+	t.Helper()
+
+	s, err := New(Options{
+		Token:     "test-token",
+		Version:   "0.0.1-test",
+		Workspace: "test",
+		Repos: []Repo{
+			{ID: teamRepoID, Path: copyTree(t, teamFixtureRoot), Role: "team", DocsFolder: "knowledge"},
+			{
+				ID: secondTeamRepoID, Path: copyTree(t, secondTeamFixtureRoot),
+				Role: "team", DocsFolder: "knowledge",
+			},
+			{ID: testRepoID, Path: copyTree(t, fixtureRoot), Role: "project", DocsFolder: "docs"},
+		},
+		Now: func() time.Time { return time.Date(2026, 9, 4, 10, 0, 0, 0, time.UTC) },
+	})
+	if err != nil {
+		t.Fatalf("New(): %v", err)
+	}
+	return s
+}
+
+func TestTeamEndpointsWithSeveralTeams(t *testing.T) {
+	s := newTwoTeamServer(t)
+
+	t.Run("the list carries every mounted team", func(t *testing.T) {
+		var body struct {
+			Teams []teamBody `json:"teams"`
+			Total int        `json:"total"`
+		}
+		decode(t, send(t, s, request{method: http.MethodGet, target: "/api/v1/teams"}), http.StatusOK, &body)
+		if body.Total != 2 || len(body.Teams) != 2 {
+			t.Fatalf("teams = %d, want 2", body.Total)
+		}
+		if body.Teams[0].Key != "DEMO-TEAM" || body.Teams[1].Key != "PLATFORM-TEAM" {
+			t.Errorf("keys = %q, %q", body.Teams[0].Key, body.Teams[1].Key)
+		}
+	})
+
+	t.Run("the key in the path picks the team", func(t *testing.T) {
+		for _, tc := range []struct{ target, want string }{
+			{target: "/api/v1/teams/DEMO-TEAM", want: "Demo Delivery Team"},
+			{target: "/api/v1/teams/PLATFORM-TEAM", want: "Platform Team"},
+			{target: "/api/v1/teams/" + secondTeamRepoID, want: "Platform Team"},
+		} {
+			t.Run(tc.target, func(t *testing.T) {
+				var team teamBody
+				decode(t, send(t, s, request{method: http.MethodGet, target: tc.target}), http.StatusOK, &team)
+				if team.Name != tc.want {
+					t.Errorf("name = %q, want %q", team.Name, tc.want)
+				}
+			})
+		}
+	})
+
+	t.Run("team-scoped routes take the team they act on", func(t *testing.T) {
+		for _, tc := range []struct {
+			name   string
+			target string
+			want   string
+			count  int
+		}{
+			{name: "delivery", target: "/api/v1/boards?team=DEMO-TEAM", want: "delivery", count: 2},
+			{name: "platform", target: "/api/v1/boards?team=PLATFORM-TEAM", want: "platform", count: 1},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				var body struct {
+					Boards []struct {
+						ID string `json:"id"`
+					} `json:"boards"`
+				}
+				decode(t, send(t, s, request{method: http.MethodGet, target: tc.target}), http.StatusOK, &body)
+				if len(body.Boards) != tc.count {
+					t.Fatalf("boards = %d, want %d", len(body.Boards), tc.count)
+				}
+				if body.Boards[0].ID != tc.want {
+					t.Errorf("first board = %q, want %q", body.Boards[0].ID, tc.want)
+				}
+			})
+		}
+	})
+
+	t.Run("naming no team is refused rather than guessed", func(t *testing.T) {
+		rec := send(t, s, request{method: http.MethodGet, target: "/api/v1/boards"})
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400", rec.Code)
+		}
+	})
+
+	t.Run("each team knowledge base is reachable by its own key", func(t *testing.T) {
+		for _, tc := range []struct{ target, want string }{
+			{target: "/api/v1/teams/DEMO-TEAM/kb/tree", want: "ways-of-working"},
+			{target: "/api/v1/teams/PLATFORM-TEAM/kb/tree", want: "index.md"},
+		} {
+			t.Run(tc.target, func(t *testing.T) {
+				var tree []struct {
+					Name string `json:"name"`
+				}
+				decode(t, send(t, s, request{method: http.MethodGet, target: tc.target}), http.StatusOK, &tree)
+				found := false
+				for _, n := range tree {
+					if n.Name == tc.want {
+						found = true
+					}
+				}
+				if !found {
+					t.Errorf("the tree of %s is missing %q: %+v", tc.target, tc.want, tree)
+				}
+			})
 		}
 	})
 }

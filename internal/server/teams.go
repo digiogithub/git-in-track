@@ -9,36 +9,48 @@ import (
 	"github.com/digiogithub/git-in-track/internal/core"
 )
 
-// handleTeams serves GET /api/v1/teams. A workspace holds at most one team
-// repository, so the list has zero or one entry; it is a list anyway because
-// the client must be able to tell "no team repository is open" from an error.
+// handleTeams serves GET /api/v1/teams: every mounted repository holding a
+// team.yaml, in mount order. A workspace may hold several since GIT-US-0036,
+// and the list is returned even when it is empty, because the client must be
+// able to tell "no team repository is open" from an error.
 func (s *Server) handleTeams(w http.ResponseWriter, r *http.Request) {
-	teams := []any{}
-	if summary, err := s.repos.workspace().Dispatch(r.Context(), "team.get", nil); err == nil {
-		teams = append(teams, summary)
+	result, err := s.repos.workspace().Dispatch(r.Context(), "team.list", nil)
+	if err != nil {
+		writeVaultError(w, r, err)
+		return
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{"teams": teams, "total": len(teams)})
+	writeJSON(w, r, http.StatusOK, result)
 }
 
-// handleTeam serves GET /api/v1/teams/{key}.
+// handleTeam serves GET /api/v1/teams/{key}, where {key} is the `key:` of a
+// team.yaml or the id of the repository holding it. It resolves that key
+// against every mounted team rather than against the first one.
 func (s *Server) handleTeam(w http.ResponseWriter, r *http.Request) {
 	key := chi.URLParam(r, "key")
-	m, ok := s.repos.workspace().TeamMount()
-	if !ok {
-		failProblem(w, r, codeNotFound, "No mounted repository holds a "+core.TeamFileName+".")
-		return
-	}
-	team := m.Vault.Team()
-	if team == nil || (key != "" && key != string(team.Key) && key != m.ID) {
-		failProblem(w, r, codeNotFound, "No mounted team repository is called "+key+".")
-		return
-	}
-	summary, err := s.repos.workspace().Dispatch(r.Context(), "team.get", nil)
+	summary, err := s.repos.workspace().Dispatch(r.Context(), "team.get",
+		mustJSON(map[string]string{"team": key}))
 	if err != nil {
 		writeVaultError(w, r, err)
 		return
 	}
 	writeJSON(w, r, http.StatusOK, summary)
+}
+
+// teamOf reads the team a request acts on from `?team=`. Every team-scoped
+// route accepts it, and it takes either the `key:` of a team.yaml or the id of
+// the repository holding it. It is optional while the workspace holds a single
+// team, and required as soon as it holds two (docs/07 section 5.5).
+func teamOf(r *http.Request) string {
+	return r.URL.Query().Get("team")
+}
+
+// teamFallback lets a request body name the team instead of the query string,
+// which is what a POST whose params struct already carries the scope does.
+func teamFallback(r *http.Request, body string) string {
+	if body != "" {
+		return body
+	}
+	return teamOf(r)
 }
 
 // handleResolveRef serves GET /api/v1/refs?ref=<KEY>/<ITEM-ID>: where a
@@ -85,7 +97,8 @@ func (s *Server) handleWorkspaceTree(w http.ResponseWriter, r *http.Request) {
 // handleSnapshotList serves GET /api/v1/snapshots: the committed index snapshot
 // of every project team.yaml declares, with its age and its staleness.
 func (s *Server) handleSnapshotList(w http.ResponseWriter, r *http.Request) {
-	result, err := s.repos.workspace().Dispatch(r.Context(), "snapshot.list", nil)
+	result, err := s.repos.workspace().Dispatch(r.Context(), "snapshot.list",
+		mustJSON(map[string]string{"team": teamOf(r)}))
 	if err != nil {
 		writeVaultError(w, r, err)
 		return
@@ -102,10 +115,12 @@ func (s *Server) handleSnapshotRefresh(w http.ResponseWriter, r *http.Request) {
 		GeneratedBy   string   `json:"generatedBy,omitempty"`
 		IncludeClosed *bool    `json:"includeClosed,omitempty"`
 		DryRun        bool     `json:"dryRun,omitempty"`
+		Team          string   `json:"team,omitempty"`
 	}
 	if r.ContentLength > 0 && !decodeBody(w, r, &body) {
 		return
 	}
+	body.Team = teamFallback(r, body.Team)
 	result, err := s.repos.workspace().Dispatch(r.Context(), "snapshot.refresh", mustJSON(body))
 	if err != nil {
 		writeVaultError(w, r, err)

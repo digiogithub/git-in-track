@@ -12,7 +12,19 @@ because a commit list cannot express them.
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- A workspace can hold several team repositories, and the web app chooses which one is
+  active. The choice is remembered per workspace and sent on every call that reads a
+  board, a sprint, a retro or a team knowledge base, so the companion and browser-only
+  mode behave identically (`GIT-US-0036`, ADR-019, docs/04 §3.8).
+- `GET /api/v1/teams` lists every mounted team, `GET /api/v1/teams/{key}` resolves the key
+  it is given, and every team-scoped route accepts `?team=`.
+
+### Changed
+
+- A second team repository is no longer reported as an error and ignored. What is reported
+  now is two mounted repositories declaring the same team `key:`.
 
 ## [1.0.0] — unreleased, prepared
 

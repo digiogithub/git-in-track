@@ -11,18 +11,20 @@ import { useQuery } from '@tanstack/react-query';
 
 import type { SprintMetricsView } from '@/api/provider';
 import { useProvider } from '@/api/provider-context';
+import { useActiveTeamKey } from '@/features/workspace/active-team';
 
 /** Key factory. Every metrics key lives under the `metrics` prefix. */
 export const metricsKeys = {
   all: () => ['metrics'] as const,
-  sprint: (id: string) => ['metrics', 'sprint', id] as const,
+  sprint: (id: string, team = '') => ['metrics', 'sprint', id, team] as const,
 };
 
 export function useSprintMetrics(id: string | undefined) {
   const provider = useProvider();
+  const team = useActiveTeamKey();
   return useQuery<SprintMetricsView>({
-    queryKey: metricsKeys.sprint(id ?? ''),
-    queryFn: () => provider.getSprintMetrics(id ?? ''),
+    queryKey: metricsKeys.sprint(id ?? '', team),
+    queryFn: () => provider.getSprintMetrics(id ?? '', team),
     enabled: Boolean(id),
   });
 }

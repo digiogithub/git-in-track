@@ -316,12 +316,22 @@ projects:
 | `E-TEAM-KEY-DUP` | E | Duplicate project `key`. |
 | `E-TEAM-HANDLE-DUP` | E | Duplicate member `handle`. |
 | `E-TEAM-EMAIL-DUP` | E | An email appears under two members. |
-| `E-TEAM-MEMBER-FIELDS` | E | A member entry has a malformed `handle`, or no member is declared. |
-| `E-TEAM-PROJECT-FIELDS` | E | A project entry lacks `key`, `name`, `repo`, or `docs_path`, or none is declared. |
+| `E-TEAM-MEMBER-FIELDS` | E | A member entry has a malformed `handle`. |
+| `E-TEAM-MEMBER-FIELDS` | **W** | No member is declared: assignee pickers and capacity hints stay empty. |
+| `E-TEAM-PROJECT-FIELDS` | E | A project entry lacks `key`, `name`, `repo`, or `docs_path`. |
+| `E-TEAM-PROJECT-FIELDS` | **W** | No project is declared: boards have nothing to pull cards from. |
 | `E-TEAM-BACKLOG-IN-TEAM-REPO` | E | `.pmngr/{epics,stories,tasks,milestones,comments}` exists in the team repo. |
 | `W-TEAM-KEY-MISMATCH` | W | Cloned project's `project.yaml:key` ≠ the declared `key`. |
 | `W-TEAM-WEB-URL` | W | `web_url` absent and not inferable (blob links disabled for that project). |
 | `W-TEAM-HINT-DEAD` | W | No `local_hints` path exists on this machine (informational). |
+
+**An empty `members:` or `projects:` is a warning, not an error.** The product writes
+`team.yaml` itself now ([§3.7](#37-creating-a-team-repository-implemented-git-us-0034)), and
+it writes it before anybody has been listed on the team and before any project has been
+connected — connecting one is a later, deliberate act. Refusing to load the file the tool had
+just written would have been a lie, so those two "none is declared" cases were downgraded to
+warnings; a *malformed* entry stays an error. See
+[ADR-020](./adr/ADR-020-creating-a-team-repository.md).
 
 ### 3.6 Loading a team repository — the workspace (implemented, GIT-US-0016)
 
@@ -329,8 +339,9 @@ projects:
 by an adapter, so the companion process and the WebAssembly build validate it identically.
 
 A **workspace** (`internal/vault`, type `Workspace`) is several repositories open at once: the
-project clones the user has, plus at most one team repository. It is what makes the cross-repository
-half of this document possible without a second implementation of anything:
+project clones the user has, plus **any number of team repositories** — a person on two squads
+mounts both (GIT-US-0036). It is what makes the cross-repository half of this document possible
+without a second implementation of anything:
 
 | Concern | Where it is answered |
 |---|---|
@@ -338,7 +349,8 @@ half of this document possible without a second implementation of anything:
 | Which repository answers a call | `Workspace.route`, by explicit `vaultId`, then `project`, then the project key embedded in an item `id`, then the project half of a `ref` |
 | `ref: <KEY>/<ITEM-ID>` resolution | `Workspace.ResolveRef` — see below |
 | Search over everything that is open | `Workspace.Search`, merging the per-repository rankings |
-| The team surface of §3 | `Workspace.Team` |
+| The team surface of §3 | `Workspace.Team(key)`, and `Workspace.Teams()` for every open team |
+| Which team a board, sprint, retro or team knowledge base belongs to | the `team` field of the call — see §3.7 |
 
 The hosts differ only in how repositories get in: the browser worker calls `workspace.mount` and
 pushes each folder's files with `vault.load` (both carry a `vaultId`); the companion attaches the
@@ -371,6 +383,72 @@ GIT-US-0019; this build recognises and marks the project, and offers its `repo` 
 
 The fixture `testdata/fixtures/team-basic` is the end-to-end case: a team repository declaring
 `DEMO` (opened next to it from `testdata/fixtures/project-basic`) and `WEB` (never cloned).
+
+### 3.7 Creating a team repository (implemented, GIT-US-0034)
+
+Everything above describes a file somebody wrote. The product writes it too:
+`core.CreateTeam` in the shared core is the single scaffolder, reached from every surface —
+the CLI (`gintrack init --team`, `gintrack add --team --key`), the vault contract
+(`team.create`), the REST API (`POST /api/v1/repos/{id}/team`) and the add-repository wizard
+of the web app. It uses `core.FS` only, so the browser writes byte-identical files to the ones
+the companion writes.
+
+What it writes, and nothing else:
+
+```
+<root>/
+  team.yaml                # schema 1, key, name, the documented defaults,
+                           # members: [] and projects: []
+  .pmngr/boards/           # empty; the first board is created from the UI or by hand
+  .pmngr/sprints/
+  .pmngr/retros/
+  .pmngr/index/            # committed snapshots (R-TEAM-LOC-3)
+  knowledge/index.md       # a landing page naming the conventions of section 4
+```
+
+- **R-TEAM-NEW-1** The team key MUST match `[A-Z][A-Z0-9-]{1,15}`; a malformed key is refused
+  before anything is written.
+- **R-TEAM-NEW-2** A folder that already holds a `team.yaml` is refused (`ErrTeamExists`,
+  `team_exists`, HTTP 409). The file is the routing table of the workspace: overwriting it
+  would drop the project list.
+- **R-TEAM-NEW-3** No project is invented. A team repository that lists a project nobody can
+  reach is worse than one that lists none, and the project list is what decides whether a card
+  renders live or from a snapshot ([ADR-007](./adr/ADR-007-team-repo-references.md)).
+- **R-TEAM-NEW-4** `team.yaml` is emitted by `core.MarshalTeamConfig`, the only emitter, so
+  the round trip `LoadTeamConfig` → `MarshalTeamConfig` is byte-stable and a file the tool
+  wrote diffs against a hand-written one as one block.
+- **R-TEAM-NEW-5** No commit is made. The new files are left for the user or for
+  `gintrack sync`.
+
+Registering the folder is a separate act, and in companion mode it stays with the CLI: see
+[doc 07 §5.5](./07-cli-and-api.md) and [ADR-020](./adr/ADR-020-creating-a-team-repository.md).
+
+### 3.8 Several teams, and the active one (implemented, GIT-US-0036)
+
+A workspace may hold more than one team repository. A second one used to register and then be
+ignored, with an error-severity diagnostic saying so; it is now a first-class member of the
+workspace, and holding several is not a finding. What *is* a finding — at error severity,
+`E-TEAM-KEY` — is two mounted repositories declaring the **same** `key:`, because a request
+naming that key could then be answered by either one.
+
+Boards (§5), sprints (§8), retrospectives (§9) and the team knowledge base (§4) all live in a
+team repository, so every call that reaches one says which team it means:
+
+| Rule | Behavior |
+|---|---|
+| **R-TEAM-ACT-1** | Every team-scoped call takes a `team`: the `key:` of a `team.yaml`, or the id of the repository holding it. Over HTTP it is `?team=` or the `team` field of the body. |
+| **R-TEAM-ACT-2** | An **omitted** `team` selects the only open team. A workspace holding one team therefore behaves exactly as it did before this rule existed, and so do the CLI and the MCP server. |
+| **R-TEAM-ACT-3** | An omitted `team` while **two or more** teams are open is refused with `invalid_request`, naming the field to set. A call is never answered by an arbitrary team. |
+| **R-TEAM-ACT-4** | An unknown `team` is `not_found`. |
+| **R-TEAM-ACT-5** | No host holds an "active team". The choice is client state, remembered by the web app per workspace and sent on every call, so the companion and browser-only mode behave identically ([ADR-019](./adr/ADR-019-active-team-is-client-state-threaded-per-call.md)). |
+
+`Workspace.TeamMounts()` is every team in mount order, `Workspace.Teams()` renders them all, and
+`Workspace.TeamMount(key)` applies R-TEAM-ACT-1 to R-TEAM-ACT-4 in one place — `boardContext`, and
+through it the sprint and retro contexts, is its only caller inside the vault.
+
+Reference resolution (§3.6) is not team-scoped: a `<KEY>/<ITEM-ID>` reference is resolved against
+the team that **declares** that project, whichever of the open teams that is, and falls back to
+the first team for a project none of them declares.
 
 ---
 

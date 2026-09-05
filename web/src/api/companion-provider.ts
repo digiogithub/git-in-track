@@ -34,6 +34,7 @@ import type {
   CardMove,
   Capabilities,
   CreateProjectInput,
+  CreateTeamInput,
   ChangeEvent,
   Comment,
   ConflictAnalysis,
@@ -213,6 +214,7 @@ const PROBLEM_CODES: Record<string, ProviderErrorCode> = {
   repo_not_cloned: 'repo_not_cloned',
   wip_limit_exceeded: 'wip_limit_exceeded',
   project_exists: 'project_exists',
+  team_exists: 'team_exists',
   index_unavailable: 'internal',
   rate_limited: 'internal',
   internal: 'internal',
@@ -683,6 +685,15 @@ export function toCapabilities(value: unknown): Capabilities {
 
 type QueryValue = string | number | boolean | string[] | undefined;
 
+/**
+ * `?team=` for a team-scoped route, empty while no team is named. A workspace
+ * holding one team therefore keeps sending the URLs it sent before the active
+ * team existed (GIT-US-0036).
+ */
+function teamQuery(team?: string): string {
+  return team === undefined || team === '' ? '' : `?team=${encodeURIComponent(team)}`;
+}
+
 function buildQuery(params: Record<string, QueryValue>): string {
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
@@ -840,12 +851,31 @@ export class CompanionProvider implements DataProvider {
    * an empty list means "no team repository is registered", which is a normal
    * state rather than an error.
    */
-  async getTeam(): Promise<TeamSummary | null> {
+  async getTeam(team?: string): Promise<TeamSummary | null> {
+    if (team !== undefined && team !== '') {
+      try {
+        return (await this.#json(
+          `${API_PREFIX}/teams/${encodeURIComponent(team)}`,
+        )) as TeamSummary;
+      } catch (error) {
+        if (error instanceof ProviderError && error.code === 'not_found') return null;
+        throw error;
+      }
+    }
+    const teams = await this.listTeams();
+    return teams[0] ?? null;
+  }
+
+  /**
+   * Every registered repository holding a `team.yaml`, in mount order. An
+   * empty list means "no team repository is registered", which is a normal
+   * state rather than an error.
+   */
+  async listTeams(): Promise<TeamSummary[]> {
     const body = await this.#json(`${API_PREFIX}/teams`);
     const record = asRecord(body);
     const entries = record ? asArray(record['teams'] ?? record['items']) : asArray(body);
-    const first = entries[0];
-    return first === undefined ? null : (first as TeamSummary);
+    return entries as TeamSummary[];
   }
 
   async resolveRef(ref: string): Promise<RefResolution> {
@@ -884,6 +914,29 @@ export class CompanionProvider implements DataProvider {
     });
     const record = asRecord(body);
     return toProjectSummary(record?.['project'] ?? body);
+  }
+
+  /**
+   * Turns a registered repository into a team repository. The companion writes
+   * the files itself, through the same core code browser-only mode runs, so the
+   * two modes produce byte-identical `team.yaml` files.
+   */
+  async createTeam(input: CreateTeamInput): Promise<TeamSummary> {
+    const repoId = input.repoId ?? (await this.#soleRepoId());
+    const body = await this.#json(`${API_PREFIX}/repos/${encodeURIComponent(repoId)}/team`, {
+      method: 'POST',
+      body: {
+        key: input.key,
+        ...(input.root === undefined ? {} : { root: input.root }),
+        ...(input.name === undefined ? {} : { name: input.name }),
+        ...(input.description === undefined ? {} : { description: input.description }),
+        ...(input.timezone === undefined ? {} : { timezone: input.timezone }),
+        ...(input.knowledgePath === undefined ? {} : { knowledgePath: input.knowledgePath }),
+        ...(input.members === undefined ? {} : { members: input.members }),
+      },
+    });
+    const record = asRecord(body);
+    return (record?.['team'] ?? body) as TeamSummary;
   }
 
   /** The registered repository a call that names none is written into. */
@@ -1028,15 +1081,17 @@ export class CompanionProvider implements DataProvider {
 
   // -------------------------------------------------------------------- boards
 
-  async listBoards(): Promise<BoardSummary[]> {
-    const body = await this.#json(`${API_PREFIX}/boards`);
+  async listBoards(team?: string): Promise<BoardSummary[]> {
+    const body = await this.#json(`${API_PREFIX}/boards${teamQuery(team)}`);
     const record = asRecord(body);
     const entries = record ? asArray(record['boards'] ?? record['items']) : asArray(body);
     return entries as BoardSummary[];
   }
 
-  async getBoard(slug: string): Promise<BoardView> {
-    return (await this.#json(`${API_PREFIX}/boards/${encodeURIComponent(slug)}`)) as BoardView;
+  async getBoard(slug: string, team?: string): Promise<BoardView> {
+    return (await this.#json(
+      `${API_PREFIX}/boards/${encodeURIComponent(slug)}${teamQuery(team)}`,
+    )) as BoardView;
   }
 
   /**
@@ -1046,7 +1101,7 @@ export class CompanionProvider implements DataProvider {
    */
   async moveCard(move: CardMove): Promise<BoardMoveResult> {
     const body = await this.#json(
-      `${API_PREFIX}/boards/${encodeURIComponent(move.board)}/cards/move`,
+      `${API_PREFIX}/boards/${encodeURIComponent(move.board)}/cards/move${teamQuery(move.team)}`,
       {
         method: 'POST',
         rev: move.rev ?? '*',
@@ -1064,8 +1119,13 @@ export class CompanionProvider implements DataProvider {
   }
 
   /** `If-Match` carries the board revision; `*` overwrites unconditionally. */
-  async updateBoard(slug: string, patch: BoardPatch, rev?: string): Promise<BoardView> {
-    const body = await this.#json(`${API_PREFIX}/boards/${encodeURIComponent(slug)}`, {
+  async updateBoard(
+    slug: string,
+    patch: BoardPatch,
+    rev?: string,
+    team?: string,
+  ): Promise<BoardView> {
+    const body = await this.#json(`${API_PREFIX}/boards/${encodeURIComponent(slug)}${teamQuery(team)}`, {
       method: 'PATCH',
       rev: rev ?? '*',
       body: patch,
@@ -1079,15 +1139,18 @@ export class CompanionProvider implements DataProvider {
    * with, so the call carries no `If-Match`; a slug already taken comes back
    * as `duplicate_id`.
    */
-  async createBoard(draft: BoardDraft): Promise<BoardView> {
-    const body = await this.#json(`${API_PREFIX}/boards`, { method: 'POST', body: draft });
+  async createBoard(draft: BoardDraft, team?: string): Promise<BoardView> {
+    const body = await this.#json(`${API_PREFIX}/boards${teamQuery(team)}`, {
+      method: 'POST',
+      body: draft,
+    });
     const record = asRecord(body);
     return (record ? record['board'] : body) as BoardView;
   }
 
   /** `If-Match` carries the board revision; `*` deletes unconditionally. */
-  async deleteBoard(slug: string, rev?: string): Promise<void> {
-    await this.#json(`${API_PREFIX}/boards/${encodeURIComponent(slug)}`, {
+  async deleteBoard(slug: string, rev?: string, team?: string): Promise<void> {
+    await this.#json(`${API_PREFIX}/boards/${encodeURIComponent(slug)}${teamQuery(team)}`, {
       method: 'DELETE',
       rev: rev ?? '*',
     });
@@ -1095,36 +1158,45 @@ export class CompanionProvider implements DataProvider {
 
   // ------------------------------------------------------------------- retros
 
-  async listRetros(filter: RetroFilter = {}): Promise<RetroListing> {
+  async listRetros(filter: RetroFilter = {}, team?: string): Promise<RetroListing> {
     const query = new URLSearchParams();
     if (filter.sprint) query.set('sprint', filter.sprint);
     if (filter.board) query.set('board', filter.board);
     if (filter.state) query.set('state', filter.state);
+    if (team) query.set('team', team);
     const suffix = query.size > 0 ? `?${query.toString()}` : '';
     return (await this.#json(`${API_PREFIX}/retros${suffix}`)) as RetroListing;
   }
 
-  async getRetro(id: string): Promise<RetroView> {
-    return (await this.#json(`${API_PREFIX}/retros/${encodeURIComponent(id)}`)) as RetroView;
+  async getRetro(id: string, team?: string): Promise<RetroView> {
+    return (await this.#json(
+      `${API_PREFIX}/retros/${encodeURIComponent(id)}${teamQuery(team)}`,
+    )) as RetroView;
   }
 
-  async createRetro(input: RetroDraft): Promise<RetroResult> {
-    return (await this.#json(`${API_PREFIX}/retros`, {
+  async createRetro(input: RetroDraft, team?: string): Promise<RetroResult> {
+    return (await this.#json(`${API_PREFIX}/retros${teamQuery(team)}`, {
       method: 'POST',
       body: input,
     })) as RetroResult;
   }
 
-  async updateRetro(id: string, patch: RetroPatch, rev?: string): Promise<RetroResult> {
-    return (await this.#json(`${API_PREFIX}/retros/${encodeURIComponent(id)}`, {
+  async updateRetro(
+    id: string,
+    patch: RetroPatch,
+    rev?: string,
+    team?: string,
+  ): Promise<RetroResult> {
+    return (await this.#json(`${API_PREFIX}/retros/${encodeURIComponent(id)}${teamQuery(team)}`, {
       method: 'PATCH',
       rev: rev ?? '*',
       body: patch,
     })) as RetroResult;
   }
 
-  async promoteRetroAction(input: RetroPromotion): Promise<RetroResult> {
-    const path = `${API_PREFIX}/retros/${encodeURIComponent(input.retro)}/actions/promote`;
+  async promoteRetroAction(input: RetroPromotion, team?: string): Promise<RetroResult> {
+    const path =
+      `${API_PREFIX}/retros/${encodeURIComponent(input.retro)}/actions/promote` + teamQuery(team);
     return (await this.#json(path, {
       method: 'POST',
       rev: input.rev ?? '*',
@@ -1138,55 +1210,79 @@ export class CompanionProvider implements DataProvider {
 
   // ------------------------------------------------------------------- sprints
 
-  async listSprints(filter: SprintFilter = {}): Promise<SprintSummary[]> {
+  async listSprints(filter: SprintFilter = {}, team?: string): Promise<SprintSummary[]> {
     const query = new URLSearchParams();
     if (filter.board) query.set('board', filter.board);
     if (filter.state) query.set('state', filter.state);
+    if (team) query.set('team', team);
     const suffix = query.size > 0 ? `?${query.toString()}` : '';
     const body = await this.#json(`${API_PREFIX}/sprints${suffix}`);
     const record = asRecord(body);
     return asArray(record ? record['sprints'] : body) as SprintSummary[];
   }
 
-  async getSprint(id: string): Promise<SprintView> {
-    return (await this.#json(`${API_PREFIX}/sprints/${encodeURIComponent(id)}`)) as SprintView;
+  async getSprint(id: string, team?: string): Promise<SprintView> {
+    return (await this.#json(
+      `${API_PREFIX}/sprints/${encodeURIComponent(id)}${teamQuery(team)}`,
+    )) as SprintView;
   }
 
-  async getSprintMetrics(id: string): Promise<SprintMetricsView> {
+  async getSprintMetrics(id: string, team?: string): Promise<SprintMetricsView> {
     return (await this.#json(
-      `${API_PREFIX}/sprints/${encodeURIComponent(id)}/burndown`,
+      `${API_PREFIX}/sprints/${encodeURIComponent(id)}/burndown${teamQuery(team)}`,
     )) as SprintMetricsView;
   }
 
-  async createSprint(input: SprintDraft): Promise<SprintResult> {
-    return (await this.#json(`${API_PREFIX}/sprints`, {
+  async createSprint(input: SprintDraft, team?: string): Promise<SprintResult> {
+    return (await this.#json(`${API_PREFIX}/sprints${teamQuery(team)}`, {
       method: 'POST',
       body: input,
     })) as SprintResult;
   }
 
-  async updateSprint(id: string, patch: SprintPatch, rev?: string): Promise<SprintResult> {
-    return (await this.#json(`${API_PREFIX}/sprints/${encodeURIComponent(id)}`, {
+  async updateSprint(
+    id: string,
+    patch: SprintPatch,
+    rev?: string,
+    team?: string,
+  ): Promise<SprintResult> {
+    return (await this.#json(`${API_PREFIX}/sprints/${encodeURIComponent(id)}${teamQuery(team)}`, {
       method: 'PATCH',
       rev: rev ?? '*',
       body: patch,
     })) as SprintResult;
   }
 
-  async startSprint(id: string, rev?: string, force?: boolean): Promise<SprintResult> {
-    return (await this.#json(`${API_PREFIX}/sprints/${encodeURIComponent(id)}/start`, {
+  async startSprint(
+    id: string,
+    rev?: string,
+    force?: boolean,
+    team?: string,
+  ): Promise<SprintResult> {
+    return (await this.#json(
+      `${API_PREFIX}/sprints/${encodeURIComponent(id)}/start${teamQuery(team)}`,
+      {
       method: 'POST',
-      rev: rev ?? '*',
-      body: { ...(force === undefined ? {} : { force }) },
-    })) as SprintResult;
+        rev: rev ?? '*',
+        body: { ...(force === undefined ? {} : { force }) },
+      },
+    )) as SprintResult;
   }
 
-  async closeSprint(id: string, carry?: SprintCarry[], rev?: string): Promise<SprintResult> {
-    return (await this.#json(`${API_PREFIX}/sprints/${encodeURIComponent(id)}/close`, {
+  async closeSprint(
+    id: string,
+    carry?: SprintCarry[],
+    rev?: string,
+    team?: string,
+  ): Promise<SprintResult> {
+    return (await this.#json(
+      `${API_PREFIX}/sprints/${encodeURIComponent(id)}/close${teamQuery(team)}`,
+      {
       method: 'POST',
-      rev: rev ?? '*',
-      body: { carry: carry ?? [] },
-    })) as SprintResult;
+        rev: rev ?? '*',
+        body: { carry: carry ?? [] },
+      },
+    )) as SprintResult;
   }
 
   // ----------------------------------------------------------------- snapshots

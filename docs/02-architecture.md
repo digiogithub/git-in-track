@@ -472,8 +472,12 @@ Large payloads (index snapshots, file bodies) travel as transferable
 ```
 
 Operation namespaces: `project.*`, `team.*`, `items.*`, `kb.*`, `board.*`,
-`search.*`, `index.*`, `fs.*`. **The same operation names and payload shapes are
-used by the REST API** (`POST /api/v1/rpc` accepts the identical envelope, in
+`search.*`, `index.*`, `fs.*`. A workspace may hold several team repositories,
+so every operation that reaches one — `team.get`, `board.*`, `sprint.*`,
+`retro.*`, `snapshot.*` — carries a `team` naming it; no host keeps an active
+team of its own (doc 04 §3.8,
+[ADR-019](adr/ADR-019-active-team-is-client-state-threaded-per-call.md)).
+**The same operation names and payload shapes are used by the REST API** (`POST /api/v1/rpc` accepts the identical envelope, in
 addition to the resource-style routes) **and by the MCP tools**, so a behaviour is
 specified once and tested once.
 
