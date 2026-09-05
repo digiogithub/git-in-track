@@ -17,6 +17,7 @@ import type {
   BoardCard,
   BoardColumnPatch,
   BoardColumnView,
+  BoardDraft,
   BoardPatch,
   BoardMovePlan,
   BoardMoveResult,
@@ -89,6 +90,7 @@ export type {
   BoardCard,
   BoardColumnPatch,
   BoardColumnView,
+  BoardDraft,
   BoardPatch,
   BoardMovePlan,
   BoardMoveResult,
@@ -582,6 +584,12 @@ export type ProviderErrorCode =
   | 'sprint_already_active'
   /** The improvement action already became a task (docs/04 R-RETRO-2). */
   | 'retro_action_promoted'
+  /** The board slug is already taken; a board file is named after its id. */
+  | 'duplicate_id'
+  /** A sprint still names the board that was to be deleted. */
+  | 'board_in_use'
+  /** The documentation folder already holds a `project.yaml` (GIT-US-0031). */
+  | 'project_exists'
   /** A write lost a race, or a sprint already has a retro. */
   | 'conflict'
   | 'internal';
@@ -663,6 +671,18 @@ export interface DataProvider {
    * moves one card at a time through `moveCard`.
    */
   updateBoard(slug: string, patch: BoardPatch, rev?: string): Promise<BoardView>;
+  /**
+   * Creates a board in the team repository. A board is a view, so creating one
+   * adds no item anywhere: the cards it shows are the ones its project scope
+   * and its filters select. A slug already taken fails with `duplicate_id`.
+   */
+  createBoard(draft: BoardDraft): Promise<BoardView>;
+  /**
+   * Deletes a board file, and nothing else — every item its cards referenced
+   * stays where it is. A board a sprint still names fails with `board_in_use`,
+   * or `sprint_already_active` when that sprint is running.
+   */
+  deleteBoard(slug: string, rev?: string): Promise<void>;
 
   // sprints (docs/04-team-repository.md §8)
   /** The sprints of the team repository, newest ids last; empty when none. */

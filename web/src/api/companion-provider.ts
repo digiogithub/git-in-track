@@ -28,10 +28,12 @@ import type {
   BatchResult,
   BoardMoveResult,
   BoardSummary,
+  BoardDraft,
   BoardPatch,
   BoardView,
   CardMove,
   Capabilities,
+  CreateProjectInput,
   ChangeEvent,
   Comment,
   ConflictAnalysis,
@@ -1036,6 +1038,25 @@ export class CompanionProvider implements DataProvider {
     });
     const record = asRecord(body);
     return (record ? record['board'] : body) as BoardView;
+  }
+
+  /**
+   * Creates a board in the team repository. There is nothing yet to conflict
+   * with, so the call carries no `If-Match`; a slug already taken comes back
+   * as `duplicate_id`.
+   */
+  async createBoard(draft: BoardDraft): Promise<BoardView> {
+    const body = await this.#json(`${API_PREFIX}/boards`, { method: 'POST', body: draft });
+    const record = asRecord(body);
+    return (record ? record['board'] : body) as BoardView;
+  }
+
+  /** `If-Match` carries the board revision; `*` deletes unconditionally. */
+  async deleteBoard(slug: string, rev?: string): Promise<void> {
+    await this.#json(`${API_PREFIX}/boards/${encodeURIComponent(slug)}`, {
+      method: 'DELETE',
+      rev: rev ?? '*',
+    });
   }
 
   // ------------------------------------------------------------------- retros

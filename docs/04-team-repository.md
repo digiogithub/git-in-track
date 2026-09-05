@@ -411,7 +411,7 @@ holding the board — a fact the UI must surface ([§5.7](#57-what-happens-when-
 `internal/core/boardview.go` turns a board plus the items of the open repositories into the
 columns the UI renders and decides what a move implies. `internal/vault/board.go` is the plumbing
 — read the files, hand the pieces to the core, write the answer back — and answers `board.list`,
-`board.get`, `board.move` and `board.update` for a workspace. `internal/server/boards.go` and
+`board.get`, `board.move`, `board.update`, `board.create` and `board.delete` for a workspace. `internal/server/boards.go` and
 `internal/server/sprints.go` serve the same calls over HTTP ([doc 07 §5.5](./07-cli-and-api.md)).
 The fixtures are `testdata/fixtures/team-basic/.pmngr/boards/delivery.md` (kanban) and
 `demo-scrum.md` with `.pmngr/sprints/DEMO-TEAM-S-0001.md` (scrum).
@@ -750,6 +750,36 @@ concurrent move a mergeable diff, and `internal/core` pins it with a test that d
 
 Columns the board no longer declares are dropped from `order:` on the next write, and so are refs
 the column no longer shows (R-ORD-2).
+
+### 5.11 Creating and deleting a board (as built, GIT-US-0032)
+
+A board is created and deleted from the same surfaces as everything else: `board.create` and
+`board.delete` in the vault, `POST /api/v1/boards` and `DELETE /api/v1/boards/{slug}` over HTTP,
+and the board index and the board settings dialog in the web app ([doc 05 §9.1](./05-web-app.md)).
+The decisions are `internal/core/boardcreate.go`; the adapters only carry them.
+
+- **R-BOARD-NEW-1** The id is the caller's, or the slug of the title:
+  `SlugifyBoardID` lowercases, keeps ASCII letters and digits, collapses everything else into
+  single hyphens and truncates to 48 characters. A title from which no slug survives is refused
+  and the caller is asked for an explicit id; nothing is ever invented.
+- **R-BOARD-NEW-2** `BoardStore.Create` refuses a slug that already exists (`ErrBoardExists`,
+  wire code `duplicate_id`). A board file is named after its id, so the only other outcome would
+  be to replace somebody else's board.
+- **R-BOARD-NEW-3** A board with no columns gets the defaults of its kind, which map **status
+  categories** rather than status ids (R-COL-2): `todo` / `in_progress` / `done` + `cancelled`, and
+  on a scrum board the first column is `sprint_backlog` and becomes `backlog_column`. A board can
+  therefore be created before any of the projects it will show is cloned.
+- **R-BOARD-NEW-4** A new board carries no `sprint:` and no `order:`. A scrum board acquires its
+  sprint from `sprint.start`, or from the first-sprint flow of the web app, and its order one card
+  at a time.
+- **R-BOARD-NEW-5** The created file goes through `SerializeBoard` like any other write, so it
+  round-trips byte-identically and two people creating different boards touch different files.
+- **R-BOARD-DEL-1** Deleting a board deletes a *view*: the items its cards referenced live in
+  their own repositories and are untouched. The delete takes the board revision, as every write
+  does.
+- **R-BOARD-DEL-2** A board a sprint file still names is refused — `sprint_already_active` when
+  that sprint is running, `board_in_use` otherwise — because the sprint would be left pointing at
+  a board this repository no longer holds (`E-SPRINT-BOARD`).
 
 ---
 

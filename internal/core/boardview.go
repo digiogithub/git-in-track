@@ -141,12 +141,18 @@ func formatSnapshotAge(info SnapshotInfo) string {
 
 // BoardColumnView is one rendered column.
 type BoardColumnView struct {
-	ID        string      `json:"id"`
-	Name      string      `json:"name"`
-	WIP       int         `json:"wip,omitempty"`
-	Color     string      `json:"color,omitempty"`
-	Collapsed bool        `json:"collapsed,omitempty"`
-	Cards     []BoardCard `json:"cards"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	WIP       int    `json:"wip,omitempty"`
+	Color     string `json:"color,omitempty"`
+	Collapsed bool   `json:"collapsed,omitempty"`
+	// Statuses and Categories echo the column's mapping, exactly one of which
+	// a valid column declares (R-COL-2). They are what the board editor needs
+	// to show — and patch back — what a column claims, without reading the
+	// board file a second time.
+	Statuses   map[string][]Status `json:"statuses,omitempty"`
+	Categories []StatusCategory    `json:"categories,omitempty"`
+	Cards      []BoardCard         `json:"cards"`
 	// Exceeded reports the live WIP condition of R-COL-5, recomputed on every
 	// render rather than stored anywhere.
 	Exceeded bool `json:"exceeded"`
@@ -262,7 +268,8 @@ func BuildBoardView(b *Board, in BoardInput) BoardView {
 	for _, c := range b.Columns {
 		columns = append(columns, BoardColumnView{
 			ID: c.ID, Name: c.Name, WIP: c.WIP, Color: c.Color,
-			Collapsed: c.Collapsed, Cards: []BoardCard{},
+			Collapsed: c.Collapsed, Statuses: c.Statuses, Categories: c.Categories,
+			Cards: []BoardCard{},
 		})
 	}
 

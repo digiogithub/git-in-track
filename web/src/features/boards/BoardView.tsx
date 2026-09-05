@@ -10,7 +10,8 @@ import {
 } from '@dnd-kit/core';
 import { restrictToWindowEdges } from '@dnd-kit/modifiers';
 import { sortableKeyboardCoordinates } from '@dnd-kit/sortable';
-import { useParams } from '@tanstack/react-router';
+import { useQuery } from '@tanstack/react-query';
+import { Link, useParams } from '@tanstack/react-router';
 import { useMemo, useState } from 'react';
 
 import type { BoardCard, BoardView as BoardViewData, CardMove } from '@/api/provider';
@@ -31,6 +32,8 @@ import { Select } from '@/components/ui/select';
 import { useToast } from '@/components/ui/toast';
 import { useProjects } from '@/features/backlog/queries';
 import { BoardColumnPanel } from '@/features/boards/BoardColumnPanel';
+import { BoardSettingsDialog } from '@/features/boards/BoardSettingsDialog';
+import { NewSprintDialog } from '@/features/boards/NewSprintDialog';
 import { useBoard, useBoardEvents, useMoveCard } from '@/features/boards/queries';
 import { SprintPanel } from '@/features/boards/SprintPanel';
 
@@ -82,6 +85,9 @@ export function BoardCanvas({ slug }: { slug: string }) {
   const [announcement, setAnnouncement] = useState('');
   const [pending, setPending] = useState<PendingMove | null>(null);
   const [dragging, setDragging] = useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [openingSprint, setOpeningSprint] = useState(false);
+  const team = useQuery({ queryKey: ['team'], queryFn: () => provider.getTeam() });
 
   useBoardEvents(slug);
 
@@ -191,7 +197,17 @@ export function BoardCanvas({ slug }: { slug: string }) {
   return (
     <div className="space-y-4">
       <header className="space-y-1">
-        <h1 className="text-2xl font-semibold tracking-tight">{view.title}</h1>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h1 className="text-2xl font-semibold tracking-tight">{view.title}</h1>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!canWrite}
+            onClick={() => setSettingsOpen(true)}
+          >
+            Board settings
+          </Button>
+        </div>
         {view.description ? (
           <p className="text-sm text-muted-foreground">{view.description}</p>
         ) : null}
@@ -214,11 +230,48 @@ export function BoardCanvas({ slug }: { slug: string }) {
       {view.kind === 'scrum' && view.sprintInfo ? <SprintPanel view={view} /> : null}
 
       {view.kind === 'scrum' && !view.sprintInfo ? (
-        <p className="text-sm text-muted-foreground">
-          This scrum board is not scoped to a sprint yet, so it shows nothing to plan. Point it at
-          one from the sprint list.
-        </p>
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">No sprint yet</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3 text-sm text-muted-foreground">
+            <p>
+              A scrum board shows the work of one sprint. Open the first one here, or point the
+              board at a sprint that already exists from the sprint list.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" disabled={!canWrite} onClick={() => setOpeningSprint(true)}>
+                Plan the first sprint
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setSettingsOpen(true)}>
+                Board settings
+              </Button>
+              <Link
+                to="/sprints"
+                search={{ board: view.id }}
+                className="self-center text-xs underline underline-offset-2 hover:text-foreground"
+              >
+                All sprints
+              </Link>
+            </div>
+          </CardContent>
+        </Card>
       ) : null}
+
+      <NewSprintDialog
+        board={view.id}
+        boardRev={view.rev}
+        open={openingSprint}
+        onOpenChange={setOpeningSprint}
+        attach
+      />
+
+      <BoardSettingsDialog
+        view={view}
+        projects={(team.data?.projects ?? []).map((project) => project.key)}
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+      />
 
       {!canWrite ? (
         <p className="text-sm text-muted-foreground">

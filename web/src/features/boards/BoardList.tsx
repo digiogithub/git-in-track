@@ -1,8 +1,13 @@
+import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { Columns3 } from 'lucide-react';
+import { useState } from 'react';
 
+import { useProvider } from '@/api/provider-context';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { NewBoardDialog } from '@/features/boards/NewBoardDialog';
 import { useBoards } from '@/features/boards/queries';
 
 /**
@@ -12,15 +17,32 @@ import { useBoards } from '@/features/boards/queries';
  */
 export function BoardList() {
   const boards = useBoards();
+  const provider = useProvider();
+  const team = useQuery({ queryKey: ['team'], queryFn: () => provider.getTeam() });
+  const [creating, setCreating] = useState(false);
+
+  const canCreate = provider.capabilities.write && team.data !== null && team.data !== undefined;
 
   return (
     <div className="space-y-6">
       <header className="space-y-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Boards</h1>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h1 className="text-2xl font-semibold tracking-tight">Boards</h1>
+          <Button size="sm" disabled={!canCreate} onClick={() => setCreating(true)}>
+            New board
+          </Button>
+        </div>
         <p className="text-sm text-muted-foreground">
-          Boards live in the team repository and pull cards from every configured project.
+          Boards live in the team repository and pull cards from every configured project. A board
+          holds no items of its own: its cards are the work its projects and filters select.
         </p>
       </header>
+
+      <NewBoardDialog
+        open={creating}
+        onOpenChange={setCreating}
+        projects={(team.data?.projects ?? []).map((project) => project.key)}
+      />
 
       {boards.isPending ? <p className="text-sm text-muted-foreground">Loading boards…</p> : null}
 

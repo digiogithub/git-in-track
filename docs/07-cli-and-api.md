@@ -993,7 +993,7 @@ Catalog of `code` values: `unauthorized`, `forbidden`, `not_found`, `invalid_req
 `validation_failed`, `invalid_front_matter`, `precondition_required`, `stale_revision`,
 `conflict`, `duplicate_id`, `workflow_transition_denied`, `read_only`,
 `repo_not_registered`, `repo_not_cloned`, `wip_limit_exceeded`, `sprint_overlap`,
-`sprint_already_active`, `git_dirty`, `git_auth_failed`,
+`sprint_already_active`, `board_in_use`, `git_dirty`, `git_auth_failed`,
 `git_conflict`, `index_unavailable`, `rate_limited`, `not_implemented`, `internal`.
 
 `wip_limit_exceeded` (HTTP 409) is a *refusal the caller may repeat*: a board's WIP limit is
@@ -1005,6 +1005,12 @@ silently, and never blocks a team that has decided to exceed it.
 board sharing a day, and a second active sprint on one board, are refused once with the other
 sprint named in `detail`. `sprint_already_active` is repeatable with `force`; `sprint_overlap` is
 not — the caller has to change the dates.
+
+`duplicate_id` and `board_in_use` (HTTP 409) guard a board's life cycle: a board file is named
+after its id, so `POST /boards` refuses a slug that is already taken rather than replacing
+somebody else's board, and `DELETE /boards/{slug}` refuses while a sprint file still names the
+board (`sprint_already_active` when that sprint is running). Neither is repeatable with `force`:
+the caller picks another name, or moves the sprint first.
 
 `not_implemented` (HTTP 501) is what a route of a later phase answers: the path exists so
 that a client learns "not yet" from the code instead of guessing from a 404.
@@ -1269,9 +1275,11 @@ GET  /api/v1/snapshots                      committed index snapshots, with thei
 POST /api/v1/snapshots                      refresh them; body {projects?, generatedBy?,
                                             includeClosed?, dryRun?}
 GET  /api/v1/boards                         list the boards of the team repository
+POST /api/v1/boards                         create a board; no If-Match, a taken slug is 409
 GET  /api/v1/boards/{slug}                  always resolved against the open repositories
 POST /api/v1/boards/{slug}/cards/move       If-Match: <board rev>; body carries itemRev
-PATCH /api/v1/boards/{slug}                 If-Match (title, columns, wip, filters, sprint)
+PATCH /api/v1/boards/{slug}                 If-Match (title, projects, columns, wip, filters, sprint)
+DELETE /api/v1/boards/{slug}                If-Match; refused while a sprint names the board
 GET  /api/v1/sprints                        ?board=platform-scrum&state=active
 GET  /api/v1/sprints/{id}                   scope, candidates and metrics; ETag: <sprint rev>
 POST /api/v1/sprints                        create a sprint; the core allocates the id
@@ -1372,6 +1380,27 @@ GET /api/v1/boards/platform-kanban?resolve=true
   ]
 }
 ```
+
+A board is created with one call and no precondition — there is nothing yet to conflict with —
+and the core allocates the slug from the title, refuses to overwrite, and fills in the default
+columns when the caller proposes none (doc 04 §5.2, R-COL-2):
+
+```json
+POST /api/v1/boards
+{"title":"Platform Kanban","kind":"kanban","projects":["ACME","AWEB"],
+ "filters":{"types":["story","task"]}}
+
+201
+{ "board": { "id":"platform-kanban","kind":"kanban","title":"Platform Kanban",
+             "columns":[{"id":"todo","name":"To Do"},{"id":"in_progress","name":"In Progress"},
+                        {"id":"done","name":"Done"}], … },
+  "writes":[{"vaultId":"acme-team",
+             "written":[{"path":".pmngr/boards/platform-kanban.md","text":"…"}],"removed":[]}] }
+```
+
+`DELETE /api/v1/boards/{slug}` takes the board's revision in `If-Match` and removes the file —
+a view and nothing else, since every item its cards referenced lives in its own repository. It is
+refused while a sprint file still names the board.
 
 ```json
 POST /api/v1/boards/platform-kanban/cards/move

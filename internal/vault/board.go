@@ -2,6 +2,7 @@ package vault
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -737,6 +738,190 @@ func (w *Workspace) UpdateBoard(ctx context.Context, p BoardUpdateParams) (Board
 	}
 	return BoardUpdateResult{
 		Board:  c.render(ctx, written),
+		Writes: []RepoWriteSet{teamWrites(c.team.ID, writes)},
+	}, nil
+}
+
+// BoardExistsCode is the machine code of a create whose slug is already a board
+// of this team repository. A board file is named after its id, so the only
+// other outcome would be to replace somebody else's board silently.
+const BoardExistsCode = "duplicate_id"
+
+// BoardInUseCode is the machine code of a delete refused because a sprint file
+// still names the board. Deleting it would leave that sprint pointing at a
+// board this repository no longer holds (E-SPRINT-BOARD).
+const BoardInUseCode = "board_in_use"
+
+// BoardCreateParams is the input of "board.create". Only the title is required:
+// an absent kind is kanban, an absent id is derived from the title, and absent
+// columns are the default set of the kind (docs/04 R-COL-2). The card order is
+// never seeded here — a board starts with no manual order and acquires one card
+// at a time.
+type BoardCreateParams struct {
+	ID            string                 `json:"id,omitempty"`
+	Kind          string                 `json:"kind,omitempty"`
+	Title         string                 `json:"title"`
+	Description   string                 `json:"description,omitempty"`
+	Projects      []core.ProjectKey      `json:"projects,omitempty"`
+	Columns       []core.BoardColumn     `json:"columns,omitempty"`
+	Filters       *core.BoardFilters     `json:"filters,omitempty"`
+	Swimlanes     *core.BoardSwimlanes   `json:"swimlanes,omitempty"`
+	Card          *core.BoardCardDisplay `json:"card,omitempty"`
+	BacklogColumn string                 `json:"backlogColumn,omitempty"`
+	Author        string                 `json:"author,omitempty"`
+}
+
+// BoardCreateResult is the answer of "board.create": the board as it renders
+// over the open repositories, and what the team repository has to save.
+type BoardCreateResult struct {
+	Board  core.BoardView `json:"board"`
+	Writes []RepoWriteSet `json:"writes"`
+}
+
+// BoardDeleteParams is the input of "board.delete".
+type BoardDeleteParams struct {
+	Board string `json:"board"`
+	Rev   string `json:"rev,omitempty"`
+}
+
+// BoardDeleteResult is the answer of "board.delete": what was removed, so that
+// the host persists the deletion in the right repository.
+type BoardDeleteResult struct {
+	Board  string         `json:"board"`
+	Writes []RepoWriteSet `json:"writes"`
+}
+
+// CreateBoardFile writes a board that does not exist yet and reports what the
+// host must save. It takes the vault lock.
+func (v *Vault) CreateBoardFile(ctx context.Context, b *core.Board) (*core.Board, WriteSet, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	store, err := v.boardStore()
+	if err != nil {
+		return nil, WriteSet{}, err
+	}
+	v.fs.begin()
+	written, err := store.Create(ctx, b)
+	if err != nil {
+		if errors.Is(err, core.ErrBoardExists) {
+			return nil, WriteSet{}, failf(BoardExistsCode,
+				"a board %q already exists in %s", b.ID, store.Dir())
+		}
+		return nil, WriteSet{}, fmt.Errorf("create board: %w", err)
+	}
+	writes, err := v.commit(ctx)
+	if err != nil {
+		return nil, WriteSet{}, err
+	}
+	return written, writes, nil
+}
+
+// DeleteBoardFile removes a board file and reports what the host must delete.
+// It takes the vault lock.
+func (v *Vault) DeleteBoardFile(ctx context.Context, id string, expected core.Rev) (WriteSet, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	store, err := v.boardStore()
+	if err != nil {
+		return WriteSet{}, err
+	}
+	v.fs.begin()
+	if err := store.Delete(ctx, id, expected); err != nil {
+		return WriteSet{}, fmt.Errorf("delete board: %w", err)
+	}
+	writes, err := v.commit(ctx)
+	if err != nil {
+		return WriteSet{}, err
+	}
+	return writes, nil
+}
+
+// CreateBoard writes a new board file into the team repository and nothing
+// else. The board is a view: creating one adds no item anywhere, and the cards
+// it shows are the ones its project scope and its filters select
+// (internal/core/boardview.go).
+func (w *Workspace) CreateBoard(ctx context.Context, p BoardCreateParams) (BoardCreateResult, error) {
+	c, err := w.boardContext()
+	if err != nil {
+		return BoardCreateResult{}, err
+	}
+	draft := core.BoardDraft{
+		ID: p.ID, Kind: core.BoardKind(p.Kind), Title: p.Title,
+		Description: p.Description, Projects: p.Projects, Columns: p.Columns,
+		BacklogColumn: p.BacklogColumn, Author: p.Author,
+	}
+	if p.Filters != nil {
+		draft.Filters = *p.Filters
+	}
+	if p.Swimlanes != nil {
+		draft.Swimlanes = *p.Swimlanes
+	}
+	if p.Card != nil {
+		draft.Card = *p.Card
+	}
+	board, err := core.NewBoard(draft, c.team.Vault.Now())
+	if err != nil {
+		return BoardCreateResult{}, failf("validation_failed", "%v", err)
+	}
+	for _, d := range board.Validate(c.declared, c.configs) {
+		if d.Severity == core.SeverityError {
+			return BoardCreateResult{}, failf("validation_failed", "%s: %s", d.Code, d.Message)
+		}
+	}
+	written, writes, err := c.team.Vault.CreateBoardFile(ctx, board)
+	if err != nil {
+		return BoardCreateResult{}, err
+	}
+	return BoardCreateResult{
+		Board:  c.render(ctx, written),
+		Writes: []RepoWriteSet{teamWrites(c.team.ID, writes)},
+	}, nil
+}
+
+// DeleteBoard removes a board file from the team repository. It deletes a view
+// and nothing else: every item its cards referenced lives in its own project
+// repository and is untouched.
+//
+// A board a sprint of any state points at is refused, because the sprint file
+// would then name a board this repository no longer holds (E-SPRINT-BOARD).
+func (w *Workspace) DeleteBoard(ctx context.Context, p BoardDeleteParams) (BoardDeleteResult, error) {
+	c, err := w.boardContext()
+	if err != nil {
+		return BoardDeleteResult{}, err
+	}
+	board, err := c.team.Vault.Board(ctx, p.Board)
+	if err != nil {
+		return BoardDeleteResult{}, err
+	}
+	if p.Rev != "" && p.Rev != "*" && string(board.Rev) != p.Rev {
+		return BoardDeleteResult{}, &Error{
+			Code: "stale_revision", Path: board.Path,
+			Current: string(board.Rev),
+			Message: fmt.Sprintf("board %s was modified since revision %s (current %s)",
+				board.ID, p.Rev, board.Rev),
+		}
+	}
+	sprints, _, err := c.team.Vault.Sprints(ctx)
+	if err != nil {
+		return BoardDeleteResult{}, err
+	}
+	for _, s := range sprints {
+		if s.Board != board.ID {
+			continue
+		}
+		if s.State == core.SprintActive {
+			return BoardDeleteResult{}, failf(SprintActiveCode,
+				"sprint %s is running on board %s; close it before deleting the board", s.ID, board.ID)
+		}
+		return BoardDeleteResult{}, failf(BoardInUseCode,
+			"sprint %s belongs to board %s; delete or move it before deleting the board", s.ID, board.ID)
+	}
+	writes, err := c.team.Vault.DeleteBoardFile(ctx, board.ID, board.Rev)
+	if err != nil {
+		return BoardDeleteResult{}, err
+	}
+	return BoardDeleteResult{
+		Board:  board.ID,
 		Writes: []RepoWriteSet{teamWrites(c.team.ID, writes)},
 	}, nil
 }

@@ -18,6 +18,7 @@
 import type {
   BatchResult,
   BoardMoveResult,
+  BoardDraft,
   BoardPatch,
   BoardSummary,
   BoardView,
@@ -583,6 +584,28 @@ export class BrowserProvider implements DataProvider {
     });
     await this.#persistSets(result.writes);
     return result.board;
+  }
+
+  /**
+   * Creates a board file in the team repository. A board is a view: the write
+   * is one new file, and the cards it will show are the ones its scope and its
+   * filters select.
+   */
+  async createBoard(draft: BoardDraft): Promise<BoardView> {
+    await this.#ensureWritable();
+    const result = await this.#call('board.create', draft);
+    await this.#persistSets(result.writes);
+    return result.board;
+  }
+
+  /** Deletes a board file, and nothing else: no item is touched. */
+  async deleteBoard(slug: string, rev?: string): Promise<void> {
+    await this.#ensureWritable();
+    const result = await this.#call('board.delete', {
+      board: slug,
+      ...(rev === undefined ? {} : { rev }),
+    });
+    await this.#persistSets(result.writes);
   }
 
   // ------------------------------------------------------------------- sprints

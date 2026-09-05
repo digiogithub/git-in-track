@@ -7,6 +7,8 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/digiogithub/git-in-track/internal/core"
+	"github.com/digiogithub/git-in-track/internal/gitops"
+	"github.com/digiogithub/git-in-track/internal/vault"
 )
 
 // The board surface of docs/07 section 9. A board lives in the team repository
@@ -17,9 +19,63 @@ import (
 // mountBoards registers the board routes.
 func (s *Server) mountBoards(r chi.Router) {
 	r.Get("/", s.handleBoardList)
+	r.Post("/", s.handleBoardCreate)
 	r.Get("/{slug}", s.handleBoardGet)
 	r.Post("/{slug}/cards/move", s.handleBoardCardMove)
 	r.Patch("/{slug}", s.handleBoardUpdate)
+	r.Delete("/{slug}", s.handleBoardDelete)
+}
+
+// handleBoardCreate serves POST /api/v1/boards: one new board file in the team
+// repository and nothing else. A board is a view, so creating one adds no item
+// anywhere; the cards it shows are the ones its scope and its filters select.
+//
+// There is nothing yet to conflict with, so the call carries no If-Match; a
+// slug that is already a board is refused rather than overwritten.
+func (s *Server) handleBoardCreate(w http.ResponseWriter, r *http.Request) {
+	var params vault.BoardCreateParams
+	if !decodeBody(w, r, &params) {
+		return
+	}
+	if params.Title == "" {
+		failProblem(w, r, codeInvalidRequest, "A board needs a `title`.")
+		return
+	}
+	result, err := s.repos.workspace().Dispatch(r.Context(), "board.create", mustJSON(params))
+	if err != nil {
+		writeVaultError(w, r, err)
+		return
+	}
+	if created, ok := result.(vault.BoardCreateResult); ok {
+		s.publishWriteSets(r, created.Writes)
+		s.commitWriteSets(r.Context(), created.Writes,
+			sprintFields(created.Board.ID, "board", gitops.ActionCreate))
+		writeEntity(w, r, http.StatusCreated, result, string(created.Board.Rev))
+		return
+	}
+	writeJSON(w, r, http.StatusCreated, result)
+}
+
+// handleBoardDelete serves DELETE /api/v1/boards/{slug}. It removes a view and
+// nothing else: every item the board's cards referenced lives in its own
+// project repository and is untouched. A board a sprint belongs to is refused.
+func (s *Server) handleBoardDelete(w http.ResponseWriter, r *http.Request) {
+	rev, ok := requireIfMatch(w, r)
+	if !ok {
+		return
+	}
+	params := vault.BoardDeleteParams{Board: chi.URLParam(r, "slug"), Rev: rev}
+	result, err := s.repos.workspace().Dispatch(r.Context(), "board.delete", mustJSON(params))
+	if err != nil {
+		writeVaultError(w, r, err)
+		return
+	}
+	if deleted, ok := result.(vault.BoardDeleteResult); ok {
+		s.publishWriteSets(r, deleted.Writes)
+		s.commitWriteSets(r.Context(), deleted.Writes,
+			sprintFields(deleted.Board, "board", gitops.ActionDelete))
+	}
+	writeJSON(w, r, http.StatusOK, result)
 }
 
 // handleBoardList serves GET /api/v1/boards.

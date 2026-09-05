@@ -102,6 +102,18 @@ func (w *Workspace) Dispatch(ctx context.Context, method string, raw []byte) (an
 			return nil, err
 		}
 		return w.UpdateBoard(ctx, p)
+	case "board.create":
+		p, err := decodeParams[BoardCreateParams](raw)
+		if err != nil {
+			return nil, err
+		}
+		return w.CreateBoard(ctx, p)
+	case "board.delete":
+		p, err := decodeParams[BoardDeleteParams](raw)
+		if err != nil {
+			return nil, err
+		}
+		return w.DeleteBoard(ctx, p)
 	case "sprint.list":
 		p, err := decodeParams[SprintListParams](raw)
 		if err != nil {

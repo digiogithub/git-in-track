@@ -770,6 +770,26 @@ export type BoardPatch = {
   backlogColumn?: string;
 };
 
+/**
+ * A new board as `board.create` receives it (docs/04 §5.1). Only the title is
+ * required; the core allocates the slug, the default columns and — on a scrum
+ * board — the backlog column.
+ */
+export type BoardDraft = {
+  title: string;
+  kind?: BoardKind;
+  /** The slug, when the caller does not want the one derived from the title. */
+  id?: string;
+  description?: string;
+  projects?: string[];
+  columns?: BoardColumnPatch[];
+  filters?: BoardFilters;
+  swimlanes?: { by?: string; order?: string[]; collapseEmpty?: boolean };
+  card?: { show?: string[] };
+  backlogColumn?: string;
+  author?: string;
+};
+
 /** One column as `board.update` sends it back. */
 export type BoardColumnPatch = {
   id: string;
@@ -817,6 +837,9 @@ export type BoardColumnView = {
   wip?: number;
   color?: string;
   collapsed?: boolean;
+  /** The column's mapping, echoed so the board editor can patch it back. */
+  statuses?: Record<string, string[]>;
+  categories?: StatusCategory[];
   cards: BoardCard[];
   /** The column holds more cards than its limit allows. */
   exceeded: boolean;
@@ -1060,6 +1083,26 @@ export type CoreApi = {
   'board.update': {
     params: { board: string; rev?: string; patch: BoardPatch };
     result: { board: BoardView; writes: VaultWriteSet[] };
+  };
+  /**
+   * Create a board file in the team repository. Only the title is required:
+   * an absent kind is kanban, an absent id is the slug of the title, and
+   * absent columns are the default category-mapped set (docs/04 R-COL-2). A
+   * slug that is already a board fails with `duplicate_id`.
+   */
+  'board.create': {
+    params: BoardDraft;
+    result: { board: BoardView; writes: VaultWriteSet[] };
+  };
+  /**
+   * Delete a board file. It removes a view and nothing else: the items its
+   * cards referenced live in their own repositories. A board a sprint still
+   * names fails with `board_in_use`, or `sprint_already_active` when that
+   * sprint is running.
+   */
+  'board.delete': {
+    params: { board: string; rev?: string };
+    result: { board: string; writes: VaultWriteSet[] };
   };
 
   /** The sprints of the team repository, filtered by board and by state. */

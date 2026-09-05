@@ -143,6 +143,7 @@ state is shareable by URL and survives reloads.
   /team/$teamId/boards/$boardSlug           BoardView (kanban or scrum)
   /team/$teamId/boards/$boardSlug/planning  SprintPlanning
   /team/$teamId/sprints/$sprintId           SprintDetail
+  /sprints                                  SprintList    (as built, ?board=)
   /retros                                   RetroList     (as built)
   /retros/$retroId                          RetroBoard    (as built)
   /metrics                                  MetricsIndex  (as built)
@@ -954,6 +955,37 @@ Code: `features/boards/` — `BoardList`, `BoardView` (the route plus the
   goal; the id is allocated by the core, and dates that overlap another sprint
   of the same board are refused with `sprint_overlap` and the offending sprint
   named.
+
+### 9.1 Authoring a board (as built, GIT-US-0032)
+
+`BoardList` carries a **New board** control and `BoardView` a **Board settings**
+one; both render the same `BoardFormFields`, and `features/boards/board-form.ts`
+translates that form into the `board.create` draft and the `board.update` patch.
+A read-only workspace, and a workspace with no team repository open, disable the
+controls rather than hiding them.
+
+- **Creating** asks for the name, the kind, the projects in scope, the filters
+  and the columns. The core turns the name into the slug, refuses a slug that is
+  already a board (`duplicate_id`) and fills in the default columns — which map
+  status *categories*, so they work for a project whose workflow the team has
+  never seen (doc 04 R-COL-2). The dialog then navigates to the new board.
+- **Editing** patches the same fields plus the scrum backlog column, sending the
+  whole form so that a cleared filter means "cleared" rather than "unchanged".
+  The card order is never patched here; it moves one card at a time.
+- **Cards are a query, and the UI says so.** A board holds no items: the form's
+  scope and filter sections explain that widening the scope or relaxing a filter
+  is what puts epics, stories and tasks on a board, because there is nothing to
+  copy into the board file.
+- **Deleting** sits in the same dialog behind a confirmation, states that no item
+  is touched, and is refused while a sprint still names the board
+  (`sprint_already_active` when it is running, `board_in_use` otherwise).
+- **The first sprint of a scrum board.** A scrum board pointing at no sprint used
+  to be a dead end: `SprintPanel` renders only once the board has one. It now
+  shows a "No sprint yet" card with **Plan the first sprint**, which creates the
+  sprint (`NewSprintDialog`, shared with the panel) and points the board at it in
+  the same gesture. The new `/sprints` route lists every sprint of the team
+  repository, opens one for any board, and points a board at a sprint that
+  already exists.
 - **Performance:** columns virtualise beyond 100 cards; cards are memoised on
   `(ref, rev, position)`; drag overlays use `transform` only.
 
