@@ -3,18 +3,17 @@ id: GIT-EP-0002
 type: epic
 title: Browser-only MVP
 status: done
-created: 2026-09-03T00:00:00Z
-updated: 2026-09-04T05:06:40Z
-closed: 2026-09-04T05:06:40Z
-started: 2026-09-03T21:47:06Z
-author: team
 priority: critical
 milestone: GIT-M-0002
-estimate: 37
+author: team
 labels: [web, wasm, core]
+estimate: 37
+created: 2026-09-03T00:00:00Z
+updated: 2026-09-04T05:06:40Z
+started: 2026-09-03T21:47:06Z
+closed: 2026-09-04T05:06:40Z
 links:
-  - kind: blocked_by
-    target: GIT-EP-0001
+  - { kind: blocked_by, target: GIT-EP-0001 }
 ---
 
 ## Description

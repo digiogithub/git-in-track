@@ -3,16 +3,15 @@ id: GIT-EP-0006
 type: epic
 title: MCP server and agent workflows
 status: in_progress
-created: 2026-09-03T00:00:00Z
-updated: 2026-09-04
-author: team
 priority: high
 milestone: GIT-M-0006
-estimate: 16
+author: team
 labels: [mcp, core, docs]
+estimate: 16
+created: 2026-09-03T00:00:00Z
+updated: 2026-09-04T00:00:00Z
 links:
-  - kind: blocked_by
-    target: GIT-EP-0003
+  - { kind: blocked_by, target: GIT-EP-0003 }
 ---
 
 ## Description

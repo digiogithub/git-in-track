@@ -3,13 +3,12 @@ id: GIT-M-0005
 type: milestone
 title: Phase 4 — Git sync
 status: in_progress
-created: 2026-09-03T00:00:00Z
-updated: 2026-09-04
 author: team
 labels: [git, security]
+created: 2026-09-03T00:00:00Z
+updated: 2026-09-04T00:00:00Z
 links:
-  - kind: relates_to
-    target: GIT-EP-0005
+  - { kind: relates_to, target: GIT-EP-0005 }
 custom:
   phase: 4
   version: v0.5.0

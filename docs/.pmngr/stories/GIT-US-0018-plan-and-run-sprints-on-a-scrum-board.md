@@ -3,17 +3,16 @@ id: GIT-US-0018
 type: story
 title: Plan and run sprints on a Scrum board
 status: in_review
-created: 2026-09-03T00:00:00Z
-updated: 2026-09-04
-author: team
 priority: high
 parent: GIT-EP-0004
 milestone: GIT-M-0004
-estimate: 8
+author: team
 labels: [web, core]
+estimate: 8
+created: 2026-09-03T00:00:00Z
+updated: 2026-09-04T00:00:00Z
 links:
-  - kind: blocked_by
-    target: GIT-US-0017
+  - { kind: blocked_by, target: GIT-US-0017 }
 ---
 
 ## Description

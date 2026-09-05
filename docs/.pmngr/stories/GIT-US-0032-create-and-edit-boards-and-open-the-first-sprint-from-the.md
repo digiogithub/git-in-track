@@ -3,14 +3,14 @@ id: GIT-US-0032
 type: story
 title: Create and edit boards, and open the first sprint, from the web UI
 status: in_review
-created: 2026-09-05
-updated: 2026-09-05
-author: claude
+priority: high
 parent: GIT-EP-0008
 milestone: GIT-M-0008
-estimate: 8
-priority: high
+author: claude
 labels: [core, web]
+estimate: 8
+created: 2026-09-05T00:00:00Z
+updated: 2026-09-05T00:00:00Z
 ---
 
 ## Description

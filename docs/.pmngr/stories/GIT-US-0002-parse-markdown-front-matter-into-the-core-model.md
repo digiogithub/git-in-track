@@ -3,19 +3,18 @@ id: GIT-US-0002
 type: story
 title: Parse Markdown front matter into the core model
 status: done
-created: 2026-09-03T00:00:00Z
-updated: 2026-09-03T21:17:39Z
-closed: 2026-09-03T21:17:39Z
-started: 2026-09-03T20:42:39Z
-author: team
 priority: critical
 parent: GIT-EP-0001
 milestone: GIT-M-0001
-estimate: 5
+author: team
 labels: [core]
+estimate: 5
+created: 2026-09-03T00:00:00Z
+updated: 2026-09-03T21:17:39Z
+started: 2026-09-03T20:42:39Z
+closed: 2026-09-03T21:17:39Z
 links:
-  - kind: blocked_by
-    target: GIT-US-0001
+  - { kind: blocked_by, target: GIT-US-0001 }
 ---
 
 ## Description

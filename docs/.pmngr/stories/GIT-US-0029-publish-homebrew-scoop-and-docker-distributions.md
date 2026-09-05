@@ -3,17 +3,16 @@ id: GIT-US-0029
 type: story
 title: Publish Homebrew, Scoop and Docker distributions
 status: in_review
-created: 2026-09-03T00:00:00Z
-updated: 2026-09-04
-author: team
 priority: medium
 parent: GIT-EP-0007
 milestone: GIT-M-0007
-estimate: 5
+author: team
 labels: [ci, cli]
+estimate: 5
+created: 2026-09-03T00:00:00Z
+updated: 2026-09-04T00:00:00Z
 links:
-  - kind: blocked_by
-    target: GIT-US-0005
+  - { kind: blocked_by, target: GIT-US-0005 }
 ---
 
 ## Description

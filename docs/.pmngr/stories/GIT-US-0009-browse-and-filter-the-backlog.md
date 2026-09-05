@@ -3,19 +3,18 @@ id: GIT-US-0009
 type: story
 title: Browse and filter the backlog
 status: done
-created: 2026-09-03T00:00:00Z
-updated: 2026-09-04T02:37:45Z
-closed: 2026-09-04T02:37:45Z
-started: 2026-09-03T21:47:06Z
-author: team
 priority: high
 parent: GIT-EP-0002
 milestone: GIT-M-0002
-estimate: 5
+author: team
 labels: [web]
+estimate: 5
+created: 2026-09-03T00:00:00Z
+updated: 2026-09-04T02:37:45Z
+started: 2026-09-03T21:47:06Z
+closed: 2026-09-04T02:37:45Z
 links:
-  - kind: blocked_by
-    target: GIT-US-0007
+  - { kind: blocked_by, target: GIT-US-0007 }
 ---
 
 ## Description

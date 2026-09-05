@@ -3,10 +3,10 @@ id: GIT-M-0008
 type: milestone
 title: Authoring from the web UI
 status: in_progress
+priority: high
+author: team
 created: 2026-09-05T00:00:00Z
 updated: 2026-09-05T00:00:00Z
-author: team
-priority: high
 ---
 
 ## Description

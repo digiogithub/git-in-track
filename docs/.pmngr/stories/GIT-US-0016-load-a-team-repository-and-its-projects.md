@@ -3,17 +3,16 @@ id: GIT-US-0016
 type: story
 title: Load a team repository and its projects
 status: in_review
-created: 2026-09-03T00:00:00Z
-updated: 2026-09-04
-author: team
 priority: critical
 parent: GIT-EP-0004
 milestone: GIT-M-0004
-estimate: 5
+author: team
 labels: [core, web]
+estimate: 5
+created: 2026-09-03T00:00:00Z
+updated: 2026-09-04T00:00:00Z
 links:
-  - kind: blocked_by
-    target: GIT-US-0015
+  - { kind: blocked_by, target: GIT-US-0015 }
 ---
 
 ## Description

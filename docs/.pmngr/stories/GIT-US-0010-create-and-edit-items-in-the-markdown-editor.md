@@ -3,20 +3,18 @@ id: GIT-US-0010
 type: story
 title: Create and edit items in the Markdown editor
 status: in_review
-created: 2026-09-03T00:00:00Z
-updated: 2026-09-04T02:37:45Z
-started: 2026-09-03T21:47:06Z
-author: team
 priority: critical
 parent: GIT-EP-0002
 milestone: GIT-M-0002
-estimate: 8
+author: team
 labels: [web, core]
+estimate: 8
+created: 2026-09-03T00:00:00Z
+updated: 2026-09-04T02:37:45Z
+started: 2026-09-03T21:47:06Z
 links:
-  - kind: blocked_by
-    target: GIT-US-0009
-  - kind: blocked_by
-    target: GIT-US-0004
+  - { kind: blocked_by, target: GIT-US-0009 }
+  - { kind: blocked_by, target: GIT-US-0004 }
 ---
 
 ## Description

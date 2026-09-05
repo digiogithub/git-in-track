@@ -3,20 +3,17 @@ id: GIT-EP-0007
 type: epic
 title: Retrospectives, metrics and 1.0
 status: in_progress
-created: 2026-09-03T00:00:00Z
-updated: 2026-09-04
-author: team
 priority: high
 milestone: GIT-M-0007
-estimate: 21
+author: team
 labels: [web, core, ci, docs]
+estimate: 21
+created: 2026-09-03T00:00:00Z
+updated: 2026-09-04T00:00:00Z
 links:
-  - kind: blocked_by
-    target: GIT-EP-0004
-  - kind: blocked_by
-    target: GIT-EP-0005
-  - kind: blocked_by
-    target: GIT-EP-0006
+  - { kind: blocked_by, target: GIT-EP-0004 }
+  - { kind: blocked_by, target: GIT-EP-0005 }
+  - { kind: blocked_by, target: GIT-EP-0006 }
 ---
 
 ## Description

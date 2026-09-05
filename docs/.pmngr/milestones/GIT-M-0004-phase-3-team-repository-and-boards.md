@@ -3,13 +3,12 @@ id: GIT-M-0004
 type: milestone
 title: Phase 3 — Team repository and boards
 status: in_progress
-created: 2026-09-03T00:00:00Z
-updated: 2026-09-04
 author: team
 labels: [core, web]
+created: 2026-09-03T00:00:00Z
+updated: 2026-09-04T00:00:00Z
 links:
-  - kind: relates_to
-    target: GIT-EP-0004
+  - { kind: relates_to, target: GIT-EP-0004 }
 custom:
   phase: 3
   version: v0.4.0

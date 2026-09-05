@@ -3,15 +3,14 @@ id: GIT-M-0003
 type: milestone
 title: Phase 2 — Companion CLI
 status: done
-created: 2026-09-03T00:00:00Z
-updated: 2026-09-04T05:48:51Z
-closed: 2026-09-04T05:48:51Z
-started: 2026-09-04T05:06:40Z
 author: team
 labels: [cli, server]
+created: 2026-09-03T00:00:00Z
+updated: 2026-09-04T05:48:51Z
+started: 2026-09-04T05:06:40Z
+closed: 2026-09-04T05:48:51Z
 links:
-  - kind: relates_to
-    target: GIT-EP-0003
+  - { kind: relates_to, target: GIT-EP-0003 }
 custom:
   phase: 2
   version: v0.3.0

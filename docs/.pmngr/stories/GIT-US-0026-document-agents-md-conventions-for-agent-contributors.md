@@ -3,17 +3,16 @@ id: GIT-US-0026
 type: story
 title: Document AGENTS.md conventions for agent contributors
 status: in_review
-created: 2026-09-03T00:00:00Z
-updated: 2026-09-04
-author: team
 priority: high
 parent: GIT-EP-0006
 milestone: GIT-M-0006
-estimate: 3
+author: team
 labels: [docs, mcp, agent-ok]
+estimate: 3
+created: 2026-09-03T00:00:00Z
+updated: 2026-09-04T00:00:00Z
 links:
-  - kind: blocked_by
-    target: GIT-US-0025
+  - { kind: blocked_by, target: GIT-US-0025 }
 ---
 
 ## Description

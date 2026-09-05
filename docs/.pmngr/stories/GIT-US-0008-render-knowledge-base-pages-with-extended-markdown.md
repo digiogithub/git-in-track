@@ -3,19 +3,18 @@ id: GIT-US-0008
 type: story
 title: Render knowledge base pages with extended Markdown
 status: done
-created: 2026-09-03T00:00:00Z
-updated: 2026-09-04T02:37:45Z
-closed: 2026-09-04T02:37:45Z
-started: 2026-09-03T21:47:06Z
-author: team
 priority: critical
 parent: GIT-EP-0002
 milestone: GIT-M-0002
-estimate: 8
+author: team
 labels: [web]
+estimate: 8
+created: 2026-09-03T00:00:00Z
+updated: 2026-09-04T02:37:45Z
+started: 2026-09-03T21:47:06Z
+closed: 2026-09-04T02:37:45Z
 links:
-  - kind: blocked_by
-    target: GIT-US-0006
+  - { kind: blocked_by, target: GIT-US-0006 }
 ---
 
 ## Description

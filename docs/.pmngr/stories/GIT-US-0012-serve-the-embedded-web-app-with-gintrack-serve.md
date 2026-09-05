@@ -3,19 +3,18 @@ id: GIT-US-0012
 type: story
 title: Serve the embedded web app with `gintrack serve`
 status: done
-created: 2026-09-03T00:00:00Z
-updated: 2026-09-04T05:48:51Z
-closed: 2026-09-04T05:48:51Z
-started: 2026-09-04T05:06:40Z
-author: team
 priority: critical
 parent: GIT-EP-0003
 milestone: GIT-M-0003
-estimate: 5
+author: team
 labels: [cli, server, security]
+estimate: 5
+created: 2026-09-03T00:00:00Z
+updated: 2026-09-04T05:48:51Z
+started: 2026-09-04T05:06:40Z
+closed: 2026-09-04T05:48:51Z
 links:
-  - kind: blocked_by
-    target: GIT-US-0010
+  - { kind: blocked_by, target: GIT-US-0010 }
 ---
 
 ## Description
