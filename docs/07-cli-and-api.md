@@ -764,7 +764,11 @@ Checks performed:
 2. **Configuration** — unknown keys, unreadable repo paths, duplicate registrations,
    workspaces with zero repos, token strength.
 3. **Repository** — is a git working tree, has a remote, docs folder exists, `.pmngr`
-   scaffold present, `project.yaml`/`team.yaml` parse and validate.
+   scaffold present, `project.yaml`/`team.yaml` parse and validate. What is required
+   depends on the role: a repository registered as a **team** repository is checked for a
+   root `team.yaml` and never for a backlog — it holds none by the hard rule of doc 04 §1 —
+   and a team registration without that file is an error naming
+   `gintrack init <path> --team --key <KEY>` (GIT-US-0034).
 4. **Content** — front matter parses; required fields present; `type` matches the folder;
    `status` is in the project workflow; `parent` exists and has the right type; `milestone`
    exists; `links[]` targets resolve; `assignees` are known team members (warning only);
