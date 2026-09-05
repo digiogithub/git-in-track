@@ -30,6 +30,7 @@ import { useProvider } from '@/api/provider-context';
 /** Key factory. Keep every backlog key under the project prefix. */
 export const backlogKeys = {
   projects: () => ['projects'] as const,
+  all: () => ['items'] as const,
   project: (project: string) => ['items', project] as const,
   lists: (project: string) => ['items', project, 'list'] as const,
   list: (project: string, filter: ItemFilter) =>

@@ -193,6 +193,10 @@ func New(opts Options) (*Server, error) {
 	s.repos = newRegistry(opts.Repos, now)
 	s.hub = newHub(opts.Workspace, now)
 	s.git = newGitState(opts, s.repos, s.log, s.publishCommit)
+	// The metrics of GIT-US-0028 reconstruct their series from the git history
+	// of the item files. Only the companion can read it, so only the companion
+	// installs the reader (ADR-017).
+	s.repos.workspace().SetHistorySource(newGitHistorySource(s.git))
 	for _, m := range s.repos.all() {
 		if m.err != nil {
 			s.log.Warn("repository mounted with errors", "repo", m.id, "path", m.path, "error", m.err)

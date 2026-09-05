@@ -132,12 +132,48 @@ func (w *Workspace) Dispatch(ctx context.Context, method string, raw []byte) (an
 			return nil, err
 		}
 		return w.StartSprint(ctx, p)
+	case "sprint.metrics":
+		p, err := decodeParams[SprintParams](raw)
+		if err != nil {
+			return nil, err
+		}
+		return w.SprintMetrics(ctx, p.ID)
 	case "sprint.close":
 		p, err := decodeParams[SprintCloseParams](raw)
 		if err != nil {
 			return nil, err
 		}
 		return w.CloseSprint(ctx, p)
+	case "retro.list":
+		p, err := decodeParams[RetroListParams](raw)
+		if err != nil {
+			return nil, err
+		}
+		return w.Retros(ctx, p)
+	case "retro.get":
+		p, err := decodeParams[RetroParams](raw)
+		if err != nil {
+			return nil, err
+		}
+		return w.Retro(ctx, p.ID)
+	case "retro.create":
+		p, err := decodeParams[RetroCreateParams](raw)
+		if err != nil {
+			return nil, err
+		}
+		return w.CreateRetro(ctx, p)
+	case "retro.update":
+		p, err := decodeParams[RetroUpdateParams](raw)
+		if err != nil {
+			return nil, err
+		}
+		return w.UpdateRetro(ctx, p)
+	case "retro.promote":
+		p, err := decodeParams[RetroPromoteParams](raw)
+		if err != nil {
+			return nil, err
+		}
+		return w.PromoteRetroAction(ctx, p)
 	case "snapshot.list":
 		return w.SnapshotList()
 	case "snapshot.refresh":

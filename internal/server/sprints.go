@@ -23,7 +23,7 @@ func (s *Server) mountSprints(r chi.Router) {
 	r.Patch("/{id}", s.handleSprintUpdate)
 	r.Post("/{id}/start", s.handleSprintStart)
 	r.Post("/{id}/close", s.handleSprintClose)
-	r.Get("/{id}/burndown", s.notImplemented("Sprint burndown arrives with the metrics of GIT-US-0028."))
+	r.Get("/{id}/burndown", s.handleSprintMetrics)
 }
 
 // handleSprintList serves GET /api/v1/sprints?board=&state=.
@@ -54,6 +54,23 @@ func (s *Server) handleSprintGet(w http.ResponseWriter, r *http.Request) {
 		rev = string(view.Sprint.Rev)
 	}
 	writeEntity(w, r, http.StatusOK, result, rev)
+}
+
+// handleSprintMetrics serves GET /api/v1/sprints/{id}/burndown: the burndown,
+// the cumulative flow diagram and the flow statistics of one sprint, together
+// with the provenance of the history they were reconstructed from
+// (docs/04 section 12, docs/07 section 5.5).
+//
+// The three come back together because they are one reconstruction of one
+// window: splitting them across routes would walk the history twice.
+func (s *Server) handleSprintMetrics(w http.ResponseWriter, r *http.Request) {
+	result, err := s.repos.workspace().Dispatch(r.Context(), "sprint.metrics",
+		mustJSON(map[string]string{"id": chi.URLParam(r, "id")}))
+	if err != nil {
+		writeVaultError(w, r, err)
+		return
+	}
+	writeJSON(w, r, http.StatusOK, result)
 }
 
 // handleSprintCreate serves POST /api/v1/sprints. The id is allocated by the

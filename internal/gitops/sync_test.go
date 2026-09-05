@@ -538,6 +538,10 @@ func (s *stubBackend) Commits(context.Context, LogRequest) ([]Commit, error) {
 	return []Commit{}, nil
 }
 
+func (s *stubBackend) History(context.Context, HistoryRequest) (FileHistory, error) {
+	return FileHistory{}, nil
+}
+
 func (s *stubBackend) Continue(context.Context) (IntegrateResult, error) {
 	return IntegrateResult{}, nil
 }

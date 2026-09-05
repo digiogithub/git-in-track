@@ -14,12 +14,16 @@ repositories. There is no central server and no database. Humans use a web UI;
 agents use the same files or the local MCP server. The CLI binary is `gintrack`;
 the Go module path is `github.com/digiogithub/git-in-track`.
 
-**Current state.** The scaffold exists and Phases 0–5 are implemented: the
-shared Go core, the `gintrack` binary with the embedded web app, browser-only
-mode over WASM, the companion server (`gintrack serve`), team boards and
-sprints, git sync, and the MCP server (`gintrack mcp`). Phases 3, 4 and 5 are in
-review; Phase 6 (retrospectives, metrics, 1.0) has not started. `docs/.pmngr/`
-is the live truth — read it rather than trusting this paragraph.
+**Current state.** All seven phases are implemented: the shared Go core, the
+`gintrack` binary with the embedded web app, browser-only mode over WASM, the
+companion server (`gintrack serve`), team boards and sprints, git sync, the MCP
+server (`gintrack mcp`), retrospectives, sprint metrics and the Homebrew/Scoop/
+GHCR distribution channels. Phases 3–6 are in review, and the `v1.0.0` tag has
+not been pushed — no tag exists at all. Before you assume a capability, check
+`CHANGELOG.md` "Known limitations" and `docs/12-release-readiness-1-0.md` §5:
+several documented behaviours (browser commit-on-save, `git.dirtyPolicy`, branch
+policy, `gintrack migrate`, the planned MCP tools) are **not** implemented.
+`docs/.pmngr/` is the live truth — read it rather than trusting this paragraph.
 
 ## Read the docs in this order
 
@@ -38,7 +42,7 @@ Then read only what your task needs: `docs/01-vision-and-scope.md`,
 
 ## Tech stack
 
-- **Backend and CLI**: Go 1.23+, cobra (CLI), chi (HTTP), fsnotify, go-git,
+- **Backend and CLI**: Go 1.25+, cobra (CLI), chi (HTTP), fsnotify, go-git,
   goldmark, yaml.v3, an MCP Go SDK, and `go:embed` to embed the built frontend
   (`web/dist`) into the binary.
 - **Frontend**: React 18 + Vite + TypeScript in `web/`, with TanStack Router and

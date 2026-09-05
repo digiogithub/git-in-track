@@ -64,10 +64,18 @@ import type {
   SearchQuery,
   SnapshotRefresh,
   SnapshotResult,
+  RetroDraft,
+  RetroFilter,
+  RetroListing,
+  RetroPatch,
+  RetroPromotion,
+  RetroResult,
+  RetroView,
   SprintCarry,
   SprintDraft,
   SprintFilter,
   SprintPatch,
+  SprintMetricsView,
   SprintResult,
   SprintSummary,
   SprintView,
@@ -647,7 +655,7 @@ export function toGitSettings(value: unknown): GitSettings {
  * different types, and the wire has only the first.
  */
 function optional<K extends string, V>(key: K, value: V | undefined): Record<K, V> | object {
-  return value === undefined ? {} : ({ [key]: value });
+  return value === undefined ? {} : { [key]: value };
 }
 
 /** `GET /capabilities` → the object the UI branches on. */
@@ -1030,6 +1038,49 @@ export class CompanionProvider implements DataProvider {
     return (record ? record['board'] : body) as BoardView;
   }
 
+  // ------------------------------------------------------------------- retros
+
+  async listRetros(filter: RetroFilter = {}): Promise<RetroListing> {
+    const query = new URLSearchParams();
+    if (filter.sprint) query.set('sprint', filter.sprint);
+    if (filter.board) query.set('board', filter.board);
+    if (filter.state) query.set('state', filter.state);
+    const suffix = query.size > 0 ? `?${query.toString()}` : '';
+    return (await this.#json(`${API_PREFIX}/retros${suffix}`)) as RetroListing;
+  }
+
+  async getRetro(id: string): Promise<RetroView> {
+    return (await this.#json(`${API_PREFIX}/retros/${encodeURIComponent(id)}`)) as RetroView;
+  }
+
+  async createRetro(input: RetroDraft): Promise<RetroResult> {
+    return (await this.#json(`${API_PREFIX}/retros`, {
+      method: 'POST',
+      body: input,
+    })) as RetroResult;
+  }
+
+  async updateRetro(id: string, patch: RetroPatch, rev?: string): Promise<RetroResult> {
+    return (await this.#json(`${API_PREFIX}/retros/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      rev: rev ?? '*',
+      body: patch,
+    })) as RetroResult;
+  }
+
+  async promoteRetroAction(input: RetroPromotion): Promise<RetroResult> {
+    const path = `${API_PREFIX}/retros/${encodeURIComponent(input.retro)}/actions/promote`;
+    return (await this.#json(path, {
+      method: 'POST',
+      rev: input.rev ?? '*',
+      body: {
+        action: input.action,
+        project: input.project,
+        ...(input.labels === undefined ? {} : { labels: input.labels }),
+      },
+    })) as RetroResult;
+  }
+
   // ------------------------------------------------------------------- sprints
 
   async listSprints(filter: SprintFilter = {}): Promise<SprintSummary[]> {
@@ -1044,6 +1095,12 @@ export class CompanionProvider implements DataProvider {
 
   async getSprint(id: string): Promise<SprintView> {
     return (await this.#json(`${API_PREFIX}/sprints/${encodeURIComponent(id)}`)) as SprintView;
+  }
+
+  async getSprintMetrics(id: string): Promise<SprintMetricsView> {
+    return (await this.#json(
+      `${API_PREFIX}/sprints/${encodeURIComponent(id)}/burndown`,
+    )) as SprintMetricsView;
   }
 
   async createSprint(input: SprintDraft): Promise<SprintResult> {
@@ -1177,9 +1234,9 @@ export class CompanionProvider implements DataProvider {
   }
 
   /** `POST /api/v1/git/commit`; with no paths it flushes the batched edits. */
-  async commitNow(input: { repoId?: string; paths?: string[]; message?: string } = {}): Promise<
-    GitCommit[]
-  > {
+  async commitNow(
+    input: { repoId?: string; paths?: string[]; message?: string } = {},
+  ): Promise<GitCommit[]> {
     const body = await this.#json(`${API_PREFIX}/git/commit`, {
       method: 'POST',
       body: {
@@ -1196,7 +1253,9 @@ export class CompanionProvider implements DataProvider {
 
   /** `GET /api/v1/sync/status`. */
   async getSyncStatus(repoId?: string): Promise<SyncRepoStatus[]> {
-    const body = asRecord(await this.#json(`${API_PREFIX}/sync/status${buildQuery({ repo: repoId })}`));
+    const body = asRecord(
+      await this.#json(`${API_PREFIX}/sync/status${buildQuery({ repo: repoId })}`),
+    );
     return asArray(body ? body['repos'] : []) as SyncRepoStatus[];
   }
 
@@ -1207,7 +1266,8 @@ export class CompanionProvider implements DataProvider {
     return {
       pullStrategy: (settings?.['pullStrategy'] as 'rebase' | 'merge') ?? 'rebase',
       pushOnSync: settings?.['pushOnSync'] !== false,
-      maxPushRetries: typeof settings?.['maxPushRetries'] === 'number' ? settings['maxPushRetries'] : 3,
+      maxPushRetries:
+        typeof settings?.['maxPushRetries'] === 'number' ? settings['maxPushRetries'] : 3,
       supported: settings?.['supported'] !== false,
       ...(typeof settings?.['reason'] === 'string' ? { reason: settings['reason'] } : {}),
     };
@@ -1221,7 +1281,8 @@ export class CompanionProvider implements DataProvider {
     return {
       pullStrategy: (settings?.['pullStrategy'] as 'rebase' | 'merge') ?? 'rebase',
       pushOnSync: settings?.['pushOnSync'] !== false,
-      maxPushRetries: typeof settings?.['maxPushRetries'] === 'number' ? settings['maxPushRetries'] : 3,
+      maxPushRetries:
+        typeof settings?.['maxPushRetries'] === 'number' ? settings['maxPushRetries'] : 3,
       supported: settings?.['supported'] !== false,
     };
   }

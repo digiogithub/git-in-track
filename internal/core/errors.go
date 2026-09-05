@@ -99,6 +99,19 @@ const (
 	CodeSprintRefDead           Code = "W-SPRINT-REF-DEAD"
 	CodeSprintRefUnknownProject Code = "W-SPRINT-REF-UNKNOWN-PROJECT"
 
+	// Retro codes (docs/04 section 9.5). A retro is team-repo state, so a
+	// promoted task inside a project nobody cloned is never an error.
+	CodeRetroID                 Code = "E-RETRO-ID"
+	CodeRetroDate               Code = "E-RETRO-DATE"
+	CodeRetroState              Code = "E-RETRO-STATE"
+	CodeRetroVoteTheme          Code = "E-RETRO-VOTE-THEME"
+	CodeRetroActionIDDup        Code = "E-RETRO-ACTION-ID-DUP"
+	CodeRetroVoteBudget         Code = "W-RETRO-VOTE-BUDGET"
+	CodeRetroVoteNonParticipant Code = "W-RETRO-VOTE-NONPARTICIPANT"
+	CodeRetroActionNoOwner      Code = "W-RETRO-ACTION-NO-OWNER"
+	CodeRetroActionTaskDead     Code = "W-RETRO-ACTION-TASK-DEAD"
+	CodeRetroSprintDead         Code = "W-RETRO-SPRINT-DEAD"
+
 	// Index-snapshot codes (docs/04 section 6). A snapshot is a cache, so only
 	// a file that cannot be used at all is an error; the rest is advisory.
 	CodeSnapMalformed   Code = "E-SNAP-MALFORMED"

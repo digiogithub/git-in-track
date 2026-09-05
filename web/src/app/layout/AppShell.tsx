@@ -3,9 +3,11 @@ import { Link, Outlet } from '@tanstack/react-router';
 import {
   BookOpen,
   Boxes,
+  ChartLine,
   LayoutDashboard,
   ListChecks,
   Lock,
+  NotebookPen,
   Plug,
   RefreshCw,
   Settings,
@@ -27,6 +29,16 @@ type NavItem = {
 const navItems: NavItem[] = [
   { to: '/', label: 'Workspace', icon: <LayoutDashboard aria-hidden="true" className="h-4 w-4" /> },
   { to: '/boards', label: 'Boards', icon: <Boxes aria-hidden="true" className="h-4 w-4" /> },
+  {
+    to: '/retros',
+    label: 'Retros',
+    icon: <NotebookPen aria-hidden="true" className="h-4 w-4" />,
+  },
+  {
+    to: '/metrics',
+    label: 'Metrics',
+    icon: <ChartLine aria-hidden="true" className="h-4 w-4" />,
+  },
   { to: '/sync', label: 'Sync', icon: <RefreshCw aria-hidden="true" className="h-4 w-4" /> },
   { to: '/settings', label: 'Settings', icon: <Settings aria-hidden="true" className="h-4 w-4" /> },
 ];

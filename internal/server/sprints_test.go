@@ -317,16 +317,7 @@ func TestSprintEndpoints(t *testing.T) {
 		}
 	})
 
-	t.Run("burndown is still deferred", func(t *testing.T) {
-		s := newTeamServer(t)
-		var doc problemBody
-		decode(t, send(t, s, request{
-			method: http.MethodGet, target: "/api/v1/sprints/DEMO-TEAM-S-0001/burndown",
-		}), http.StatusNotImplemented, &doc)
-		if doc.Code != "not_implemented" {
-			t.Fatalf("problem = %+v", doc)
-		}
-	})
+	// The burndown route has its own test: TestSprintMetricsEndpoint.
 }
 
 func TestBoardPatch(t *testing.T) {
@@ -394,6 +385,96 @@ func TestBoardPatch(t *testing.T) {
 		}), http.StatusPreconditionRequired, &doc)
 		if doc.Code != "precondition_required" {
 			t.Fatalf("problem = %+v", doc)
+		}
+	})
+}
+
+// TestSprintMetricsEndpoint covers GET /api/v1/sprints/{id}/burndown, the route
+// that answered `not_implemented` until GIT-US-0028. The fixture repositories
+// are copied out of the source tree and are not git working trees, so the
+// companion has no history to read and the answer must be the stated
+// approximation rather than an invented series.
+func TestSprintMetricsEndpoint(t *testing.T) {
+	t.Run("a sprint answers with both charts and their provenance", func(t *testing.T) {
+		s := newTeamServer(t)
+		var body struct {
+			Sprint struct {
+				ID string `json:"id"`
+			} `json:"sprint"`
+			Burndown struct {
+				CommittedPoints float64 `json:"committedPoints"`
+				Points          []struct {
+					Date      string  `json:"date"`
+					Day       int     `json:"day"`
+					Ideal     float64 `json:"ideal"`
+					Observed  bool    `json:"observed"`
+					Remaining float64 `json:"remaining"`
+					Unknown   int     `json:"unknown"`
+				} `json:"points"`
+			} `json:"burndown"`
+			Flow struct {
+				Bands []string `json:"bands"`
+				Days  []struct {
+					Date   string         `json:"date"`
+					Counts map[string]int `json:"counts"`
+					Total  int            `json:"total"`
+				} `json:"days"`
+			} `json:"flow"`
+			Stats struct {
+				Throughput int `json:"throughput"`
+			} `json:"stats"`
+			Provenance struct {
+				Source      string `json:"source"`
+				Approximate bool   `json:"approximate"`
+				Items       int    `json:"items"`
+				Note        string `json:"note"`
+			} `json:"provenance"`
+			Items []struct {
+				Ref string `json:"ref"`
+			} `json:"items"`
+		}
+		decode(t, send(t, s, request{
+			method: http.MethodGet, target: "/api/v1/sprints/DEMO-TEAM-S-0001/burndown",
+		}), http.StatusOK, &body)
+
+		if body.Sprint.ID != "DEMO-TEAM-S-0001" {
+			t.Fatalf("sprint = %q", body.Sprint.ID)
+		}
+		if len(body.Burndown.Points) != 14 || len(body.Flow.Days) != 14 {
+			t.Fatalf("points = %d, days = %d, want 14 of each",
+				len(body.Burndown.Points), len(body.Flow.Days))
+		}
+		if body.Burndown.Points[0].Date != "2026-08-24" || body.Burndown.Points[0].Day != 1 {
+			t.Errorf("first day = %+v", body.Burndown.Points[0])
+		}
+		if body.Burndown.Points[13].Ideal != 0 {
+			t.Errorf("the ideal line must reach zero on the last day: %+v", body.Burndown.Points[13])
+		}
+		if len(body.Flow.Bands) != 5 || body.Flow.Bands[0] != "done" {
+			t.Errorf("bands = %v, want five with done at the bottom", body.Flow.Bands)
+		}
+		if len(body.Items) != 3 {
+			t.Errorf("items = %d, want the whole scope for the data table", len(body.Items))
+		}
+		if body.Provenance.Source == "" || body.Provenance.Note == "" {
+			t.Errorf("every metric must state where it came from: %+v", body.Provenance)
+		}
+		if !body.Provenance.Approximate {
+			t.Error("a fixture with no git history must not claim a reconstruction")
+		}
+		if body.Provenance.Items != 3 {
+			t.Errorf("provenance items = %d, want 3", body.Provenance.Items)
+		}
+	})
+
+	t.Run("an unknown sprint is not found", func(t *testing.T) {
+		s := newTeamServer(t)
+		var doc problemBody
+		decode(t, send(t, s, request{
+			method: http.MethodGet, target: "/api/v1/sprints/DEMO-TEAM-S-0099/burndown",
+		}), http.StatusNotFound, &doc)
+		if doc.Code != "not_found" {
+			t.Errorf("code = %q", doc.Code)
 		}
 	})
 }

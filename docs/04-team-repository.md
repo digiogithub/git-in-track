@@ -1008,7 +1008,7 @@ emits a sprint file; `internal/core/sprintview.go` renders one — the header, t
 the closing report. `internal/vault/sprint.go` answers `sprint.list`, `sprint.get`,
 `sprint.create`, `sprint.update`, `sprint.start` and `sprint.close` for a workspace, and
 `internal/server/sprints.go` serves them over HTTP ([doc 07 §5.5](./07-cli-and-api.md)).
-Burndown is Phase 6 (GIT-US-0028).
+Burndown and cumulative flow are [§12](#12-metrics-burndown-cumulative-flow-and-flow-times) (GIT-US-0028, done).
 
 ### 8.1 Identity
 
@@ -1351,6 +1351,55 @@ the website work grows.
 | `W-RETRO-ACTION-TASK-DEAD` | W | `task` ref does not resolve in a cloned project. |
 | `W-RETRO-SPRINT-DEAD` | W | `sprint` names a sprint that does not exist. |
 
+### 9.6 As built (GIT-US-0027)
+
+Everything above is implemented, with the details §9.1–§9.5 left open pinned down as follows.
+
+**The body is structured data that still reads as a document.** `internal/core/retrobody.go`
+parses a retro body into level-2 sections. The three collection sections (`## Went well`,
+`## To improve`, `## Puzzles`, matched case-insensitively, with a few synonyms) and `## Actions`
+are *owned*: their bullets are re-rendered from the structured state on every write. Every other
+section — `## Previous Actions`, `## Discussion`, anything a human added — is written back
+verbatim, in place. A note bullet is `- (n1) text — handle`; the `(n1)` prefix is what a theme
+references, and a bullet without one is kept exactly as it was typed. An action bullet is
+`- [x] a1 — title (owner, due) → \`PROJ/PROJ-T-0111\``.
+
+**One entry, one line.** That is the whole answer to concurrent editing: two participants adding
+notes at the same time touch different lines, so git merges both sides. `themes` and `votes` are
+front-matter fields with one entry per line for the same reason. A retro round-trips byte for
+byte through `ParseRetro`/`SerializeRetro`.
+
+**The file name carries a slug.** `PathOf` writes `<RETRO-ID>-<slug of title>.md`, and a lookup
+by id scans `retros/` for the file whose stem is the id or begins with `<id>-`. `E-RETRO-ID`
+therefore checks the id against the *prefix* of the file name, not the whole stem.
+
+**An action's live state beats its recorded one.** `BuildRetroView` resolves `actions[].task`
+through `core.ResolveCard` — live from a clone, read-only from the committed index snapshot, or
+unresolved with the reason — and grades the action from that card. `status: done` in the file is
+only the fallback for an action that was never promoted, which is R-RETRO-1 made executable. The
+next retro's `carried` list is the still-open actions of the retro its `carried_from` names, or
+of every earlier retro when it names none.
+
+**Promotion writes to two repositories or to none.** `retro.promote` refuses with
+`repo_not_cloned` when the target project is not open, rather than half writing; the UI then
+offers the action as Markdown to paste. When it goes through it creates the task
+(`labels: [retro]`, `assignees: [owner]`, `due`, `author` = the facilitator, and the body line
+`Promoted from retro <ID> (action <id>).`) and writes `PROJ/PROJ-T-NNNN` back into the action in
+the same call. Promoting an already promoted action is `retro_action_promoted`.
+
+**Calls.** `retro.list` (filters `sprint`, `board`, `state`; the answer carries `carried`),
+`retro.get`, `retro.create`, `retro.update` and `retro.promote` on the workspace, and
+`GET/POST /api/v1/retros`, `GET/PATCH /api/v1/retros/{id}` and
+`POST /api/v1/retros/{id}/actions/promote` on the companion. `retro.update` adds, edits and
+removes notes and actions one entry at a time, and replaces `themes` and `votes` wholesale
+because grouping is one decision about the whole wall. `retro.create` for a sprint fills in its
+board, its title and its participants, sets the sprint's `retro:` back-link, and refuses a second
+retro for a sprint that already has one.
+
+**Not built here.** Voting is stored and ranked but has no per-person budget enforcement beyond
+the `W-RETRO-VOTE-BUDGET` warning, and no MCP tools were added: `get_retro`,
+`create_retro_action` and `promote_retro_action` remain planned (doc 08 §4.11).
+
 ---
 
 ## 10. Permissions model
@@ -1421,7 +1470,81 @@ flowchart TD
 
 ---
 
-## 12. Agent notes
+## 12. Metrics — burndown, cumulative flow and flow times
+
+**Status: implemented (GIT-US-0028).** `internal/core/metrics.go` computes every number;
+`internal/gitops/history.go` reads the history the numbers are computed from;
+`internal/vault/metrics.go` joins the two and answers `sprint.metrics`; `internal/server/sprints.go`
+serves it at `GET /api/v1/sprints/{id}/burndown` ([doc 07 §5.5](./07-cli-and-api.md)); the web app
+draws it at `/metrics/<SPRINT-ID>` ([doc 05 §12](./05-web-app.md)).
+
+### 12.1 Metrics are derived, and their history comes from git
+
+- **R-MET-1** No metric is stored. There is no transition log, no events folder and no `history:`
+  block in an item's front matter. A metric is a function of the item files as they stood on a day,
+  and it is recomputed on every read. This is [ADR-017](./adr/ADR-017-metrics-history-from-git-not-a-stored-time-series.md).
+- **R-MET-2** The history is the **git history of the item files themselves**. Every status change
+  is already a commit with an author date, so the transitions are read back by walking the commits
+  that touched each item file and parsing the front matter of each revision.
+- **R-MET-3** Only a host that can read a git repository can do that: the companion process and the
+  CLI. `internal/core` never touches git — it compiles to WebAssembly — so the walk lives in
+  `internal/gitops` and reaches the core as a list of revisions.
+- **R-MET-4** Results MAY be cached. A cache is keyed by the commit it was read at, so a new commit
+  invalidates it, and it is derived data that can be thrown away at any time. It MUST NOT become a
+  source of truth (`gitops.HistoryCache`).
+- **R-MET-5** A history walk is bounded (`gitops.DefaultHistoryLimit`, 2 000 commits per path). A
+  walk that hits the bound is reported as `truncated` and the days it cannot cover are unknown.
+
+### 12.2 Provenance — every metric says where it came from
+
+- **R-MET-6** Every metric result carries a **provenance**, and every surface that shows the metric
+  MUST show it:
+
+| `source` | What it means | `approximate` |
+|---|---|---|
+| `git` | Reconstructed from every revision of every covered item file. | `false`, or `true` when the walk was truncated |
+| `updated` | Approximated from each item's `updated` stamp: the item is assumed to have held its current status since it was last written, and its state before that is unknown. | `true` |
+| `none` | No history at all; only the current state is known. | `true` |
+
+- **R-MET-7** A day the history cannot account for is **unknown**. It is counted in
+  `BurndownPoint.unknown` and drawn as the hatched `unknown` band of the cumulative flow diagram. It
+  is never rendered as an empty backlog and never as finished work.
+- **R-MET-8** A reference the history covers nothing of — a card resolved from a committed snapshot,
+  or one in a project nobody cloned (§7) — is unknown on every day. `provenance.covered` against
+  `provenance.items` is what makes that visible.
+- **R-MET-9** Browser-only mode has no git and therefore answers with `source: updated`. It degrades
+  in the open: the same call, the same shape, a stated approximation. It never fabricates a series.
+
+### 12.3 What is computed
+
+Over the sprint window `start..end`, both ends inclusive, one point per day, measured at the end of
+each day. A day after today is emitted with its ideal value and nothing else (`observed: false`).
+
+| Metric | Definition |
+|---|---|
+| **Burndown** `remaining` | The estimate of the references that exist that day and are not in a terminal status. The estimate used is the one the item carried *that day*, not today's. |
+| **Burndown** `scope` | The estimate of every reference that exists that day, so scope growth is visible as the scope line rising above the commitment. |
+| **Burndown** `ideal` | A straight line from the commitment (`committed`, §8.2) on day 1 to zero on the last day. A sprint that never started uses its observed scope on day 1. |
+| **Cumulative flow** | Item counts by status **category** (doc 03 §5), stacked bottom first as `done`, `cancelled`, `in_progress`, `todo`, `unknown`, so the top edge of the shape is the scope. |
+| **Throughput** | References that first reached a terminal status inside the window, and the same scaled to a week. |
+| **Cycle time** | First entry into `in_progress` → first entry into a terminal status, in days. |
+| **Lead time** | The item's first observation (its creation) → the same terminal instant. It needs a complete history and is empty without one. |
+
+- **R-MET-10** Cycle time and lead time report `count`, `median`, `mean`, the 85th percentile and the
+  range. A finished reference whose history does not reach the transition being measured is
+  **excluded and counted** (`stats.excluded`), never estimated.
+- **R-MET-11** Categories come from each project's own workflow, so projects with different statuses
+  are comparable on one chart — the same rule that makes a team board possible (§5).
+
+### 12.4 Not built here
+
+Board-level (non-sprint) cumulative flow, velocity across sprints, and reading git history inside
+the browser through isomorphic-git. All three fit the same `HistorySource` seam and change no
+contract.
+
+---
+
+## 13. Agent notes
 
 The rules of doc 03 §17 apply unchanged; three additions specific to the team repo:
 
@@ -1442,7 +1565,7 @@ MCP tools implied by this document (doc 05 specifies them fully): `list_projects
 
 ---
 
-## 13. Phase mapping
+## 14. Phase mapping
 
 | Phase | What this document delivers |
 |---|---|
@@ -1450,12 +1573,12 @@ MCP tools implied by this document (doc 05 specifies them fully): `list_projects
 | Phase 2 | `team.yaml` parsing in the core (read-only), project resolution from local paths. |
 | Phase 3 | Team repo end to end: `team.yaml` (§3.6, done), `knowledge/` (done), multi-repository workspace and reference resolution (§3.6, done), kanban boards (§5, done), scrum boards and sprints (§§5.5, 8, done), remote references and index snapshots (§§6, 7, done). |
 | Phase 4 | Multi-repo sync, per-repo push results, conflict handling for `order` and snapshots. |
-| Phase 5 | MCP tools of §12; agents reading snapshots for cross-project questions. |
-| Phase 6 | Retrospectives with voting and promotion, metrics (velocity, burndown, cumulative flow) computed from sprints plus project data. |
+| Phase 5 | MCP tools (doc 08); agents reading snapshots for cross-project questions. |
+| Phase 6 | Retrospectives with voting and promotion (§9, done — GIT-US-0027), metrics (§12, done — GIT-US-0028): burndown, cumulative flow, cycle time, lead time and throughput, reconstructed from the git history of the item files. |
 
 ---
 
-## 14. Open questions
+## 15. Open questions
 
 1. ~~**Snapshot churn.**~~ **Settled in Phase 3 by [ADR-014](./adr/ADR-014-snapshots-stay-on-the-main-branch.md):**
    snapshots stay on the main branch in dedicated commits, and the writer compares content rather

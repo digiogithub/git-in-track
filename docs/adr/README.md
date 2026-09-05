@@ -49,6 +49,8 @@ Every ADR uses the same sections:
 | [ADR-013](ADR-013-board-card-ordering.md) | Card order as a plain ordered list, not a fractional index | Accepted | 3 |
 | [ADR-014](ADR-014-snapshots-stay-on-the-main-branch.md) | Index snapshots stay on the main branch, written only when their content changes | Accepted | 3 |
 | [ADR-015](ADR-015-official-go-mcp-sdk-and-verb-noun-tools.md) | The official Go MCP SDK, and verb-noun tool names | Accepted | 5 |
+| [ADR-016](ADR-016-homebrew-cask-instead-of-formula.md) | Homebrew is distributed as a cask (macOS), not as a formula | Accepted | 6 |
+| [ADR-017](ADR-017-metrics-history-from-git-not-a-stored-time-series.md) | Sprint metrics reconstruct their history from git, and say so when they cannot | Accepted | 6 |
 
 ## Related documents
 

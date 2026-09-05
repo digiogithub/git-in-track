@@ -413,6 +413,106 @@ export type SprintView = {
   diagnostics: Diagnostic[];
 };
 
+/**
+ * Where the observations behind a metric came from (docs/04 §12, ADR-017).
+ *
+ * `git` is the real thing: every revision of every item file, reconstructed
+ * from the commits. `updated` is the approximation a host without git falls
+ * back to — each item is assumed to have held its current status since its
+ * `updated` stamp, and nothing is claimed about the time before that. `none`
+ * is no history at all.
+ */
+export type MetricsSource = 'git' | 'updated' | 'none';
+
+/** The honesty half of a metric: where it came from and what it may not be asked. */
+export type MetricsProvenance = {
+  source: MetricsSource;
+  /** True for anything but a complete git reconstruction. */
+  approximate: boolean;
+  /** The earliest day the history can speak for, `YYYY-MM-DD`. */
+  from?: string | null;
+  commits?: number;
+  truncated?: boolean;
+  /** The size of the scope, and how many of it the history covers. */
+  items: number;
+  covered: number;
+  /** One sentence for the UI. Always present, always shown. */
+  note: string;
+};
+
+/** One band of a cumulative flow diagram, in stacking order, bottom first. */
+export type FlowBand = 'done' | 'cancelled' | 'in_progress' | 'todo' | 'unknown';
+
+/** One day of a burndown. Only an observed day carries measurements. */
+export type BurndownPoint = {
+  date: string;
+  /** 1-based: day 1 is the first day of the sprint. */
+  day: number;
+  /** The straight line from the commitment to zero; it exists for every day. */
+  ideal: number;
+  /** A day on or before today: the only kind a chart may plot. */
+  observed: boolean;
+  remaining: number;
+  scope: number;
+  done: number;
+  items: number;
+  completed: number;
+  /** References whose state that day the history cannot state. */
+  unknown: number;
+};
+
+/** The remaining work of a sprint per day against the ideal line. */
+export type Burndown = {
+  sprint: string;
+  start?: string | null;
+  end?: string | null;
+  committedPoints: number;
+  points: BurndownPoint[];
+};
+
+/** One day of a cumulative flow diagram. */
+export type FlowPoint = {
+  date: string;
+  day: number;
+  observed: boolean;
+  counts: Record<FlowBand, number>;
+  total: number;
+};
+
+/** Item counts by status band over the sprint window. */
+export type CumulativeFlow = { bands: FlowBand[]; days: FlowPoint[] };
+
+/** A sample of durations in days. */
+export type MetricStat = {
+  count: number;
+  mean: number;
+  median: number;
+  p85: number;
+  min: number;
+  max: number;
+};
+
+/** Cycle time, lead time and throughput, each with the sample behind it. */
+export type FlowStats = {
+  throughput: number;
+  throughputPerWeek: number;
+  cycleTime: MetricStat;
+  leadTime: MetricStat;
+  /** Finished references no duration could be measured for. */
+  excluded: number;
+};
+
+/** One sprint's metrics: both charts, the flow numbers and their provenance. */
+export type SprintMetricsView = {
+  sprint: SprintSummary;
+  burndown: Burndown;
+  flow: CumulativeFlow;
+  stats: FlowStats;
+  provenance: MetricsProvenance;
+  /** The scope, so every chart has its data table without a second call. */
+  items: BoardCard[];
+};
+
 /** What happens to one unfinished item when a sprint closes (R-SPR-3). */
 export type SprintCarryAction = 'leave' | 'next' | 'backlog';
 
@@ -458,6 +558,203 @@ export type SprintResult = {
   /** Present when the sprint was closed. */
   report?: SprintCloseReport;
   writes: VaultWriteSet[];
+};
+
+/** The facilitation stage of a retro (docs/04 §9.2). */
+export type RetroState = 'collecting' | 'voting' | 'discussing' | 'closed';
+
+/** The column a retro note and its theme belong to (docs/04 §9.1). */
+export type RetroCategory = 'went_well' | 'to_improve' | 'puzzle';
+
+/** The retro-local bookkeeping of an improvement action (docs/04 §9.2). */
+export type RetroActionStatus = 'proposed' | 'promoted' | 'done' | 'dropped';
+
+/** One sticky note: a body bullet of a collection section. */
+export type RetroNote = {
+  /** The `(n1)` prefix; absent on a bullet somebody typed by hand. */
+  id?: string;
+  category: RetroCategory;
+  text: string;
+  /** Absent on an anonymous retro. */
+  author?: string;
+};
+
+/** A group of notes the room merged into one topic. */
+export type RetroTheme = {
+  id: string;
+  title: string;
+  category?: RetroCategory;
+  /** Ids of the notes this theme absorbed. */
+  notes?: string[];
+};
+
+/** One improvement action as the retro file stores it. */
+export type RetroAction = {
+  id: string;
+  title: string;
+  /** The single accountable handle; an action without one is a warning. */
+  owner?: string;
+  due?: string;
+  theme?: string;
+  /** `<projectKey>/<itemId>`, written by a promotion and by nothing else. */
+  task?: string;
+  status?: RetroActionStatus;
+  note?: string;
+};
+
+/** One theme plus what the room decided about it. */
+export type RetroThemeView = RetroTheme & {
+  votes: number;
+  voters?: string[];
+  /** The notes this theme grouped, resolved from the body. */
+  noteTexts?: RetroNote[];
+  /** Ids of the improvement actions that came out of it. */
+  actions?: string[];
+};
+
+/**
+ * One improvement action plus its live state. Once the action carries a `task`
+ * that task's status in the project repository is the truth, and `done` is
+ * graded from the card rather than from `status` (docs/04 R-RETRO-1).
+ */
+export type RetroActionView = RetroAction & {
+  /** The retro the action belongs to. */
+  retro: string;
+  retroTitle?: string;
+  /** The promoted task, live, from a snapshot, or unresolved with a reason. */
+  card?: BoardCard;
+  done: boolean;
+  /** Neither done nor dropped: exactly what the next retro has to review. */
+  open: boolean;
+  reason?: string;
+};
+
+/** How well one retro was followed through. */
+export type RetroMetrics = {
+  actions: number;
+  promoted: number;
+  done: number;
+  open: number;
+  dropped: number;
+  /** Actions nobody is accountable for (docs/04 R-RETRO-4). */
+  noOwner: number;
+};
+
+/** A retro as an index reads it. */
+export type RetroSummary = {
+  id: string;
+  title: string;
+  sprint?: string;
+  board?: string;
+  date?: string;
+  facilitator?: string;
+  participants?: string[];
+  state: RetroState;
+  anonymous?: boolean;
+  voteBudget: number;
+  carriedFrom?: string;
+  notes: number;
+  themes: number;
+  metrics: RetroMetrics;
+  actions: RetroAction[];
+  path?: string;
+  rev?: string;
+};
+
+/** One retro as the UI runs it. */
+export type RetroView = {
+  retro: RetroSummary;
+  /** The body bullets, in document order. */
+  notes: RetroNote[];
+  /** Ranked by votes descending, then by id. */
+  themes: RetroThemeView[];
+  actions: RetroActionView[];
+  /** The still-open actions of the retros before this one. */
+  carried: RetroActionView[];
+  /** The sprint under review, when the team repository holds it. */
+  sprint?: SprintSummary;
+  body?: string;
+  diagnostics: Diagnostic[];
+};
+
+/** The answer of every retro call that writes. */
+export type RetroResult = {
+  retro: RetroView;
+  /** The task a promotion created, in the project repository. */
+  task?: Item;
+  writes: VaultWriteSet[];
+};
+
+/** One sticky note added during the session. */
+export type RetroNoteDraft = { category: RetroCategory; text: string; author?: string };
+
+/** One note edited during the session; an absent field is left alone. */
+export type RetroNoteEdit = {
+  id: string;
+  text?: string;
+  author?: string;
+  /** Moves the note to another column. */
+  category?: RetroCategory;
+};
+
+/** One improvement action selected during the session. */
+export type RetroActionDraft = {
+  id?: string;
+  title: string;
+  owner?: string;
+  due?: string;
+  theme?: string;
+  note?: string;
+};
+
+/** One action edited during the session; `task` is written by a promotion. */
+export type RetroActionEdit = {
+  id: string;
+  title?: string;
+  owner?: string;
+  due?: string;
+  theme?: string;
+  status?: RetroActionStatus;
+  note?: string;
+};
+
+/**
+ * The retro fields an update may change. Notes and actions are edited entry by
+ * entry so that one participant's write is one line of diff; themes and votes
+ * are replaced wholesale because grouping is one decision about the whole wall.
+ */
+export type RetroPatch = {
+  title?: string;
+  date?: string;
+  state?: RetroState;
+  facilitator?: string;
+  participants?: string[];
+  anonymous?: boolean;
+  votesPerPerson?: number;
+  carriedFrom?: string;
+  addNotes?: RetroNoteDraft[];
+  updateNotes?: RetroNoteEdit[];
+  removeNotes?: string[];
+  themes?: RetroTheme[];
+  votes?: Record<string, string[]>;
+  addActions?: RetroActionDraft[];
+  updateActions?: RetroActionEdit[];
+  removeActions?: string[];
+};
+
+/** A new retro. Everything but the sprint has a sensible default. */
+export type RetroDraft = {
+  sprint?: string;
+  board?: string;
+  title?: string;
+  date?: string;
+  facilitator?: string;
+  participants?: string[];
+  anonymous?: boolean;
+  votesPerPerson?: number;
+  carriedFrom?: string;
+  state?: RetroState;
+  author?: string;
 };
 
 /** The fields `board.update` may change; the card order is never patched. */
@@ -730,7 +1027,10 @@ export type CoreApi = {
   'project.list': { params: undefined; result: ProjectSummary[] };
 
   /** Every board of the team repository. */
-  'board.list': { params: undefined; result: { boards: BoardSummary[]; diagnostics: Diagnostic[] } };
+  'board.list': {
+    params: undefined;
+    result: { boards: BoardSummary[]; diagnostics: Diagnostic[] };
+  };
   /** One board, rendered over every open repository. */
   'board.get': { params: { board: string }; result: BoardView };
   /**
@@ -816,6 +1116,38 @@ export type CoreApi = {
   'sprint.close': {
     params: { id: string; rev?: string; carry?: SprintCarry[] };
     result: SprintResult;
+  };
+  /**
+   * The burndown, the cumulative flow diagram and the flow statistics of one
+   * sprint, with the provenance of the history behind them. The three come
+   * back together because they are one reconstruction of one window.
+   */
+  'sprint.metrics': { params: { id: string }; result: SprintMetricsView };
+
+  /**
+   * The retros of the team repository, newest first, with every improvement
+   * action they left open. The open actions are the point: a team starting a
+   * new retro sees what it promised last time (docs/04 §9.1, step 7).
+   */
+  'retro.list': {
+    params: { sprint?: string; board?: string; state?: RetroState } | undefined;
+    result: { retros: RetroSummary[]; carried: RetroActionView[]; diagnostics: Diagnostic[] };
+  };
+  /** One retro: its notes, its themes by votes, its actions and what it carried. */
+  'retro.get': { params: { id: string }; result: RetroView };
+  /** Create a retro; the id is allocated by the core from the team key. */
+  'retro.create': { params: RetroDraft; result: RetroResult };
+  /** Apply one session's edits: notes, grouping, votes and actions. */
+  'retro.update': { params: { id: string; rev?: string; patch: RetroPatch }; result: RetroResult };
+  /**
+   * Turn one improvement action into a task in a project repository and write
+   * the reference back into the retro, so neither end of the link is lost. A
+   * project no open repository serves is refused with `repo_not_cloned` rather
+   * than half written (docs/04 R-RETRO-2).
+   */
+  'retro.promote': {
+    params: { id: string; action: string; project: string; labels?: string[]; rev?: string };
+    result: RetroResult;
   };
 
   /**

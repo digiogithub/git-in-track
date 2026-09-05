@@ -36,15 +36,43 @@ import type {
   Priority,
   ProjectSummary,
   RefResolution,
+  RetroAction,
+  RetroActionDraft,
+  RetroActionEdit,
+  RetroActionStatus,
+  RetroActionView,
+  RetroCategory,
+  RetroDraft,
+  RetroMetrics,
+  RetroNote,
+  RetroNoteDraft,
+  RetroNoteEdit,
+  RetroPatch,
+  RetroResult,
+  RetroState,
+  RetroSummary,
+  RetroTheme,
+  RetroThemeView,
+  RetroView,
   SearchHit,
   SnapshotInfo,
   SnapshotItemSummary,
   SnapshotResult,
+  Burndown,
+  BurndownPoint,
+  CumulativeFlow,
+  FlowBand,
+  FlowPoint,
+  FlowStats,
+  MetricsProvenance,
+  MetricsSource,
+  MetricStat,
   SprintCarry,
   SprintCarryAction,
   SprintCarryResult,
   SprintCloseReport,
   SprintMetrics,
+  SprintMetricsView,
   SprintResult,
   SprintState,
   SprintSummary,
@@ -80,15 +108,43 @@ export type {
   Priority,
   ProjectSummary,
   RefResolution,
+  RetroAction,
+  RetroActionDraft,
+  RetroActionEdit,
+  RetroActionStatus,
+  RetroActionView,
+  RetroCategory,
+  RetroDraft,
+  RetroMetrics,
+  RetroNote,
+  RetroNoteDraft,
+  RetroNoteEdit,
+  RetroPatch,
+  RetroResult,
+  RetroState,
+  RetroSummary,
+  RetroTheme,
+  RetroThemeView,
+  RetroView,
   SearchHit,
   SnapshotInfo,
   SnapshotItemSummary,
   SnapshotResult,
+  Burndown,
+  BurndownPoint,
+  CumulativeFlow,
+  FlowBand,
+  FlowPoint,
+  FlowStats,
+  MetricsProvenance,
+  MetricsSource,
+  MetricStat,
   SprintCarry,
   SprintCarryAction,
   SprintCarryResult,
   SprintCloseReport,
   SprintMetrics,
+  SprintMetricsView,
   SprintResult,
   SprintState,
   SprintSummary,
@@ -274,7 +330,8 @@ export type SyncOptions = {
 };
 
 /** The phase a run ended in. */
-export type SyncPhase = 'preflight' | 'fetch' | 'integrate' | 'push' | 'done' | 'conflicts' | 'failed';
+export type SyncPhase =
+  'preflight' | 'fetch' | 'integrate' | 'push' | 'done' | 'conflicts' | 'failed';
 
 /**
  * One repository's sync report. It is filled on failure too, so the UI can say
@@ -523,6 +580,10 @@ export type ProviderErrorCode =
   | 'sprint_overlap'
   /** The board already runs a sprint; confirm to run two at once. */
   | 'sprint_already_active'
+  /** The improvement action already became a task (docs/04 R-RETRO-2). */
+  | 'retro_action_promoted'
+  /** A write lost a race, or a sprint already has a retro. */
+  | 'conflict'
   | 'internal';
 
 export type ChangeEvent =
@@ -628,6 +689,40 @@ export interface DataProvider {
    * unfinished item (R-SPR-3).
    */
   closeSprint(id: string, carry?: SprintCarry[], rev?: string): Promise<SprintResult>;
+  /**
+   * One sprint's burndown, cumulative flow diagram and flow statistics, with
+   * the provenance of the history behind them (docs/04 §12). The provenance is
+   * part of the answer, not decoration: the companion reconstructs the series
+   * from git, and a host without git says so and shows the approximation it
+   * can draw from the `updated` stamps instead of inventing a curve.
+   */
+  getSprintMetrics(id: string): Promise<SprintMetricsView>;
+
+  // retrospectives (docs/04-team-repository.md §9)
+  /**
+   * The retros of the team repository, newest first, with the improvement
+   * actions they left open. The open actions come back with the listing
+   * because a team starting a new retro has to see them first (§9.1, step 7).
+   */
+  listRetros(filter?: RetroFilter): Promise<RetroListing>;
+  /** One retro: its notes, its themes by votes, its actions and what it carried. */
+  getRetro(id: string): Promise<RetroView>;
+  /** Creates a retro; the core allocates the id from the team key. */
+  createRetro(input: RetroDraft): Promise<RetroResult>;
+  /**
+   * Applies one session's edits. Notes and actions are added, changed and
+   * removed one entry at a time, so two participants writing at once produce
+   * diffs that merge rather than an entry that disappears.
+   */
+  updateRetro(id: string, patch: RetroPatch, rev?: string): Promise<RetroResult>;
+  /**
+   * Turns one improvement action into a task in a project repository, and
+   * writes the produced reference back into the retro. A project no open
+   * repository serves is refused with `repo_not_cloned` rather than half
+   * written, and the UI then offers the action as Markdown to paste
+   * (docs/04 R-RETRO-2).
+   */
+  promoteRetroAction(input: RetroPromotion): Promise<RetroResult>;
 
   // index snapshots (docs/04-team-repository.md §6)
   /**
@@ -684,7 +779,9 @@ export interface DataProvider {
   /** Undo a half-finished rebase or merge, restoring the tree. */
   abortSync(repoId: string): Promise<SyncRepoStatus>;
   /** The conflicted paths of every repository whose integration stopped. */
-  listSyncConflicts(repoId?: string): Promise<{ repo: string; paths: string[]; operation?: string }[]>;
+  listSyncConflicts(
+    repoId?: string,
+  ): Promise<{ repo: string; paths: string[]; operation?: string }[]>;
 
   // git — conflict resolution (docs/06 §5, story GIT-US-0022)
   /**
@@ -706,6 +803,26 @@ export interface DataProvider {
 
   subscribe(handler: (event: ChangeEvent) => void): Unsubscribe;
 }
+
+/** How a retro listing is narrowed; the filters are ANDed. */
+export type RetroFilter = { sprint?: string; board?: string; state?: RetroState };
+
+/** A retro listing: the retros and every action they left open. */
+export type RetroListing = {
+  retros: RetroSummary[];
+  carried: RetroActionView[];
+  diagnostics: Diagnostic[];
+};
+
+/** Promoting one improvement action into a task in a project repository. */
+export type RetroPromotion = {
+  retro: string;
+  action: string;
+  project: string;
+  /** Overrides the `[retro]` label the task carries (docs/04 R-RETRO-3). */
+  labels?: string[];
+  rev?: string;
+};
 
 /** How a sprint listing is narrowed; both filters are ANDed. */
 export type SprintFilter = { board?: string; state?: SprintState };

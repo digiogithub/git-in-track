@@ -47,11 +47,28 @@ import type {
   SnapshotItemSummary,
   SnapshotRefresh,
   SnapshotResult,
+  RetroAction,
+  RetroActionView,
+  RetroCategory,
+  RetroDraft,
+  RetroFilter,
+  RetroListing,
+  RetroNote,
+  RetroPatch,
+  RetroPromotion,
+  RetroResult,
+  RetroState,
+  RetroSummary,
+  RetroThemeView,
+  RetroView,
   SprintCarry,
   SprintCarryResult,
   SprintDraft,
   SprintFilter,
   SprintPatch,
+  BurndownPoint,
+  FlowPoint,
+  SprintMetricsView,
   SprintResult,
   SprintState,
   SprintSummary,
@@ -82,8 +99,35 @@ export type FakeData = {
   boards?: FakeBoard[];
   /** The sprints of the team repository; omit for the sample sprint. */
   sprints?: FakeSprint[];
+  /** The retros of the team repository; omit for the sample retro. */
+  retros?: FakeRetro[];
   /** The day the sprint header counts its remaining days from. */
   today?: string;
+};
+
+/**
+ * A retro as the team repository stores it (docs/04 §9.2): the notes in the
+ * body, the themes, the votes and the improvement actions in the front matter.
+ * The fake grades an action the way the Go core does — a promoted action is
+ * done when its task is done — so a component test exercises R-RETRO-1.
+ */
+export type FakeRetro = {
+  id: string;
+  title: string;
+  sprint?: string;
+  board?: string;
+  date: string;
+  facilitator?: string;
+  participants: string[];
+  state: RetroState;
+  anonymous?: boolean;
+  votesPerPerson?: number;
+  carriedFrom?: string;
+  notes: RetroNote[];
+  themes: { id: string; title: string; category?: RetroCategory; notes?: string[] }[];
+  votes: Record<string, string[]>;
+  actions: RetroAction[];
+  rev: string;
 };
 
 /**
@@ -193,6 +237,61 @@ export const sampleSprint: FakeSprint = {
   velocityTarget: 21,
   participants: ['marta', 'jose'],
   rev: 'sha256:00000000000000c1',
+};
+
+/** The retro `sampleSprint` produced: one promoted action and one process one. */
+export const sampleRetro: FakeRetro = {
+  id: 'ACME-TEAM-R-0007',
+  title: 'Sprint 7 Retrospective',
+  sprint: 'ACME-TEAM-S-0007',
+  board: 'acme-scrum',
+  date: '2026-09-08',
+  facilitator: 'marta',
+  participants: ['marta', 'jose'],
+  state: 'closed',
+  votesPerPerson: 3,
+  notes: [
+    {
+      id: 'n1',
+      category: 'went_well',
+      text: 'Pairing on the OIDC flow unblocked us.',
+      author: 'jose',
+    },
+    {
+      id: 'n2',
+      category: 'to_improve',
+      text: 'Two days lost to a trailing slash.',
+      author: 'marta',
+    },
+    { id: 'n3', category: 'puzzle', text: 'Is the stale snapshot badge useful?', author: 'jose' },
+  ],
+  themes: [
+    { id: 't1', title: 'Pairing paid off', category: 'went_well', notes: ['n1'] },
+    { id: 't2', title: 'Configuration bites us', category: 'to_improve', notes: ['n2'] },
+  ],
+  votes: { t1: ['jose'], t2: ['jose', 'marta'] },
+  actions: [
+    {
+      id: 'a1',
+      title: 'Assert the OIDC redirect URI at startup',
+      owner: 'jose',
+      due: '2026-09-12',
+      theme: 't2',
+      task: 'ACME/ACME-T-0107',
+      status: 'promoted',
+    },
+    {
+      id: 'a2',
+      title: 'Split Monday planning into two slots',
+      owner: 'marta',
+      due: '2026-09-08',
+      theme: 't2',
+      status: 'done',
+      note: 'Team process change; nothing to build.',
+    },
+    { id: 'a3', title: 'Write the staging runbook', due: '2026-09-20', status: 'proposed' },
+  ],
+  rev: 'sha256:00000000000000d1',
 };
 
 /**
@@ -535,6 +634,7 @@ export class FakeProvider implements DataProvider {
   private team: TeamSummary | null;
   private boards: Map<string, FakeBoard>;
   private sprints: Map<string, FakeSprint>;
+  private retros: Map<string, FakeRetro>;
   private today: string;
   private handlers = new Set<(event: ChangeEvent) => void>();
   private revCounter = 1000;
@@ -551,9 +651,8 @@ export class FakeProvider implements DataProvider {
     this.boards = new Map(
       (data.boards ?? [sampleBoard, sampleScrumBoard]).map((b) => [b.id, structuredClone(b)]),
     );
-    this.sprints = new Map(
-      (data.sprints ?? [sampleSprint]).map((s) => [s.id, structuredClone(s)]),
-    );
+    this.sprints = new Map((data.sprints ?? [sampleSprint]).map((s) => [s.id, structuredClone(s)]));
+    this.retros = new Map((data.retros ?? [sampleRetro]).map((r) => [r.id, structuredClone(r)]));
     this.today = data.today ?? '2026-09-02';
     this.git = {
       commitOnSave: false,
@@ -1031,6 +1130,276 @@ export class FakeProvider implements DataProvider {
     return Promise.resolve(this.renderBoard(board));
   }
 
+  // ------------------------------------------------------------------- retros
+
+  listRetros(filter: RetroFilter = {}): Promise<RetroListing> {
+    const rows = [...this.retros.values()]
+      .filter((r) => (filter.sprint ? r.sprint === filter.sprint : true))
+      .filter((r) => (filter.board ? r.board === filter.board : true))
+      .filter((r) => (filter.state ? r.state === filter.state : true))
+      .sort((a, b) =>
+        a.date === b.date ? b.id.localeCompare(a.id) : b.date.localeCompare(a.date),
+      );
+    return Promise.resolve({
+      retros: rows.map((r) => this.summarizeRetro(r)),
+      carried: rows.flatMap((r) => this.retroActions(r)).filter((a) => a.open),
+      diagnostics: [],
+    });
+  }
+
+  getRetro(id: string): Promise<RetroView> {
+    const retro = this.retros.get(id);
+    if (!retro) return Promise.reject(new ProviderError('not_found', `No retro ${id}`));
+    return Promise.resolve(this.renderRetro(retro));
+  }
+
+  createRetro(input: RetroDraft): Promise<RetroResult> {
+    if (!this.capabilities.write)
+      return Promise.reject(new ProviderError('read_only', 'This workspace is read-only'));
+    const sprint = input.sprint ? this.sprints.get(input.sprint) : undefined;
+    if (input.sprint && !sprint) {
+      return Promise.reject(new ProviderError('not_found', `No sprint ${input.sprint}`));
+    }
+    const taken = [...this.retros.values()].find((r) => input.sprint && r.sprint === input.sprint);
+    if (taken) {
+      return Promise.reject(
+        new ProviderError('conflict', `sprint ${input.sprint} already has retro ${taken.id}`),
+      );
+    }
+    const numbers = [...this.retros.keys()].map((id) => Number(id.split('-').pop() ?? 0));
+    const next = Math.max(0, ...numbers) + 1;
+    const previous = [...this.retros.values()].at(-1);
+    const retro: FakeRetro = {
+      id: `ACME-TEAM-R-${String(next).padStart(4, '0')}`,
+      title: input.title ?? `${sprint?.title ?? 'Retrospective'} Retrospective`,
+      ...(input.sprint === undefined ? {} : { sprint: input.sprint }),
+      ...((input.board ?? sprint?.board)
+        ? { board: (input.board ?? sprint?.board) as string }
+        : {}),
+      date: input.date ?? this.today,
+      ...(input.facilitator === undefined ? {} : { facilitator: input.facilitator }),
+      participants: input.participants ?? sprint?.participants ?? [],
+      state: input.state ?? 'collecting',
+      ...(input.anonymous === undefined ? {} : { anonymous: input.anonymous }),
+      ...(input.votesPerPerson === undefined ? {} : { votesPerPerson: input.votesPerPerson }),
+      ...((input.carriedFrom ?? previous?.id)
+        ? { carriedFrom: (input.carriedFrom ?? previous?.id) as string }
+        : {}),
+      notes: [],
+      themes: [],
+      votes: {},
+      actions: [],
+      rev: this.nextRev(),
+    };
+    this.retros.set(retro.id, retro);
+    this.emit({ kind: 'repo', repoId: 'repo-1' });
+    return Promise.resolve({ retro: this.renderRetro(retro), writes: [] });
+  }
+
+  updateRetro(id: string, patch: RetroPatch, rev?: string): Promise<RetroResult> {
+    if (!this.capabilities.write)
+      return Promise.reject(new ProviderError('read_only', 'This workspace is read-only'));
+    const retro = this.retros.get(id);
+    if (!retro) return Promise.reject(new ProviderError('not_found', `No retro ${id}`));
+    if (rev !== undefined && rev !== '*' && rev !== retro.rev) {
+      return Promise.reject(new ProviderError('stale_revision', `Retro ${id} changed on disk`));
+    }
+    if (patch.title !== undefined) retro.title = patch.title;
+    if (patch.date !== undefined) retro.date = patch.date;
+    if (patch.state !== undefined) retro.state = patch.state;
+    if (patch.facilitator !== undefined) retro.facilitator = patch.facilitator;
+    if (patch.participants !== undefined) retro.participants = [...patch.participants];
+    if (patch.anonymous !== undefined) retro.anonymous = patch.anonymous;
+    if (patch.votesPerPerson !== undefined) retro.votesPerPerson = patch.votesPerPerson;
+    if (patch.carriedFrom !== undefined) retro.carriedFrom = patch.carriedFrom;
+    for (const draft of patch.addNotes ?? []) {
+      retro.notes.push({
+        id: `n${retro.notes.length + 1}`,
+        category: draft.category,
+        text: draft.text,
+        ...(draft.author === undefined || retro.anonymous ? {} : { author: draft.author }),
+      });
+    }
+    for (const edit of patch.updateNotes ?? []) {
+      const note = retro.notes.find((n) => n.id === edit.id);
+      if (!note) return Promise.reject(new ProviderError('not_found', `No note ${edit.id}`));
+      if (edit.text !== undefined) note.text = edit.text;
+      if (edit.author !== undefined) note.author = edit.author;
+      if (edit.category !== undefined) note.category = edit.category;
+    }
+    if (patch.removeNotes) {
+      retro.notes = retro.notes.filter((n) => !patch.removeNotes?.includes(n.id ?? ''));
+    }
+    if (patch.themes !== undefined) retro.themes = structuredClone(patch.themes);
+    if (patch.votes !== undefined) retro.votes = structuredClone(patch.votes);
+    for (const draft of patch.addActions ?? []) {
+      retro.actions.push({
+        id: draft.id ?? `a${retro.actions.length + 1}`,
+        title: draft.title,
+        ...(draft.owner === undefined ? {} : { owner: draft.owner }),
+        ...(draft.due === undefined ? {} : { due: draft.due }),
+        ...(draft.theme === undefined ? {} : { theme: draft.theme }),
+        ...(draft.note === undefined ? {} : { note: draft.note }),
+        status: 'proposed',
+      });
+    }
+    for (const edit of patch.updateActions ?? []) {
+      const action = retro.actions.find((a) => a.id === edit.id);
+      if (!action) return Promise.reject(new ProviderError('not_found', `No action ${edit.id}`));
+      if (edit.title !== undefined) action.title = edit.title;
+      if (edit.owner !== undefined) action.owner = edit.owner;
+      if (edit.due !== undefined) action.due = edit.due;
+      if (edit.theme !== undefined) action.theme = edit.theme;
+      if (edit.note !== undefined) action.note = edit.note;
+      if (edit.status !== undefined) action.status = edit.status;
+    }
+    if (patch.removeActions) {
+      retro.actions = retro.actions.filter((a) => !patch.removeActions?.includes(a.id));
+    }
+    retro.rev = this.nextRev();
+    this.emit({ kind: 'repo', repoId: 'repo-1' });
+    return Promise.resolve({ retro: this.renderRetro(retro), writes: [] });
+  }
+
+  promoteRetroAction(input: RetroPromotion): Promise<RetroResult> {
+    if (!this.capabilities.write)
+      return Promise.reject(new ProviderError('read_only', 'This workspace is read-only'));
+    const retro = this.retros.get(input.retro);
+    if (!retro) return Promise.reject(new ProviderError('not_found', `No retro ${input.retro}`));
+    if (input.rev !== undefined && input.rev !== '*' && input.rev !== retro.rev) {
+      return Promise.reject(
+        new ProviderError('stale_revision', `Retro ${retro.id} changed on disk`),
+      );
+    }
+    const action = retro.actions.find((a) => a.id === input.action);
+    if (!action) return Promise.reject(new ProviderError('not_found', `No action ${input.action}`));
+    if (action.task) {
+      return Promise.reject(
+        new ProviderError(
+          'retro_action_promoted',
+          `action ${action.id} is already promoted to ${action.task}`,
+        ),
+      );
+    }
+    if (!this.projects.some((p) => p.key === input.project)) {
+      return Promise.reject(
+        new ProviderError(
+          'repo_not_cloned',
+          `project ${input.project} is not cloned on this machine; clone it, or copy the action as Markdown`,
+        ),
+      );
+    }
+    const numbers = [...this.items.values()]
+      .filter((i) => i.type === 'task')
+      .map((i) => Number(i.id.split('-').pop() ?? 0));
+    const id = `${input.project}-T-${String(Math.max(0, ...numbers) + 1).padStart(4, '0')}`;
+    const task: Item = {
+      id,
+      type: 'task',
+      title: action.title,
+      status: 'todo',
+      ...(action.owner === undefined ? {} : { assignees: [action.owner] }),
+      ...(retro.facilitator === undefined ? {} : { author: retro.facilitator }),
+      labels: input.labels ?? ['retro'],
+      ...(action.due === undefined ? {} : { due: action.due }),
+      body: `## Description\n\n${action.note ? `${action.note}\n\n` : ''}Promoted from retro ${retro.id} (action ${action.id}).\n`,
+      path: `docs/.pmngr/tasks/${id.toLowerCase()}.md`,
+      rev: this.nextRev(),
+    };
+    this.items.set(task.id, task);
+    action.task = `${input.project}/${task.id}`;
+    action.status = 'promoted';
+    retro.rev = this.nextRev();
+    this.emit({ kind: 'items', repoId: 'repo-1', ids: [task.id] });
+    return Promise.resolve({ retro: this.renderRetro(retro), task, writes: [] });
+  }
+
+  /** Renders a retro the way `core.BuildRetroView` does. */
+  private renderRetro(retro: FakeRetro): RetroView {
+    const actions = this.retroActions(retro);
+    const themes: RetroThemeView[] = retro.themes
+      .map((theme) => ({
+        ...theme,
+        votes: (retro.votes[theme.id] ?? []).length,
+        voters: [...(retro.votes[theme.id] ?? [])].sort(),
+        noteTexts: (theme.notes ?? [])
+          .map((id) => retro.notes.find((n) => n.id === id))
+          .filter((n): n is RetroNote => n !== undefined),
+        actions: retro.actions.filter((a) => a.theme === theme.id).map((a) => a.id),
+      }))
+      .sort((a, b) => (a.votes === b.votes ? a.id.localeCompare(b.id) : b.votes - a.votes));
+    const sprintOfRetro = retro.sprint ? this.sprints.get(retro.sprint) : undefined;
+    const earlier = [...this.retros.values()].filter(
+      (r) => r.id !== retro.id && (!retro.carriedFrom || r.id === retro.carriedFrom),
+    );
+    return {
+      retro: this.summarizeRetro(retro),
+      notes: structuredClone(retro.notes),
+      themes,
+      actions,
+      carried: earlier.flatMap((r) => this.retroActions(r)).filter((a) => a.open),
+      ...(sprintOfRetro ? { sprint: this.renderSprint(sprintOfRetro).sprint } : {}),
+      diagnostics: [],
+    };
+  }
+
+  /** The header and the follow-through counts of one retro. */
+  private summarizeRetro(retro: FakeRetro): RetroSummary {
+    const actions = this.retroActions(retro);
+    return {
+      id: retro.id,
+      title: retro.title,
+      ...(retro.sprint === undefined ? {} : { sprint: retro.sprint }),
+      ...(retro.board === undefined ? {} : { board: retro.board }),
+      date: retro.date,
+      ...(retro.facilitator === undefined ? {} : { facilitator: retro.facilitator }),
+      participants: [...retro.participants],
+      state: retro.state,
+      ...(retro.anonymous === undefined ? {} : { anonymous: retro.anonymous }),
+      voteBudget: retro.votesPerPerson ?? 3,
+      ...(retro.carriedFrom === undefined ? {} : { carriedFrom: retro.carriedFrom }),
+      notes: retro.notes.length,
+      themes: retro.themes.length,
+      metrics: {
+        actions: retro.actions.length,
+        promoted: actions.filter((a) => a.task).length,
+        done: actions.filter((a) => a.done && a.status !== 'dropped').length,
+        open: actions.filter((a) => a.open).length,
+        dropped: actions.filter((a) => a.status === 'dropped').length,
+        noOwner: actions.filter((a) => !a.owner).length,
+      },
+      actions: structuredClone(retro.actions),
+      path: `.pmngr/retros/${retro.id}.md`,
+      rev: retro.rev,
+    };
+  }
+
+  /**
+   * Grades every improvement action against the task it was promoted into: the
+   * task's status decides, and the retro's own `status` is only the fallback
+   * for an action that was never promoted (docs/04 R-RETRO-1).
+   */
+  private retroActions(retro: FakeRetro): RetroActionView[] {
+    return retro.actions.map((action) => {
+      const card = action.task ? this.refCard(action.task) : undefined;
+      const done =
+        action.status === 'dropped'
+          ? false
+          : card && card.category
+            ? card.category === 'done' || card.category === 'cancelled'
+            : action.status === 'done';
+      return {
+        ...action,
+        retro: retro.id,
+        retroTitle: retro.title,
+        ...(card ? { card } : {}),
+        ...(card?.reason ? { reason: card.reason } : {}),
+        done,
+        open: !done && action.status !== 'dropped',
+      };
+    });
+  }
+
   // ------------------------------------------------------------------- sprints
 
   listSprints(filter: SprintFilter = {}): Promise<SprintSummary[]> {
@@ -1047,6 +1416,83 @@ export class FakeProvider implements DataProvider {
     const sprint = this.sprints.get(id);
     if (!sprint) return Promise.reject(new ProviderError('not_found', `No sprint ${id}`));
     return Promise.resolve(this.renderSprint(sprint));
+  }
+
+  /**
+   * A deterministic metrics fixture for the demo and for the tests. The fake
+   * provider fabricates data by definition, so this hand-rolls a plausible
+   * series rather than reimplementing the core's reconstruction: the real
+   * numbers come from `internal/core` in both shipping providers.
+   */
+  getSprintMetrics(id: string): Promise<SprintMetricsView> {
+    const sprint = this.sprints.get(id);
+    if (!sprint) return Promise.reject(new ProviderError('not_found', `No sprint ${id}`));
+    const view = this.renderSprint(sprint);
+    const summary = view.sprint;
+    const days = summary.totalDays > 0 ? summary.totalDays : 1;
+    const committed = summary.metrics.committedPoints || summary.metrics.points;
+    const start = new Date(`${summary.start ?? '2026-01-01'}T00:00:00Z`);
+    const total = view.cards.length;
+    const points: BurndownPoint[] = [];
+    const flow: FlowPoint[] = [];
+    for (let i = 0; i < days; i += 1) {
+      const date = new Date(start.getTime() + i * 86_400_000).toISOString().slice(0, 10);
+      const observed = i < Math.max(1, days - 2);
+      const ideal = Math.round(committed * (1 - i / Math.max(1, days - 1)) * 100) / 100;
+      const done = observed ? Math.min(committed, Math.round((committed * i) / days)) : 0;
+      const finished = observed ? Math.min(total, Math.floor((total * i) / days)) : 0;
+      points.push({
+        date,
+        day: i + 1,
+        ideal,
+        observed,
+        remaining: observed ? committed - done : 0,
+        scope: observed ? committed : 0,
+        done,
+        items: observed ? total : 0,
+        completed: finished,
+        unknown: 0,
+      });
+      flow.push({
+        date,
+        day: i + 1,
+        observed,
+        counts: {
+          done: finished,
+          cancelled: 0,
+          in_progress: observed ? Math.min(1, total - finished) : 0,
+          todo: observed ? Math.max(0, total - finished - 1) : 0,
+          unknown: 0,
+        },
+        total: observed ? total : 0,
+      });
+    }
+    return Promise.resolve({
+      sprint: summary,
+      burndown: {
+        sprint: summary.id,
+        ...(summary.start === undefined ? {} : { start: summary.start }),
+        ...(summary.end === undefined ? {} : { end: summary.end }),
+        committedPoints: committed,
+        points,
+      },
+      flow: { bands: ['done', 'cancelled', 'in_progress', 'todo', 'unknown'], days: flow },
+      stats: {
+        throughput: summary.metrics.done,
+        throughputPerWeek: Math.round(((summary.metrics.done * 7) / days) * 100) / 100,
+        cycleTime: { count: 2, mean: 2.5, median: 2, p85: 3.5, min: 1, max: 3.5 },
+        leadTime: { count: 2, mean: 6.5, median: 6, p85: 8, min: 5, max: 8 },
+        excluded: 0,
+      },
+      provenance: {
+        source: 'git',
+        approximate: false,
+        items: view.cards.length,
+        covered: view.cards.length,
+        note: 'Demo data: this provider fabricates a plausible series.',
+      },
+      items: structuredClone(view.cards),
+    });
   }
 
   createSprint(input: SprintDraft): Promise<SprintResult> {
@@ -1157,9 +1603,7 @@ export class FakeProvider implements DataProvider {
       if (decision.action === 'next') {
         const target =
           (decision.sprint ? this.sprints.get(decision.sprint) : undefined) ??
-          [...this.sprints.values()].find(
-            (s) => s.board === sprint.board && s.state === 'planned',
-          );
+          [...this.sprints.values()].find((s) => s.board === sprint.board && s.state === 'planned');
         if (!target) {
           outcome.error = `no sprint to carry ${decision.ref} into`;
           return outcome;
@@ -1256,6 +1700,26 @@ export class FakeProvider implements DataProvider {
   }
 
   /** One card of a sprint scope, live or read from the committed snapshot. */
+  private refCard(ref: string): BoardCard {
+    const [project = '', id = ''] = ref.split('/');
+    const declared = (this.team?.projects.map((p) => p.key) ?? []).includes(project);
+    if (!this.projects.some((p) => p.key === project)) {
+      return remoteCard(ref, project, id, declared);
+    }
+    const item = this.items.get(id);
+    if (!item) {
+      return {
+        ref,
+        project,
+        item: id,
+        declared,
+        remote: false,
+        reason: `${id} does not exist in the clone of ${project}`,
+      };
+    }
+    return this.liveCard(project, item);
+  }
+
   private cardFor(ref: string, sprint: FakeSprint): BoardCard {
     const [project = '', id = ''] = ref.split('/');
     const declared = (this.team?.projects.map((p) => p.key) ?? []).includes(project);
@@ -1313,7 +1777,9 @@ export class FakeProvider implements DataProvider {
       source: 'live',
       title: item.title,
       type: item.type,
-      ...(item.status === undefined ? {} : { status: item.status, category: categoryOf(item.status) }),
+      ...(item.status === undefined
+        ? {}
+        : { status: item.status, category: categoryOf(item.status) }),
       ...(item.priority === undefined ? {} : { priority: item.priority }),
       ...(item.assignees ? { assignees: item.assignees } : {}),
       ...(item.labels ? { labels: item.labels } : {}),
@@ -1578,9 +2044,9 @@ export class FakeProvider implements DataProvider {
     );
   }
 
-  commitNow(input: { repoId?: string; paths?: string[]; message?: string } = {}): Promise<
-    GitCommit[]
-  > {
+  commitNow(
+    input: { repoId?: string; paths?: string[]; message?: string } = {},
+  ): Promise<GitCommit[]> {
     const repo = input.repoId ?? this.repos[0]?.id ?? 'default';
     this.git = { ...this.git, pending: 0 };
     return Promise.resolve([
@@ -1692,7 +2158,9 @@ export class FakeProvider implements DataProvider {
   readConflict(repoId: string, path: string): Promise<ConflictAnalysis> {
     const analysis = this.conflicts.get(`${repoId}:${path}`);
     if (!analysis) {
-      return Promise.reject(new ProviderError('not_found', `${path} is not conflicted in ${repoId}`));
+      return Promise.reject(
+        new ProviderError('not_found', `${path} is not conflicted in ${repoId}`),
+      );
     }
     return Promise.resolve(analysis);
   }
@@ -1704,7 +2172,9 @@ export class FakeProvider implements DataProvider {
   ): Promise<ConflictResolveResult> {
     const analysis = this.conflicts.get(`${repoId}:${path}`);
     if (!analysis) {
-      return Promise.reject(new ProviderError('not_found', `${path} is not conflicted in ${repoId}`));
+      return Promise.reject(
+        new ProviderError('not_found', `${path} is not conflicted in ${repoId}`),
+      );
     }
     this.resolutions.push({ repo: repoId, path, resolution });
     this.conflicts.delete(`${repoId}:${path}`);

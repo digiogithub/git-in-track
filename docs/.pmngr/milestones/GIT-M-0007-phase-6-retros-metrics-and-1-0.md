@@ -2,9 +2,9 @@
 id: GIT-M-0007
 type: milestone
 title: Phase 6 — Retrospectives, metrics and 1.0
-status: backlog
+status: in_progress
 created: 2026-09-03T00:00:00Z
-updated: 2026-09-03T00:00:00Z
+updated: 2026-09-04
 author: team
 labels: [web, docs, ci]
 links:
@@ -24,7 +24,7 @@ model and a written compatibility promise.
 ## Acceptance Criteria
 
 - [ ] A full sprint planned, run, closed and retrospected in the tool itself.
-- [ ] Burndown and cumulative flow match a hand-computed reference.
+- [x] Burndown and cumulative flow match a hand-computed reference.
 - [ ] Primary flows pass WCAG 2.1 AA.
 - [ ] Homebrew, Scoop, Docker and `go install` all yield a working binary.
 - [ ] Data model frozen at `schemaVersion: 1` with a 0.x migration path.

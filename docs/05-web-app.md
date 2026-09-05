@@ -143,9 +143,10 @@ state is shareable by URL and survives reloads.
   /team/$teamId/boards/$boardSlug           BoardView (kanban or scrum)
   /team/$teamId/boards/$boardSlug/planning  SprintPlanning
   /team/$teamId/sprints/$sprintId           SprintDetail
-  /team/$teamId/retros                      RetroList
-  /team/$teamId/retros/$retroId             RetroBoard
-  /team/$teamId/metrics                     Metrics (Phase 6)
+  /retros                                   RetroList     (as built)
+  /retros/$retroId                          RetroBoard    (as built)
+  /metrics                                  MetricsIndex  (as built)
+  /metrics/$sprintId                        SprintMetrics (as built)
 /sync                                    SyncPanel
   /sync/conflicts/$conflictId              ConflictResolver
 /search                                  GlobalSearch
@@ -247,6 +248,17 @@ Sticky-note cards are list items in the body; adding a note appends a bullet.
 Voting (Phase 6) is stored as a `votes` map in front matter. Any action can be
 "promoted to task": a dialog picks the target project, and the provider creates a
 task in that repo and writes the produced ref back into the retro's `actions[]`.
+
+*As built (GIT-US-0027).* The routes are `/retros` and `/retros/$retroId`. **RetroList** puts what
+past retros left open *above* the list of retros, because the point of writing a retro down is
+following through, and starts a retro for a closed sprint that has none in one click.
+**RetroBoard** renders the three collection columns from the body bullets — adding a note appends
+one line, which is what lets two participants write at once — plus the themes ranked by the votes
+they got and the improvement actions. An action carries an owner, a due date and a "Promote to
+task" control that names the target project; once promoted, the row shows the task reference and
+its live status instead, and its checkbox is disabled because the task, not the retro, decides
+whether the action is done (docs/04 R-RETRO-1). The provider members are `listRetros`, `getRetro`,
+`createRetro`, `updateRetro` and `promoteRetroAction`, on all three providers.
 
 **SyncPanel (`/sync`)** — Per-repo rows: branch, ahead/behind, dirty files,
 last fetch, and buttons Fetch / Sync / Push. Expanding a row shows the staged
@@ -374,8 +386,13 @@ export interface DataProvider {
   moveCard(move: CardMove): Promise<BoardMoveResult>;
   getSprint(teamId: string, id: string): Promise<Sprint>;
   updateSprint(teamId: string, id: string, patch: SprintPatch, rev: string): Promise<Sprint>;
-  getRetro(teamId: string, id: string): Promise<Retro>;
-  updateRetro(teamId: string, id: string, patch: RetroPatch, rev: string): Promise<Retro>;
+  // A workspace holds at most one team repository here too, so no teamId.
+  listRetros(filter?: RetroFilter): Promise<RetroListing>;
+  getRetro(id: string): Promise<RetroView>;
+  createRetro(input: RetroDraft): Promise<RetroResult>;
+  updateRetro(id: string, patch: RetroPatch, rev?: string): Promise<RetroResult>;
+  // Creates the task in the named project and writes the ref back into the retro.
+  promoteRetroAction(input: RetroPromotion): Promise<RetroResult>;
 
   // git — commit on save (GIT-US-0020, implemented)
   getGitSettings(): Promise<GitSettings>;
@@ -1064,7 +1081,46 @@ and the Chromium e2e project on every PR; the full browser matrix runs nightly.
 
 ---
 
-## 16. Phase mapping
+## 16. Sprint metrics (as built, GIT-US-0028)
+
+`/metrics` picks a sprint; `/metrics/$sprintId` draws it. The feature lives in
+`src/features/metrics/`: `metrics-queries.ts` (one read-only query, nothing to invalidate),
+`chart.ts` (the scales and the band tokens), `BurndownChart.tsx`, `CumulativeFlowChart.tsx` and
+`SprintMetrics.tsx` (the page, the stat tiles, the provenance banner and the data tables).
+
+**The provenance banner comes first, above every chart.** The companion reconstructs the series
+from the git history of the item files; a browser-only session cannot and says so, showing the
+approximation it can draw from the `updated` stamps instead
+([doc 04 §12](./04-team-repository.md), [ADR-017](./adr/ADR-017-metrics-history-from-git-not-a-stored-time-series.md)).
+The UI branches on one flag, `provenance.approximate`, and prints `provenance.note` verbatim: the
+wording of an approximation is decided once, in the core, so every surface says the same thing.
+
+**No charting library.** Both charts are polylines over a linear scale in hand-written SVG. That is
+less code than the adapter a library would need, it adds no dependency to a bundle that ships inside
+the binary, and it keeps every mark on the app's own tokens.
+
+**Chart tokens are their own set** (`--chart-todo`, `--chart-progress`, `--chart-done`,
+`--chart-cancelled`, `--chart-unknown`, `--chart-grid`, `--chart-ideal`), defined next to the badge
+tokens in `index.css` and deliberately not equal to them. A badge is read on its own; a chart series
+is read against its neighbours, so the steps are re-chosen until every adjacent pair stays separable
+under protanopia, deuteranopia and tritanopia and each one clears the chart surface. Dark mode is
+re-stepped against the dark surface rather than flipped. Changing one of these means re-validating
+the set.
+
+**Accessibility.**
+
+- Every chart has a data-table equivalent, in a `<details>` directly under it, carrying every value
+  that was plotted. Nothing is only in a tooltip.
+- Colour is never the only channel: two or more series always carry a legend, the burndown's ideal
+  line is dashed as well as neutral, and the cumulative flow's `unknown` band is hatched as well as
+  grey.
+- Each `<svg>` is `role="img"` with a label that names the chart and points at the table.
+- A day that has not happened is `observed: false` and is simply not drawn — never plotted as zero.
+  In the table it reads "not measured".
+
+---
+
+## 17. Phase mapping
 
 | Phase | Frontend deliverables |
 |---|---|
@@ -1074,11 +1130,11 @@ and the Chromium e2e project on every PR; the full browser matrix runs nightly.
 | 3 | Team repo mounting, boards (kanban + scrum) with dnd-kit, sprint planning, remote reference cards, multi-project item table |
 | 4 | Commit-on-save settings card with a live message preview and per-repository git status (GIT-US-0020, done); sync panel with the status indicator and the dry-run preview, over the companion API and over isomorphic-git in the browser (GIT-US-0021, done); credential prompt in the sync panel, per-session in-memory tokens and the redaction rules (GIT-US-0023, done); conflict resolver UI (GIT-US-0022, done; git activity strips still to come) |
 | 5 | Agent/MCP status screen, call log, agent-oriented empty states and AGENTS.md surfacing in the KB |
-| 6 | Retro board, action promotion, metrics (burndown, CFD), link graph view, PWA polish, visual/a11y test gates, 1.0 |
+| 6 | Retro board and action promotion (GIT-US-0027, done); sprint metrics — burndown, cumulative flow, cycle/lead time and throughput, with the provenance of their history (GIT-US-0028, done, §16); link graph view, PWA polish, visual/a11y test gates, 1.0 |
 
 ---
 
-## 17. Open questions
+## 18. Open questions
 
 1. Should saved views and column layouts be committed to the repo (shareable,
    reviewable) instead of living in `localStorage`? Leaning: opt-in, stored under

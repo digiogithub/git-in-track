@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  GO_VERSION: "1.24"
+  GO_VERSION: "1.25"
   NODE_VERSION: "22"
   # golangci-lint v2 reads the `version: "2"` schema in .golangci.yaml. Pinned so
   # that CI runs the exact linter release verified locally by `make lint`.
@@ -36,7 +36,7 @@ jobs:
         run: |
           missing=0
           for path in go.mod go.sum Makefile .goreleaser.yaml .golangci.yaml \
-                      cmd/gintrack wasm web/package.json web/package-lock.json \
+                      Dockerfile cmd/gintrack wasm web/package.json web/package-lock.json \
                       web/dist/.gitkeep scripts/wasm-smoke.mjs; do
             if [ ! -e "$path" ]; then
               echo "::error::missing $path"
@@ -129,7 +129,20 @@ jobs:
 
       - name: go test (race + coverage)
         run: |
-          go list ./... | grep -v '/web/node_modules/' |
+          # Report the toolchain layout: a runner whose GOROOT is missing
+          # pkg/tool/*/covdata fails the coverage run with `no such tool
+          # "covdata"`, which is otherwise indistinguishable from a test failure.
+          echo "GOROOT=$(go env GOROOT)"
+          find "$(go env GOROOT)/pkg/tool/$(go env GOOS)_$(go env GOARCH)" \
+            -maxdepth 1 -type f -printf '%f ' 2>/dev/null || true
+          echo
+          # wasm/ and web/ hold no tests: wasm/ is built and smoke-tested by the
+          # `wasm` job and web/ only embeds web/dist. Covering a package with no
+          # test files makes the go command shell out to `go tool covdata`, so
+          # excluding them keeps this step independent of the runner's tool
+          # directory without losing a single covered statement.
+          go list ./... |
+            grep -vE '/web/node_modules/|^github\.com/digiogithub/git-in-track/(wasm|web)$' |
             xargs go test -race -covermode=atomic -coverprofile=coverage.out
 
       - name: Upload coverage artifact

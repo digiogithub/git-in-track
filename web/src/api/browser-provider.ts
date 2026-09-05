@@ -49,10 +49,18 @@ import type {
   SearchQuery,
   SnapshotRefresh,
   SnapshotResult,
+  RetroDraft,
+  RetroListing,
+  RetroPatch,
+  RetroPromotion,
+  RetroResult,
+  RetroFilter,
+  RetroView,
   SprintCarry,
   SprintDraft,
   SprintFilter,
   SprintPatch,
+  SprintMetricsView,
   SprintResult,
   SprintSummary,
   SprintView,
@@ -98,7 +106,11 @@ import {
 } from '@/fs';
 import type { DirectoryHandleLike } from '@/fs/types';
 import { readSyncStatus, runSync, type BrowserConflict } from '@/git/browser-sync';
-import { createAuthCallback, createAuthFailureCallback, forgetCredentials } from '@/git/credentials';
+import {
+  createAuthCallback,
+  createAuthFailureCallback,
+  forgetCredentials,
+} from '@/git/credentials';
 import {
   BROWSER_GIT_REASON,
   readGitSettings,
@@ -598,6 +610,11 @@ export class BrowserProvider implements DataProvider {
     return this.#call('sprint.get', { id });
   }
 
+  async getSprintMetrics(id: string): Promise<SprintMetricsView> {
+    await this.#ensureActive();
+    return this.#call('sprint.metrics', { id });
+  }
+
   async createSprint(input: SprintDraft): Promise<SprintResult> {
     await this.#ensureWritable();
     return this.#persistSprint(await this.#call('sprint.create', input));
@@ -630,6 +647,65 @@ export class BrowserProvider implements DataProvider {
         ...(rev === undefined ? {} : { rev }),
       }),
     );
+  }
+
+  // ------------------------------------------------------------------- retros
+
+  /**
+   * The retros of the team repository. Without one open there is nothing to
+   * list, which is a state rather than an error.
+   */
+  async listRetros(filter: RetroFilter = {}): Promise<RetroListing> {
+    await this.#ensureActive();
+    try {
+      return await this.#call('retro.list', {
+        ...(filter.sprint === undefined ? {} : { sprint: filter.sprint }),
+        ...(filter.board === undefined ? {} : { board: filter.board }),
+        ...(filter.state === undefined ? {} : { state: filter.state }),
+      });
+    } catch (error) {
+      if (error instanceof ProviderError && error.code === 'not_found') {
+        return { retros: [], carried: [], diagnostics: [] };
+      }
+      throw error;
+    }
+  }
+
+  async getRetro(id: string): Promise<RetroView> {
+    await this.#ensureActive();
+    return this.#call('retro.get', { id });
+  }
+
+  async createRetro(input: RetroDraft): Promise<RetroResult> {
+    await this.#ensureWritable();
+    return this.#persistRetro(await this.#call('retro.create', input));
+  }
+
+  async updateRetro(id: string, patch: RetroPatch, rev?: string): Promise<RetroResult> {
+    await this.#ensureWritable();
+    return this.#persistRetro(
+      await this.#call('retro.update', { id, patch, ...(rev === undefined ? {} : { rev }) }),
+    );
+  }
+
+  async promoteRetroAction(input: RetroPromotion): Promise<RetroResult> {
+    await this.#ensureWritable();
+    return this.#persistRetro(
+      await this.#call('retro.promote', {
+        id: input.retro,
+        action: input.action,
+        project: input.project,
+        ...(input.labels === undefined ? {} : { labels: input.labels }),
+        ...(input.rev === undefined ? {} : { rev: input.rev }),
+      }),
+    );
+  }
+
+  /** Persists what a retro call wrote: the team repository, and the project
+   * repository a promoted task landed in. */
+  async #persistRetro(result: RetroResult): Promise<RetroResult> {
+    await this.#persistSets(result.writes);
+    return result;
   }
 
   /** Persists what a sprint call wrote: the team repository, and the project
@@ -843,7 +919,9 @@ export class BrowserProvider implements DataProvider {
     return row;
   }
 
-  listSyncConflicts(repoId?: string): Promise<{ repo: string; paths: string[]; operation?: string }[]> {
+  listSyncConflicts(
+    repoId?: string,
+  ): Promise<{ repo: string; paths: string[]; operation?: string }[]> {
     const out: { repo: string; paths: string[]; operation?: string }[] = [];
     for (const [repo, paths] of this.#conflicts) {
       if (repoId !== undefined && repo !== repoId) continue;

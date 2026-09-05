@@ -175,6 +175,11 @@ type Backend interface {
 	// Commits lists the commits reachable from req.To but not from req.From,
 	// newest first. It is what a dry-run preview is made of.
 	Commits(ctx context.Context, req LogRequest) ([]Commit, error)
+	// History reads every revision of the requested paths out of the commit
+	// history, oldest first. It is what the metrics of GIT-US-0028 reconstruct
+	// their time series from (ADR-017); the result is derived data that can be
+	// rebuilt from the repository at any time.
+	History(ctx context.Context, req HistoryRequest) (FileHistory, error)
 
 	// ConflictFile reads the three versions of a conflicted path — the merge
 	// base, ours and theirs — out of the index stages a stopped integration

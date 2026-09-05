@@ -69,7 +69,7 @@ func (s *Server) mountAPI(api chi.Router) {
 		// Team boards and the sprints a scrum board runs.
 		p.Route("/boards", s.mountBoards)
 		p.Route("/sprints", s.mountSprints)
-		s.deferRoute(p, "/retros", "Retrospectives arrive with Phase 3.")
+		p.Route("/retros", s.mountRetros)
 		// Commit-on-save and the git settings (GIT-US-0020), and the sync
 		// pipeline over them (GIT-US-0021).
 		p.Route("/git", s.mountGit)
