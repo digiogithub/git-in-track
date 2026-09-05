@@ -531,9 +531,20 @@ Build targets in the `Makefile`: `make web` (Vite build → `web/dist`),
 
 ### 7.1 Scan
 
-A scan walks the project's docs folder and its `.pmngr/` subtree (and, for team
-repos, `knowledge/` and `.pmngr/`), skipping `.git/`, `node_modules/`, dotfiles
-other than `.pmngr`, and files above a size threshold. For each `.md` file it:
+**Discovery comes first, and it is bounded.** Before a single file is read, the
+core decides *which folders are projects* — and it does not search the working
+tree for them. `core.DiscoverProjectsWith` probes the repository root, each of
+the root's first-level directories, and every documentation folder the host
+declares (doc 03 §2.1, [ADR-018](./adr/ADR-018-bounded-project-discovery.md)).
+A handful of `stat` calls, the same rule in every host, and no way for a
+`testdata/` fixture to become somebody's project. The declaration reaches the
+core from the registration: `repos[].docsFolders` in the companion's
+configuration, `docsFolders` on `workspace.mount`/`vault.load` in the browser.
+
+A scan then walks the docs folder of each discovered project and its `.pmngr/`
+subtree (and, for team repos, `knowledge/` and `.pmngr/`), skipping `.git/`,
+`node_modules/`, dotfiles other than `.pmngr`, and files above a size threshold.
+For each `.md` file it:
 
 1. Reads the file (bounded concurrency: `min(8, NumCPU)` natively; sequential in
    WASM, where worker-level parallelism is not worth the complexity in v1).

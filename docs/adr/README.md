@@ -51,6 +51,7 @@ Every ADR uses the same sections:
 | [ADR-015](ADR-015-official-go-mcp-sdk-and-verb-noun-tools.md) | The official Go MCP SDK, and verb-noun tool names | Accepted | 5 |
 | [ADR-016](ADR-016-homebrew-cask-instead-of-formula.md) | Homebrew is distributed as a cask (macOS), not as a formula | Accepted | 6 |
 | [ADR-017](ADR-017-metrics-history-from-git-not-a-stored-time-series.md) | Sprint metrics reconstruct their history from git, and say so when they cannot | Accepted | 6 |
+| [ADR-018](ADR-018-bounded-project-discovery.md) | Project discovery is bounded to the root and one level, plus what the registration declares | Accepted | 7 |
 
 ## Related documents
 

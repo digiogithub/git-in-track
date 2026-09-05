@@ -184,7 +184,18 @@ repos:
     path: /home/jose/code/acme-api  # absolute path of the git working tree
     role: project                   # project | team
     docsFolder: docs                # folder holding .pmngr/, "." for the root
+    # Every documentation folder this registration declares, docsFolder first.
+    # Discovery probes the repository root and its first-level directories on
+    # its own; a folder deeper than that — a monorepo's apps/api/docs — is
+    # found only because it is listed here (doc 03 R-DISC-1, ADR-018).
+    docsFolders: [docs]
     enabled: true                   # false keeps the entry but skips indexing
+  - id: mono
+    path: /home/jose/code/mono
+    role: project
+    docsFolder: apps/api/docs
+    docsFolders: [apps/api/docs, apps/web/docs]
+    enabled: true
   - id: acme-team
     path: /home/jose/code/acme-team
     role: team
@@ -352,8 +363,12 @@ Registers a repository in the current workspace.
 gintrack add <path> [flags]
 
   --team              Register as a team repository (role: team)
-  --docs string       Documentation/KB folder relative to the repo root
-                      (default: auto-detected)
+  --docs strings      Documentation/KB folder relative to the repo root.
+                      Repeatable: every occurrence is declared, the first one
+                      is the primary (default: auto-detected)
+  --key string        Create a project with this key when the repository has
+                      no backlog (see 4.14 `gintrack init`)
+  --name string       Human name of the created project; defaults to the key
   --no-git            Register a folder that is not a git working tree
   --workspace string  Target workspace (created if it does not exist)
   --json              Machine-readable output
@@ -365,7 +380,20 @@ tree (a `.git` directory or file) unless `--no-git` says otherwise, detects `rol
 documentation folder by looking for `<folder>/.pmngr/project.yaml` at most four levels
 deep and preferring `docs/`, assigns the id (the slug of the folder name, deduplicated
 with `-2`, `-3`), refuses a duplicate by canonical path, appends to `repos` and joins the
-active workspace. Nothing inside the repository is written.
+active workspace. Nothing inside the repository is written unless `--key` asks for it.
+
+**Only the primary folder is declared automatically.** Detection looks four levels down but
+discovery reaches the repository root and its first-level directories only (doc 03 §2.1,
+[ADR-018](./adr/ADR-018-bounded-project-discovery.md)), so a nested backlog it found is
+*reported*, not imported — a `testdata/` fixture is not a project of the user. Declare the
+ones that are yours by repeating `--docs`:
+
+```bash
+$ gintrack add ~/code/mono --docs apps/api/docs --docs apps/web/docs
+added project repository mono  /home/jose/code/mono  (docs: apps/api/docs, 2 projects, 0 items)
+  API  API  apps/api/docs/.pmngr
+  WEB  WEB  apps/web/docs/.pmngr
+```
 
 ```bash
 $ gintrack add ~/code/acme-api
@@ -379,8 +407,20 @@ added team repository acme-team  /home/jose/code/acme-team  (docs: knowledge, 41
 
 `gintrack rm <id>` removes a registration (never touching files on disk).
 
-`--key` and `--init` (create the missing `.pmngr/` scaffold) are deferred: writing a new
-project.yaml is a core concern the scaffolding story owns.
+A repository with no backlog at all is registered with a warning and a way forward. Pass
+`--key` to create the project in the same command:
+
+```bash
+$ gintrack add ~/code/greenfield --key ACME --name "ACME Platform"
+added project repository greenfield  /home/jose/code/greenfield  (docs: docs, 0 items)
+created project ACME (ACME Platform) in docs/.pmngr/project.yaml
+  ACME  ACME Platform  docs/.pmngr
+```
+
+`--key` writes into `--docs` (the first one), defaulting to `docs/`. It never uses the
+detected folder: `--key` means "there is nothing here yet", and detection may have found a
+backlog that is a fixture. A folder that already holds a `project.yaml` is refused with exit
+code 5.
 
 ### 4.3 `gintrack ls`
 
@@ -866,6 +906,51 @@ WEB      —                            skipped     (not cloned in this workspac
 - Exit codes: 4 when no team repository is registered or a named key is not declared, 2
   for a malformed key.
 
+### 4.14 `gintrack init [path]`
+
+Creates a project backlog in a repository that does not have one, so that a team can start
+from an empty repository without hand-writing a `project.yaml`.
+
+```
+gintrack init [path] [flags]           # path defaults to "."
+
+  --key string          Project key, matching [A-Z][A-Z0-9]{1,9} (required)
+  --name string         Human name; defaults to the key
+  --description string  One paragraph shown in project pickers
+  --timezone string     IANA timezone for date-only fields (default: UTC)
+  --docs string         Documentation folder, "." for the repository root
+                        (default: docs)
+  --register            Register the repository in the active workspace too
+  --team                With --register, register it as a team repository
+  --json                Machine-readable output
+```
+
+It writes exactly what doc 03 §2.2 prescribes — `project.yaml` with schema 1, the key, the
+name and the default six-status workflow of doc 03 §6.2; a `.gitignore` holding
+`index.json`; and the five item folders plus `attachments/` — and nothing else. No commit is
+made: the new files are left for the user or for `gintrack sync`.
+
+The command is **fully non-interactive**, because agents and scripts use it:
+
+```bash
+$ gintrack init . --key ACME --name "ACME Platform"
+created project ACME (ACME Platform) in docs/.pmngr/project.yaml
+register the repository with `gintrack add /home/jose/code/acme --docs docs`
+
+$ gintrack init ~/code/mono --key API --docs apps/api/docs --register --json
+{"key":"API","name":"API","docsFolder":"apps/api/docs", …,"repo":{…}}
+```
+
+`--register` also declares the folder, which matters for a nested one: discovery reaches the
+repository root and its first-level directories on its own (doc 03 R-DISC-1,
+[ADR-018](./adr/ADR-018-bounded-project-discovery.md)).
+
+- Exit codes: 2 without `--key`, 3 for a key the grammar refuses, 5 for a folder that
+  already holds a `project.yaml` — a backlog is never overwritten.
+- The same scaffolder serves every surface: `core.CreateProject` in the shared core, reached
+  by this command, by `gintrack add --key`, by `POST /repos/{id}/projects` (§5.5) and by the
+  add-repository wizard of the web app.
+
 ---
 
 ## 5. Local REST API
@@ -993,7 +1078,7 @@ Catalog of `code` values: `unauthorized`, `forbidden`, `not_found`, `invalid_req
 `validation_failed`, `invalid_front_matter`, `precondition_required`, `stale_revision`,
 `conflict`, `duplicate_id`, `workflow_transition_denied`, `read_only`,
 `repo_not_registered`, `repo_not_cloned`, `wip_limit_exceeded`, `sprint_overlap`,
-`sprint_already_active`, `board_in_use`, `git_dirty`, `git_auth_failed`,
+`sprint_already_active`, `board_in_use`, `project_exists`, `git_dirty`, `git_auth_failed`,
 `git_conflict`, `index_unavailable`, `rate_limited`, `not_implemented`, `internal`.
 
 `wip_limit_exceeded` (HTTP 409) is a *refusal the caller may repeat*: a board's WIP limit is
@@ -1005,6 +1090,10 @@ silently, and never blocks a team that has decided to exceed it.
 board sharing a day, and a second active sprint on one board, are refused once with the other
 sprint named in `detail`. `sprint_already_active` is repeatable with `force`; `sprint_overlap` is
 not — the caller has to change the dates.
+
+`project_exists` (HTTP 409) refuses to scaffold a project into a documentation folder that
+already holds a `project.yaml` (doc 03 R-NEW-2). A backlog is never overwritten, so the caller
+picks another folder or opens the one that is there.
 
 `duplicate_id` and `board_in_use` (HTTP 409) guard a board's life cycle: a board file is named
 after its id, so `POST /boards` refuses a slug that is already taken rather than replacing
@@ -1064,7 +1153,32 @@ POST   /api/v1/repos                    {"path":"~/code/acme-api","role":"projec
 GET    /api/v1/repos/{key}
 DELETE /api/v1/repos/{key}              (unregisters; never deletes files)
 POST   /api/v1/repos/{key}/reindex      {"full":true}
+POST   /api/v1/repos/{key}/projects     {"docsFolder":"docs","key":"ACME","name":"ACME Platform"}
 ```
+
+`POST /api/v1/repos/{key}/projects` scaffolds a backlog in a registered repository that has
+none: it writes what doc 03 §2.2 prescribes and answers `201` with the project as
+`GET /api/v1/projects` reports it, plus the files it wrote. It goes through the same
+`core.CreateProject` the CLI and the browser use, so all three produce identical files, and it
+declares the folder for the life of the process, which keeps a nested one discoverable
+([ADR-018](./adr/ADR-018-bounded-project-discovery.md)).
+
+```json
+POST /api/v1/repos/greenfield/projects
+{ "docsFolder": "docs", "key": "ACME", "name": "ACME Platform" }
+201
+{
+  "project": { "key": "ACME", "name": "ACME Platform", "docsPath": "docs",
+               "backlogPath": "docs/.pmngr", "writable": true, "statuses": [ … ] },
+  "writes": { "written": [{ "path": "docs/.pmngr/project.yaml", "text": "schema: 1\n…" }],
+              "removed": [] }
+}
+```
+
+Failures use the codes of §5.4: `422 validation_failed` for a key outside
+`[A-Z][A-Z0-9]{1,9}`, `409 project_exists` for a folder that already holds a `project.yaml`,
+`404 repo_not_registered` for an unknown repository. The registration in the configuration
+file is not rewritten — that is a CLI concern (`gintrack add`, `gintrack init`).
 
 ```json
 GET /api/v1/repos/ACME

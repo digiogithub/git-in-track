@@ -182,11 +182,23 @@ or the configured git author email), and a sync health strip.
    `showDirectoryPicker()`; in companion mode, a path input with server-side
    autocompletion plus a "clone from URL" option. Firefox/Safari get the
    `webkitdirectory` read-only fallback with an explicit banner.
-3. *Detection*: the provider scans for `.git`, for `project.yaml`/`team.yaml`, and
-   proposes the docs folder (defaults: an existing `docs/`, else the folder
-   containing `.pmngr`, else repo root). For a fresh project the wizard offers to
-   scaffold `docs/.pmngr/` with `project.yaml` (`key`, `name`, status workflow
-   picked from a template).
+3. *Detection*: the provider scans for `.git` and for `project.yaml`/`team.yaml`
+   (`fs/detect-project.ts`, four levels down) and lists every documentation folder
+   it found, `docs/` first. Detection is deliberately deeper than discovery, which
+   reaches the repository root and its first-level directories only (doc 03 §2.1,
+   [ADR-018](./adr/ADR-018-bounded-project-discovery.md)): a nested candidate is
+   marked *"indexed only if you choose it here"*, and picking it declares it on the
+   mount, so it stays discoverable on every later scan.
+
+   **When nothing is found, the wizard creates the project** rather than offering
+   an empty workspace (`features/workspace/CreateProjectForm.tsx`, story
+   GIT-US-0031). It asks for three things — the documentation folder, with the
+   detected folders offered as one-click suggestions; the project key, validated
+   against `[A-Z][A-Z0-9]{1,9}` before anything is sent; and the display name —
+   then mounts the folder and calls `provider.createProject()`, which writes
+   `<docsFolder>/.pmngr/project.yaml` and the layout of doc 03 §2.2 through the
+   shared core. *Mount it anyway* stays available as an explicit choice, for
+   someone who wants to browse the Markdown without starting a backlog.
 4. *Confirm*: shows what will be written, then runs the initial index with a
    progress bar (files scanned / items found / errors).
 
@@ -361,7 +373,8 @@ export interface DataProvider {
   listProjects(): Promise<ProjectSummary[]>;
   getTeam(): Promise<TeamSummary | null>;          // team.yaml of the open team repo, or null
   resolveRef(ref: string): Promise<RefResolution>; // "<KEY>/<ITEM-ID>" across every open repo
-  mountRepo(input: MountInput): Promise<RepoInfo>;
+  mountRepo(input: MountInput): Promise<RepoInfo>;   // `docsFolders` declares nested backlogs
+  createProject(input: CreateProjectInput): Promise<ProjectSummary>; // scaffolds .pmngr/
   unmountRepo(repoId: string): Promise<void>;
   reindex(repoId: string, opts?: { full?: boolean }): Promise<IndexStats>;
 
