@@ -44,6 +44,23 @@ describe('ItemDetail', () => {
     expect(thread.getByText('jose')).toBeInTheDocument();
   });
 
+  it('creates a task under the story on screen', async () => {
+    renderBacklog({ path: '/p/ACME/items/ACME-US-0042' });
+
+    const link = await screen.findByRole('link', { name: 'New task in ACME-US-0042' });
+    expect(link.getAttribute('href')).toContain('/p/ACME/items/new');
+    expect(link.getAttribute('href')).toContain('type=task');
+    expect(link.getAttribute('href')).toContain('parent=ACME-US-0042');
+  });
+
+  it('creates a story under the epic on screen', async () => {
+    renderBacklog({ path: '/p/ACME/items/ACME-EP-0001' });
+
+    const link = await screen.findByRole('link', { name: 'New story in ACME-EP-0001' });
+    expect(link.getAttribute('href')).toContain('type=story');
+    expect(link.getAttribute('href')).toContain('parent=ACME-EP-0001');
+  });
+
   it('renders the body through the Markdown pipeline', async () => {
     renderBacklog({ path: '/p/ACME/items/ACME-US-0042' });
 

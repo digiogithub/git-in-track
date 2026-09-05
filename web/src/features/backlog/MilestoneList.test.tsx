@@ -19,4 +19,18 @@ describe('MilestoneList', () => {
     const link = screen.getByRole('link', { name: 'See its items' });
     expect(link).toHaveAttribute('href', '/p/ACME/items?milestone=ACME-M-0001');
   });
+
+  it('creates a milestone from the header and a story inside one', async () => {
+    renderBacklog({ path: '/p/ACME/milestones' });
+
+    await screen.findByRole('link', { name: 'ACME-M-0001' });
+
+    const create = screen.getByRole('link', { name: 'New milestone' });
+    expect(create.getAttribute('href')).toContain('/p/ACME/items/new');
+    expect(create.getAttribute('href')).toContain('type=milestone');
+
+    const story = screen.getByRole('link', { name: 'New story in ACME-M-0001' });
+    expect(story.getAttribute('href')).toContain('type=story');
+    expect(story.getAttribute('href')).toContain('milestone=ACME-M-0001');
+  });
 });

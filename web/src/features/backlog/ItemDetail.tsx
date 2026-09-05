@@ -29,6 +29,7 @@ import {
   type LinkKind,
 } from '@/features/backlog/item-meta';
 import { ItemBody } from '@/features/backlog/ItemBody';
+import { NewItemLink } from '@/features/backlog/NewItemLink';
 import {
   useAddComment,
   useBacklogEvents,
@@ -293,6 +294,9 @@ function ItemDetailView() {
 
   const acceptance = acceptanceProgress(item.body);
   const children = childrenQuery.data ?? [];
+  // What this item can parent: a story under an epic, a task under a story.
+  const childType =
+    item.type === 'epic' ? 'story' : item.type === 'story' ? ('task' as const) : undefined;
   const custom = Object.entries(item.custom ?? {});
 
   return (
@@ -456,10 +460,18 @@ function ItemDetailView() {
       </Card>
 
       <Card>
-        <CardHeader>
+        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0">
           <CardTitle>
             {item.type === 'epic' ? 'Stories' : item.type === 'story' ? 'Tasks' : 'Children'}
           </CardTitle>
+          {childType ? (
+            <NewItemLink
+              project={projectKey}
+              type={childType}
+              parent={item.id}
+              label={childType === 'story' ? 'New story' : 'New task'}
+            />
+          ) : null}
         </CardHeader>
         <CardContent>
           {childrenQuery.isPending ? (

@@ -216,6 +216,8 @@ status pill, metadata grid, rendered body, acceptance-criteria checklist with
 inline toggling (a checkbox toggle is a body write, so it goes through the same
 rev-checked update), children (stories of an epic, tasks of a story), typed links
 (`blocks`, `blocked_by`, `relates_to`, `duplicates`) rendered as navigable chips,
+a create control on the children panel that opens the editor with `parent` set to
+the item on screen (§8.1),
 comments thread with a composer, and an activity strip from `git log` for that
 path (Phase 4). A right rail shows file path, last commit, and "Open in editor"
 (companion mode only, via a server endpoint that shells out to `$EDITOR`).
@@ -225,12 +227,15 @@ path (Phase 4). A right rail shows file path, last commit, and "Open in editor"
 **EpicTree (`/p/$projectKey/epics`)** — Three-level tree (epic → story → task)
 with lazy expansion, per-node rollups (done/total, points sum, % complete), inline
 status change, and drag to re-parent (a re-parent writes the child's `parent`
-field). A "flatten" toggle switches to a table of all descendants.
+field). A "flatten" toggle switches to a table of all descendants. The header
+creates an epic and every node creates its own child — a story under an epic, a
+task under a story — through the shared create link (§8.1).
 
 **MilestoneList / MilestoneDetail** — Milestones sorted by `due`, each with a
 progress bar, item count by status, overdue highlight, and a burnup sparkline
 (Phase 6). Detail view lists member items with the same table component as
-ItemTable, pre-filtered.
+ItemTable, pre-filtered. The header creates a milestone, and each card creates a
+story already filed under it (§8.1).
 
 **BoardView (`/team/$teamId/boards/$boardSlug`)** — §9. Columns from the board
 file, cards resolved from every configured project. Kanban and Scrum share the
@@ -836,6 +841,35 @@ CodeMirror 6, wrapped in `src/editor/`.
   configured template; the editor footer shows the resulting message and a
   "amend last commit" option when the previous commit touched the same file within
   a configurable window (default 5 min).
+
+### 8.1 Creating an item from where the user is
+
+**Status: implemented** (GIT-US-0033). There is exactly one create implementation,
+`features/editor/NewItemPage` at `/p/$projectKey/items/new`. It creates any of the
+four editable types — epic, story, task, milestone — and its draft goes through
+`provider.createItem` → `item.create`, so the core allocates the id and validates
+the draft exactly as it does for an agent writing over MCP.
+
+Every list of items reaches that page through one link component,
+`features/backlog/NewItemLink`, instead of growing a form of its own. The link
+carries what the surface already knows as search parameters, which the route
+validates (`validateNewItemSearch`): `type` always, plus `parent` when the context
+is an owning item and `milestone` when it is a milestone.
+
+| Where | Control | Opens with |
+| ----- | ------- | ---------- |
+| ItemTable header | New item | `type=story` |
+| EpicTree header | New epic | `type=epic` |
+| EpicTree, on an epic | New story | `type=story&parent=<epic>` |
+| EpicTree, on a story | New task | `type=task&parent=<story>` |
+| MilestoneList header | New milestone | `type=milestone` |
+| MilestoneList, on a milestone | New story | `type=story&milestone=<milestone>` |
+| ItemDetail, children panel of an epic | New story | `type=story&parent=<epic>` |
+| ItemDetail, children panel of a story | New task | `type=task&parent=<story>` |
+
+Saving returns to the new item's detail page, and the relationship is visible
+straight away: the parent's children panel and the epic tree both read `parent`
+from the index the write refreshed.
 
 ---
 

@@ -9,7 +9,7 @@ import {
   type RowSelectionState,
   type SortingState,
 } from '@tanstack/react-table';
-import { ArrowDown, ArrowUp, ArrowUpDown, Plus } from 'lucide-react';
+import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import type { Item, ProjectSummary } from '@/api/provider';
@@ -35,9 +35,9 @@ import {
   TypeBadge,
 } from '@/features/backlog/Badges';
 import { BulkMoveBar } from '@/features/backlog/BulkMoveBar';
-import { FeatureLink } from '@/features/backlog/FeatureLink';
 import { FilterBar } from '@/features/backlog/FilterBar';
 import { formatDate } from '@/features/backlog/item-meta';
+import { NewItemLink } from '@/features/backlog/NewItemLink';
 import { useBacklogEvents, useItems, useProject } from '@/features/backlog/queries';
 import { QuickViews } from '@/features/backlog/QuickViews';
 import { isEmptySearch, toItemFilter, type SortField } from '@/features/backlog/search';
@@ -315,15 +315,7 @@ function ItemTableView() {
             {itemsQuery.isSuccess ? ` — ${items.length} of ${total}` : null}
           </p>
         </div>
-        <FeatureLink
-          to="/p/$project/items/new"
-          params={{ project: projectKey }}
-          search={{ type: 'story' }}
-          className="inline-flex h-9 items-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90"
-        >
-          <Plus aria-hidden="true" className="h-4 w-4" />
-          New item
-        </FeatureLink>
+        <NewItemLink project={projectKey} type="story" label="New item" variant="bar" />
       </header>
 
       <QuickViews search={search} />

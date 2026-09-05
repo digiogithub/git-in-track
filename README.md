@@ -233,7 +233,7 @@ repository's own backlog.
 | 2 | Companion CLI (`gintrack serve`, watcher, native index, REST/WS) | done |
 | 3 | Team repository and boards (kanban, scrum, sprints, remote references) | done, in review |
 | 4 | Git sync (commit on save, fetch/rebase/push, conflicts, credentials) | done, in review |
-| 5 | MCP server and agent workflows (12 tools, stdio + HTTP, `rev` locking) | done, in review |
+| 5 | MCP server and agent workflows (13 tools, stdio + HTTP, `rev` locking) | done, in review |
 | 6 | Retrospectives, sprint metrics, distribution channels, 1.0 release prep | done, in review — the `v1.0.0` tag is the maintainer's remaining step |
 
 Known limitations are not hidden: the full list, with a file or a test behind

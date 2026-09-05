@@ -8,6 +8,8 @@ type FeatureLinkProps = {
   search?: Record<string, string>;
   className?: string;
   title?: string;
+  /** Accessible name, when the visible text alone does not carry the context. */
+  'aria-label'?: string;
   children: ReactNode;
 };
 
