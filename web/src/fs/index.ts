@@ -2,6 +2,8 @@
 
 export { detectDocsFolders, normalizeDocsFolder, PROJECT_FILE } from './detect-project';
 export type { DocsFolderCandidate } from './detect-project';
+export { detectTeam, TEAM_FILE, TEAM_KEY } from './detect-team';
+export type { TeamCandidate } from './detect-team';
 export {
   FsaVault,
   getDirectoryPicker,

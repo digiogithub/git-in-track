@@ -562,3 +562,64 @@ describe('BrowserProvider.createProject', () => {
     ).rejects.toMatchObject({ code: 'read_only' });
   });
 });
+
+describe('BrowserProvider.createTeam', () => {
+  it('writes team.yaml back through the folder handle', async () => {
+    const team = {
+      key: 'ACME-TEAM',
+      name: 'ACME Delivery Team',
+      root: '.',
+      knowledgePath: 'knowledge',
+      members: [],
+      projects: [],
+      cadence: {},
+      defaults: {},
+      snapshots: { enabled: true, maxAgeDays: 7 },
+      diagnostics: [],
+    };
+    const { provider, vault, call } = await mount({
+      'team.create': () => ({
+        team,
+        writes: {
+          written: [
+            { path: 'team.yaml', text: 'schema: 1\nkey: ACME-TEAM\n' },
+            { path: 'knowledge/index.md', text: '# ACME Delivery Team\n' },
+          ],
+          removed: [],
+        },
+      }),
+    });
+
+    await expect(
+      provider.createTeam({ repoId: 'repo-1', key: 'ACME-TEAM', name: 'ACME Delivery Team' }),
+    ).resolves.toMatchObject({ key: 'ACME-TEAM' });
+
+    const files = vault.snapshot();
+    expect(files['team.yaml']).toContain('key: ACME-TEAM');
+    expect(files['knowledge/index.md']).toContain('ACME Delivery Team');
+    expect(call).toHaveBeenCalledWith(
+      'team.create',
+      expect.objectContaining({ vaultId: 'repo-1', key: 'ACME-TEAM' }),
+    );
+  });
+
+  it('refuses to write into a read-only folder', async () => {
+    const { provider } = await mount({}, false);
+
+    await expect(provider.createTeam({ repoId: 'repo-1', key: 'ACME-TEAM' })).rejects.toMatchObject(
+      { code: 'read_only' },
+    );
+  });
+
+  it('reports a folder that already holds a team.yaml as team_exists', async () => {
+    const { provider } = await mount({
+      'team.create': () => {
+        throw coreError('team_exists', 'team.yaml already exists');
+      },
+    });
+
+    await expect(provider.createTeam({ repoId: 'repo-1', key: 'ACME-TEAM' })).rejects.toMatchObject(
+      { code: 'team_exists' },
+    );
+  });
+});
