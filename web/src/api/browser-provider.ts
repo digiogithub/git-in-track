@@ -67,6 +67,8 @@ import type {
   SprintResult,
   SprintSummary,
   SprintView,
+  TeamProjectDraft,
+  TeamProjectResult,
   TeamSummary,
   Unsubscribe,
   UpdateOp,
@@ -154,6 +156,8 @@ const CORE_ERROR_CODES: Record<string, ProviderError['code']> = {
   repo_not_cloned: 'repo_not_cloned',
   project_exists: 'project_exists',
   team_exists: 'team_exists',
+  team_project_exists: 'team_project_exists',
+  team_project_referenced: 'team_project_referenced',
   rev_mismatch: 'stale_revision',
   conflict: 'stale_revision',
   validation_failed: 'validation_failed',
@@ -441,6 +445,34 @@ export class BrowserProvider implements DataProvider {
 
     this.#emit({ kind: 'repo', repoId });
     return team;
+  }
+
+  /**
+   * Declares a project repository in the active team's `team.yaml`. The write
+   * lands in the team repository, so it is persisted through that folder's
+   * handle rather than through the active one.
+   */
+  async addTeamProject(project: TeamProjectDraft, team?: string): Promise<TeamProjectResult> {
+    await this.#ensureActive();
+    const result = await this.#call('team.project.add', { project, ...teamScope(team) });
+    await this.#persistSets(result.writes);
+    return result;
+  }
+
+  /** Disconnects a project from the active team's `team.yaml`. */
+  async removeTeamProject(
+    key: string,
+    opts?: { force?: boolean },
+    team?: string,
+  ): Promise<TeamProjectResult> {
+    await this.#ensureActive();
+    const result = await this.#call('team.project.remove', {
+      key,
+      ...(opts?.force === undefined ? {} : { force: opts.force }),
+      ...teamScope(team),
+    });
+    await this.#persistSets(result.writes);
+    return result;
   }
 
   async unmountRepo(repoId: string): Promise<void> {
@@ -742,9 +774,7 @@ export class BrowserProvider implements DataProvider {
 
   async createSprint(input: SprintDraft, team?: string): Promise<SprintResult> {
     await this.#ensureWritable();
-    return this.#persistSprint(
-      await this.#call('sprint.create', { ...input, ...teamScope(team) }),
-    );
+    return this.#persistSprint(await this.#call('sprint.create', { ...input, ...teamScope(team) }));
   }
 
   async updateSprint(

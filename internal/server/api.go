@@ -56,6 +56,10 @@ func (s *Server) mountAPI(api chi.Router) {
 		p.Get("/teams", s.handleTeams)
 		p.Get("/teams/{key}", s.handleTeam)
 		p.Route("/teams/{key}/kb", s.mountKB)
+		// The project list of a team: connecting a repository to a team and
+		// disconnecting it again (GIT-US-0037, docs/04 section 3.9).
+		p.Post("/teams/{key}/projects", s.handleTeamProjectAdd)
+		p.Delete("/teams/{key}/projects/{project}", s.handleTeamProjectRemove)
 		p.Get("/refs", s.handleResolveRef)
 		// Committed index snapshots: what a board renders for a project this
 		// machine has not cloned (docs/04 section 6).

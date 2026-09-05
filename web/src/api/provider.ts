@@ -80,6 +80,9 @@ import type {
   SprintView,
   StatusCategory,
   TeamMember,
+  TeamProjectDraft,
+  TeamProjectReference,
+  TeamProjectResult,
   TeamProjectSummary,
   TeamSummary,
   WorkspaceSummary,
@@ -153,6 +156,9 @@ export type {
   SprintView,
   StatusCategory,
   TeamMember,
+  TeamProjectDraft,
+  TeamProjectReference,
+  TeamProjectResult,
   TeamProjectSummary,
   TeamSummary,
   WorkspaceSummary,
@@ -657,6 +663,10 @@ export type ProviderErrorCode =
   | 'project_exists'
   /** The folder already holds a `team.yaml` (GIT-US-0034). */
   | 'team_exists'
+  /** The team already declares this project key (GIT-US-0037, R-PROJ-1). */
+  | 'team_project_exists'
+  /** A board, a sprint or a retro action still references the project; force it. */
+  | 'team_project_referenced'
   /** A write lost a race, or a sprint already has a retro. */
   | 'conflict'
   | 'internal';
@@ -713,6 +723,30 @@ export interface DataProvider {
    * companion writes and the one a browser writes are identical.
    */
   createTeam(input: CreateTeamInput): Promise<TeamSummary>;
+  /**
+   * Declares a project repository in a team's `team.yaml` (story GIT-US-0037,
+   * docs/04 §3.9). The link between a registered repository and the entry is
+   * the project key alone, never a path and never a remote URL.
+   *
+   * It fails with `team_project_exists` when the team already declares the key,
+   * and with `validation_failed` when the entry is missing what R-PROJ-1
+   * requires.
+   */
+  addTeamProject(project: TeamProjectDraft, team?: string): Promise<TeamProjectResult>;
+  /**
+   * Disconnects a project from a team. Nothing in the project repository is
+   * touched.
+   *
+   * It fails with `team_project_referenced` when a board, a sprint or a retro
+   * action still points at an item of that project; `force` accepts leaving
+   * those references pointing at a project the team no longer declares, and the
+   * result then lists what was broken.
+   */
+  removeTeamProject(
+    key: string,
+    opts?: { force?: boolean },
+    team?: string,
+  ): Promise<TeamProjectResult>;
   unmountRepo(repoId: string): Promise<void>;
   reindex(repoId: string, opts?: { full?: boolean }): Promise<IndexStats>;
 

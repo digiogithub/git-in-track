@@ -20,6 +20,14 @@ because a commit list cannot express them.
   mode behave identically (`GIT-US-0036`, ADR-019, docs/04 §3.8).
 - `GET /api/v1/teams` lists every mounted team, `GET /api/v1/teams/{key}` resolves the key
   it is given, and every team-scoped route accepts `?team=`.
+- A team's project list is editable from the product. Settings holds a **Team projects**
+  card that connects a registered repository to the active team and disconnects it again,
+  offering the locally indexed projects as candidates and pre-filling key, name, docs
+  folder, remote URL and branch (`GIT-US-0037`, docs/04 §3.9). The write path is
+  `core.AddTeamProject`/`core.RemoveTeamProject`, the vault methods `team.project.add` and
+  `team.project.remove`, and `POST`/`DELETE /api/v1/teams/{key}/projects`. A duplicate
+  project key is refused with `team_project_exists`; a removal that would orphan a board,
+  sprint or retro reference is refused with `team_project_referenced` unless it is forced.
 
 ### Changed
 

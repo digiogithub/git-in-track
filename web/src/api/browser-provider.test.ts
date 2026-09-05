@@ -623,3 +623,79 @@ describe('BrowserProvider.createTeam', () => {
     );
   });
 });
+
+describe('BrowserProvider team projects', () => {
+  const team = {
+    key: 'ACME-TEAM',
+    name: 'ACME Delivery Team',
+    root: '.',
+    knowledgePath: 'knowledge',
+    members: [],
+    projects: [],
+    cadence: {},
+    defaults: {},
+    snapshots: { enabled: true, maxAgeDays: 7 },
+    diagnostics: [],
+  };
+
+  it('persists the team.yaml an add wrote into the team repository', async () => {
+    const { provider, vault, call } = await mount({
+      'team.project.add': () => ({
+        team,
+        project: { key: 'TOOLS' },
+        references: [],
+        writes: [
+          {
+            vaultId: 'repo-1',
+            written: [{ path: 'team.yaml', text: 'schema: 1\nkey: ACME-TEAM\n' }],
+            removed: [],
+          },
+        ],
+      }),
+    });
+
+    await expect(
+      provider.addTeamProject(
+        { key: 'TOOLS', repo: 'https://github.com/acme/tools.git', docsPath: 'docs' },
+        'ACME-TEAM',
+      ),
+    ).resolves.toMatchObject({ project: { key: 'TOOLS' } });
+
+    expect(vault.snapshot()['team.yaml']).toContain('key: ACME-TEAM');
+    expect(call).toHaveBeenCalledWith(
+      'team.project.add',
+      expect.objectContaining({
+        team: 'ACME-TEAM',
+        project: expect.objectContaining({ key: 'TOOLS' }),
+      }),
+    );
+  });
+
+  it('sends force only when a removal was confirmed', async () => {
+    const { provider, call } = await mount({
+      'team.project.remove': () => ({ team, project: { key: 'WEB' }, references: [], writes: [] }),
+    });
+
+    await provider.removeTeamProject('WEB');
+    expect(call).toHaveBeenCalledWith('team.project.remove', { key: 'WEB' });
+
+    await provider.removeTeamProject('WEB', { force: true }, 'ACME-TEAM');
+    expect(call).toHaveBeenCalledWith('team.project.remove', {
+      key: 'WEB',
+      force: true,
+      team: 'ACME-TEAM',
+    });
+  });
+
+  it('reports a referenced project with its stable code', async () => {
+    const { provider } = await mount({
+      'team.project.remove': () => {
+        throw coreError('team_project_referenced', '3 reference(s) still point at project WEB');
+      },
+    });
+
+    await expect(provider.removeTeamProject('WEB')).rejects.toMatchObject({
+      code: 'team_project_referenced',
+    });
+  });
+});

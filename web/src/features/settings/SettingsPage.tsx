@@ -1,6 +1,6 @@
 /**
- * Settings — Runtime section (story GIT-US-0015) and commit on save
- * (story GIT-US-0020).
+ * Settings — Runtime section (story GIT-US-0015), the project list of the active
+ * team (story GIT-US-0037) and commit on save (story GIT-US-0020).
  *
  * Everything the user needs to understand which runtime they are on: the
  * detected mode, the companion version and URL, the state of the event socket,
@@ -20,6 +20,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { GitSettingsCard } from '@/features/settings/GitSettingsCard';
+import { TeamProjectsCard } from '@/features/settings/TeamProjectsCard';
 
 /** Where the companion binary is published (docs/09-ci-cd-and-releases.md). */
 const COMPANION_DOWNLOAD_URL = 'https://github.com/digiogithub/git-in-track/releases';
@@ -102,6 +103,8 @@ export function SettingsPage() {
       </Card>
 
       {companion ? <CompanionTokenCard /> : null}
+
+      <TeamProjectsCard />
 
       <GitSettingsCard />
 

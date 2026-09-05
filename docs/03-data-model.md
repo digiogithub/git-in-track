@@ -405,7 +405,12 @@ the redirect table exists precisely to soften it.
   en masse. Intended only for a project that has never been shared.
 - `--renumber --rekey NEW` : changes the project key (`ACME` → `ACME2`) across every file, comment
   folder, attachment folder, and index. Requires the team repo to be updated in the same change set;
-  `doctor` prints the exact `team.yaml` edit needed.
+  `doctor` prints the exact `team.yaml` edit needed. Since GIT-US-0037 that edit is also a
+  supported write: remove the old entry and add the new one from Settings, from
+  `team.project.remove`/`team.project.add`, or over `/api/v1/teams/{key}/projects`
+  ([doc 04 §3.9](./04-team-repository.md)). The two acts stay separate — the product never
+  renames a project key inside `team.yaml`, because a rename that is not the whole change set
+  leaves every `ref:` dangling.
 
 Both operations produce one commit and MUST NOT be mixed with content edits.
 

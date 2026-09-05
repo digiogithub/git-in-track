@@ -351,6 +351,24 @@ any step. A binary conflict says so and offers only the two whole-side choices.
 Nothing is decided silently: an automatic decision is a visible row or a badged
 hunk, never an invisible one.
 
+**Team projects (`features/settings/TeamProjectsCard.tsx`, story GIT-US-0037).** The
+`projects:` list of the active team's `team.yaml` (doc 04 §3.9), managed from Settings. It
+carries the `TeamSelector` of GIT-US-0036 rather than a second team-selection mechanism, so the
+list it edits is the one the boards, sprints and retros on screen belong to.
+
+Adding a project offers the projects this machine has indexed as candidates and pre-fills the
+entry from them — key, name and docs folder from the index, remote URL and branch from the sync
+status — because the link between a registered repository and an entry is **the project key
+alone** (doc 04 §7.1). A project nobody here cloned is declared by typing its details, which is
+the normal way a team owns a repository not everybody checks out. Every row says whether it is
+cloned or renders from a committed index snapshot, and a clone whose `project.yaml` declares
+another key shows `W-TEAM-KEY-MISMATCH` on the row: that warning is the failure mode this
+surface produces, so it belongs next to the entry that caused it.
+
+A duplicate key is refused before the call goes out and again by the core
+(`team_project_exists`). A removal that would orphan a `ref:` is refused with the references
+named, and the row then offers "Remove anyway", which repeats the call with `force`.
+
 **SettingsLayout (`/settings/*`)** — Workspace (mounted repos, remove/repair,
 re-index, clear caches), per-repo (docs folder, project key, default branch,
 ignored globs), appearance (§12), sync (branch policy, commit-on-save toggle and
@@ -418,6 +436,13 @@ export interface DataProvider {
   // `team` is the key of a team.yaml or the id of the repository holding it.
   // It may be omitted while the workspace holds a single team.
   getTeam(team?: string): Promise<TeamSummary | null>;
+  // The project list of a team (docs/04 §3.9, GIT-US-0037). A registered
+  // repository is linked to an entry by project key alone.
+  addTeamProject(project: TeamProjectDraft, team?: string): Promise<TeamProjectResult>;
+  // `team_project_referenced` unless `force`: a board, sprint or retro action
+  // still points at an item of that project.
+  removeTeamProject(key: string, opts?: { force?: boolean }, team?: string)
+    : Promise<TeamProjectResult>;
 
   // boards (implemented) / sprints / retros
   // Every team-scoped call takes the active team; see ADR-019.
@@ -1088,6 +1113,11 @@ disabled with the same reason rather than being enabled and failing with a raw
 
 ## 13. Theming and design tokens
 
+> The palette, the component rules and the accessibility contract are specified
+> in [13-design-system.md](./13-design-system.md), which is the authority; this
+> section is the summary. `npm run styleguide` renders the whole system, and
+> `npm run tokens:check` verifies it.
+
 - Tailwind CSS with CSS custom properties for tokens (`--background`,
   `--foreground`, `--muted`, `--accent`, `--destructive`, plus semantic
   `--status-todo`, `--status-in-progress`, …, and `--priority-*`).
@@ -1099,6 +1129,9 @@ disabled with the same reason rather than being enabled and failing with a raw
 - Typography: system UI stack by default, optional Inter + JetBrains Mono
   self-hosted (no external font CDN, so offline works). Prose styles are custom
   rather than `@tailwindcss/typography` defaults, to keep them token-driven.
+- The theme control is a three-way `light`/`dark`/`system` radio group in the
+  sidebar footer; the choice is stored under `gintrack:theme` and applied by an
+  inline script in `index.html` before first paint.
 - Status and priority colours are configurable per project in `project.yaml`;
   the UI maps unknown statuses to a neutral token instead of failing.
 

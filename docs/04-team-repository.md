@@ -450,6 +450,44 @@ Reference resolution (§3.6) is not team-scoped: a `<KEY>/<ITEM-ID>` reference i
 the team that **declares** that project, whichever of the open teams that is, and falls back to
 the first team for a project none of them declares.
 
+### 3.9 Managing the project list (implemented, GIT-US-0037)
+
+The `projects:` list is the routing table of the whole product, and until this story it was
+read-only in code: the product could create a team repository (§3.7) and then connect nothing
+to it. The write half is `core.AddTeamProject` and `core.RemoveTeamProject` over the parsed
+configuration, `core.WriteTeamConfig` back through `core.MarshalTeamConfig`, and the two
+team-scoped vault methods `team.project.add` and `team.project.remove` that reach the REST API
+([doc 07 §5.5](./07-cli-and-api.md)), the WASM bridge and all three web providers. The user
+surface is the **Team projects** card of Settings ([doc 05 §7](./05-web-app.md)).
+
+- **R-PROJ-ADD-1** An entry MUST carry `key`, `repo` and `docs_path`; `name` defaults to the
+  key. The key MUST match `[A-Z][A-Z0-9]{1,9}` — the same grammar `project.yaml` uses, because
+  the two have to be equal (R-PROJ-1).
+- **R-PROJ-ADD-2** A key the team already declares is refused (`team_project_exists`, HTTP 409).
+  The list is keyed by project key alone, so a second entry would make every reference into it
+  ambiguous.
+- **R-PROJ-ADD-3** A new entry is inserted **in key order**, never appended. The position of an
+  entry then depends on its key and not on the order the team connected its repositories, so two
+  people connecting two different projects write two hunks in two different places and git merges
+  them. Entries already in the file are never reordered, which keeps the round trip of an
+  existing `team.yaml` byte-stable (R-TEAM-NEW-4).
+- **R-PROJ-ADD-4** `local_hints` is never written by the product. Hints are per-machine and
+  usually wrong for everybody else (R-PROJ-3); the user's own settings file overrides them.
+- **R-PROJ-DEL-1** Removing a project removes a *declaration*. Nothing in the project repository
+  is touched, and no board, sprint or retro file is edited.
+- **R-PROJ-DEL-2** A removal that would leave a board scope, a board column order, a sprint
+  `items`/`committed` list or a promoted retro action pointing at a project the team no longer
+  declares is refused (`team_project_referenced`, HTTP 409) with the references named. The caller
+  may repeat it with `force`, and the answer then lists exactly what was accepted. This is the
+  shape a WIP limit already has (R-COL-5): a refusal the caller may repeat, never a silent break.
+- **R-PROJ-DEL-3** No commit is made, exactly as for R-TEAM-NEW-5. The changed `team.yaml` is
+  left for the user or for commit-on-save.
+
+Nothing about the *link* changes here: a declared project is cloned when some open repository
+serves that key (§7.1), and a clone whose `project.yaml` declares another key is
+`W-TEAM-KEY-MISMATCH` on the entry. That warning is the failure mode this surface produces most
+often, which is why the card shows it on the entry itself rather than in a global list.
+
 ---
 
 ## 4. `knowledge/` — the team knowledge base
@@ -1683,6 +1721,7 @@ MCP tools implied by this document (doc 05 specifies them fully): `list_projects
 | Phase 4 | Multi-repo sync, per-repo push results, conflict handling for `order` and snapshots. |
 | Phase 5 | MCP tools (doc 08); agents reading snapshots for cross-project questions. |
 | Phase 6 | Retrospectives with voting and promotion (§9, done — GIT-US-0027), metrics (§12, done — GIT-US-0028): burndown, cumulative flow, cycle time, lead time and throughput, reconstructed from the git history of the item files. |
+| Post-1.0 | Team workspaces (epic GIT-EP-0009): creating a team repository (§3.7, done), holding several and choosing the active one (§3.8, done), and managing a team's project list from the product (§3.9, done). |
 
 ---
 

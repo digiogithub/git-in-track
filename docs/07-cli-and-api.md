@@ -1142,7 +1142,8 @@ Catalog of `code` values: `unauthorized`, `forbidden`, `not_found`, `invalid_req
 `validation_failed`, `invalid_front_matter`, `precondition_required`, `stale_revision`,
 `conflict`, `duplicate_id`, `workflow_transition_denied`, `read_only`,
 `repo_not_registered`, `repo_not_cloned`, `wip_limit_exceeded`, `sprint_overlap`,
-`sprint_already_active`, `board_in_use`, `project_exists`, `team_exists`, `git_dirty`,
+`sprint_already_active`, `board_in_use`, `project_exists`, `team_exists`,
+`team_project_exists`, `team_project_referenced`, `git_dirty`,
 `git_auth_failed`,
 `git_conflict`, `index_unavailable`, `rate_limited`, `not_implemented`, `internal`.
 
@@ -1159,6 +1160,16 @@ not — the caller has to change the dates.
 `project_exists` (HTTP 409) refuses to scaffold a project into a documentation folder that
 already holds a `project.yaml` (doc 03 R-NEW-2). A backlog is never overwritten, so the caller
 picks another folder or opens the one that is there.
+
+`team_project_exists` (HTTP 409) refuses to declare a project key a team already declares: the
+`projects:` list is keyed by project key alone (doc 04 R-PROJ-1), so a second entry would make
+every reference into it ambiguous. It is not repeatable with `force` — the caller edits the
+entry that is there.
+
+`team_project_referenced` (HTTP 409) has the shape of `wip_limit_exceeded`: disconnecting a
+project a board, a sprint or a retro action still points at is declined once, with the
+references named in `detail`, and the same request with `force` goes through. It exists so that
+`ref:` entries are never orphaned silently (doc 04 §3.9).
 
 `duplicate_id` and `board_in_use` (HTTP 409) guard a board's life cycle: a board file is named
 after its id, so `POST /boards` refuses a slug that is already taken rather than replacing
@@ -1308,6 +1319,8 @@ GET /api/v1/repos/ACME
 GET /api/v1/workspace                   # every open repository, its projects, the teams among them
 GET /api/v1/teams                       # every mounted team repository, in mount order
 GET /api/v1/teams/{key}                 # team.yaml: members, projects, policies, diagnostics
+POST /api/v1/teams/{key}/projects       # declare a project repository in team.yaml
+DELETE /api/v1/teams/{key}/projects/{project}   # ?force=true to break references
 GET /api/v1/refs?ref=ACME/ACME-US-0042  # where a cross-repository reference points
 ```
 
@@ -1351,6 +1364,39 @@ project, whether a clone of it is open in this workspace:
   "diagnostics": []
 }
 ```
+
+**The project list (GIT-US-0037).** `POST /api/v1/teams/{key}/projects` declares a project
+repository in that team's `team.yaml`, and `DELETE /api/v1/teams/{key}/projects/{project}`
+disconnects it. Both go through the vault methods `team.project.add` and `team.project.remove`,
+so the file a companion writes and the file a browser writes are the same bytes, and both answer
+with the team as `GET /api/v1/teams/{key}` reports it, the entry that changed, the references a
+removal broke and the write set. The team travels in the path here rather than as `?team=`,
+because the project list belongs to one team repository and to nothing else.
+
+```json
+POST /api/v1/teams/ACME-TEAM/projects
+{ "key": "TOOLS", "name": "Internal Tools", "repo": "https://github.com/acme/tools.git",
+  "defaultBranch": "main", "docsPath": "docs" }
+201
+{
+  "team": { "key": "ACME-TEAM", "projects": [ … ] },
+  "project": { "key": "TOOLS", "name": "Internal Tools", "docsPath": "docs" },
+  "writes": [{ "vaultId": "acme-team", "written": [{ "path": "team.yaml", "text": "schema: 1\n…" }],
+               "removed": [] }]
+}
+```
+
+The body is one entry of doc 04 §3.3: `key`, `name`, `repo`, `defaultBranch`, `docsPath`, `host`,
+`webUrl`, `color` and `archived`. Failures: `400 invalid_request` for a body with no `key`,
+`422 validation_failed` for a key outside `[A-Z][A-Z0-9]{1,9}` or a missing `repo`/`docsPath`,
+`409 team_project_exists` for a key the team already declares (R-PROJ-1), `404 not_found` for an
+unknown team.
+
+A removal that would leave a board, a sprint or a retro action pointing at an undeclared project
+is `409 team_project_referenced`, whose `detail` names what breaks; `?force=true` repeats it and
+accepts that, and the answer then lists the references under `references`. `local_hints` is not
+written by either route — hints are per-machine and belong in the user's own configuration
+(R-PROJ-3).
 
 `GET /api/v1/refs` resolves `<projectKey>/<itemId>` across every mounted repository. A reference
 into a project nobody cloned is **not** a 404 — it is the normal state of a team board (doc 04 §7):

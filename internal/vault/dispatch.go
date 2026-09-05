@@ -86,6 +86,18 @@ func (w *Workspace) Dispatch(ctx context.Context, method string, raw []byte) (an
 		return w.Team(p.Team)
 	case "team.list":
 		return w.TeamList(), nil
+	case "team.project.add":
+		p, err := decodeParams[TeamProjectAddParams](raw)
+		if err != nil {
+			return nil, err
+		}
+		return w.AddTeamProject(ctx, p)
+	case "team.project.remove":
+		p, err := decodeParams[TeamProjectRemoveParams](raw)
+		if err != nil {
+			return nil, err
+		}
+		return w.RemoveTeamProject(ctx, p)
 	case "ref.resolve":
 		ref, err := decodeRefParams(raw)
 		if err != nil {

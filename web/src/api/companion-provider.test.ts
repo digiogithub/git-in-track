@@ -1071,3 +1071,66 @@ describe('CompanionProvider — sync (GIT-US-0021)', () => {
     expect(settings.pullStrategy).toBe('merge');
   });
 });
+
+describe('CompanionProvider team projects', () => {
+  const team = { key: 'ACME-TEAM', name: 'ACME Delivery Team', projects: [] };
+
+  it('addresses the team by path segment and sends the entry', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(response({ team, project: { key: 'TOOLS' }, references: [], writes: [] }));
+
+    await provider(fetchImpl).addTeamProject(
+      { key: 'TOOLS', repo: 'https://github.com/acme/tools.git', docsPath: 'docs' },
+      'ACME-TEAM',
+    );
+
+    const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${BASE}/api/v1/teams/ACME-TEAM/projects`);
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toMatchObject({ key: 'TOOLS', docsPath: 'docs' });
+  });
+
+  it('resolves the only open team when the caller names none', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(response({ teams: [team], total: 1 }))
+      .mockResolvedValueOnce(
+        response({ team, project: { key: 'WEB' }, references: [], writes: [] }),
+      );
+
+    await provider(fetchImpl).removeTeamProject('WEB', { force: true });
+
+    const [url, init] = fetchImpl.mock.calls[1] as [string, RequestInit];
+    expect(url).toBe(`${BASE}/api/v1/teams/ACME-TEAM/projects/WEB?force=true`);
+    expect(init.method).toBe('DELETE');
+  });
+
+  it('refuses to guess between two open teams', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(response({ teams: [team, { ...team, key: 'PLATFORM-TEAM' }], total: 2 }));
+
+    await expect(provider(fetchImpl).removeTeamProject('WEB')).rejects.toBeInstanceOf(
+      ProviderError,
+    );
+  });
+
+  it('carries the duplicate-key refusal through as its stable code', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(
+        response(
+          { code: 'team_project_exists', detail: 'ACME is already declared by team ACME-TEAM' },
+          { status: 409, statusText: 'Conflict' },
+        ),
+      );
+
+    await expect(
+      provider(fetchImpl).addTeamProject(
+        { key: 'ACME', repo: 'https://x/y.git', docsPath: 'docs' },
+        'ACME-TEAM',
+      ),
+    ).rejects.toMatchObject({ code: 'team_project_exists' });
+  });
+});

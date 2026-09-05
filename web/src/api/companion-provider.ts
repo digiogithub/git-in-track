@@ -87,6 +87,8 @@ import type {
   SyncResult,
   SyncSettings,
   SyncSettingsPatch,
+  TeamProjectDraft,
+  TeamProjectResult,
   TeamSummary,
   Unsubscribe,
   UpdateOp,
@@ -215,6 +217,8 @@ const PROBLEM_CODES: Record<string, ProviderErrorCode> = {
   wip_limit_exceeded: 'wip_limit_exceeded',
   project_exists: 'project_exists',
   team_exists: 'team_exists',
+  team_project_exists: 'team_project_exists',
+  team_project_referenced: 'team_project_referenced',
   index_unavailable: 'internal',
   rate_limited: 'internal',
   internal: 'internal',
@@ -854,9 +858,7 @@ export class CompanionProvider implements DataProvider {
   async getTeam(team?: string): Promise<TeamSummary | null> {
     if (team !== undefined && team !== '') {
       try {
-        return (await this.#json(
-          `${API_PREFIX}/teams/${encodeURIComponent(team)}`,
-        )) as TeamSummary;
+        return (await this.#json(`${API_PREFIX}/teams/${encodeURIComponent(team)}`)) as TeamSummary;
       } catch (error) {
         if (error instanceof ProviderError && error.code === 'not_found') return null;
         throw error;
@@ -937,6 +939,52 @@ export class CompanionProvider implements DataProvider {
     });
     const record = asRecord(body);
     return (record?.['team'] ?? body) as TeamSummary;
+  }
+
+  /**
+   * Declares a project repository in a team's `team.yaml`. The team travels in
+   * the path here rather than as `?team=`, because the project list belongs to
+   * one team repository and to nothing else.
+   */
+  async addTeamProject(project: TeamProjectDraft, team?: string): Promise<TeamProjectResult> {
+    const key = await this.#teamKey(team);
+    const body = await this.#json(`${API_PREFIX}/teams/${encodeURIComponent(key)}/projects`, {
+      method: 'POST',
+      body: project,
+    });
+    return body as TeamProjectResult;
+  }
+
+  /** Disconnects a project from a team's `team.yaml`. */
+  async removeTeamProject(
+    key: string,
+    opts?: { force?: boolean },
+    team?: string,
+  ): Promise<TeamProjectResult> {
+    const teamKey = await this.#teamKey(team);
+    const query = opts?.force ? '?force=true' : '';
+    const body = await this.#json(
+      `${API_PREFIX}/teams/${encodeURIComponent(teamKey)}/projects/${encodeURIComponent(key)}${query}`,
+      { method: 'DELETE' },
+    );
+    return body as TeamProjectResult;
+  }
+
+  /**
+   * The team a call that names none acts on. The routes address a team by path
+   * segment, so unlike `?team=` there is no "omit it and the only team answers"
+   * form: the sole open team is resolved here instead.
+   */
+  async #teamKey(team?: string): Promise<string> {
+    if (team !== undefined && team !== '') return team;
+    const teams = await this.listTeams();
+    if (teams.length === 1 && teams[0]) return teams[0].key;
+    throw new ProviderError(
+      'not_found',
+      teams.length === 0
+        ? 'No team repository is registered. Create or mount one first.'
+        : 'This workspace holds several team repositories: name the one to act on.',
+    );
   }
 
   /** The registered repository a call that names none is written into. */
@@ -1125,11 +1173,14 @@ export class CompanionProvider implements DataProvider {
     rev?: string,
     team?: string,
   ): Promise<BoardView> {
-    const body = await this.#json(`${API_PREFIX}/boards/${encodeURIComponent(slug)}${teamQuery(team)}`, {
-      method: 'PATCH',
-      rev: rev ?? '*',
-      body: patch,
-    });
+    const body = await this.#json(
+      `${API_PREFIX}/boards/${encodeURIComponent(slug)}${teamQuery(team)}`,
+      {
+        method: 'PATCH',
+        rev: rev ?? '*',
+        body: patch,
+      },
+    );
     const record = asRecord(body);
     return (record ? record['board'] : body) as BoardView;
   }
@@ -1262,7 +1313,7 @@ export class CompanionProvider implements DataProvider {
     return (await this.#json(
       `${API_PREFIX}/sprints/${encodeURIComponent(id)}/start${teamQuery(team)}`,
       {
-      method: 'POST',
+        method: 'POST',
         rev: rev ?? '*',
         body: { ...(force === undefined ? {} : { force }) },
       },
@@ -1278,7 +1329,7 @@ export class CompanionProvider implements DataProvider {
     return (await this.#json(
       `${API_PREFIX}/sprints/${encodeURIComponent(id)}/close${teamQuery(team)}`,
       {
-      method: 'POST',
+        method: 'POST',
         rev: rev ?? '*',
         body: { carry: carry ?? [] },
       },

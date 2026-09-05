@@ -1065,6 +1065,56 @@ export type TeamCreated = {
   writes: WriteSet;
 };
 
+/**
+ * One entry of the `projects:` list of `team.yaml` (docs/04 §3.3). It is the
+ * routing declaration that decides which project a board may show and whether
+ * a card renders live from a clone or read-only from a committed snapshot;
+ * `key`, `name` and `repo` plus `docsPath` are the required half.
+ */
+export type TeamProjectDraft = {
+  /** Must equal the `key:` of that repository's own `project.yaml`. */
+  key: string;
+  /** Display name; defaults to the key. */
+  name?: string;
+  /** Canonical remote URL. */
+  repo: string;
+  /** Branch snapshot links and blob URLs are built against; defaults to `main`. */
+  defaultBranch?: string;
+  /** Folder holding `.pmngr/` inside that repository. */
+  docsPath: string;
+  host?: string;
+  webUrl?: string;
+  color?: string;
+  archived?: boolean;
+};
+
+/**
+ * One place a team artifact points at a project: the scope of a board, a
+ * column order, the `items` or `committed` list of a sprint, or the task a
+ * retro action was promoted into. It is what removing a project would orphan.
+ */
+export type TeamProjectReference = {
+  /** `board`, `sprint` or `retro`. */
+  kind: string;
+  id: string;
+  path: string;
+  /** The front-matter field the reference sits in. */
+  field: string;
+  /** `<projectKey>/<itemId>`, or the bare key when the artifact names the project. */
+  ref: string;
+};
+
+/** What `team.project.add` and `team.project.remove` answer with. */
+export type TeamProjectResult = {
+  team: TeamSummary;
+  /** The entry that was added or removed. */
+  project: TeamProjectSummary;
+  /** The references a forced removal broke; an add never produces any. */
+  references?: TeamProjectReference[];
+  /** One write set per repository; a project change touches `team.yaml` only. */
+  writes: VaultWriteSet[];
+};
+
 /** Method map: request method name → { params, result }. */
 export type CoreApi = {
   ping: { params: undefined; result: { pong: true; wasm: boolean } };
@@ -1128,6 +1178,31 @@ export type CoreApi = {
    * and a folder that already holds a `team.yaml` with `team_exists`.
    */
   'team.create': { params: NewTeamParams; result: TeamCreated };
+  /**
+   * Declare a project repository in a team's `team.yaml`, which is what makes
+   * its items reachable from that team's boards and sprints (docs/04 §3.9).
+   *
+   * The entry lands in key order rather than at the end of the list, so two
+   * people connecting two different projects write two hunks git can merge. A
+   * key the team already declares is refused with `team_project_exists`, and an
+   * entry missing `repo` or `docsPath` with `validation_failed`.
+   */
+  'team.project.add': {
+    params: { project: TeamProjectDraft } & TeamScoped;
+    result: TeamProjectResult;
+  };
+  /**
+   * Disconnect a project from a team. Nothing in the project repository is
+   * touched: the entry is a routing declaration, not the backlog.
+   *
+   * A project a board, a sprint or a retro action still references is refused
+   * with `team_project_referenced` and the list of references; `force` accepts
+   * leaving them pointing at a project the team no longer declares.
+   */
+  'team.project.remove': {
+    params: { key: string; force?: boolean } & TeamScoped;
+    result: TeamProjectResult;
+  };
   /** Resolve `<projectKey>/<itemId>` across every open repository. */
   'ref.resolve': { params: { ref: string }; result: RefResolution };
 
@@ -1289,8 +1364,13 @@ export type CoreApi = {
    * than half written (docs/04 R-RETRO-2).
    */
   'retro.promote': {
-    params: { id: string; action: string; project: string; labels?: string[]; rev?: string } &
-      TeamScoped;
+    params: {
+      id: string;
+      action: string;
+      project: string;
+      labels?: string[];
+      rev?: string;
+    } & TeamScoped;
     result: RetroResult;
   };
 

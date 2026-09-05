@@ -83,6 +83,10 @@ import type {
   SyncSettings,
   SyncSettingsPatch,
   SyncStatus,
+  TeamProjectDraft,
+  TeamProjectReference,
+  TeamProjectResult,
+  TeamProjectSummary,
   TeamSummary,
   Unsubscribe,
   UpdateOp,
@@ -799,6 +803,123 @@ export class FakeProvider implements DataProvider {
     return Promise.resolve(structuredClone(team));
   }
 
+  addTeamProject(project: TeamProjectDraft, team?: string): Promise<TeamProjectResult> {
+    this.assertWritable();
+    const found = this.resolveTeam(team);
+    if (!found) {
+      return Promise.reject(new ProviderError('not_found', 'No team repository is open.'));
+    }
+    if (!/^[A-Z][A-Z0-9]{1,9}$/.test(project.key)) {
+      return Promise.reject(
+        new ProviderError('validation_failed', `${project.key} does not match [A-Z][A-Z0-9]{1,9}`),
+      );
+    }
+    if (project.repo.trim() === '' || project.docsPath.trim() === '') {
+      return Promise.reject(
+        new ProviderError(
+          'validation_failed',
+          `project ${project.key} needs a repo and a docs_path`,
+        ),
+      );
+    }
+    if (found.projects.some((p) => p.key === project.key)) {
+      return Promise.reject(
+        new ProviderError(
+          'team_project_exists',
+          `${project.key} is already declared by team ${found.key}`,
+        ),
+      );
+    }
+    const entry: TeamProjectSummary = {
+      ...project,
+      name: project.name ?? project.key,
+      cloned: this.projects.some((p) => p.key === project.key),
+      snapshot: {
+        project: project.key,
+        path: `.pmngr/index/${project.key}.json`,
+        present: false,
+        enabled: true,
+        items: 0,
+        freshness: 'unknown',
+        stale: false,
+      },
+      diagnostics: [],
+    };
+    // The list is kept in key order, as the core writes it.
+    found.projects = [...found.projects, entry].sort((a, b) => a.key.localeCompare(b.key));
+    this.emit({ kind: 'repo', repoId: found.vaultId ?? 'team' });
+    return Promise.resolve(
+      structuredClone({ team: found, project: entry, references: [], writes: [] }),
+    );
+  }
+
+  removeTeamProject(
+    key: string,
+    opts?: { force?: boolean },
+    team?: string,
+  ): Promise<TeamProjectResult> {
+    this.assertWritable();
+    const found = this.resolveTeam(team);
+    const entry = found?.projects.find((p) => p.key === key);
+    if (!found || !entry) {
+      return Promise.reject(new ProviderError('not_found', `no team declares the project ${key}`));
+    }
+    const references = this.teamProjectReferences(key, team);
+    if (references.length > 0 && opts?.force !== true) {
+      return Promise.reject(
+        new ProviderError(
+          'team_project_referenced',
+          `${references.length} reference(s) still point at project ${key}. ` +
+            'Removing the project leaves them pointing at a project this team no longer ' +
+            'declares; repeat with force to accept that.',
+        ),
+      );
+    }
+    found.projects = found.projects.filter((p) => p.key !== key);
+    this.emit({ kind: 'repo', repoId: found.vaultId ?? 'team' });
+    return Promise.resolve(
+      structuredClone({ team: found, project: entry, references, writes: [] }),
+    );
+  }
+
+  /** Every board, sprint and retro reference into a project of this team. */
+  private teamProjectReferences(key: string, team?: string): TeamProjectReference[] {
+    const out: TeamProjectReference[] = [];
+    const owns = (ref: string) => ref.split('/')[0] === key;
+    for (const board of this.boards.values()) {
+      if (!this.inTeam(board.team, team)) continue;
+      if (board.projects.includes(key)) {
+        out.push({ kind: 'board', id: board.id, path: '', field: 'projects', ref: key });
+      }
+      for (const [column, refs] of Object.entries(board.order)) {
+        for (const ref of refs.filter(owns)) {
+          out.push({ kind: 'board', id: board.id, path: '', field: `order.${column}`, ref });
+        }
+      }
+    }
+    for (const sprint of this.sprints.values()) {
+      if (!this.inTeam(sprint.team, team)) continue;
+      for (const ref of sprint.items.filter(owns)) {
+        out.push({ kind: 'sprint', id: sprint.id, path: '', field: 'items', ref });
+      }
+    }
+    for (const retro of this.retros.values()) {
+      if (!this.inTeam(retro.team, team)) continue;
+      for (const action of retro.actions ?? []) {
+        if (action.task !== undefined && owns(action.task)) {
+          out.push({
+            kind: 'retro',
+            id: retro.id,
+            path: '',
+            field: `actions.${action.id}`,
+            ref: action.task,
+          });
+        }
+      }
+    }
+    return out;
+  }
+
   /** The named team, or the first open one when nothing is named. */
   private resolveTeam(team?: string): TeamSummary | undefined {
     if (team === undefined || team === '') return this.teams[0];
@@ -1135,15 +1256,15 @@ export class FakeProvider implements DataProvider {
       [...this.boards.values()]
         .filter((b) => this.inTeam(b.team, team))
         .map((b) => ({
-        id: b.id,
-        kind: b.kind,
-        title: b.title,
-        ...(b.description === undefined ? {} : { description: b.description }),
-        path: `.pmngr/boards/${b.id}.md`,
-        rev: b.rev,
-        vaultId: 'repo-team',
-        projects: b.projects,
-        columns: b.columns.length,
+          id: b.id,
+          kind: b.kind,
+          title: b.title,
+          ...(b.description === undefined ? {} : { description: b.description }),
+          path: `.pmngr/boards/${b.id}.md`,
+          rev: b.rev,
+          vaultId: 'repo-team',
+          projects: b.projects,
+          columns: b.columns.length,
           ...(b.sprint === undefined ? {} : { sprint: b.sprint }),
           diagnostics: [],
         })),
@@ -1308,13 +1429,11 @@ export class FakeProvider implements DataProvider {
       kind,
       title: draft.title,
       ...(draft.description === undefined ? {} : { description: draft.description }),
-      projects: draft.projects ?? (this.teams[0]?.projects.map((p) => p.key) ?? []),
+      projects: draft.projects ?? this.teams[0]?.projects.map((p) => p.key) ?? [],
       columns,
       ...(draft.filters === undefined ? {} : { filters: draft.filters }),
       order: {},
-      ...(kind === 'scrum'
-        ? { backlogColumn: draft.backlogColumn ?? columns[0]?.id ?? '' }
-        : {}),
+      ...(kind === 'scrum' ? { backlogColumn: draft.backlogColumn ?? columns[0]?.id ?? '' } : {}),
       rev: this.nextRev(),
     };
     this.boards.set(id, board);
