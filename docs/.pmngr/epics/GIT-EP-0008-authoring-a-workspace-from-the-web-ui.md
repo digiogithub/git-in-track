@@ -3,13 +3,13 @@ id: GIT-EP-0008
 type: epic
 title: Authoring a workspace from the web UI
 status: in_progress
-created: 2026-09-05T00:00:00Z
-updated: 2026-09-05T00:00:00Z
-author: team
 priority: high
 milestone: GIT-M-0008
-estimate: 21
+author: team
 labels: [core, web, cli]
+estimate: 21
+created: 2026-09-05T00:00:00Z
+updated: 2026-09-05T00:00:00Z
 ---
 
 ## Description

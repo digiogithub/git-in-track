@@ -3,18 +3,17 @@ id: GIT-EP-0003
 type: epic
 title: Companion CLI
 status: done
-created: 2026-09-03T00:00:00Z
-updated: 2026-09-04T05:48:51Z
-closed: 2026-09-04T05:48:51Z
-started: 2026-09-04T05:06:40Z
-author: team
 priority: critical
 milestone: GIT-M-0003
-estimate: 24
+author: team
 labels: [cli, server, web]
+estimate: 24
+created: 2026-09-03T00:00:00Z
+updated: 2026-09-04T05:48:51Z
+started: 2026-09-04T05:06:40Z
+closed: 2026-09-04T05:48:51Z
 links:
-  - kind: blocked_by
-    target: GIT-EP-0002
+  - { kind: blocked_by, target: GIT-EP-0002 }
 ---
 
 ## Description

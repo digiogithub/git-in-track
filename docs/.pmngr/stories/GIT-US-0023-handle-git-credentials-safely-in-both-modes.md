@@ -3,17 +3,16 @@ id: GIT-US-0023
 type: story
 title: Handle git credentials safely in both modes
 status: in_review
-created: 2026-09-03T00:00:00Z
-updated: 2026-09-04
-author: team
 priority: critical
 parent: GIT-EP-0005
 milestone: GIT-M-0005
-estimate: 5
+author: team
 labels: [git, security]
+estimate: 5
+created: 2026-09-03T00:00:00Z
+updated: 2026-09-04T00:00:00Z
 links:
-  - kind: blocked_by
-    target: GIT-US-0021
+  - { kind: blocked_by, target: GIT-US-0021 }
 ---
 
 ## Description

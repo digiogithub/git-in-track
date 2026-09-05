@@ -3,19 +3,18 @@ id: GIT-US-0011
 type: story
 title: Provide a read-only fallback for non-Chromium browsers
 status: done
-created: 2026-09-03T00:00:00Z
-updated: 2026-09-04T02:37:45Z
-closed: 2026-09-04T02:37:45Z
-started: 2026-09-03T21:47:06Z
-author: team
 priority: medium
 parent: GIT-EP-0002
 milestone: GIT-M-0002
-estimate: 3
+author: team
 labels: [web, good-first-issue]
+estimate: 3
+created: 2026-09-03T00:00:00Z
+updated: 2026-09-04T02:37:45Z
+started: 2026-09-03T21:47:06Z
+closed: 2026-09-04T02:37:45Z
 links:
-  - kind: blocked_by
-    target: GIT-US-0008
+  - { kind: blocked_by, target: GIT-US-0008 }
 ---
 
 ## Description

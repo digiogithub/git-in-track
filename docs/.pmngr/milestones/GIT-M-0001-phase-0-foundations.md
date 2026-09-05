@@ -3,15 +3,14 @@ id: GIT-M-0001
 type: milestone
 title: Phase 0 — Foundations
 status: done
-created: 2026-09-03T00:00:00Z
-updated: 2026-09-03T21:47:05Z
-closed: 2026-09-03T21:47:05Z
-started: 2026-09-03T20:42:39Z
 author: team
 labels: [core, ci, wasm]
+created: 2026-09-03T00:00:00Z
+updated: 2026-09-03T21:47:05Z
+started: 2026-09-03T20:42:39Z
+closed: 2026-09-03T21:47:05Z
 links:
-  - kind: relates_to
-    target: GIT-EP-0001
+  - { kind: relates_to, target: GIT-EP-0001 }
 custom:
   phase: 0
   version: v0.1.0

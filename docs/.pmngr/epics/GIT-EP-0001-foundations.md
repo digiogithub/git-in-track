@@ -3,16 +3,15 @@ id: GIT-EP-0001
 type: epic
 title: Foundations
 status: done
-created: 2026-09-03T00:00:00Z
-updated: 2026-09-03T21:47:05Z
-closed: 2026-09-03T21:47:05Z
-started: 2026-09-03T20:42:39Z
-author: team
 priority: critical
 milestone: GIT-M-0001
-estimate: 21
+author: team
 labels: [core, ci, wasm]
-links: []
+estimate: 21
+created: 2026-09-03T00:00:00Z
+updated: 2026-09-03T21:47:05Z
+started: 2026-09-03T20:42:39Z
+closed: 2026-09-03T21:47:05Z
 ---
 
 ## Description

@@ -3,19 +3,18 @@ id: GIT-US-0015
 type: story
 title: Auto-detect the companion and upgrade the web app
 status: done
-created: 2026-09-03T00:00:00Z
-updated: 2026-09-04T05:48:51Z
-closed: 2026-09-04T05:48:51Z
-started: 2026-09-04T05:06:40Z
-author: team
 priority: high
 parent: GIT-EP-0003
 milestone: GIT-M-0003
-estimate: 3
+author: team
 labels: [web]
+estimate: 3
+created: 2026-09-03T00:00:00Z
+updated: 2026-09-04T05:48:51Z
+started: 2026-09-04T05:06:40Z
+closed: 2026-09-04T05:48:51Z
 links:
-  - kind: blocked_by
-    target: GIT-US-0014
+  - { kind: blocked_by, target: GIT-US-0014 }
 ---
 
 ## Description

@@ -3,17 +3,16 @@ id: GIT-US-0024
 type: story
 title: Expose backlog tools over an MCP server on stdio
 status: in_review
-created: 2026-09-03T00:00:00Z
-updated: 2026-09-04
-author: team
 priority: critical
 parent: GIT-EP-0006
 milestone: GIT-M-0006
-estimate: 8
+author: team
 labels: [mcp, core]
+estimate: 8
+created: 2026-09-03T00:00:00Z
+updated: 2026-09-04T00:00:00Z
 links:
-  - kind: blocked_by
-    target: GIT-US-0014
+  - { kind: blocked_by, target: GIT-US-0014 }
 ---
 
 ## Description

@@ -3,15 +3,14 @@ id: GIT-M-0002
 type: milestone
 title: Phase 1 — Browser-only MVP
 status: done
-created: 2026-09-03T00:00:00Z
-updated: 2026-09-04T05:06:40Z
-closed: 2026-09-04T05:06:40Z
-started: 2026-09-03T21:47:06Z
 author: team
 labels: [web, wasm]
+created: 2026-09-03T00:00:00Z
+updated: 2026-09-04T05:06:40Z
+started: 2026-09-03T21:47:06Z
+closed: 2026-09-04T05:06:40Z
 links:
-  - kind: relates_to
-    target: GIT-EP-0002
+  - { kind: relates_to, target: GIT-EP-0002 }
 custom:
   phase: 1
   version: v0.2.0

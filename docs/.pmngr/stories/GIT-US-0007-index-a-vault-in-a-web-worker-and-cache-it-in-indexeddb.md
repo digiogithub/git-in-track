@@ -3,21 +3,19 @@ id: GIT-US-0007
 type: story
 title: Index a vault in a Web Worker and cache it in IndexedDB
 status: done
-created: 2026-09-03T00:00:00Z
-updated: 2026-09-04T02:37:45Z
-closed: 2026-09-04T02:37:45Z
-started: 2026-09-03T21:47:06Z
-author: team
 priority: critical
 parent: GIT-EP-0002
 milestone: GIT-M-0002
-estimate: 8
+author: team
 labels: [web, wasm, core, performance]
+estimate: 8
+created: 2026-09-03T00:00:00Z
+updated: 2026-09-04T02:37:45Z
+started: 2026-09-03T21:47:06Z
+closed: 2026-09-04T02:37:45Z
 links:
-  - kind: blocked_by
-    target: GIT-US-0006
-  - kind: blocked_by
-    target: GIT-US-0002
+  - { kind: blocked_by, target: GIT-US-0006 }
+  - { kind: blocked_by, target: GIT-US-0002 }
 ---
 
 ## Description

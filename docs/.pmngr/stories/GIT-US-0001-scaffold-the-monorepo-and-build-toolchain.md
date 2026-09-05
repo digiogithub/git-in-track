@@ -3,17 +3,16 @@ id: GIT-US-0001
 type: story
 title: Scaffold the monorepo and build toolchain
 status: done
-created: 2026-09-03T00:00:00Z
-updated: 2026-09-03T21:17:39Z
-closed: 2026-09-03T21:17:39Z
-started: 2026-09-03T20:42:39Z
-author: team
 priority: critical
 parent: GIT-EP-0001
 milestone: GIT-M-0001
-estimate: 3
+author: team
 labels: [core, ci, good-first-issue]
-links: []
+estimate: 3
+created: 2026-09-03T00:00:00Z
+updated: 2026-09-03T21:17:39Z
+started: 2026-09-03T20:42:39Z
+closed: 2026-09-03T21:17:39Z
 ---
 
 ## Description

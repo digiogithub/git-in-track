@@ -3,16 +3,15 @@ id: GIT-EP-0004
 type: epic
 title: Team repository and boards
 status: in_progress
-created: 2026-09-03T00:00:00Z
-updated: 2026-09-04
-author: team
 priority: high
 milestone: GIT-M-0004
-estimate: 26
+author: team
 labels: [core, web, server]
+estimate: 26
+created: 2026-09-03T00:00:00Z
+updated: 2026-09-04T00:00:00Z
 links:
-  - kind: blocked_by
-    target: GIT-EP-0003
+  - { kind: blocked_by, target: GIT-EP-0003 }
 ---
 
 ## Description

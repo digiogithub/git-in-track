@@ -3,16 +3,15 @@ id: GIT-EP-0005
 type: epic
 title: Git sync
 status: in_progress
-created: 2026-09-03T00:00:00Z
-updated: 2026-09-04
-author: team
 priority: critical
 milestone: GIT-M-0005
-estimate: 26
+author: team
 labels: [git, server, web, security]
+estimate: 26
+created: 2026-09-03T00:00:00Z
+updated: 2026-09-04T00:00:00Z
 links:
-  - kind: blocked_by
-    target: GIT-EP-0003
+  - { kind: blocked_by, target: GIT-EP-0003 }
 ---
 
 ## Description
