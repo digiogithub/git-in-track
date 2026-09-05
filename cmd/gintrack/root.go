@@ -87,6 +87,7 @@ Start with:
 		newMCPCommand(build, flags),
 		newVersionCommand(build),
 		newCompletionCommand(),
+		newInitCommand(flags),
 		newAddCommand(flags),
 		newLsCommand(flags),
 		newRmCommand(flags),

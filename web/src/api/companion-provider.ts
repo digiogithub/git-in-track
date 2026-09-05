@@ -212,6 +212,7 @@ const PROBLEM_CODES: Record<string, ProviderErrorCode> = {
   git_auth_failed: 'git_auth_failed',
   repo_not_cloned: 'repo_not_cloned',
   wip_limit_exceeded: 'wip_limit_exceeded',
+  project_exists: 'project_exists',
   index_unavailable: 'internal',
   rate_limited: 'internal',
   internal: 'internal',
@@ -862,6 +863,39 @@ export class CompanionProvider implements DataProvider {
       },
     });
     return toRepoInfo(body);
+  }
+
+  /**
+   * Scaffolds a backlog in a registered repository that has none. The companion
+   * writes the files itself, through the same core code browser-only mode runs,
+   * so the two modes produce byte-identical projects.
+   */
+  async createProject(input: CreateProjectInput): Promise<ProjectSummary> {
+    const repoId = input.repoId ?? (await this.#soleRepoId());
+    const body = await this.#json(`${API_PREFIX}/repos/${encodeURIComponent(repoId)}/projects`, {
+      method: 'POST',
+      body: {
+        docsFolder: input.docsFolder,
+        key: input.key,
+        ...(input.name === undefined ? {} : { name: input.name }),
+        ...(input.description === undefined ? {} : { description: input.description }),
+        ...(input.timezone === undefined ? {} : { timezone: input.timezone }),
+      },
+    });
+    const record = asRecord(body);
+    return toProjectSummary(record?.['project'] ?? body);
+  }
+
+  /** The registered repository a call that names none is written into. */
+  async #soleRepoId(): Promise<string> {
+    const repos = await this.listRepos();
+    if (repos.length === 1 && repos[0]) return repos[0].id;
+    throw new ProviderError(
+      'not_found',
+      repos.length === 0
+        ? 'No repository is registered. Register one with `gintrack add <path>`.'
+        : 'This workspace holds several repositories: name the one to create the project in.',
+    );
   }
 
   async unmountRepo(repoId: string): Promise<void> {

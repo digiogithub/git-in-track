@@ -28,7 +28,9 @@ func openRepo(ctx context.Context, repo config.Repo, full bool) (*repoView, erro
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", repo.ID, err)
 	}
-	projects, err := core.DiscoverProjects(fsys, ".")
+	projects, err := core.DiscoverProjectsWith(fsys, core.DiscoveryOptions{
+		DocsFolders: repo.DeclaredDocsFolders(),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("discover the projects of %s: %w", repo.ID, err)
 	}
@@ -80,6 +82,11 @@ func openVault(ctx context.Context, res *config.Resolution, full bool) (*vault, 
 	}
 	mounts := newMountFS()
 	byMount := make(map[string]config.Repo, len(repos))
+	// Every repository is one root of the bounded discovery rule, and its own
+	// declared folders are prefixed with its mount name: "one level below the
+	// root" must mean one level below a repository, not one level below the
+	// mount table (ADR-018).
+	opts := core.DiscoveryOptions{}
 	for _, repo := range repos {
 		fsys, err := osfs.New(repo.Path)
 		if err != nil {
@@ -89,8 +96,12 @@ func openVault(ctx context.Context, res *config.Resolution, full bool) (*vault, 
 			return nil, fmt.Errorf("open %s: %w", repo.ID, err)
 		}
 		byMount[repo.ID] = repo
+		opts.Roots = append(opts.Roots, repo.ID)
+		for _, docs := range repo.DeclaredDocsFolders() {
+			opts.DocsFolders = append(opts.DocsFolders, path.Join(repo.ID, docs))
+		}
 	}
-	refs, err := core.DiscoverProjects(mounts, ".")
+	refs, err := core.DiscoverProjectsWith(mounts, opts)
 	if err != nil {
 		return nil, fmt.Errorf("discover the projects: %w", err)
 	}

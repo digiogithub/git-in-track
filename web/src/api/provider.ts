@@ -542,6 +542,35 @@ export type MountInput = {
   /** Companion mode: an absolute path. Browser mode: a picked directory handle id. */
   location: string;
   docsFolder?: string;
+  /**
+   * Every documentation folder this repository declares, `docsFolder`
+   * included. Discovery probes the repository root and its first-level
+   * directories on its own; a folder deeper than that — a monorepo's
+   * `apps/api/docs` — is found only because it is listed here (ADR-018).
+   */
+  docsFolders?: string[];
+};
+
+/**
+ * Creating a project in a repository that has none (story GIT-US-0031).
+ *
+ * It writes `<docsFolder>/.pmngr/project.yaml` and the folder layout
+ * docs/03-data-model.md §2 prescribes. A key outside `[A-Z][A-Z0-9]{1,9}` is
+ * refused with `validation_failed`, and a folder that already holds a project
+ * with `project_exists` — a backlog is never overwritten.
+ */
+export type CreateProjectInput = {
+  /** The repository to write into; the only open one when omitted. */
+  repoId?: string;
+  /** Repository-relative documentation folder; `''` means the root. */
+  docsFolder: string;
+  /** ID prefix, matching `[A-Z][A-Z0-9]{1,9}`. */
+  key: string;
+  /** Human name; defaults to the key. */
+  name?: string;
+  description?: string;
+  /** IANA timezone; defaults to `UTC`. */
+  timezone?: string;
 };
 
 /**
@@ -627,6 +656,12 @@ export interface DataProvider {
    */
   resolveRef(ref: string): Promise<RefResolution>;
   mountRepo(input: MountInput): Promise<RepoInfo>;
+  /**
+   * Scaffolds a backlog in a repository that has none, and returns the project
+   * as `listProjects` reports it. Both modes go through the same core code, so
+   * the file a companion writes and the file a browser writes are identical.
+   */
+  createProject(input: CreateProjectInput): Promise<ProjectSummary>;
   unmountRepo(repoId: string): Promise<void>;
   reindex(repoId: string, opts?: { full?: boolean }): Promise<IndexStats>;
 

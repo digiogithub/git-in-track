@@ -53,6 +53,11 @@ type Vault struct {
 	stores    map[core.ProjectKey]*core.FileStore
 	rootLabel string
 	version   string
+	// docsFolders are the documentation folders the host declares. Discovery
+	// probes the vault root and its first-level directories on its own; a
+	// folder deeper than that is found only because it is listed here
+	// (ADR-018).
+	docsFolders []string
 
 	// now supplies build timestamps and the created/updated stamps of writes.
 	// It defaults to time.Now and exists so that tests can pin them.
@@ -67,6 +72,10 @@ type Options struct {
 	// Root is the human-readable label of the vault root: a directory handle
 	// name in the browser, the vault directory in the companion process.
 	Root string
+	// DocsFolders are the documentation folders the host declares, vault
+	// relative. They are probed at any depth, which is what keeps a monorepo
+	// working under the bounded discovery rule (ADR-018).
+	DocsFolders []string
 	// Version is the build the "version" method reports. Empty means the
 	// package default.
 	Version string
@@ -95,7 +104,7 @@ func New(opts Options) (*Vault, error) {
 // newVault mounts a vault without scanning it, which is the only part of
 // construction that cannot fail.
 func newVault(opts Options) *Vault {
-	v := &Vault{now: opts.Now, version: opts.Version, rootLabel: opts.Root}
+	v := &Vault{now: opts.Now, version: opts.Version, rootLabel: opts.Root, docsFolders: opts.DocsFolders}
 	if v.now == nil {
 		v.now = time.Now
 	}
@@ -121,10 +130,17 @@ func NewInMemory() *Vault {
 // browser, a companion process reads the vault directly instead of having the
 // host push file contents in.
 func Open(fsys core.FS, rootLabel string) (*Vault, error) {
+	return OpenWithDocs(fsys, rootLabel, nil)
+}
+
+// OpenWithDocs is Open with the documentation folders the host declares. A
+// folder deeper than the bounded discovery rule — the monorepo `apps/api/docs`
+// of docs/03 section 3.5 — is found only because it is listed here (ADR-018).
+func OpenWithDocs(fsys core.FS, rootLabel string, docsFolders []string) (*Vault, error) {
 	if fsys == nil {
 		return nil, failf("invalid_request", "open vault: no file system")
 	}
-	return New(Options{FS: fsys, Root: rootLabel, Scan: true})
+	return New(Options{FS: fsys, Root: rootLabel, DocsFolders: docsFolders, Scan: true})
 }
 
 // SetClock replaces the clock used for build timestamps and for the created and
@@ -303,6 +319,8 @@ func (v *Vault) Dispatch(ctx context.Context, method string, raw []byte) (any, e
 
 	case "project.list":
 		return v.projectList(), nil
+	case "project.create":
+		return v.projectCreate(ctx, raw)
 
 	case "team.get":
 		return v.teamGet()
@@ -387,7 +405,7 @@ func (v *Vault) mount(fsys core.FS) {
 // knowledge base is indexed, searched and linked exactly like a project's
 // (docs/04 section 4).
 func (v *Vault) rediscover() (bool, error) {
-	found, err := core.DiscoverProjects(v.fs, ".")
+	found, err := core.DiscoverProjectsWith(v.fs, core.DiscoveryOptions{DocsFolders: v.docsFolders})
 	if err != nil {
 		return false, fmt.Errorf("discover projects: %w", err)
 	}
@@ -473,6 +491,9 @@ func (v *Vault) vaultLoad(ctx context.Context, raw []byte) (any, error) {
 	}
 	v.mount(mem)
 	v.rootLabel = p.RootLabel
+	if len(p.DocsFolders) > 0 {
+		v.docsFolders = p.DocsFolders
+	}
 	stats, err := v.reload(ctx)
 	if err != nil {
 		return nil, err

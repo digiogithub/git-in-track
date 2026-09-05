@@ -30,6 +30,7 @@ import type {
   ConflictMerge,
   ConflictResolution,
   ConflictResolveResult,
+  CreateProjectInput,
   DataProvider,
   Diagnostic,
   IndexStats,
@@ -129,6 +130,8 @@ type MountedRepo = {
   name: string;
   vault: VaultFS;
   docsFolder: string;
+  /** Every documentation folder declared for this repository (ADR-018). */
+  docsFolders: string[];
   projects: string[];
   lastIndexedAt?: string;
 };
@@ -148,6 +151,7 @@ const CORE_ERROR_CODES: Record<string, ProviderError['code']> = {
   stale_revision: 'stale_revision',
   wip_limit_exceeded: 'wip_limit_exceeded',
   repo_not_cloned: 'repo_not_cloned',
+  project_exists: 'project_exists',
   rev_mismatch: 'stale_revision',
   conflict: 'stale_revision',
   validation_failed: 'validation_failed',
@@ -317,9 +321,11 @@ export class BrowserProvider implements DataProvider {
     }
 
     const docsFolder = normalizeDocsFolder(input.docsFolder ?? '');
+    const docsFolders = declaredFolders(docsFolder, input.docsFolders);
     const stats = await this.#load(input.location, vault, {
       kind: input.kind,
       docsFolder,
+      docsFolders,
     });
     const mount = this.#mounts.get(input.location);
     const projects = mount?.projects ?? [];
@@ -330,6 +336,7 @@ export class BrowserProvider implements DataProvider {
         name: vault.name,
         handle: vault.handle,
         docsFolder,
+        docsFolders,
         kind: input.kind,
         projects,
         mountedAt: new Date().toISOString(),
@@ -354,6 +361,45 @@ export class BrowserProvider implements DataProvider {
     };
   }
 
+  /**
+   * Scaffolds a backlog in a mounted repository that has none. The core writes
+   * the files into its in-memory vault and reports them as a write set; this
+   * method persists that set through the folder handle, so the project reaches
+   * the disk exactly like any other write of browser-only mode.
+   */
+  async createProject(input: CreateProjectInput): Promise<ProjectSummary> {
+    const repoId = input.repoId ?? this.#activeRepoId;
+    if (!repoId) throw new ProviderError('not_found', 'No repository is open.');
+    const mount = await this.#ensureMounted(repoId);
+    if (!mount.vault.capabilities.write) {
+      throw new ProviderError(
+        'read_only',
+        'This folder was opened read-only, so a project cannot be written into it. ' +
+          'Reopen it with "Open folder" in a Chromium browser, or run the companion.',
+      );
+    }
+    const docsFolder = normalizeDocsFolder(input.docsFolder);
+    const { project, writes } = await this.#call('project.create', {
+      vaultId: repoId,
+      docsFolder,
+      key: input.key,
+      ...(input.name === undefined ? {} : { name: input.name }),
+      ...(input.description === undefined ? {} : { description: input.description }),
+      ...(input.timezone === undefined ? {} : { timezone: input.timezone }),
+    });
+    await this.#persist(mount, writes);
+
+    // The folder is declared from now on, so a reload of this repository keeps
+    // finding the project however deep it sits (ADR-018).
+    mount.docsFolders = declaredFolders(docsFolder, mount.docsFolders);
+    mount.docsFolder = mount.docsFolder === '' ? docsFolder : mount.docsFolder;
+    mount.projects = await this.#projectsOf(repoId);
+    await this.#touchRecord(mount);
+
+    this.#emit({ kind: 'repo', repoId });
+    return project;
+  }
+
   async unmountRepo(repoId: string): Promise<void> {
     this.#mounts.delete(repoId);
     // Unmounting is one of the "forget credentials" triggers of docs/06 §8.2.
@@ -376,7 +422,11 @@ export class BrowserProvider implements DataProvider {
     const mount = await this.#ensureMounted(repoId);
 
     if (opts?.full || this.#activeRepoId !== repoId) {
-      return this.#load(repoId, mount.vault, { kind: mount.kind, docsFolder: mount.docsFolder });
+      return this.#load(repoId, mount.vault, {
+        kind: mount.kind,
+        docsFolder: mount.docsFolder,
+        docsFolders: mount.docsFolders,
+      });
     }
 
     const events = await this.#vaultCall(() => mount.vault.rescan());
@@ -1123,13 +1173,18 @@ export class BrowserProvider implements DataProvider {
   async #load(
     repoId: string,
     vault: VaultFS,
-    meta: { kind: RepoInfo['kind']; docsFolder: string },
+    meta: { kind: RepoInfo['kind']; docsFolder: string; docsFolders?: string[] },
   ): Promise<IndexStats> {
     const files = await this.#vaultCall(async () => vault.cachedFiles() ?? vault.readTextFiles());
+    // The declaration travels with the mount: without it the core would only
+    // probe the repository root and its first-level directories, and a folder
+    // deeper than that would silently stop being a project (ADR-018).
+    const docsFolders = declaredFolders(meta.docsFolder, meta.docsFolders);
     await this.#call('workspace.mount', {
       vaultId: repoId,
       role: meta.kind,
       rootLabel: vault.name,
+      docsFolders,
     });
     // The IndexedDB snapshot cache (GIT-US-0007) paints the vault structure
     // before the files are parsed again, then the real index replaces it.
@@ -1138,6 +1193,7 @@ export class BrowserProvider implements DataProvider {
       ({ stats } = await hydrateOrBuild(this.#client, repoId, files, {
         rootLabel: vault.name,
         vaultId: repoId,
+        docsFolders,
       }));
     } catch (error) {
       throw toProviderError(error);
@@ -1150,6 +1206,7 @@ export class BrowserProvider implements DataProvider {
       name: vault.name,
       vault,
       docsFolder: meta.docsFolder,
+      docsFolders,
       projects,
       lastIndexedAt: new Date().toISOString(),
     };
@@ -1207,6 +1264,7 @@ export class BrowserProvider implements DataProvider {
     await saveHandleRecord({
       ...record,
       docsFolder: mount.docsFolder,
+      docsFolders: mount.docsFolders,
       projects: mount.projects,
       ...(mount.lastIndexedAt ? { lastIndexedAt: mount.lastIndexedAt } : {}),
     });
@@ -1228,7 +1286,12 @@ export class BrowserProvider implements DataProvider {
 
     const registered = getVault(repoId);
     if (registered) {
-      await this.#load(repoId, registered, { kind: 'project', docsFolder: '' });
+      const known = await getHandleRecord(repoId);
+      await this.#load(repoId, registered, {
+        kind: 'project',
+        docsFolder: known?.docsFolder ?? '',
+        ...(known?.docsFolders ? { docsFolders: known.docsFolders } : {}),
+      });
       const mount = this.#mounts.get(repoId);
       if (mount) return mount;
     }
@@ -1246,7 +1309,11 @@ export class BrowserProvider implements DataProvider {
     }
 
     const vault = new FsaVault(record.handle);
-    await this.#load(repoId, vault, { kind: record.kind, docsFolder: record.docsFolder });
+    await this.#load(repoId, vault, {
+      kind: record.kind,
+      docsFolder: record.docsFolder,
+      ...(record.docsFolders ? { docsFolders: record.docsFolders } : {}),
+    });
     const mount = this.#mounts.get(repoId);
     if (!mount) throw new ProviderError('internal', `Repository ${repoId} failed to mount`);
     return mount;
@@ -1259,7 +1326,11 @@ export class BrowserProvider implements DataProvider {
 
     const [first] = this.#mounts.values();
     if (first) {
-      await this.#load(first.id, first.vault, { kind: first.kind, docsFolder: first.docsFolder });
+      await this.#load(first.id, first.vault, {
+        kind: first.kind,
+        docsFolder: first.docsFolder,
+        docsFolders: first.docsFolders,
+      });
       return this.#mounts.get(first.id) ?? first;
     }
 
@@ -1298,6 +1369,20 @@ export class BrowserProvider implements DataProvider {
     });
     mount.lastIndexedAt = new Date().toISOString();
   }
+}
+
+/**
+ * The documentation folders a mount declares: the primary one first, then the
+ * extras, without duplicates and without an entry the core would refuse.
+ */
+export function declaredFolders(primary: string, extra?: string[]): string[] {
+  const out: string[] = [];
+  for (const raw of [primary, ...(extra ?? [])]) {
+    const folder = normalizeDocsFolder(raw ?? '');
+    if (folder === '' || folder.startsWith('..') || out.includes(folder)) continue;
+    out.push(folder);
+  }
+  return out;
 }
 
 /** Why a vault with no File System Access handle cannot be driven by git. */

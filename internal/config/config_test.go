@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -75,7 +76,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	if got.Server != want.Server || got.Git != want.Git || got.Index != want.Index || got.MCP != want.MCP || got.Log != want.Log {
 		t.Errorf("round trip lost a section:\ngot  %+v\nwant %+v", got, want)
 	}
-	if len(got.Repos) != 1 || got.Repos[0] != want.Repos[0] {
+	if len(got.Repos) != 1 || !reflect.DeepEqual(got.Repos[0], want.Repos[0]) {
 		t.Errorf("repos = %+v, want %+v", got.Repos, want.Repos)
 	}
 	if len(got.Workspaces) != 1 || got.Workspaces[0].Name != DefaultWorkspaceName {

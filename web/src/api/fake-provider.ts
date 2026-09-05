@@ -782,6 +782,44 @@ export class FakeProvider implements DataProvider {
     return Promise.resolve(structuredClone(repo));
   }
 
+  createProject(input: CreateProjectInput): Promise<ProjectSummary> {
+    this.assertWritable();
+    if (!/^[A-Z][A-Z0-9]{1,9}$/.test(input.key)) {
+      return Promise.reject(
+        new ProviderError('validation_failed', `${input.key} does not match [A-Z][A-Z0-9]{1,9}`),
+      );
+    }
+    if (this.projects.some((p) => p.docsPath === input.docsFolder)) {
+      return Promise.reject(
+        new ProviderError('project_exists', `${input.docsFolder} already holds a project`),
+      );
+    }
+    const project: ProjectSummary = {
+      key: input.key,
+      name: input.name ?? input.key,
+      docsPath: input.docsFolder,
+      statuses: [
+        { id: 'backlog', name: 'Backlog', category: 'todo' },
+        { id: 'todo', name: 'To Do', category: 'todo' },
+        { id: 'in_progress', name: 'In Progress', category: 'in_progress' },
+        { id: 'in_review', name: 'In Review', category: 'in_progress' },
+        { id: 'done', name: 'Done', category: 'done', terminal: true },
+        { id: 'cancelled', name: 'Cancelled', category: 'cancelled', terminal: true },
+      ],
+      labels: [],
+      priorities: ['critical', 'high', 'medium', 'low'],
+      itemCounts: { epic: 0, story: 0, task: 0, milestone: 0, comment: 0 },
+    };
+    this.projects.push(project);
+    const repo = this.repos.find((r) => r.id === input.repoId) ?? this.repos[0];
+    if (repo) {
+      repo.projects = [...repo.projects, project.key];
+      repo.docsFolder = repo.docsFolder === '' ? input.docsFolder : repo.docsFolder;
+      this.emit({ kind: 'repo', repoId: repo.id });
+    }
+    return Promise.resolve(structuredClone(project));
+  }
+
   unmountRepo(repoId: string): Promise<void> {
     this.repos = this.repos.filter((r) => r.id !== repoId);
     return Promise.resolve();

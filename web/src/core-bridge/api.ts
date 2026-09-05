@@ -1011,6 +1011,26 @@ export type ConflictResolutionParams = {
   hunkText?: Record<string, string>;
 };
 
+/** What `project.create` needs: where the backlog goes and its identity. */
+export type NewProjectParams = {
+  /** Vault-relative documentation folder; `''` and `'.'` both mean the root. */
+  docsFolder?: string;
+  /** ID prefix, matching `[A-Z][A-Z0-9]{1,9}`. */
+  key: string;
+  /** Human name; defaults to the key. */
+  name?: string;
+  description?: string;
+  /** IANA timezone; defaults to `UTC`. */
+  timezone?: string;
+  vaultId?: string;
+};
+
+/** What `project.create` answers with: the project, and the files to persist. */
+export type ProjectCreated = {
+  project: ProjectSummary;
+  writes: WriteSet;
+};
+
 /** Method map: request method name → { params, result }. */
 export type CoreApi = {
   ping: { params: undefined; result: { pong: true; wasm: boolean } };
@@ -1022,7 +1042,17 @@ export type CoreApi = {
    * default one, and a `vault.load` for an unknown id creates it.
    */
   'vault.load': {
-    params: { files: VaultFile[]; rootLabel?: string; vaultId?: string };
+    params: {
+      files: VaultFile[];
+      rootLabel?: string;
+      vaultId?: string;
+      /**
+       * Documentation folders this repository declares. Discovery probes the
+       * repository root and its first-level directories on its own; a folder
+       * deeper than that is found only because it is listed here (ADR-018).
+       */
+      docsFolders?: string[];
+    };
     result: IndexStats;
   };
   /** Apply incremental file events (from a rescan diff or a watcher). */
@@ -1036,7 +1066,13 @@ export type CoreApi = {
   'workspace.list': { params: undefined; result: WorkspaceSummary };
   /** Open an empty repository the host then fills with `vault.load`. */
   'workspace.mount': {
-    params: { vaultId: string; role?: 'project' | 'team'; rootLabel?: string };
+    params: {
+      vaultId: string;
+      role?: 'project' | 'team';
+      rootLabel?: string;
+      /** Documentation folders declared for this repository (ADR-018). */
+      docsFolders?: string[];
+    };
     result: WorkspaceVault;
   };
   /** Drop a repository from the workspace; it never touches files. */
@@ -1048,6 +1084,16 @@ export type CoreApi = {
   'ref.resolve': { params: { ref: string }; result: RefResolution };
 
   'project.list': { params: undefined; result: ProjectSummary[] };
+  /**
+   * Scaffold a backlog in a repository that has none: it writes
+   * `<docsFolder>/.pmngr/project.yaml` plus the folder layout of
+   * docs/03-data-model.md §2, and declares the folder so that discovery keeps
+   * finding it however deep it is.
+   *
+   * It refuses a key outside `[A-Z][A-Z0-9]{1,9}` with `validation_failed`,
+   * and a folder that already holds a project with `project_exists`.
+   */
+  'project.create': { params: NewProjectParams; result: ProjectCreated };
 
   /** Every board of the team repository. */
   'board.list': {

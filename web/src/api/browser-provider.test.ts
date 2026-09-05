@@ -169,6 +169,7 @@ describe('BrowserProvider', () => {
         { path: 'docs/index.md', text: '# Docs\n' },
       ],
       rootLabel: 'acme-repo',
+      docsFolders: ['docs'],
       vaultId: 'repo-1',
     });
     expect(repo).toMatchObject({
@@ -385,11 +386,13 @@ describe('BrowserProvider', () => {
       vaultId: 'repo-1',
       role: 'project',
       rootLabel: 'acme-repo',
+      docsFolders: ['docs'],
     });
     expect(call).toHaveBeenCalledWith('workspace.mount', {
       vaultId: 'repo-2',
       role: 'team',
       rootLabel: 'acme-team',
+      docsFolders: [],
     });
     const repos = await provider.listRepos();
     expect(repos.map((repo) => repo.id).sort()).toEqual(['repo-1', 'repo-2']);
@@ -490,5 +493,72 @@ describe('BrowserProvider', () => {
 
     expect(result.applied).toBe(1);
     expect(result.failed).toMatchObject([{ id: 'ACME-US-0002', code: 'stale_revision' }]);
+  });
+});
+
+describe('BrowserProvider.createProject', () => {
+  it('writes the scaffolded files back through the folder handle', async () => {
+    const created: ProjectSummary = { ...project, key: 'NEW', name: 'New Project' };
+    const { provider, vault, call } = await mount({
+      'project.create': () => ({
+        project: created,
+        writes: {
+          written: [
+            { path: 'plan/.pmngr/project.yaml', text: 'schema: 1\nkey: NEW\n' },
+            { path: 'plan/.pmngr/.gitignore', text: 'index.json\n' },
+          ],
+          removed: [],
+        },
+      }),
+      'project.list': () => [project, created],
+    });
+
+    await expect(
+      provider.createProject({
+        repoId: 'repo-1',
+        docsFolder: 'plan',
+        key: 'NEW',
+        name: 'New Project',
+      }),
+    ).resolves.toMatchObject({ key: 'NEW' });
+
+    const files = vault.snapshot();
+    expect(files['plan/.pmngr/project.yaml']).toContain('key: NEW');
+    expect(files['plan/.pmngr/.gitignore']).toContain('index.json');
+    expect(call).toHaveBeenCalledWith(
+      'project.create',
+      expect.objectContaining({ vaultId: 'repo-1', docsFolder: 'plan', key: 'NEW' }),
+    );
+  });
+
+  it('declares the new folder so a reload keeps finding it', async () => {
+    const created: ProjectSummary = { ...project, key: 'API', docsPath: 'apps/api/docs' };
+    const { provider, call } = await mount({
+      'project.create': () => ({
+        project: created,
+        writes: {
+          written: [{ path: 'apps/api/docs/.pmngr/project.yaml', text: 'key: API\n' }],
+          removed: [],
+        },
+      }),
+      'project.list': () => [created],
+    });
+
+    await provider.createProject({ repoId: 'repo-1', docsFolder: 'apps/api/docs', key: 'API' });
+    call.mockClear();
+    await provider.reindex('repo-1', { full: true });
+
+    expect(call).toHaveBeenCalledWith(
+      'workspace.mount',
+      expect.objectContaining({ docsFolders: expect.arrayContaining(['apps/api/docs']) }),
+    );
+  });
+
+  it('refuses to write into a read-only folder', async () => {
+    const { provider } = await mount({}, false);
+
+    await expect(
+      provider.createProject({ repoId: 'repo-1', docsFolder: 'docs', key: 'NEW' }),
+    ).rejects.toMatchObject({ code: 'read_only' });
   });
 });

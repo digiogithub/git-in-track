@@ -27,6 +27,11 @@ type mountParams struct {
 	VaultID   string `json:"vaultId"`
 	Role      string `json:"role,omitempty"`
 	RootLabel string `json:"rootLabel,omitempty"`
+	// DocsFolders are the documentation folders the host declares for this
+	// repository. Discovery probes the root and its first-level directories on
+	// its own; a folder deeper than that is found only because it is listed
+	// here (ADR-018).
+	DocsFolders []string `json:"docsFolders,omitempty"`
 }
 
 // mountSummary is one repository as the contract reports it.
@@ -328,7 +333,7 @@ func (w *Workspace) mount(raw []byte) (any, error) {
 	if p.VaultID == "" {
 		return nil, failf("invalid_request", "workspace.mount needs a vaultId")
 	}
-	v := newVault(Options{Root: p.RootLabel, Now: w.clock(), Version: w.build()})
+	v := newVault(Options{Root: p.RootLabel, DocsFolders: p.DocsFolders, Now: w.clock(), Version: w.build()})
 	m, err := w.Attach(p.VaultID, p.Role, v)
 	if err != nil {
 		return nil, err

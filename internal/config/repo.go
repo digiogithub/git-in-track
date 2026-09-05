@@ -44,6 +44,10 @@ type AddOptions struct {
 	// DocsFolder forces the documentation folder, relative to the repository
 	// root, instead of detecting it.
 	DocsFolder string
+	// DocsFolders forces the whole list of declared documentation folders,
+	// instead of recording every candidate detection found. The first entry is
+	// the primary one when DocsFolder is empty.
+	DocsFolders []string
 	// NoGit registers a folder that is not a git working tree.
 	NoGit bool
 	// Workspace is the workspace the repository joins; empty means the active
@@ -91,15 +95,24 @@ func (c *Config) AddRepoWithOptions(repoPath string, opts AddOptions) (Repo, err
 	}
 
 	det := Detect(abs)
+	declared := cleanFolders(opts.DocsFolders)
 	docs := strings.TrimSpace(opts.DocsFolder)
 	switch {
 	case docs != "":
 		docs = path.Clean(filepath.ToSlash(docs))
+	case len(declared) > 0:
+		docs = declared[0]
 	case det.DocsFolder != "":
 		docs = det.DocsFolder
 	default:
 		docs = preferredDocsFolder
 	}
+	// Only the primary folder is declared automatically. Detection offers the
+	// deeper candidates it found (Detection.Candidates) but declaring one is a
+	// deliberate act: auto-declaring every `.pmngr/` a working tree happens to
+	// carry is exactly the unbounded discovery ADR-018 replaced — a repository
+	// with test fixtures under it would import them as projects.
+	declared = withFolder(declared, docs)
 
 	role := opts.Role
 	if role == "" {
@@ -110,11 +123,12 @@ func (c *Config) AddRepoWithOptions(repoPath string, opts AddOptions) (Repo, err
 	}
 
 	repo := Repo{
-		ID:         c.freeID(opts.ID, abs),
-		Path:       abs,
-		Role:       role,
-		DocsFolder: docs,
-		Enabled:    true,
+		ID:          c.freeID(opts.ID, abs),
+		Path:        abs,
+		Role:        role,
+		DocsFolder:  docs,
+		DocsFolders: declared,
+		Enabled:     true,
 	}
 	c.Repos = append(c.Repos, repo)
 
@@ -168,6 +182,49 @@ func (c *Config) freeID(want, repoPath string) string {
 			return candidate
 		}
 	}
+}
+
+// DeclaredDocsFolders returns every documentation folder this registration
+// declares, in preference order and with the primary one first. It is what a
+// caller hands to core.DiscoverProjectsWith so that a folder deeper than the
+// bounded rule is still found (ADR-018).
+func (r Repo) DeclaredDocsFolders() []string {
+	return withFolder(cleanFolders(r.DocsFolders), strings.TrimSpace(r.DocsFolder))
+}
+
+// cleanFolders normalizes repository-relative folders and drops the empty and
+// the duplicated ones, keeping the given order.
+func cleanFolders(in []string) []string {
+	out := make([]string, 0, len(in))
+	seen := make(map[string]bool, len(in))
+	for _, raw := range in {
+		folder := strings.TrimSpace(raw)
+		if folder == "" {
+			continue
+		}
+		folder = path.Clean(filepath.ToSlash(folder))
+		if folder == ".." || strings.HasPrefix(folder, "../") || path.IsAbs(folder) || seen[folder] {
+			continue
+		}
+		seen[folder] = true
+		out = append(out, folder)
+	}
+	return out
+}
+
+// withFolder puts folder at the head of the list, without duplicating it.
+func withFolder(folders []string, folder string) []string {
+	head := cleanFolders([]string{folder})
+	if len(head) == 0 {
+		return folders
+	}
+	out := head
+	for _, existing := range folders {
+		if existing != head[0] {
+			out = append(out, existing)
+		}
+	}
+	return out
 }
 
 // Detection is what Detect found out about a folder.

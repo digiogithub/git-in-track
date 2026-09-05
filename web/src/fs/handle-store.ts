@@ -27,6 +27,12 @@ export type RepoHandleRecord = {
   handle: DirectoryHandleLike;
   /** Vault-relative path of the documentation folder (`''` for the root). */
   docsFolder: string;
+  /**
+   * Every documentation folder declared for this repository. Discovery probes
+   * the repository root and its first-level directories on its own; a folder
+   * deeper than that is found only because it is listed here (ADR-018).
+   */
+  docsFolders?: string[];
   kind: RepoHandleKind;
   /** Project keys found during the last index, for the workspace card. */
   projects?: string[];

@@ -16,6 +16,7 @@ import {
   type DocsFolderCandidate,
 } from '@/fs';
 
+import { CreateProjectForm, type CreateProjectValues } from './CreateProjectForm';
 import { FolderPickers } from './FolderPickers';
 
 const CUSTOM_CHOICE = '__custom__';
@@ -52,23 +53,60 @@ export function AddRepositoryPage() {
     },
   });
 
+  const finish = async (): Promise<void> => {
+    setPendingVault(null);
+    await queryClient.invalidateQueries({ queryKey: ['repos'] });
+    await queryClient.invalidateQueries({ queryKey: ['projects'] });
+    await navigate({ to: '/' });
+  };
+
   const mount = useMutation({
     mutationFn: async (docsFolder: string) => {
       if (!pendingVaultId) throw new Error('No folder is selected');
-      return provider.mountRepo({ kind: 'project', location: pendingVaultId, docsFolder });
+      return provider.mountRepo({
+        kind: 'project',
+        location: pendingVaultId,
+        docsFolder,
+        docsFolders: [docsFolder],
+      });
     },
-    onSuccess: async () => {
-      setPendingVault(null);
-      await queryClient.invalidateQueries({ queryKey: ['repos'] });
-      await queryClient.invalidateQueries({ queryKey: ['projects'] });
-      await navigate({ to: '/' });
+    onSuccess: finish,
+    onError: (cause: Error) => {
+      setError(cause.message);
     },
+  });
+
+  /**
+   * A repository with no backlog is mounted first and then written into: the
+   * core has to hold the folder before it can scaffold a project in it.
+   */
+  const create = useMutation({
+    mutationFn: async (values: CreateProjectValues) => {
+      if (!pendingVaultId) throw new Error('No folder is selected');
+      await provider.mountRepo({
+        kind: 'project',
+        location: pendingVaultId,
+        docsFolder: values.docsFolder,
+        docsFolders: [values.docsFolder],
+      });
+      return provider.createProject({
+        repoId: pendingVaultId,
+        docsFolder: values.docsFolder,
+        key: values.key,
+        ...(values.name === '' ? {} : { name: values.name }),
+      });
+    },
+    onSuccess: finish,
     onError: (cause: Error) => {
       setError(cause.message);
     },
   });
 
   const candidates: DocsFolderCandidate[] = detection.data?.candidates ?? [];
+  /** No backlog anywhere: the wizard offers to create one instead of a dead end. */
+  const noBacklog = detection.isSuccess && candidates.length === 0;
+  /** Folders detection saw, plus the convention, offered as one-click choices. */
+  const suggestions = [...new Set(['docs', ...candidates.map((c) => c.docsFolder)])];
   const selected = choice ?? candidates[0]?.docsFolder ?? CUSTOM_CHOICE;
   const docsFolder =
     selected === CUSTOM_CHOICE ? normalizeDocsFolder(customFolder) : normalizeDocsFolder(selected);
@@ -132,78 +170,106 @@ export function AddRepositoryPage() {
               </p>
             ) : null}
 
-            {candidates.length === 0 && detection.isSuccess ? (
-              <p className="flex items-start gap-2 rounded-md bg-secondary p-3 text-sm">
-                <Info aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />
-                <span>
-                  No <code>.pmngr/project.yaml</code> was found. Type the folder that should hold
-                  the backlog and mount it anyway; creating a new project needs a writable folder
-                  and lands with the editor.
-                </span>
-              </p>
-            ) : null}
-
-            <fieldset className="space-y-2">
-              <legend className="text-sm font-medium">Detected folders</legend>
-              {candidates.map((candidate) => (
-                <label
-                  key={candidate.projectFile}
-                  className="flex items-center gap-2 text-sm"
-                  htmlFor={`docs-${candidate.projectFile}`}
-                >
-                  <input
-                    id={`docs-${candidate.projectFile}`}
-                    type="radio"
-                    name="docs-folder"
-                    value={candidate.docsFolder}
-                    checked={selected === candidate.docsFolder}
-                    onChange={() => {
-                      setChoice(candidate.docsFolder);
-                    }}
-                  />
+            {noBacklog ? (
+              <div className="space-y-3">
+                <p className="flex items-start gap-2 rounded-md bg-secondary p-3 text-sm">
+                  <Info aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />
                   <span>
-                    <code>
-                      {candidate.docsFolder === '' ? '(repository root)' : candidate.docsFolder}
-                    </code>
-                    {candidate.projectKey ? ` · ${candidate.projectKey}` : ''}
-                    {candidate.projectName ? ` — ${candidate.projectName}` : ''}
+                    No <code>.pmngr/project.yaml</code> was found in this repository. Say where the
+                    project&rsquo;s Markdown should live and it is created for you.
                   </span>
-                </label>
-              ))}
-
-              <label className="flex items-center gap-2 text-sm" htmlFor="docs-custom">
-                <input
-                  id="docs-custom"
-                  type="radio"
-                  name="docs-folder"
-                  value={CUSTOM_CHOICE}
-                  checked={selected === CUSTOM_CHOICE}
-                  onChange={() => {
-                    setChoice(CUSTOM_CHOICE);
+                </p>
+                <CreateProjectForm
+                  suggestions={suggestions}
+                  busy={create.isPending || mount.isPending}
+                  onSubmit={(values) => {
+                    setError(null);
+                    create.mutate(values);
+                  }}
+                  onSkip={() => {
+                    setError(null);
+                    mount.mutate(normalizeDocsFolder(customFolder));
                   }}
                 />
-                <span>Another folder</span>
-              </label>
+                {error ? (
+                  <p role="alert" className="text-sm text-destructive">
+                    {error}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
 
-              {selected === CUSTOM_CHOICE ? (
-                <label className="block space-y-1.5 text-sm font-medium" htmlFor="docs-folder-path">
-                  Documentation folder
-                  <Input
-                    id="docs-folder-path"
-                    value={customFolder}
-                    placeholder="docs"
-                    onChange={(event) => {
-                      setCustomFolder(event.target.value);
+            {noBacklog ? null : (
+              <fieldset className="space-y-2">
+                <legend className="text-sm font-medium">Detected folders</legend>
+                {candidates.map((candidate) => (
+                  <label
+                    key={candidate.projectFile}
+                    className="flex items-center gap-2 text-sm"
+                    htmlFor={`docs-${candidate.projectFile}`}
+                  >
+                    <input
+                      id={`docs-${candidate.projectFile}`}
+                      type="radio"
+                      name="docs-folder"
+                      value={candidate.docsFolder}
+                      checked={selected === candidate.docsFolder}
+                      onChange={() => {
+                        setChoice(candidate.docsFolder);
+                      }}
+                    />
+                    <span>
+                      <code>
+                        {candidate.docsFolder === '' ? '(repository root)' : candidate.docsFolder}
+                      </code>
+                      {candidate.projectKey ? ` · ${candidate.projectKey}` : ''}
+                      {candidate.projectName ? ` — ${candidate.projectName}` : ''}
+                      {candidate.declarationNeeded ? (
+                        <em className="ml-1 text-xs not-italic text-muted-foreground">
+                          (nested: indexed only if you choose it here)
+                        </em>
+                      ) : null}
+                    </span>
+                  </label>
+                ))}
+
+                <label className="flex items-center gap-2 text-sm" htmlFor="docs-custom">
+                  <input
+                    id="docs-custom"
+                    type="radio"
+                    name="docs-folder"
+                    value={CUSTOM_CHOICE}
+                    checked={selected === CUSTOM_CHOICE}
+                    onChange={() => {
+                      setChoice(CUSTOM_CHOICE);
                     }}
                   />
+                  <span>Another folder</span>
                 </label>
-              ) : null}
-            </fieldset>
+
+                {selected === CUSTOM_CHOICE ? (
+                  <label
+                    className="block space-y-1.5 text-sm font-medium"
+                    htmlFor="docs-folder-path"
+                  >
+                    Documentation folder
+                    <Input
+                      id="docs-folder-path"
+                      value={customFolder}
+                      placeholder="docs"
+                      onChange={(event) => {
+                        setCustomFolder(event.target.value);
+                      }}
+                    />
+                  </label>
+                ) : null}
+              </fieldset>
+            )}
           </CardContent>
         </Card>
       ) : null}
 
-      {pendingVaultId ? (
+      {pendingVaultId && !noBacklog ? (
         <Card>
           <CardHeader>
             <CardTitle>3. Confirm</CardTitle>

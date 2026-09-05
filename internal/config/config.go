@@ -108,6 +108,13 @@ type Repo struct {
 	// DocsFolder is the documentation folder relative to the repository root,
 	// "." when the backlog sits at the root.
 	DocsFolder string `json:"docsFolder,omitempty" yaml:"docsFolder,omitempty"`
+	// DocsFolders lists every documentation folder this repository declares,
+	// DocsFolder included. Project discovery probes the repository root and its
+	// first-level directories on its own; a folder deeper than that — the
+	// monorepo `apps/api/docs` of docs/03 section 3.5 — is found only because it
+	// is listed here (ADR-018). Detection fills it in at registration time, so
+	// declaring is a one-time act rather than a manual edit.
+	DocsFolders []string `json:"docsFolders,omitempty" yaml:"docsFolders,omitempty"`
 	// Enabled is false for a registration the user keeps but does not want
 	// indexed. It defaults to true.
 	Enabled bool `json:"enabled" yaml:"enabled"`
@@ -226,6 +233,9 @@ func (c *Config) Clone() *Config {
 		out.Workspaces[i] = Workspace{Name: w.Name, Repos: append([]string(nil), w.Repos...)}
 	}
 	out.Repos = append([]Repo(nil), c.Repos...)
+	for i, r := range c.Repos {
+		out.Repos[i].DocsFolders = append([]string(nil), r.DocsFolders...)
+	}
 	return &out
 }
 
