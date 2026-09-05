@@ -25,9 +25,28 @@ type Repo struct {
 	// Role is "project" or "team"; it is reported, not enforced.
 	Role string
 	// DocsFolder is the documentation folder relative to the repository root.
-	// It is reported so that the UI can show where the backlog lives; project
-	// discovery walks the tree itself.
+	// It is reported so that the UI can show where the backlog lives.
 	DocsFolder string
+	// DocsFolders are every documentation folder the registration declares.
+	// Discovery probes the repository root and its first-level directories on
+	// its own; a folder deeper than that is found only because it is listed
+	// here (ADR-018).
+	DocsFolders []string
+}
+
+// declaredDocsFolders returns the documentation folders this registration
+// declares, with DocsFolder first and without duplicates.
+func (r Repo) declaredDocsFolders() []string {
+	out := make([]string, 0, len(r.DocsFolders)+1)
+	seen := map[string]bool{}
+	for _, folder := range append([]string{r.DocsFolder}, r.DocsFolders...) {
+		if folder == "" || seen[folder] {
+			continue
+		}
+		seen[folder] = true
+		out = append(out, folder)
+	}
+	return out
 }
 
 // roleProject is the default role of a mounted repository.
@@ -74,7 +93,7 @@ func openMount(repo Repo, now func() time.Time) *mount {
 		m.err = fmt.Errorf("mount %s: %w", repo.Path, err)
 		return m
 	}
-	v, err := vault.Open(fsys, m.label)
+	v, err := vault.OpenWithDocs(fsys, m.label, repo.declaredDocsFolders())
 	if err != nil {
 		m.err = fmt.Errorf("index %s: %w", repo.Path, err)
 		return m

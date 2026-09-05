@@ -38,6 +38,8 @@ func (s *Server) mountAPI(api chi.Router) {
 		p.Get("/repos/{id}", s.handleRepo)
 		p.Delete("/repos/{id}", s.notImplemented("Unregistering a repository is a configuration change; use `gintrack rm`."))
 		p.Post("/repos/{id}/reindex", s.handleReindex)
+		// Scaffolding a backlog into a repository that has none (GIT-US-0031).
+		p.Post("/repos/{id}/projects", s.handleCreateProject)
 
 		// Projects and their knowledge base.
 		p.Get("/projects", s.handleProjects)

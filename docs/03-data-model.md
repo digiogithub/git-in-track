@@ -94,6 +94,55 @@ Rules:
 - **R-LOC-6** Any file under `.pmngr/` that is not `project.yaml`, not under `attachments/`, and
   does not end in `.md` is ignored with warning `W-LAYOUT-STRAY`.
 
+### 2.1 Where a project is looked for
+
+Discovery is **bounded** ([ADR-018](./adr/ADR-018-bounded-project-discovery.md)). A repository is
+not searched from top to bottom: an unbounded walk reports every `.pmngr/` a working tree happens
+to carry — test fixtures, vendored samples, a second checkout — as a project of the user.
+
+- **R-DISC-1** A `.pmngr/project.yaml` is discovered when it sits in the repository **root**, in
+  one of the root's **first-level directories** (`docs/.pmngr/`, `apps/.pmngr/`, `.pmngr/`), or in
+  a documentation folder the **registration explicitly declares**, at any depth.
+- **R-DISC-2** Declared folders are repository-relative. One that does not exist is not an error;
+  one that escapes the repository (`..`, an absolute path) is ignored.
+- **R-DISC-3** `.git/`, `node_modules/`, `dist/`, `vendor/` and dot folders other than `.pmngr` are
+  never probed, whatever the rule says.
+- **R-DISC-4** **Detection is deeper than discovery, and is a different act.** When a repository is
+  registered, `gintrack add` and the web wizard look up to four levels down and *offer* every
+  backlog they find; the user declares the ones that are theirs. A monorepo
+  ([§3.5](#35-multiple-projects-in-one-repository)) therefore declares its projects once:
+
+  ```bash
+  gintrack add ~/code/mono --docs apps/api/docs --docs apps/web/docs
+  ```
+
+  The declaration is stored in the gintrack configuration (`repos[].docsFolders`, doc 07 §3.2) and,
+  in browser-only mode, in the persisted folder record. Creating a project declares its folder.
+- **R-DISC-5** Both runtimes apply the same rule: the shared core implements it once
+  (`core.DiscoverProjectsWith`) and every host — CLI, companion, WebAssembly worker — feeds it the
+  same declaration.
+
+### 2.2 Creating a backlog
+
+Nothing about `.pmngr/` needs a tool: a folder, a `project.yaml` and Markdown files are enough.
+When a tool does create one, it writes exactly this and nothing else:
+
+```
+<docsFolder>/.pmngr/
+  project.yaml              # schema 1, the key, the name, the default workflow of section 6.2
+  .gitignore                # `index.json` (R-LOC-5)
+  epics/  stories/  tasks/  milestones/  comments/  attachments/
+```
+
+- **R-NEW-1** The key MUST match the grammar of [§3.3](#33-identifiers) before anything is written.
+- **R-NEW-2** A folder that already holds a `project.yaml` MUST be refused, never overwritten.
+- **R-NEW-3** The written file MUST validate under [§6.3](#63-validation-rules-for-projectyaml)
+  with no findings.
+
+The single implementation is `core.CreateProject` (`internal/core/scaffold.go`), which touches
+nothing but the injected file system, so the CLI (`gintrack init`, `gintrack add --key`), the REST
+API (`POST /repos/{id}/projects`) and the browser all produce byte-identical files.
+
 ---
 
 ## 3. Common conventions
@@ -209,6 +258,12 @@ A monorepo MAY host several projects: `apps/web/docs/.pmngr/` with `key: WEB` an
 `apps/api/docs/.pmngr/` with `key: API`. Each has its own `project.yaml` and its own ID space. The
 team repository lists them as separate project entries that happen to share `repo` and differ in
 `docs_path` (doc 04, §3.3).
+
+Both of those sit three levels down, which the bounded discovery rule
+([§2.1](#21-where-a-project-is-looked-for)) does not reach on its own: the registration declares
+them once (`gintrack add --docs apps/api/docs --docs apps/web/docs`, or the checkboxes of the
+add-repository wizard) and they are found on every scan afterwards. Two projects in first-level
+siblings — `api/.pmngr/` and `web/.pmngr/` — need no declaration at all.
 
 ### 3.6 Dates and times
 

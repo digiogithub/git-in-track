@@ -97,6 +97,17 @@ const boardRoute = createRoute({
   component: lazyRouteComponent(() => import('@/features/boards/BoardView'), 'BoardView'),
 });
 
+/** The sprint index (docs/04 §8, story GIT-US-0032). */
+const sprintsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/sprints',
+  validateSearch: (search: Record<string, unknown>): { board?: string } =>
+    typeof search['board'] === 'string' && search['board'] !== ''
+      ? { board: search['board'] }
+      : {},
+  component: lazyRouteComponent(() => import('@/features/boards/SprintList'), 'SprintList'),
+});
+
 /** Retrospectives (docs/05 §4, docs/04 §9, story GIT-US-0027). */
 const retrosRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -150,6 +161,7 @@ export const routeTree = rootRoute.addChildren([
   ]),
   boardsRoute,
   boardRoute,
+  sprintsRoute,
   retrosRoute,
   retroRoute,
   metricsRoute,

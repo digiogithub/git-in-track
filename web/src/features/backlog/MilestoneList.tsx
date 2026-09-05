@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { ItemLink, StatusBadge } from '@/features/backlog/Badges';
 import { formatDate, rollup } from '@/features/backlog/item-meta';
+import { NewItemLink } from '@/features/backlog/NewItemLink';
 import { useBacklogEvents, useItems, useProject } from '@/features/backlog/queries';
 
 const PAGE_SIZE = 200;
@@ -54,11 +55,14 @@ export function MilestoneList() {
 
   return (
     <div className="space-y-4">
-      <header className="space-y-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Milestones</h1>
-        <p className="text-sm text-muted-foreground">
-          Delivery checkpoints of <strong>{projectKey}</strong>, earliest due date first.
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div className="space-y-1">
+          <h1 className="text-2xl font-semibold tracking-tight">Milestones</h1>
+          <p className="text-sm text-muted-foreground">
+            Delivery checkpoints of <strong>{projectKey}</strong>, earliest due date first.
+          </p>
+        </div>
+        <NewItemLink project={projectKey} type="milestone" label="New milestone" variant="bar" />
       </header>
 
       {itemsQuery.isPending ? (
@@ -126,14 +130,22 @@ export function MilestoneList() {
                     {summary.todo} to do
                     {summary.points > 0 ? ` · ${summary.donePoints}/${summary.points} points` : ''}
                   </p>
-                  <Link
-                    to="/p/$project/items"
-                    params={{ project: projectKey }}
-                    search={{ milestone: milestone.id }}
-                    className="text-sm text-accent underline-offset-4 hover:underline"
-                  >
-                    See its items
-                  </Link>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Link
+                      to="/p/$project/items"
+                      params={{ project: projectKey }}
+                      search={{ milestone: milestone.id }}
+                      className="text-sm text-accent underline-offset-4 hover:underline"
+                    >
+                      See its items
+                    </Link>
+                    <NewItemLink
+                      project={projectKey}
+                      type="story"
+                      milestone={milestone.id}
+                      label="New story"
+                    />
+                  </div>
                 </CardContent>
               </Card>
             </li>

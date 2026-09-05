@@ -119,7 +119,7 @@ bet of the project; see [ADR-003](adr/ADR-003-shared-go-core-wasm.md).
 | Change detection | fsnotify with debouncing, pushed to clients over WebSocket |
 | Index cache | `~/.cache/gintrack/<repo-id>/index.bin` (XDG-respecting) |
 | Git | `go-git`, or shelling out to system `git` when present (configurable — needed for SSH agents, credential helpers, LFS, signed commits) |
-| MCP | `gintrack mcp` over stdio, and `POST /mcp` on the local server with `--mcp-http`; the same twelve tools on both, read-only by default |
+| MCP | `gintrack mcp` over stdio, and `POST /mcp` on the local server with `--mcp-http`; the same thirteen tools on both, read-only by default |
 
 ### 3.3 Auto-detection and upgrade
 
@@ -515,7 +515,7 @@ Makefile, go.mod, .goreleaser.yaml
 | `internal/server/` | chi router, REST handlers, WebSocket hub, static file serving of the embedded `web/dist`, localhost binding, token middleware, origin checks. Translates core errors into HTTP status codes. |
 | `internal/watcher/` | fsnotify wrapper: recursive watch registration, ignore rules (`.git/`, `node_modules/`, editor swap files), debouncing, event coalescing, and rename detection. |
 | `internal/gitops/` | Status, add, commit, fetch, merge/rebase, push, conflict enumeration, credential resolution. Two backends behind one interface: `go-git` (pure Go, always available) and `system-git` (`os/exec`, used when present and configured). A `Backend` is bound to one working tree; a `Committer` batches writes so one logical edit is one commit. Native-only: it uses `os/exec` and the filesystem, so nothing here may be imported from `internal/core`. Implemented for commit-on-save in GIT-US-0020; status, fetch, integrate (rebase or merge), push, abort, continue and the sync pipeline over them in GIT-US-0021, whose go-git half fast-forwards only and refuses what it cannot do correctly. Credential resolution — the user's helper and ssh-agent, a non-interactive environment that can never hang on a prompt, and redaction of every secret shape from git's own output — landed in GIT-US-0023. The structured conflict surface — `ConflictFile` (the base/ours/theirs blobs of a conflicted path, read from the index stages, with the sides normalised to the user's frame during a rebase) and `ResolvePath` (write, stage, continue) — landed in GIT-US-0022; the merge those blobs feed is `internal/core`, so browser mode runs it too. `History` — every revision of a set of paths, with the instant each was committed, plus a cache keyed by HEAD — landed in GIT-US-0028 and is what the sprint metrics reconstruct their time series from ([ADR-017](./adr/ADR-017-metrics-history-from-git-not-a-stored-time-series.md)); the arithmetic over those revisions is `internal/core`, so the numbers are the same in both hosts. |
-| `internal/mcp/` | MCP tool definitions, JSON schemas, stdio transport, and the streamable HTTP handler mounted by `internal/server`. Landed in GIT-US-0024 with twelve tools — `list_items`, `search_items`, `get_item`, `create_epic`, `create_story`, `create_task`, `update_item`, `add_comment`, `move_on_board`, `list_kb_pages`, `get_kb_page`, `search_kb` — served identically over both transports, read-only unless writes are enabled. Its whole dependency on the rest of the product is one interface, `Dispatch(ctx, method, params) (any, error)`, which `*vault.Workspace` satisfies: no tool contains business logic, and schemas are inferred from the Go types of each handler by the official Go MCP SDK ([ADR-015](adr/ADR-015-official-go-mcp-sdk-and-verb-noun-tools.md)). Path arguments are confined to the mounted roots, lexically and after symlink resolution. |
+| `internal/mcp/` | MCP tool definitions, JSON schemas, stdio transport, and the streamable HTTP handler mounted by `internal/server`. Landed in GIT-US-0024 with twelve tools — `list_items`, `search_items`, `get_item`, `create_epic`, `create_story`, `create_task`, `update_item`, `add_comment`, `move_on_board`, `list_kb_pages`, `get_kb_page`, `search_kb` — and `create_milestone` in GIT-US-0033, thirteen in all, served identically over both transports, read-only unless writes are enabled. Its whole dependency on the rest of the product is one interface, `Dispatch(ctx, method, params) (any, error)`, which `*vault.Workspace` satisfies: no tool contains business logic, and schemas are inferred from the Go types of each handler by the official Go MCP SDK ([ADR-015](adr/ADR-015-official-go-mcp-sdk-and-verb-noun-tools.md)). Path arguments are confined to the mounted roots, lexically and after symlink resolution. |
 | `wasm/` | `main_js.go` (WASM entry, `//go:build js && wasm`) and nothing else: it marshals strings in and out of JavaScript and delegates every method to `internal/vault`. The TypeScript glue copied into the web build lives here too. Built to `web/public/core.wasm`. |
 | `web/` | The React application. `web/src/core-bridge/` is the only place that talks to the worker or the REST client; `web/src/datasource/` exposes the mode-agnostic interface; feature folders sit above it. Built to `web/dist`, embedded by `internal/server`. |
 | `docs/` | Planning documents (this file), ADRs, the format specification, and the project's own knowledge base. `docs/.pmngr/` holds git-in-track's own backlog — the project dogfoods itself from Phase 1. |
@@ -531,9 +531,20 @@ Build targets in the `Makefile`: `make web` (Vite build → `web/dist`),
 
 ### 7.1 Scan
 
-A scan walks the project's docs folder and its `.pmngr/` subtree (and, for team
-repos, `knowledge/` and `.pmngr/`), skipping `.git/`, `node_modules/`, dotfiles
-other than `.pmngr`, and files above a size threshold. For each `.md` file it:
+**Discovery comes first, and it is bounded.** Before a single file is read, the
+core decides *which folders are projects* — and it does not search the working
+tree for them. `core.DiscoverProjectsWith` probes the repository root, each of
+the root's first-level directories, and every documentation folder the host
+declares (doc 03 §2.1, [ADR-018](./adr/ADR-018-bounded-project-discovery.md)).
+A handful of `stat` calls, the same rule in every host, and no way for a
+`testdata/` fixture to become somebody's project. The declaration reaches the
+core from the registration: `repos[].docsFolders` in the companion's
+configuration, `docsFolders` on `workspace.mount`/`vault.load` in the browser.
+
+A scan then walks the docs folder of each discovered project and its `.pmngr/`
+subtree (and, for team repos, `knowledge/` and `.pmngr/`), skipping `.git/`,
+`node_modules/`, dotfiles other than `.pmngr`, and files above a size threshold.
+For each `.md` file it:
 
 1. Reads the file (bounded concurrency: `min(8, NumCPU)` natively; sequential in
    WASM, where worker-level parallelism is not worth the complexity in v1).

@@ -436,6 +436,72 @@ describe('CompanionProvider writes', () => {
 
 // -------------------------------------------------------------------- errors
 
+describe('CompanionProvider project creation (story GIT-US-0031)', () => {
+  const restProject = {
+    key: 'ACME',
+    name: 'ACME Platform',
+    docsPath: 'docs',
+    statuses: [{ id: 'backlog', name: 'Backlog', category: 'todo' }],
+    labels: [],
+    priorities: ['high'],
+    itemCounts: {},
+  };
+
+  it('posts to the repository the project is created in', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(
+        response({ project: restProject, writes: { written: [], removed: [] } }, { status: 201 }),
+      );
+
+    const created = await provider(fetchImpl).createProject({
+      repoId: 'demo',
+      docsFolder: 'docs',
+      key: 'ACME',
+      name: 'ACME Platform',
+    });
+
+    const [call] = fetchImpl.mock.calls;
+    expect(String(call?.[0])).toBe(`${BASE}/api/v1/repos/demo/projects`);
+    const init = call?.[1] as RequestInit;
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual({
+      docsFolder: 'docs',
+      key: 'ACME',
+      name: 'ACME Platform',
+    });
+    expect(created.key).toBe('ACME');
+  });
+
+  it('falls back to the only registered repository', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        response({ repos: [{ id: 'only', path: '/tmp/only', role: 'project', projects: [] }] }),
+      )
+      .mockResolvedValueOnce(response({ project: restProject }, { status: 201 }));
+
+    await provider(fetchImpl).createProject({ docsFolder: 'docs', key: 'ACME' });
+
+    expect(String(fetchImpl.mock.calls[1]?.[0])).toBe(`${BASE}/api/v1/repos/only/projects`);
+  });
+
+  it('reports a folder that already holds a project as project_exists', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(
+        response(
+          { code: 'project_exists', detail: 'docs/.pmngr/project.yaml already exists' },
+          { status: 409 },
+        ),
+      );
+
+    await expect(
+      provider(fetchImpl).createProject({ repoId: 'demo', docsFolder: 'docs', key: 'ACME' }),
+    ).rejects.toMatchObject({ code: 'project_exists' });
+  });
+});
+
 describe('CompanionProvider error mapping', () => {
   const cases: {
     name: string;

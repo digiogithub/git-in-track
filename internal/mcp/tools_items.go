@@ -72,9 +72,9 @@ type ItemResult struct {
 	Children []Item    `json:"children,omitempty"`
 }
 
-// CreateItemInput is the draft of a new epic, story or task. The id is never
-// supplied by the caller: it is allocated by the core, which is the only thing
-// that can do it without racing another writer.
+// CreateItemInput is the draft of a new epic, story, task or milestone. The id
+// is never supplied by the caller: it is allocated by the core, which is the
+// only thing that can do it without racing another writer.
 type CreateItemInput struct {
 	Project   string   `json:"project,omitempty" jsonschema:"Project key; required when the workspace holds more than one"`
 	Title     string   `json:"title" jsonschema:"One-line summary"`
@@ -193,6 +193,15 @@ func registerItemTools(s *Server) {
 			"The id is allocated by the tool; never propose one.",
 		Write: true,
 	}, createTool(core.TypeTask))
+
+	register(s, toolDef{
+		Name:  "create_milestone",
+		Title: "Create a milestone",
+		Description: "Create a milestone, the delivery checkpoint other items point at through " +
+			"their milestone field. A milestone has no parent; give it a due date. " +
+			"The id is allocated by the tool; never propose one.",
+		Write: true,
+	}, createTool(core.TypeMilestone))
 
 	register(s, toolDef{
 		Name:  "update_item",
@@ -343,10 +352,10 @@ func getItem(ctx context.Context, s *Server, in GetItemInput) (ItemResult, error
 	return out, nil
 }
 
-// createTool builds the handler of create_epic, create_story and create_task.
-// The three tools differ only in the type they fix, which is deliberate: an
-// agent picking a tool by name cannot file a task as an epic by mistyping a
-// field.
+// createTool builds the handler of create_epic, create_story, create_task and
+// create_milestone. The four tools differ only in the type they fix, which is
+// deliberate: an agent picking a tool by name cannot file a task as an epic by
+// mistyping a field.
 func createTool(itemType core.ItemType) func(context.Context, *Server, CreateItemInput) (WriteResult, error) {
 	return func(ctx context.Context, s *Server, in CreateItemInput) (WriteResult, error) {
 		if strings.TrimSpace(in.Title) == "" {

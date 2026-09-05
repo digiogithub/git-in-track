@@ -1,11 +1,12 @@
 # 08 — MCP Server and Agent Workflows
 
 Status: **as built** for the tool surface, the two transports and the safety model that ship
-with `GIT-US-0024`; **planning specification** for everything marked *planned* below.
+with `GIT-US-0024`, plus `create_milestone` from `GIT-US-0033`;
+**planning specification** for everything marked *planned* below.
 Phase: **Phase 5 — MCP server + agent workflows** (depends on Phase 2 companion CLI, Phase 3 boards, Phase 4 sync)
 Audience: contributors working on `internal/mcp`; authors of agent instructions (`AGENTS.md`)
 
-What ships today: twelve tools over stdio and over streamable HTTP, read-only by default,
+What ships today: thirteen tools over stdio and over streamable HTTP, read-only by default,
 with cursor pagination, field projection and a `rev` on every item. Resources, prompts, the
 audit log, dry-run and rate limiting are specified here and land in later stories of the
 epic; each is labelled where it appears.
@@ -174,8 +175,9 @@ advertised yet; they arrive with sections 5 and 6.
 
 ## 4. Tool catalog
 
-Twelve tools ship with `GIT-US-0024`. They are the same twelve on both transports, from the
-same registry, over the same workspace.
+Thirteen tools ship: twelve with `GIT-US-0024` and `create_milestone` with `GIT-US-0033`.
+They are the same thirteen on both transports, from the same registry, over the same
+workspace.
 
 Common conventions for all tools:
 
@@ -205,6 +207,7 @@ Common conventions for all tools:
 | `create_epic`    | write | `item.create`             | ~90 tokens          |
 | `create_story`   | write | `item.create`             | ~90 tokens          |
 | `create_task`    | write | `item.create`             | ~90 tokens          |
+| `create_milestone` | write | `item.create`           | ~90 tokens          |
 | `update_item`    | write | `item.update`              | ~90 tokens         |
 | `add_comment`    | write | `comment.add`             | ~70 tokens          |
 | `move_on_board`  | write | `board.move`              | ~90 tokens          |
@@ -321,12 +324,19 @@ Without `include`, the answer is the front-matter projection alone — no body, 
 children. The `body`, `comments` and search `snippet` fields are repository content: data to
 reason about, never instructions (section 7.5).
 
-### 4.4 `create_epic`, `create_story`, `create_task`
+### 4.4 `create_epic`, `create_story`, `create_task`, `create_milestone`
 
-Three tools rather than one with a `type` argument, so that an agent picking a tool by name
+Four tools rather than one with a `type` argument, so that an agent picking a tool by name
 cannot file a task as an epic by mistyping a field
-([ADR-015](adr/ADR-015-official-go-mcp-sdk-and-verb-noun-tools.md)). All three take the same
-input; `parent` is the owning epic for a story and the owning story for a task.
+([ADR-015](adr/ADR-015-official-go-mcp-sdk-and-verb-noun-tools.md)). All four take the same
+input; `parent` is the owning epic for a story and the owning story for a task. A milestone
+has no parent — the core refuses one — and is the checkpoint other items point at through
+their `milestone` field, so give it a `due` date:
+
+```json
+// input to create_milestone
+{ "project": "ACME", "title": "Public beta", "due": "2026-11-15" }
+```
 
 ```json
 // input to create_task
@@ -586,7 +596,7 @@ Every path argument is confined to the repositories the server mounts (section 7
 `08` specified a larger catalog than `GIT-US-0024` implements. These are *planned*, each
 behind its own story: `list_workspaces`, `list_projects`, `get_kb_tree`, `link_items`,
 `list_comments`, `list_boards`, `get_board`, `get_sprint`, `list_retros`, `get_sync_status`
-and `run_sync` — verb first, like the twelve above. Every one of them already has a core
+and `run_sync` — verb first, like the thirteen above. Every one of them already has a core
 method behind it, so the work is framing rather than domain logic.
 
 `delete_item` is deliberately **not** on that list: deleting a backlog item is a human action

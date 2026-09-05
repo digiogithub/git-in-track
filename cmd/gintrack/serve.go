@@ -201,10 +201,11 @@ func mountList(cfg *config.Config, workspace string, extra []string) ([]server.R
 		}
 		seen[repo.Path] = true
 		repos = append(repos, server.Repo{
-			ID:         repo.ID,
-			Path:       repo.Path,
-			Role:       string(repo.Role),
-			DocsFolder: repo.DocsFolder,
+			ID:          repo.ID,
+			Path:        repo.Path,
+			Role:        string(repo.Role),
+			DocsFolder:  repo.DocsFolder,
+			DocsFolders: repo.DeclaredDocsFolders(),
 		})
 	}
 	return repos, nil

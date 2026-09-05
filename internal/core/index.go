@@ -80,58 +80,104 @@ type ProjectRef struct {
 	Team bool `json:"team,omitempty"`
 }
 
-// DiscoverProjects walks a vault from root and returns every project backlog it
-// finds: a `.pmngr/` folder holding a `project.yaml` (R-LOC-2). Dot folders other
-// than `.pmngr`, `node_modules` and `.git` are never descended into.
+// DiscoveryDepth is how far below a root a project backlog is looked for when
+// nothing declares it: the root itself and its first-level directories, and no
+// deeper (docs/03 section 2.1, ADR-018).
+const DiscoveryDepth = 1
+
+// DiscoveryOptions bounds a discovery pass.
+//
+// The default rule is deliberately shallow, because an unbounded walk reports
+// every `.pmngr/` a repository happens to carry — test fixtures, vendored
+// samples, a documentation snapshot — as a project of the user. A layout the
+// rule cannot reach, such as the monorepo `apps/api/docs/.pmngr/` of docs/03
+// section 3.5, is declared once by the registration and then found at any
+// depth.
+type DiscoveryOptions struct {
+	// Roots are the folders the shallow rule is applied to, each probed at its
+	// own root and one level below. An empty list means the vault root alone.
+	// A vault that mounts several repositories side by side passes one root per
+	// repository, so that "one level below" means one level below a repository.
+	Roots []string
+	// DocsFolders are documentation folders the caller declares, vault-relative
+	// and at any depth. They are probed directly and never walked into.
+	DocsFolders []string
+}
+
+// DiscoverProjects returns every project backlog of a vault under the default
+// rule: a `.pmngr/` folder holding a `project.yaml` (R-LOC-2) at root, or in one
+// of the root's first-level directories.
 //
 // The result is sorted by documentation folder path, so two runs over the same
 // tree return the same order. A project whose project.yaml fails validation is
 // still returned, with its findings in Diagnostics: the app opens read-only
 // rather than pretending the folder does not exist (docs/03 section 6.3).
 func DiscoverProjects(fs FS, root string) ([]ProjectRef, error) {
+	return DiscoverProjectsWith(fs, DiscoveryOptions{Roots: []string{root}})
+}
+
+// DiscoverProjectsWith returns every project backlog reachable under opts: the
+// shallow rule applied to each root, plus every declared documentation folder.
+// A declared folder that holds no project.yaml is silently absent from the
+// result — declaring a folder is a hint, not an assertion that it exists.
+func DiscoverProjectsWith(fs FS, opts DiscoveryOptions) ([]ProjectRef, error) {
 	if fs == nil {
 		return nil, errors.New("discover projects: nil file system")
 	}
-	if root == "" {
-		root = "."
+	roots := opts.Roots
+	if len(roots) == 0 {
+		roots = []string{"."}
 	}
+
 	var out []ProjectRef
-	var walk func(dir string, depth int) error
-	walk = func(dir string, depth int) error {
-		if depth > maxWalkDepth {
+	seen := make(map[string]bool)
+	probe := func(docsPath string) error {
+		docsPath = path.Clean(docsPath)
+		if seen[docsPath] || docsPath == ".." || strings.HasPrefix(docsPath, "../") || path.IsAbs(docsPath) {
+			// A declared folder never addresses anything outside the vault.
 			return nil
 		}
-		entries, err := readDirTolerant(fs, dir)
+		ref, ok, err := loadProjectRef(fs, docsPath, joinPath(docsPath, BacklogDirName))
 		if err != nil {
 			return err
 		}
-		for _, e := range entries {
-			if !e.IsDir {
-				continue
-			}
-			child := joinPath(dir, e.Name)
-			if e.Name == BacklogDirName {
-				ref, ok, err := loadProjectRef(fs, dir, child)
-				if err != nil {
-					return err
-				}
-				if ok {
-					out = append(out, ref)
-				}
-				continue
-			}
-			if skipDirName(e.Name) {
-				continue
-			}
-			if err := walk(child, depth+1); err != nil {
-				return err
-			}
+		seen[docsPath] = true
+		if ok {
+			out = append(out, ref)
 		}
 		return nil
 	}
-	if err := walk(path.Clean(root), 0); err != nil {
-		return nil, err
+
+	for _, root := range roots {
+		if root == "" {
+			root = "."
+		}
+		root = path.Clean(root)
+		if err := probe(root); err != nil {
+			return nil, err
+		}
+		entries, err := readDirTolerant(fs, root)
+		if err != nil {
+			return nil, err
+		}
+		for _, e := range entries {
+			if !e.IsDir || e.Name == BacklogDirName || skipDirName(e.Name) {
+				continue
+			}
+			if err := probe(joinPath(root, e.Name)); err != nil {
+				return nil, err
+			}
+		}
 	}
+	for _, declared := range opts.DocsFolders {
+		if declared == "" {
+			declared = "."
+		}
+		if err := probe(declared); err != nil {
+			return nil, err
+		}
+	}
+
 	sort.Slice(out, func(i, j int) bool { return out[i].DocsPath < out[j].DocsPath })
 	return out, nil
 }

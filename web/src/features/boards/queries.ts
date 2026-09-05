@@ -16,7 +16,14 @@ import {
 } from '@tanstack/react-query';
 import { useEffect } from 'react';
 
-import type { BoardMoveResult, BoardSummary, BoardView, CardMove } from '@/api/provider';
+import type {
+  BoardDraft,
+  BoardMoveResult,
+  BoardPatch,
+  BoardSummary,
+  BoardView,
+  CardMove,
+} from '@/api/provider';
 import { useProvider } from '@/api/provider-context';
 import { backlogKeys } from '@/features/backlog/queries';
 
@@ -58,6 +65,61 @@ export function useBoardEvents(slug: string): void {
       }),
     [provider, queryClient, slug],
   );
+}
+
+/**
+ * Creates a board. A board is a view, so the write is one new file in the team
+ * repository and no item moves anywhere; the board index and the new board are
+ * both invalidated so that the caller can navigate straight to it.
+ */
+export function useCreateBoard(): UseMutationResult<BoardView, Error, BoardDraft> {
+  const provider = useProvider();
+  const queryClient = useQueryClient();
+  return useMutation<BoardView, Error, BoardDraft>({
+    mutationFn: (draft) => provider.createBoard(draft),
+    onSuccess: (view) => {
+      queryClient.setQueryData(boardKeys.detail(view.id), view);
+      void queryClient.invalidateQueries({ queryKey: boardKeys.list() });
+    },
+  });
+}
+
+/** One edit of the board file itself: never its card order (docs/04 §5.1). */
+export type BoardEdit = { slug: string; patch: BoardPatch; rev?: string | undefined };
+
+/**
+ * Edits a board: its title, its project scope, its columns, its WIP limits,
+ * its filters and — on a scrum board — the sprint it is scoped to. Widening the
+ * scope or relaxing the filters is what puts more items on the board, because
+ * the cards are a query over the projects rather than a list stored in the file.
+ */
+export function useUpdateBoard(): UseMutationResult<BoardView, Error, BoardEdit> {
+  const provider = useProvider();
+  const queryClient = useQueryClient();
+  return useMutation<BoardView, Error, BoardEdit>({
+    mutationFn: (edit) => provider.updateBoard(edit.slug, edit.patch, edit.rev),
+    onSuccess: (view) => {
+      queryClient.setQueryData(boardKeys.detail(view.id), view);
+      void queryClient.invalidateQueries({ queryKey: boardKeys.list() });
+    },
+  });
+}
+
+/** Deletes a board file. No item is touched: a board holds no item state. */
+export function useDeleteBoard(): UseMutationResult<
+  void,
+  Error,
+  { slug: string; rev?: string | undefined }
+> {
+  const provider = useProvider();
+  const queryClient = useQueryClient();
+  return useMutation<void, Error, { slug: string; rev?: string | undefined }>({
+    mutationFn: (input) => provider.deleteBoard(input.slug, input.rev),
+    onSuccess: (_result, input) => {
+      queryClient.removeQueries({ queryKey: boardKeys.detail(input.slug) });
+      void queryClient.invalidateQueries({ queryKey: boardKeys.list() });
+    },
+  });
 }
 
 type MoveContext = { previous: BoardView | undefined };

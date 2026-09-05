@@ -33,6 +33,28 @@ describe('EpicTree', () => {
     expect(screen.getByRole('link', { name: 'ACME-US-0042' })).toBeInTheDocument();
   });
 
+  it('creates an epic from the tree header', async () => {
+    renderBacklog({ path: '/p/ACME/epics' });
+
+    const link = await screen.findByRole('link', { name: 'New epic' });
+    expect(link).toHaveAttribute('href', expect.stringContaining('/p/ACME/items/new'));
+    expect(link.getAttribute('href')).toContain('type=epic');
+  });
+
+  it('creates a story under the epic it sits on, and a task under a story', async () => {
+    const user = userEvent.setup();
+    renderBacklog({ path: '/p/ACME/epics' });
+
+    const story = await screen.findByRole('link', { name: 'New story in ACME-EP-0001' });
+    expect(story.getAttribute('href')).toContain('type=story');
+    expect(story.getAttribute('href')).toContain('parent=ACME-EP-0001');
+
+    await user.click(screen.getByRole('button', { name: 'Expand ACME-US-0042' }));
+    const task = screen.getByRole('link', { name: 'New task in ACME-US-0042' });
+    expect(task.getAttribute('href')).toContain('type=task');
+    expect(task.getAttribute('href')).toContain('parent=ACME-US-0042');
+  });
+
   it('nests the tasks of a story under it', async () => {
     const user = userEvent.setup();
     renderBacklog({ path: '/p/ACME/epics' });

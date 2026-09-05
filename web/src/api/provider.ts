@@ -17,6 +17,7 @@ import type {
   BoardCard,
   BoardColumnPatch,
   BoardColumnView,
+  BoardDraft,
   BoardPatch,
   BoardMovePlan,
   BoardMoveResult,
@@ -89,6 +90,7 @@ export type {
   BoardCard,
   BoardColumnPatch,
   BoardColumnView,
+  BoardDraft,
   BoardPatch,
   BoardMovePlan,
   BoardMoveResult,
@@ -540,6 +542,35 @@ export type MountInput = {
   /** Companion mode: an absolute path. Browser mode: a picked directory handle id. */
   location: string;
   docsFolder?: string;
+  /**
+   * Every documentation folder this repository declares, `docsFolder`
+   * included. Discovery probes the repository root and its first-level
+   * directories on its own; a folder deeper than that — a monorepo's
+   * `apps/api/docs` — is found only because it is listed here (ADR-018).
+   */
+  docsFolders?: string[];
+};
+
+/**
+ * Creating a project in a repository that has none (story GIT-US-0031).
+ *
+ * It writes `<docsFolder>/.pmngr/project.yaml` and the folder layout
+ * docs/03-data-model.md §2 prescribes. A key outside `[A-Z][A-Z0-9]{1,9}` is
+ * refused with `validation_failed`, and a folder that already holds a project
+ * with `project_exists` — a backlog is never overwritten.
+ */
+export type CreateProjectInput = {
+  /** The repository to write into; the only open one when omitted. */
+  repoId?: string;
+  /** Repository-relative documentation folder; `''` means the root. */
+  docsFolder: string;
+  /** ID prefix, matching `[A-Z][A-Z0-9]{1,9}`. */
+  key: string;
+  /** Human name; defaults to the key. */
+  name?: string;
+  description?: string;
+  /** IANA timezone; defaults to `UTC`. */
+  timezone?: string;
 };
 
 /**
@@ -582,6 +613,12 @@ export type ProviderErrorCode =
   | 'sprint_already_active'
   /** The improvement action already became a task (docs/04 R-RETRO-2). */
   | 'retro_action_promoted'
+  /** The board slug is already taken; a board file is named after its id. */
+  | 'duplicate_id'
+  /** A sprint still names the board that was to be deleted. */
+  | 'board_in_use'
+  /** The documentation folder already holds a `project.yaml` (GIT-US-0031). */
+  | 'project_exists'
   /** A write lost a race, or a sprint already has a retro. */
   | 'conflict'
   | 'internal';
@@ -619,6 +656,12 @@ export interface DataProvider {
    */
   resolveRef(ref: string): Promise<RefResolution>;
   mountRepo(input: MountInput): Promise<RepoInfo>;
+  /**
+   * Scaffolds a backlog in a repository that has none, and returns the project
+   * as `listProjects` reports it. Both modes go through the same core code, so
+   * the file a companion writes and the file a browser writes are identical.
+   */
+  createProject(input: CreateProjectInput): Promise<ProjectSummary>;
   unmountRepo(repoId: string): Promise<void>;
   reindex(repoId: string, opts?: { full?: boolean }): Promise<IndexStats>;
 
@@ -663,6 +706,18 @@ export interface DataProvider {
    * moves one card at a time through `moveCard`.
    */
   updateBoard(slug: string, patch: BoardPatch, rev?: string): Promise<BoardView>;
+  /**
+   * Creates a board in the team repository. A board is a view, so creating one
+   * adds no item anywhere: the cards it shows are the ones its project scope
+   * and its filters select. A slug already taken fails with `duplicate_id`.
+   */
+  createBoard(draft: BoardDraft): Promise<BoardView>;
+  /**
+   * Deletes a board file, and nothing else — every item its cards referenced
+   * stays where it is. A board a sprint still names fails with `board_in_use`,
+   * or `sprint_already_active` when that sprint is running.
+   */
+  deleteBoard(slug: string, rev?: string): Promise<void>;
 
   // sprints (docs/04-team-repository.md §8)
   /** The sprints of the team repository, newest ids last; empty when none. */

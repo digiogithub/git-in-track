@@ -106,6 +106,12 @@ export type LoadVaultOptions = {
   onProgress?: (progress: LoadProgress) => void;
   /** Repository inside the workspace; omit for the default one. */
   vaultId?: string;
+  /**
+   * Documentation folders this repository declares. Discovery probes the root
+   * and its first-level directories on its own; a folder deeper than that is
+   * found only because it is listed here (ADR-018).
+   */
+  docsFolders?: string[];
 };
 
 /**
@@ -191,11 +197,15 @@ export class CoreClient {
     };
 
     const target = options.vaultId === undefined ? {} : { vaultId: options.vaultId };
+    const declared =
+      options.docsFolders === undefined || options.docsFolders.length === 0
+        ? {}
+        : { docsFolders: options.docsFolders };
     const head = batches[0] ?? [];
     const loadParams =
       options.rootLabel === undefined
-        ? { files: head, ...target }
-        : { files: head, rootLabel: options.rootLabel, ...target };
+        ? { files: head, ...declared, ...target }
+        : { files: head, rootLabel: options.rootLabel, ...declared, ...target };
     let stats = await this.call('vault.load', loadParams);
     report(head);
 

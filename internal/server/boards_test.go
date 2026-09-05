@@ -234,3 +234,114 @@ func TestBoardEndpoints(t *testing.T) {
 		}
 	})
 }
+
+// TestBoardCreateAndDeleteEndpoints covers the authoring half of the board
+// surface (docs/07 section 5.5, story GIT-US-0032).
+func TestBoardCreateAndDeleteEndpoints(t *testing.T) {
+	t.Run("create writes one board file and answers 201", func(t *testing.T) {
+		s := newTeamServer(t)
+		var created struct {
+			Board  boardViewBody `json:"board"`
+			Writes []struct {
+				VaultID string `json:"vaultId"`
+				Written []struct {
+					Path string `json:"path"`
+				} `json:"written"`
+			} `json:"writes"`
+		}
+		rec := send(t, s, request{
+			method: http.MethodPost, target: "/api/v1/boards",
+			body: map[string]any{"title": "Squad Delivery", "author": "jose"},
+		})
+		decode(t, rec, http.StatusCreated, &created)
+		if created.Board.ID != "squad-delivery" || created.Board.Kind != "kanban" {
+			t.Fatalf("board = %+v", created.Board)
+		}
+		if rec.Header().Get("ETag") == "" {
+			t.Error("a created board answers with its revision")
+		}
+		if len(created.Writes) != 1 || len(created.Writes[0].Written) != 1 {
+			t.Fatalf("writes = %+v", created.Writes)
+		}
+		if got := created.Writes[0].Written[0].Path; got != ".pmngr/boards/squad-delivery.md" {
+			t.Fatalf("written = %q", got)
+		}
+		var view boardViewBody
+		decode(t, send(t, s, request{method: http.MethodGet, target: "/api/v1/boards/squad-delivery"}),
+			http.StatusOK, &view)
+		if view.Title != "Squad Delivery" {
+			t.Fatalf("the created board does not read back: %+v", view)
+		}
+	})
+
+	t.Run("create without a title is a 400", func(t *testing.T) {
+		s := newTeamServer(t)
+		rec := send(t, s, request{
+			method: http.MethodPost, target: "/api/v1/boards", body: map[string]any{},
+		})
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400: %s", rec.Code, rec.Body)
+		}
+	})
+
+	t.Run("create on a taken slug is a 409", func(t *testing.T) {
+		s := newTeamServer(t)
+		rec := send(t, s, request{
+			method: http.MethodPost, target: "/api/v1/boards",
+			body: map[string]any{"title": "Delivery"},
+		})
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("status = %d, want 409: %s", rec.Code, rec.Body)
+		}
+	})
+
+	t.Run("delete without If-Match is refused", func(t *testing.T) {
+		s := newTeamServer(t)
+		rec := send(t, s, request{method: http.MethodDelete, target: "/api/v1/boards/delivery"})
+		if rec.Code != http.StatusPreconditionRequired {
+			t.Fatalf("status = %d, want 428: %s", rec.Code, rec.Body)
+		}
+	})
+
+	t.Run("delete removes the board file", func(t *testing.T) {
+		s := newTeamServer(t)
+		var view boardViewBody
+		decode(t, send(t, s, request{method: http.MethodGet, target: "/api/v1/boards/delivery"}),
+			http.StatusOK, &view)
+		var deleted struct {
+			Board  string `json:"board"`
+			Writes []struct {
+				VaultID string   `json:"vaultId"`
+				Removed []string `json:"removed"`
+			} `json:"writes"`
+		}
+		decode(t, send(t, s, request{
+			method: http.MethodDelete, target: "/api/v1/boards/delivery",
+			header: map[string]string{"If-Match": view.Rev},
+		}), http.StatusOK, &deleted)
+		if deleted.Board != "delivery" {
+			t.Fatalf("board = %q", deleted.Board)
+		}
+		if len(deleted.Writes) != 1 || len(deleted.Writes[0].Removed) != 1 {
+			t.Fatalf("writes = %+v", deleted.Writes)
+		}
+		rec := send(t, s, request{method: http.MethodGet, target: "/api/v1/boards/delivery"})
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want 404 after the delete", rec.Code)
+		}
+	})
+
+	t.Run("deleting the board of a running sprint is a 409", func(t *testing.T) {
+		s := newTeamServer(t)
+		var view boardViewBody
+		decode(t, send(t, s, request{method: http.MethodGet, target: "/api/v1/boards/demo-scrum"}),
+			http.StatusOK, &view)
+		rec := send(t, s, request{
+			method: http.MethodDelete, target: "/api/v1/boards/demo-scrum",
+			header: map[string]string{"If-Match": view.Rev},
+		})
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("status = %d, want 409: %s", rec.Code, rec.Body)
+		}
+	})
+}

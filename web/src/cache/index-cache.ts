@@ -164,6 +164,8 @@ export type HydrateOptions = {
    * that the cache never has to assume the two are one (GIT-US-0016).
    */
   vaultId?: string;
+  /** Passed through to `CoreClient.loadVault`; see ADR-018. */
+  docsFolders?: string[];
 };
 
 /**
@@ -208,6 +210,7 @@ export async function hydrateOrBuild(
   const stats = await client.loadVault(files, {
     ...(options.rootLabel === undefined ? {} : { rootLabel: options.rootLabel }),
     ...(options.vaultId === undefined ? {} : { vaultId: options.vaultId }),
+    ...(options.docsFolders === undefined ? {} : { docsFolders: options.docsFolders }),
   });
 
   let resaved = false;

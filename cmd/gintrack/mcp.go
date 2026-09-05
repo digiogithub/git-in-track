@@ -34,8 +34,8 @@ func newMCPCommand(build buildInfo, flags *globalFlags) *cobra.Command {
 		Long: `Mcp speaks the Model Context Protocol over stdin and stdout, so that an agent
 runtime can spawn it as a tool server. It exposes the workspace's backlog and
 knowledge base as typed tools: list_items, search_items, get_item, create_epic,
-create_story, create_task, update_item, add_comment, move_on_board,
-list_kb_pages, get_kb_page and search_kb.
+create_story, create_task, create_milestone, update_item, add_comment,
+move_on_board, list_kb_pages, get_kb_page and search_kb.
 
 The server is read-only unless --allow-write is given, and the write tools are
 then advertised alongside the read ones. Writes go through the same validation

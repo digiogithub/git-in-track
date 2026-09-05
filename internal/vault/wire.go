@@ -62,6 +62,10 @@ type WriteSet struct {
 type vaultLoadParams struct {
 	Files     []File `json:"files"`
 	RootLabel string `json:"rootLabel,omitempty"`
+	// DocsFolders are the documentation folders the host declares. They are
+	// probed at any depth, which is what keeps a monorepo working under the
+	// bounded discovery rule (ADR-018). Absent leaves the declaration as it is.
+	DocsFolders []string `json:"docsFolders,omitempty"`
 }
 
 // fileEventParams is one incremental change, carrying the new text so that the

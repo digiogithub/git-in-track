@@ -143,6 +143,7 @@ state is shareable by URL and survives reloads.
   /team/$teamId/boards/$boardSlug           BoardView (kanban or scrum)
   /team/$teamId/boards/$boardSlug/planning  SprintPlanning
   /team/$teamId/sprints/$sprintId           SprintDetail
+  /sprints                                  SprintList    (as built, ?board=)
   /retros                                   RetroList     (as built)
   /retros/$retroId                          RetroBoard    (as built)
   /metrics                                  MetricsIndex  (as built)
@@ -181,11 +182,23 @@ or the configured git author email), and a sync health strip.
    `showDirectoryPicker()`; in companion mode, a path input with server-side
    autocompletion plus a "clone from URL" option. Firefox/Safari get the
    `webkitdirectory` read-only fallback with an explicit banner.
-3. *Detection*: the provider scans for `.git`, for `project.yaml`/`team.yaml`, and
-   proposes the docs folder (defaults: an existing `docs/`, else the folder
-   containing `.pmngr`, else repo root). For a fresh project the wizard offers to
-   scaffold `docs/.pmngr/` with `project.yaml` (`key`, `name`, status workflow
-   picked from a template).
+3. *Detection*: the provider scans for `.git` and for `project.yaml`/`team.yaml`
+   (`fs/detect-project.ts`, four levels down) and lists every documentation folder
+   it found, `docs/` first. Detection is deliberately deeper than discovery, which
+   reaches the repository root and its first-level directories only (doc 03 §2.1,
+   [ADR-018](./adr/ADR-018-bounded-project-discovery.md)): a nested candidate is
+   marked *"indexed only if you choose it here"*, and picking it declares it on the
+   mount, so it stays discoverable on every later scan.
+
+   **When nothing is found, the wizard creates the project** rather than offering
+   an empty workspace (`features/workspace/CreateProjectForm.tsx`, story
+   GIT-US-0031). It asks for three things — the documentation folder, with the
+   detected folders offered as one-click suggestions; the project key, validated
+   against `[A-Z][A-Z0-9]{1,9}` before anything is sent; and the display name —
+   then mounts the folder and calls `provider.createProject()`, which writes
+   `<docsFolder>/.pmngr/project.yaml` and the layout of doc 03 §2.2 through the
+   shared core. *Mount it anyway* stays available as an explicit choice, for
+   someone who wants to browse the Markdown without starting a backlog.
 4. *Confirm*: shows what will be written, then runs the initial index with a
    progress bar (files scanned / items found / errors).
 
@@ -216,6 +229,8 @@ status pill, metadata grid, rendered body, acceptance-criteria checklist with
 inline toggling (a checkbox toggle is a body write, so it goes through the same
 rev-checked update), children (stories of an epic, tasks of a story), typed links
 (`blocks`, `blocked_by`, `relates_to`, `duplicates`) rendered as navigable chips,
+a create control on the children panel that opens the editor with `parent` set to
+the item on screen (§8.1),
 comments thread with a composer, and an activity strip from `git log` for that
 path (Phase 4). A right rail shows file path, last commit, and "Open in editor"
 (companion mode only, via a server endpoint that shells out to `$EDITOR`).
@@ -225,12 +240,15 @@ path (Phase 4). A right rail shows file path, last commit, and "Open in editor"
 **EpicTree (`/p/$projectKey/epics`)** — Three-level tree (epic → story → task)
 with lazy expansion, per-node rollups (done/total, points sum, % complete), inline
 status change, and drag to re-parent (a re-parent writes the child's `parent`
-field). A "flatten" toggle switches to a table of all descendants.
+field). A "flatten" toggle switches to a table of all descendants. The header
+creates an epic and every node creates its own child — a story under an epic, a
+task under a story — through the shared create link (§8.1).
 
 **MilestoneList / MilestoneDetail** — Milestones sorted by `due`, each with a
 progress bar, item count by status, overdue highlight, and a burnup sparkline
 (Phase 6). Detail view lists member items with the same table component as
-ItemTable, pre-filtered.
+ItemTable, pre-filtered. The header creates a milestone, and each card creates a
+story already filed under it (§8.1).
 
 **BoardView (`/team/$teamId/boards/$boardSlug`)** — §9. Columns from the board
 file, cards resolved from every configured project. Kanban and Scrum share the
@@ -355,7 +373,8 @@ export interface DataProvider {
   listProjects(): Promise<ProjectSummary[]>;
   getTeam(): Promise<TeamSummary | null>;          // team.yaml of the open team repo, or null
   resolveRef(ref: string): Promise<RefResolution>; // "<KEY>/<ITEM-ID>" across every open repo
-  mountRepo(input: MountInput): Promise<RepoInfo>;
+  mountRepo(input: MountInput): Promise<RepoInfo>;   // `docsFolders` declares nested backlogs
+  createProject(input: CreateProjectInput): Promise<ProjectSummary>; // scaffolds .pmngr/
   unmountRepo(repoId: string): Promise<void>;
   reindex(repoId: string, opts?: { full?: boolean }): Promise<IndexStats>;
 
@@ -837,6 +856,35 @@ CodeMirror 6, wrapped in `src/editor/`.
   "amend last commit" option when the previous commit touched the same file within
   a configurable window (default 5 min).
 
+### 8.1 Creating an item from where the user is
+
+**Status: implemented** (GIT-US-0033). There is exactly one create implementation,
+`features/editor/NewItemPage` at `/p/$projectKey/items/new`. It creates any of the
+four editable types — epic, story, task, milestone — and its draft goes through
+`provider.createItem` → `item.create`, so the core allocates the id and validates
+the draft exactly as it does for an agent writing over MCP.
+
+Every list of items reaches that page through one link component,
+`features/backlog/NewItemLink`, instead of growing a form of its own. The link
+carries what the surface already knows as search parameters, which the route
+validates (`validateNewItemSearch`): `type` always, plus `parent` when the context
+is an owning item and `milestone` when it is a milestone.
+
+| Where | Control | Opens with |
+| ----- | ------- | ---------- |
+| ItemTable header | New item | `type=story` |
+| EpicTree header | New epic | `type=epic` |
+| EpicTree, on an epic | New story | `type=story&parent=<epic>` |
+| EpicTree, on a story | New task | `type=task&parent=<story>` |
+| MilestoneList header | New milestone | `type=milestone` |
+| MilestoneList, on a milestone | New story | `type=story&milestone=<milestone>` |
+| ItemDetail, children panel of an epic | New story | `type=story&parent=<epic>` |
+| ItemDetail, children panel of a story | New task | `type=task&parent=<story>` |
+
+Saving returns to the new item's detail page, and the relationship is visible
+straight away: the parent's children panel and the epic tree both read `parent`
+from the index the write refreshed.
+
 ---
 
 ## 9. Boards UX
@@ -920,6 +968,37 @@ Code: `features/boards/` — `BoardList`, `BoardView` (the route plus the
   goal; the id is allocated by the core, and dates that overlap another sprint
   of the same board are refused with `sprint_overlap` and the offending sprint
   named.
+
+### 9.1 Authoring a board (as built, GIT-US-0032)
+
+`BoardList` carries a **New board** control and `BoardView` a **Board settings**
+one; both render the same `BoardFormFields`, and `features/boards/board-form.ts`
+translates that form into the `board.create` draft and the `board.update` patch.
+A read-only workspace, and a workspace with no team repository open, disable the
+controls rather than hiding them.
+
+- **Creating** asks for the name, the kind, the projects in scope, the filters
+  and the columns. The core turns the name into the slug, refuses a slug that is
+  already a board (`duplicate_id`) and fills in the default columns — which map
+  status *categories*, so they work for a project whose workflow the team has
+  never seen (doc 04 R-COL-2). The dialog then navigates to the new board.
+- **Editing** patches the same fields plus the scrum backlog column, sending the
+  whole form so that a cleared filter means "cleared" rather than "unchanged".
+  The card order is never patched here; it moves one card at a time.
+- **Cards are a query, and the UI says so.** A board holds no items: the form's
+  scope and filter sections explain that widening the scope or relaxing a filter
+  is what puts epics, stories and tasks on a board, because there is nothing to
+  copy into the board file.
+- **Deleting** sits in the same dialog behind a confirmation, states that no item
+  is touched, and is refused while a sprint still names the board
+  (`sprint_already_active` when it is running, `board_in_use` otherwise).
+- **The first sprint of a scrum board.** A scrum board pointing at no sprint used
+  to be a dead end: `SprintPanel` renders only once the board has one. It now
+  shows a "No sprint yet" card with **Plan the first sprint**, which creates the
+  sprint (`NewSprintDialog`, shared with the panel) and points the board at it in
+  the same gesture. The new `/sprints` route lists every sprint of the team
+  repository, opens one for any board, and points a board at a sprint that
+  already exists.
 - **Performance:** columns virtualise beyond 100 cards; cards are memoised on
   `(ref, rev, position)`; drag overlays use `transform` only.
 

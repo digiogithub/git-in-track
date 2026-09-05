@@ -19,7 +19,8 @@ var readTools = []string{
 
 // writeTools is what enabling writes adds.
 var writeTools = []string{
-	"add_comment", "create_epic", "create_story", "create_task", "move_on_board", "update_item",
+	"add_comment", "create_epic", "create_milestone", "create_story", "create_task",
+	"move_on_board", "update_item",
 }
 
 func TestToolSurface(t *testing.T) {
@@ -398,6 +399,14 @@ func TestCreateTools(t *testing.T) {
 			},
 			wantType: core.TypeTask,
 		},
+		{
+			name: "create_milestone",
+			tool: "create_milestone",
+			args: map[string]any{
+				"project": "DEMO", "title": "Checkout beta", "due": "2026-12-01",
+			},
+			wantType: core.TypeMilestone,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -429,6 +438,7 @@ func TestCreateRejectsInvalidInput(t *testing.T) {
 
 	tests := []struct {
 		name      string
+		tool      string
 		args      map[string]any
 		wantCode  string
 		wantField string
@@ -438,6 +448,14 @@ func TestCreateRejectsInvalidInput(t *testing.T) {
 			args:      map[string]any{"project": "DEMO", "title": "  "},
 			wantCode:  codeInvalidRequest,
 			wantField: "title",
+		},
+		{
+			// A milestone has no parent, and the rule lives in internal/core:
+			// the tool adds no per-type check of its own.
+			name:     "a milestone under a parent",
+			tool:     "create_milestone",
+			args:     map[string]any{"project": "DEMO", "title": "Beta", "parent": "DEMO-EP-0001"},
+			wantCode: "validation_failed",
 		},
 		{
 			name:     "a status the project does not declare",
@@ -452,7 +470,11 @@ func TestCreateRejectsInvalidInput(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := callFails(t, h, "create_story", tt.args)
+			tool := tt.tool
+			if tool == "" {
+				tool = "create_story"
+			}
+			got := callFails(t, h, tool, tt.args)
 			if got.Code != tt.wantCode {
 				t.Errorf("code = %q, want %q (%s)", got.Code, tt.wantCode, got.Message)
 			}

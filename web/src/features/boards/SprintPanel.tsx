@@ -14,13 +14,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/toast';
+import { NewSprintDialog } from '@/features/boards/NewSprintDialog';
 import {
   useCloseSprint,
-  useCreateSprint,
   useSprint,
   useStartSprint,
   useUpdateSprint,
@@ -43,7 +42,6 @@ export function SprintPanel({ view }: { view: BoardView }) {
   const update = useUpdateSprint();
   const start = useStartSprint();
   const close = useCloseSprint();
-  const create = useCreateSprint();
   const { toast } = useToast();
 
   const [planning, setPlanning] = useState(false);
@@ -52,7 +50,6 @@ export function SprintPanel({ view }: { view: BoardView }) {
   const [editingGoal, setEditingGoal] = useState(false);
   const [goal, setGoal] = useState(info?.goal ?? '');
   const [decisions, setDecisions] = useState<Record<string, SprintCarryAction>>({});
-  const [draft, setDraft] = useState({ title: '', start: '', end: '', goal: '' });
 
   const detail = sprint.data;
   const rev = detail?.sprint.rev ?? info?.rev;
@@ -346,86 +343,8 @@ export function SprintPanel({ view }: { view: BoardView }) {
       </Dialog>
 
       {/* A new sprint: the id is allocated by the core, never by the UI. */}
-      <Dialog open={creating} onOpenChange={setCreating}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>New sprint</DialogTitle>
-            <DialogDescription>
-              A sprint belongs to one board and cannot share a day with another sprint of that
-              board.
-            </DialogDescription>
-          </DialogHeader>
-          <form
-            aria-label="New sprint"
-            className="space-y-3"
-            onSubmit={(event) => {
-              event.preventDefault();
-              create.mutate(
-                { board: view.id, ...draft },
-                {
-                  onSuccess: () => setCreating(false),
-                  onError: (error) => {
-                    if (error instanceof ProviderError && error.code === 'sprint_overlap') {
-                      toast({
-                        variant: 'destructive',
-                        title: 'These dates overlap another sprint',
-                        description: error.message,
-                      });
-                      return;
-                    }
-                    refuse('The sprint could not be created')(error);
-                  },
-                },
-              );
-            }}
-          >
-            <div className="text-xs">
-              <span className="mb-1 block text-muted-foreground">Title</span>
-              <Input
-                aria-label="Title"
-                value={draft.title}
-                onChange={(event) => setDraft({ ...draft, title: event.target.value })}
-              />
-            </div>
-            <div className="flex gap-2 text-xs">
-              <div>
-                <span className="mb-1 block text-muted-foreground">Start</span>
-                <Input
-                  aria-label="Start"
-                  type="date"
-                  required
-                  value={draft.start}
-                  onChange={(event) => setDraft({ ...draft, start: event.target.value })}
-                />
-              </div>
-              <div>
-                <span className="mb-1 block text-muted-foreground">End</span>
-                <Input
-                  aria-label="End"
-                  type="date"
-                  required
-                  value={draft.end}
-                  onChange={(event) => setDraft({ ...draft, end: event.target.value })}
-                />
-              </div>
-            </div>
-            <div className="text-xs">
-              <span className="mb-1 block text-muted-foreground">Goal</span>
-              <Input
-                aria-label="Goal"
-                value={draft.goal}
-                onChange={(event) => setDraft({ ...draft, goal: event.target.value })}
-              />
-            </div>
-            <DialogFooter>
-              <Button type="button" variant="ghost" onClick={() => setCreating(false)}>
-                Cancel
-              </Button>
-              <Button type="submit">Create sprint</Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+      <NewSprintDialog board={view.id} open={creating} onOpenChange={setCreating} />
+
     </Card>
   );
 }

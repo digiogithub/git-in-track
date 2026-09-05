@@ -8,7 +8,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { ItemLink, PriorityBadge, StatusBadge } from '@/features/backlog/Badges';
 import { rollup, type CategoryRollup } from '@/features/backlog/item-meta';
+import { NewItemLink } from '@/features/backlog/NewItemLink';
 import { useBacklogEvents, useItems, useProject } from '@/features/backlog/queries';
+import type { EditableItemType } from '@/features/editor/templates';
 
 const TREE_PAGE_SIZE = 200;
 
@@ -30,6 +32,13 @@ function RollupBar({ summary, label }: { summary: CategoryRollup; label: string 
   );
 }
 
+/** The type of item this node parents, when it parents one at all. */
+function childTypeOf(type: string): EditableItemType | undefined {
+  if (type === 'epic') return 'story';
+  if (type === 'story') return 'task';
+  return undefined;
+}
+
 function TreeNode({
   item,
   childrenOf,
@@ -46,6 +55,8 @@ function TreeNode({
   const [open, setOpen] = useState(depth === 0);
   const children = childrenOf.get(item.id) ?? [];
   const summary = rollup(children, project);
+  // The child a node can gain: a story under an epic, a task under a story.
+  const childType = childTypeOf(item.type);
 
   return (
     <li>
@@ -76,6 +87,14 @@ function TreeNode({
         <span className="flex-1 text-sm font-medium">{item.title}</span>
         <StatusBadge status={item.status} project={project} />
         <PriorityBadge priority={item.priority} />
+        {childType ? (
+          <NewItemLink
+            project={projectKey}
+            type={childType}
+            parent={item.id}
+            label={childType === 'story' ? 'New story' : 'New task'}
+          />
+        ) : null}
         {children.length > 0 ? <RollupBar summary={summary} label={item.title} /> : null}
       </div>
       {open && children.length > 0 ? (
@@ -138,11 +157,14 @@ export function EpicTree() {
 
   return (
     <div className="space-y-4">
-      <header className="space-y-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Epics</h1>
-        <p className="text-sm text-muted-foreground">
-          Every epic of <strong>{projectKey}</strong> with its stories and tasks.
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div className="space-y-1">
+          <h1 className="text-2xl font-semibold tracking-tight">Epics</h1>
+          <p className="text-sm text-muted-foreground">
+            Every epic of <strong>{projectKey}</strong> with its stories and tasks.
+          </p>
+        </div>
+        <NewItemLink project={projectKey} type="epic" label="New epic" variant="bar" />
       </header>
 
       {itemsQuery.isPending ? (

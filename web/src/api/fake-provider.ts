@@ -12,11 +12,13 @@ import type {
   BoardColumnView,
   BoardColumnPatch,
   BoardMoveResult,
+  BoardDraft,
   BoardPatch,
   BoardSummary,
   BoardView,
   CardMove,
   Capabilities,
+  CreateProjectInput,
   ChangeEvent,
   Comment,
   ConflictAnalysis,
@@ -312,6 +314,47 @@ function categoryOf(status: string | undefined): StatusCategory {
     default:
       return 'todo';
   }
+}
+
+/**
+ * The board id derived from a title, the way `core.SlugifyBoardID` derives it:
+ * lowercase, ASCII letters and digits, single hyphens, at most 48 characters.
+ */
+function slugifyBoardId(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48)
+    .replace(/-+$/, '');
+}
+
+/**
+ * The statuses of `sampleProject`'s workflow that belong to a category. The Go
+ * core stores a category mapping and resolves it per project; the fake resolves
+ * it once, against the only workflow it knows.
+ */
+function categoryStatuses(categories: StatusCategory[]): Record<string, string[]> {
+  const byCategory: Record<string, string[]> = {
+    todo: ['backlog', 'todo'],
+    in_progress: ['in_progress', 'in_review'],
+    done: ['done'],
+    cancelled: ['cancelled'],
+  };
+  return { '*': categories.flatMap((category) => byCategory[category] ?? []) };
+}
+
+/** The columns a board is created with when the caller proposes none. */
+function defaultFakeColumns(kind: 'kanban' | 'scrum'): BoardColumnPatch[] {
+  return [
+    {
+      id: kind === 'scrum' ? 'sprint_backlog' : 'todo',
+      name: kind === 'scrum' ? 'Sprint Backlog' : 'To Do',
+      categories: ['todo'],
+    },
+    { id: 'in_progress', name: 'In Progress', categories: ['in_progress'] },
+    { id: 'done', name: 'Done', categories: ['done', 'cancelled'] },
+  ];
 }
 
 /** A card sits in a terminal status of its own project. */
@@ -739,6 +782,44 @@ export class FakeProvider implements DataProvider {
     return Promise.resolve(structuredClone(repo));
   }
 
+  createProject(input: CreateProjectInput): Promise<ProjectSummary> {
+    this.assertWritable();
+    if (!/^[A-Z][A-Z0-9]{1,9}$/.test(input.key)) {
+      return Promise.reject(
+        new ProviderError('validation_failed', `${input.key} does not match [A-Z][A-Z0-9]{1,9}`),
+      );
+    }
+    if (this.projects.some((p) => p.docsPath === input.docsFolder)) {
+      return Promise.reject(
+        new ProviderError('project_exists', `${input.docsFolder} already holds a project`),
+      );
+    }
+    const project: ProjectSummary = {
+      key: input.key,
+      name: input.name ?? input.key,
+      docsPath: input.docsFolder,
+      statuses: [
+        { id: 'backlog', name: 'Backlog', category: 'todo' },
+        { id: 'todo', name: 'To Do', category: 'todo' },
+        { id: 'in_progress', name: 'In Progress', category: 'in_progress' },
+        { id: 'in_review', name: 'In Review', category: 'in_progress' },
+        { id: 'done', name: 'Done', category: 'done', terminal: true },
+        { id: 'cancelled', name: 'Cancelled', category: 'cancelled', terminal: true },
+      ],
+      labels: [],
+      priorities: ['critical', 'high', 'medium', 'low'],
+      itemCounts: { epic: 0, story: 0, task: 0, milestone: 0, comment: 0 },
+    };
+    this.projects.push(project);
+    const repo = this.repos.find((r) => r.id === input.repoId) ?? this.repos[0];
+    if (repo) {
+      repo.projects = [...repo.projects, project.key];
+      repo.docsFolder = repo.docsFolder === '' ? input.docsFolder : repo.docsFolder;
+      this.emit({ kind: 'repo', repoId: repo.id });
+    }
+    return Promise.resolve(structuredClone(project));
+  }
+
   unmountRepo(repoId: string): Promise<void> {
     this.repos = this.repos.filter((r) => r.id !== repoId);
     return Promise.resolve();
@@ -1116,6 +1197,13 @@ export class FakeProvider implements DataProvider {
     if (patch.title !== undefined) board.title = patch.title;
     if (patch.description !== undefined) board.description = patch.description;
     if (patch.backlogColumn !== undefined) board.backlogColumn = patch.backlogColumn;
+    if (patch.projects !== undefined) {
+      board.projects =
+        patch.projects.length > 0
+          ? [...patch.projects]
+          : (this.team?.projects.map((p) => p.key) ?? []);
+    }
+    if (patch.filters !== undefined) board.filters = { ...patch.filters };
     if (patch.columns !== undefined) {
       board.columns = patch.columns.map((column: BoardColumnPatch) => ({
         id: column.id,
@@ -1128,6 +1216,63 @@ export class FakeProvider implements DataProvider {
     board.rev = this.nextRev();
     this.emit({ kind: 'repo', repoId: 'repo-team' });
     return Promise.resolve(this.renderBoard(board));
+  }
+
+  createBoard(draft: BoardDraft): Promise<BoardView> {
+    this.assertWritable();
+    const id = draft.id ?? slugifyBoardId(draft.title);
+    if (!id) {
+      return Promise.reject(
+        new ProviderError('validation_failed', `No board id can be derived from ${draft.title}`),
+      );
+    }
+    if (this.boards.has(id)) {
+      return Promise.reject(new ProviderError('duplicate_id', `A board ${id} already exists`));
+    }
+    const kind = draft.kind ?? 'kanban';
+    const columns = (draft.columns ?? defaultFakeColumns(kind)).map((column) => ({
+      id: column.id,
+      name: column.name ?? column.id,
+      statuses: column.statuses ?? categoryStatuses(column.categories ?? []),
+      ...(column.wip === undefined ? {} : { wip: column.wip }),
+      ...(column.color === undefined ? {} : { color: column.color }),
+    }));
+    const board: FakeBoard = {
+      id,
+      kind,
+      title: draft.title,
+      ...(draft.description === undefined ? {} : { description: draft.description }),
+      projects: draft.projects ?? (this.team?.projects.map((p) => p.key) ?? []),
+      columns,
+      ...(draft.filters === undefined ? {} : { filters: draft.filters }),
+      order: {},
+      ...(kind === 'scrum'
+        ? { backlogColumn: draft.backlogColumn ?? columns[0]?.id ?? '' }
+        : {}),
+      rev: this.nextRev(),
+    };
+    this.boards.set(id, board);
+    this.emit({ kind: 'repo', repoId: 'repo-team' });
+    return Promise.resolve(this.renderBoard(board));
+  }
+
+  deleteBoard(slug: string, rev?: string): Promise<void> {
+    this.assertWritable();
+    const board = this.boards.get(slug);
+    if (!board) return Promise.reject(new ProviderError('not_found', `No board ${slug}`));
+    if (rev !== undefined && rev !== '*' && rev !== board.rev) {
+      return Promise.reject(new ProviderError('stale_revision', `Board ${slug} changed on disk`));
+    }
+    const sprint = [...this.sprints.values()].find((s) => s.board === slug);
+    if (sprint) {
+      const code = sprint.state === 'active' ? 'sprint_already_active' : 'board_in_use';
+      return Promise.reject(
+        new ProviderError(code, `Sprint ${sprint.id} belongs to board ${slug}`),
+      );
+    }
+    this.boards.delete(slug);
+    this.emit({ kind: 'repo', repoId: 'repo-team' });
+    return Promise.resolve();
   }
 
   // ------------------------------------------------------------------- retros
