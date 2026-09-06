@@ -60,7 +60,10 @@ func statusForCode(code string) int {
 		return http.StatusPreconditionFailed
 	case codeNotFound, "unknown_method", codeRepoNotRegistered, "repo_not_cloned":
 		return http.StatusNotFound
-	case "validation_failed", "workflow_transition_denied", "invalid_front_matter":
+	case "validation_failed", "workflow_transition_denied", "invalid_front_matter",
+		core.TaskListItemMismatchCode:
+		// A toggle addressing a line that is no longer a checkbox is a request
+		// about a body that has changed: the client re-reads, it does not retry.
 		return http.StatusUnprocessableEntity
 	case "duplicate_id", "wip_limit_exceeded", "sprint_overlap", "sprint_already_active", "board_in_use",
 		"project_exists", "team_exists",
