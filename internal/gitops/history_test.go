@@ -217,8 +217,16 @@ func TestHistoryWalkIsFastOnALongHistory(t *testing.T) {
 			if len(history.Revisions) != 2 {
 				t.Fatalf("revisions = %d, want 2", len(history.Revisions))
 			}
-			if elapsed > 5*time.Second {
-				t.Errorf("the walk took %s over 2002 commits, want under 5s", elapsed)
+			// The budget guards against a walk whose cost grows with the
+			// length of the history: a quadratic regression would blow past
+			// it by orders of magnitude. It is not a benchmark, so it is
+			// generous, and more so under the race detector.
+			budget := 5 * time.Second
+			if raceEnabled {
+				budget = 30 * time.Second
+			}
+			if elapsed > budget {
+				t.Errorf("the walk took %s over 2002 commits, want under %s", elapsed, budget)
 			}
 			t.Logf("%s walked 2002 commits in %s", kind, elapsed)
 		})
