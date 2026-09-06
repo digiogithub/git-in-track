@@ -3,134 +3,265 @@
 @tailwind utilities;
 
 /*
- * Design tokens.
+ * Design tokens — "warm paper" (docs/13-design-system.md).
+ *
+ * The palette is deliberately soft: nothing in the light theme is pure white
+ * and nothing in the dark theme is pure black, because this is a tool people
+ * keep open all day. Text still clears WCAG AA on every surface it is used on;
+ * the softness is spent on the *backgrounds*, never on the contrast of text.
  *
  * Three theme states: light, dark and system. `system` stamps no attribute and
  * relies on `prefers-color-scheme`; an explicit choice stamps `data-theme` on
- * <html>, so the toggle wins in both directions.
+ * <html>, so the toggle wins in both directions. That is why the dark values
+ * appear twice — once under the media query, once under the attribute. The two
+ * blocks must stay identical; `npm run tokens:check` fails the build if they
+ * drift, and re-verifies every contrast ratio quoted below.
+ *
+ * Colours are stored as bare `H S% L%` triplets so Tailwind can compose them
+ * with an alpha (`bg-accent/15`) and so a tint is always a token, never a new
+ * colour. Never hardcode a colour in a component: add a token here instead.
  */
 @layer base {
   :root {
-    --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-    --font-mono: ui-monospace, SFMono-Regular, 'JetBrains Mono', Menlo, monospace;
+    color-scheme: light;
+
+    --font-sans:
+      ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, 'JetBrains Mono', 'Cascadia Mono', Menlo, monospace;
+
+    /* Radii: one step apart, so a chip inside a card never looks rounder than it. */
     --radius: 0.5rem;
+    --radius-sm: 0.375rem;
+    --radius-lg: 0.75rem;
 
-    --background: 0 0% 100%;
-    --foreground: 222 47% 11%;
-    --card: 0 0% 100%;
-    --card-foreground: 222 47% 11%;
+    /* Motion. Short and eased-out; anything longer reads as lag in a tool. */
+    --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+    --duration-fast: 110ms;
+    --duration: 170ms;
+
+    /* ---- Surfaces (light) -------------------------------------------------
+       Four planes, warm and close together: page < sidebar < card < overlay.
+       The steps are small on purpose — elevation is carried by a soft shadow
+       and a border, not by a bright white slab. */
+    --background: 38 33% 95%; /* #F7F4EF */
+    --surface: 40 50% 98%; /* #FCFAF6 — cards, panels */
+    --surface-muted: 39 30% 91%; /* #EFEAE1 — inset rows, code, wells */
+    --elevated: 0 0% 100%; /* dialogs and popovers only */
+    --sidebar: 39 31% 93%; /* #F3EFE7 */
+    --sidebar-border: 40 22% 84%;
+
+    --card: 40 50% 98%;
+    --card-foreground: 30 10% 15%;
     --popover: 0 0% 100%;
-    --popover-foreground: 222 47% 11%;
-    --primary: 222 47% 21%;
-    --primary-foreground: 210 40% 98%;
-    --secondary: 210 40% 96%;
-    --secondary-foreground: 222 47% 11%;
-    --muted: 210 40% 96%;
-    --muted-foreground: 215 16% 47%;
-    --accent: 199 89% 48%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 0 72% 51%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 214 32% 91%;
-    --input: 214 32% 91%;
-    --ring: 199 89% 48%;
+    --popover-foreground: 30 10% 15%;
 
-    /* Semantic status and priority tokens (mapped from project.yaml). */
-    --status-backlog: 215 16% 47%;
-    --status-todo: 199 89% 48%;
-    --status-in-progress: 38 92% 50%;
-    --status-in-review: 271 81% 56%;
-    --status-done: 142 71% 45%;
-    --status-cancelled: 215 14% 60%;
-    --priority-critical: 0 72% 51%;
-    --priority-high: 25 95% 53%;
-    --priority-medium: 38 92% 50%;
-    --priority-low: 215 16% 47%;
+    /* ---- Text (light) ----------------------------------------------------- */
+    --foreground: 30 10% 15%; /* #2B2723 — 13.5:1 on the page */
+    --muted-foreground: 36 10% 38%; /* #6B6357 — 5.4:1, safe for body copy */
+    --subtle-foreground: 35 9% 42%; /* 4.6:1 — the floor for any text */
 
-    /*
-     * Chart tokens (docs/05 section 12).
-     *
-     * These are deliberately not the badge tokens above. A badge is read on its
-     * own; a chart series is read against its neighbours, so the steps here are
-     * re-chosen until adjacent series stay separable under protanopia,
-     * deuteranopia and tritanopia, and until each one clears the chart surface.
-     * Changing one means re-validating the set, not eyeballing it.
-     */
-    --chart-todo: 201 98% 39%;
-    --chart-progress: 38 92% 50%;
-    --chart-done: 143 72% 29%;
+    /* ---- Interaction (light) ---------------------------------------------- */
+    --primary: 30 11% 18%; /* solid neutral button */
+    --primary-foreground: 40 50% 98%;
+    --secondary: 39 30% 91%;
+    --secondary-foreground: 30 10% 20%;
+    --muted: 39 30% 91%;
+    --accent: 27 54% 40%; /* #9C5F2E — copper: links, focus, active */
+    --accent-foreground: 40 50% 98%;
+    --accent-hover: 29 62% 32%;
+    --accent-subtle: 33 40% 88%; /* accent tint for an active row */
+    --destructive: 3 46% 45%;
+    --destructive-foreground: 40 50% 98%;
+    --success: 150 37% 29%;
+    --warning: 43 80% 27%;
+    --info: 205 42% 39%;
+
+    /* ---- Lines (light) ----------------------------------------------------
+       `border` separates, `input` bounds a control: the second is much stronger
+       because a control's edge has to clear 3:1 against the page (WCAG 1.4.11)
+       while a row separator must not shout. */
+    --border: 40 24% 85%;
+    --border-strong: 40 21% 78%;
+    --input: 38 18% 52%;
+    --ring: 27 54% 40%;
+    --overlay: 30 14% 12%;
+    --code: 39 30% 93%;
+
+    /* ---- Shadows (light) --------------------------------------------------
+       Warm-tinted and low-opacity: a neutral grey shadow on paper reads dirty. */
+    --shadow-xs: 0 1px 2px hsl(30 20% 20% / 0.05);
+    --shadow-sm: 0 1px 2px hsl(30 20% 20% / 0.05), 0 2px 6px hsl(30 20% 20% / 0.05);
+    --shadow-md: 0 2px 4px hsl(30 20% 20% / 0.05), 0 8px 20px hsl(30 20% 20% / 0.08);
+    --shadow-lg: 0 4px 10px hsl(30 20% 20% / 0.07), 0 18px 44px hsl(30 20% 20% / 0.12);
+
+    /* ---- Status and priority (light) --------------------------------------
+       Read one at a time, as a tinted chip, so each only has to clear 4.5:1
+       against its own tint. Priority splits critical from high by *fill*
+       (critical is solid), not by hue alone. */
+    --status-backlog: 36 10% 38%;
+    --status-todo: 205 42% 39%;
+    --status-in-progress: 43 80% 27%;
+    --status-in-review: 267 32% 45%;
+    --status-done: 150 37% 29%;
+    --status-cancelled: 35 9% 50%;
+    --priority-critical: 3 51% 41%;
+    --priority-high: 6 47% 45%;
+    --priority-medium: 43 80% 27%;
+    --priority-low: 36 10% 38%;
+
+    /* ---- Chart series (light) ---------------------------------------------
+       Not the badge tokens: a series is read *against its neighbours*. These
+       four were searched for maximum separation under protanopia, deuteranopia
+       and tritanopia (worst-case ΔE ≥ 23) while each still clears 3:1 on the
+       card surface. The accent is never a series colour, so a mark can never be
+       confused with a link. Changing one means re-running `tokens:check`. */
+    --chart-todo: 204 40% 48%;
+    --chart-progress: 40 65% 44%;
+    --chart-done: 149 30% 24%;
     /* Cancelled and unknown are context, not series: neutral by design.
        Unknown is additionally hatched, so it never depends on colour alone. */
-    --chart-cancelled: 215 16% 47%;
-    --chart-unknown: 214 20% 69%;
-    --chart-grid: 214 32% 91%;
-    --chart-ideal: 215 16% 47%;
+    --chart-cancelled: 39 12% 50%;
+    --chart-unknown: 39 16% 72%;
+    --chart-grid: 40 24% 85%;
+    --chart-ideal: 36 10% 38%;
   }
 
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme='light']) {
-      --background: 222 47% 8%;
-      --foreground: 210 40% 96%;
-      --card: 222 45% 11%;
-      --card-foreground: 210 40% 96%;
-      --popover: 222 45% 11%;
-      --popover-foreground: 210 40% 96%;
-      --primary: 210 40% 96%;
-      --primary-foreground: 222 47% 11%;
-      --secondary: 217 33% 17%;
-      --secondary-foreground: 210 40% 96%;
-      --muted: 217 33% 17%;
-      --muted-foreground: 215 20% 65%;
-      --accent: 199 89% 48%;
-      --accent-foreground: 222 47% 11%;
-      --destructive: 0 63% 41%;
-      --destructive-foreground: 210 40% 96%;
-      --border: 217 33% 20%;
-      --input: 217 33% 20%;
-      --ring: 199 89% 48%;
-      
+      color-scheme: dark;
+
+      --background: 36 11% 9%; /* #191714 — warm charcoal, never black */
+      --surface: 34 12% 12%; /* #211E1A */
+      --surface-muted: 33 11% 16%;
+      --elevated: 30 11% 14%;
+      --sidebar: 33 12% 11%;
+      --sidebar-border: 35 12% 18%;
+
+      --card: 34 12% 12%;
+      --card-foreground: 39 32% 90%;
+      --popover: 30 11% 14%;
+      --popover-foreground: 39 32% 90%;
+
+      --foreground: 39 32% 90%; /* #EDE7DC — warm off-white, 14.5:1 */
+      --muted-foreground: 36 12% 61%;
+      --subtle-foreground: 37 9% 52%;
+
+      --primary: 39 32% 90%;
+      --primary-foreground: 36 11% 9%;
+      --secondary: 33 11% 16%;
+      --secondary-foreground: 39 32% 90%;
+      --muted: 33 11% 16%;
+      --accent: 27 70% 64%; /* #E39C63 — 7.8:1 on the page */
+      --accent-foreground: 30 15% 10%;
+      --accent-hover: 27 80% 72%;
+      --accent-subtle: 25 25% 20%;
+      --destructive: 5 62% 66%;
+      --destructive-foreground: 30 15% 10%;
+      --success: 145 30% 60%;
+      --warning: 42 61% 60%;
+      --info: 204 44% 66%;
+
+      --border: 35 12% 19%;
+      --border-strong: 36 11% 26%;
+      --input: 38 11% 40%;
+      --ring: 30 60% 58%;
+      --overlay: 30 15% 4%;
+      --code: 30 10% 13%;
+
+      /* Dark shadows are near-black and wide: on a dark plane, elevation is
+         read from the surface step, and the shadow only anchors the edge. */
+      --shadow-xs: 0 1px 2px hsl(0 0% 0% / 0.3);
+      --shadow-sm: 0 1px 2px hsl(0 0% 0% / 0.3), 0 2px 6px hsl(0 0% 0% / 0.28);
+      --shadow-md: 0 2px 4px hsl(0 0% 0% / 0.3), 0 8px 20px hsl(0 0% 0% / 0.36);
+      --shadow-lg: 0 4px 10px hsl(0 0% 0% / 0.34), 0 18px 44px hsl(0 0% 0% / 0.48);
+
+      --status-backlog: 36 12% 61%;
+      --status-todo: 205 46% 70%;
+      --status-in-progress: 45 57% 63%;
+      --status-in-review: 268 46% 75%;
+      --status-done: 146 33% 64%;
+      --status-cancelled: 36 12% 55%;
+      --priority-critical: 5 69% 71%;
+      --priority-high: 4 52% 75%;
+      --priority-medium: 45 57% 63%;
+      --priority-low: 36 12% 61%;
+
       /* Dark is chosen, not flipped: each step is re-picked for the dark chart
          surface and re-validated, which is why these are not the light values. */
-      --chart-todo: 201 98% 39%;
-      --chart-progress: 32 95% 44%;
-      --chart-done: 142 76% 36%;
-      --chart-cancelled: 215 20% 65%;
-      --chart-unknown: 217 20% 45%;
-      --chart-grid: 217 33% 20%;
-      --chart-ideal: 215 20% 65%;
+      --chart-todo: 205 48% 55%;
+      --chart-progress: 40 55% 55%;
+      --chart-done: 151 28% 74%;
+      --chart-cancelled: 37 8% 45%;
+      --chart-unknown: 35 10% 33%;
+      --chart-grid: 35 12% 19%;
+      --chart-ideal: 36 12% 61%;
     }
   }
 
   :root[data-theme='dark'] {
-    --background: 222 47% 8%;
-    --foreground: 210 40% 96%;
-    --card: 222 45% 11%;
-    --card-foreground: 210 40% 96%;
-    --popover: 222 45% 11%;
-    --popover-foreground: 210 40% 96%;
-    --primary: 210 40% 96%;
-    --primary-foreground: 222 47% 11%;
-    --secondary: 217 33% 17%;
-    --secondary-foreground: 210 40% 96%;
-    --muted: 217 33% 17%;
-    --muted-foreground: 215 20% 65%;
-    --accent: 199 89% 48%;
-    --accent-foreground: 222 47% 11%;
-    --destructive: 0 63% 41%;
-    --destructive-foreground: 210 40% 96%;
-    --border: 217 33% 20%;
-    --input: 217 33% 20%;
-    --ring: 199 89% 48%;
-    
-    /* Dark is chosen, not flipped: each step is re-picked for the dark chart
-       surface and re-validated, which is why these are not the light values. */
-    --chart-todo: 201 98% 39%;
-    --chart-progress: 32 95% 44%;
-    --chart-done: 142 76% 36%;
-    --chart-cancelled: 215 20% 65%;
-    --chart-unknown: 217 20% 45%;
-    --chart-grid: 217 33% 20%;
-    --chart-ideal: 215 20% 65%;
+    color-scheme: dark;
+
+    --background: 36 11% 9%;
+    --surface: 34 12% 12%;
+    --surface-muted: 33 11% 16%;
+    --elevated: 30 11% 14%;
+    --sidebar: 33 12% 11%;
+    --sidebar-border: 35 12% 18%;
+
+    --card: 34 12% 12%;
+    --card-foreground: 39 32% 90%;
+    --popover: 30 11% 14%;
+    --popover-foreground: 39 32% 90%;
+
+    --foreground: 39 32% 90%;
+    --muted-foreground: 36 12% 61%;
+    --subtle-foreground: 37 9% 52%;
+
+    --primary: 39 32% 90%;
+    --primary-foreground: 36 11% 9%;
+    --secondary: 33 11% 16%;
+    --secondary-foreground: 39 32% 90%;
+    --muted: 33 11% 16%;
+    --accent: 27 70% 64%;
+    --accent-foreground: 30 15% 10%;
+    --accent-hover: 27 80% 72%;
+    --accent-subtle: 25 25% 20%;
+    --destructive: 5 62% 66%;
+    --destructive-foreground: 30 15% 10%;
+    --success: 145 30% 60%;
+    --warning: 42 61% 60%;
+    --info: 204 44% 66%;
+
+    --border: 35 12% 19%;
+    --border-strong: 36 11% 26%;
+    --input: 38 11% 40%;
+    --ring: 30 60% 58%;
+    --overlay: 30 15% 4%;
+    --code: 30 10% 13%;
+
+    --shadow-xs: 0 1px 2px hsl(0 0% 0% / 0.3);
+    --shadow-sm: 0 1px 2px hsl(0 0% 0% / 0.3), 0 2px 6px hsl(0 0% 0% / 0.28);
+    --shadow-md: 0 2px 4px hsl(0 0% 0% / 0.3), 0 8px 20px hsl(0 0% 0% / 0.36);
+    --shadow-lg: 0 4px 10px hsl(0 0% 0% / 0.34), 0 18px 44px hsl(0 0% 0% / 0.48);
+
+    --status-backlog: 36 12% 61%;
+    --status-todo: 205 46% 70%;
+    --status-in-progress: 45 57% 63%;
+    --status-in-review: 268 46% 75%;
+    --status-done: 146 33% 64%;
+    --status-cancelled: 36 12% 55%;
+    --priority-critical: 5 69% 71%;
+    --priority-high: 4 52% 75%;
+    --priority-medium: 45 57% 63%;
+    --priority-low: 36 12% 61%;
+
+    --chart-todo: 205 48% 55%;
+    --chart-progress: 40 55% 55%;
+    --chart-done: 151 28% 74%;
+    --chart-cancelled: 37 8% 45%;
+    --chart-unknown: 35 10% 33%;
+    --chart-grid: 35 12% 19%;
+    --chart-ideal: 36 12% 61%;
   }
 
   * {
@@ -139,9 +270,112 @@
 
   body {
     @apply bg-background font-sans text-foreground antialiased;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
   }
 
+  /* Headings are set slightly tighter than the body: at these sizes the default
+     tracking reads loose against the warm background. */
+  :is(h1, h2, h3) {
+    letter-spacing: -0.011em;
+  }
+
+  /* One focus treatment everywhere: a copper ring, offset from the control, so
+     it is visible on every surface including a tinted row. */
   :focus-visible {
     @apply outline-2 outline-offset-2 outline-ring;
+  }
+
+  code,
+  kbd,
+  samp {
+    font-family: var(--font-mono);
+    font-size: 0.9em;
+  }
+
+  /* A key is drawn as a key: a chip with a thicker bottom edge. */
+  kbd {
+    display: inline-block;
+    min-width: 1.25rem;
+    padding: 0.05rem 0.3rem;
+    border: 1px solid hsl(var(--border-strong));
+    border-bottom-width: 2px;
+    border-radius: 0.25rem;
+    background: hsl(var(--surface));
+    color: hsl(var(--muted-foreground));
+    font-size: 0.8em;
+    line-height: 1.4;
+    text-align: center;
+  }
+
+  hr {
+    border-color: hsl(var(--border));
+  }
+
+  ::selection {
+    background: hsl(var(--accent) / 0.22);
+  }
+
+  /* Scrollbars follow the theme instead of punching a bright strip into it. */
+  * {
+    scrollbar-color: hsl(var(--border-strong)) transparent;
+    scrollbar-width: thin;
+  }
+
+  ::-webkit-scrollbar {
+    height: 0.625rem;
+    width: 0.625rem;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--border-strong));
+    border: 3px solid transparent;
+    background-clip: content-box;
+    border-radius: 9999px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(var(--subtle-foreground));
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer components {
+  /* The page header every route repeats: title, one line of context, actions. */
+  .page-header {
+    @apply flex flex-wrap items-start justify-between gap-3 pb-1;
+  }
+
+  .page-title {
+    @apply text-xl font-semibold tracking-tight;
+  }
+
+  .page-subtitle {
+    @apply text-sm text-muted-foreground;
+  }
+
+  /* Small uppercase section label used above a group of fields or a list. */
+  .section-label {
+    @apply text-[11px] font-medium uppercase tracking-[0.08em] text-subtle-foreground;
+  }
+
+  /* An empty state is a surface, not a paragraph floating in the page. */
+  .empty-state {
+    @apply rounded-lg border border-dashed border-border-strong bg-surface-muted/40 px-6 py-10 text-center text-sm text-muted-foreground;
   }
 }

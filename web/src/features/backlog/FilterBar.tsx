@@ -45,7 +45,7 @@ function MultiSelectFilter({
 
   return (
     <details className="relative">
-      <summary className="flex h-9 cursor-pointer list-none items-center gap-1 rounded-md border border-input bg-background px-3 text-sm shadow-sm marker:hidden hover:bg-secondary">
+      <summary className="flex h-9 cursor-pointer list-none items-center gap-1 rounded-md border border-border-strong bg-surface px-3 text-sm shadow-xs transition-colors duration-fast marker:hidden hover:border-input hover:bg-secondary">
         {label}
         {selected.length > 0 ? (
           <span className="rounded-full bg-accent/15 px-1.5 text-xs text-accent">
@@ -53,7 +53,7 @@ function MultiSelectFilter({
           </span>
         ) : null}
       </summary>
-      <div className="absolute left-0 z-20 mt-1 max-h-72 w-56 overflow-y-auto rounded-md border border-border bg-popover p-2 shadow-md">
+      <div className="absolute left-0 z-20 mt-1 max-h-72 w-56 animate-fade-in overflow-y-auto rounded-md border border-border bg-popover p-2 shadow-pop">
         <fieldset>
           <legend className="sr-only">{label}</legend>
           {options.length === 0 ? (

@@ -58,7 +58,7 @@ export function BoardCardTile({ card, project, show, actions, draggable }: Board
       data-ref={card.ref}
       data-remote={card.remote ? 'true' : undefined}
       className={cn(
-        'rounded-md border border-border bg-card p-2 text-sm shadow-sm',
+        'rounded-md border border-border bg-card p-2 text-sm shadow-xs',
         card.remote && 'border-dashed bg-muted/40 text-muted-foreground',
         isDragging && 'opacity-50',
       )}
@@ -114,7 +114,9 @@ export function BoardCardTile({ card, project, show, actions, draggable }: Board
           </div>
 
           <p className="font-medium leading-snug">
-            {card.title ?? <span className="italic">Title unavailable until the repo is cloned</span>}
+            {card.title ?? (
+              <span className="italic">Title unavailable until the repo is cloned</span>
+            )}
           </p>
 
           <div className="flex flex-wrap items-center gap-1">
@@ -153,7 +155,10 @@ export function BoardCardTile({ card, project, show, actions, draggable }: Board
             <div className="space-y-1 text-xs text-muted-foreground">
               {caption ? (
                 <p>
-                  <span data-stale={card.stale ? 'true' : undefined} className={cn(card.stale && 'text-amber-600')}>
+                  <span
+                    data-stale={card.stale ? 'true' : undefined}
+                    className={cn(card.stale && 'text-warning')}
+                  >
                     {caption}
                   </span>
                 </p>

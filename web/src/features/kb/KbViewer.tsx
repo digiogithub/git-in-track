@@ -157,9 +157,7 @@ export function KbViewer() {
               ) : null}
             </div>
           </div>
-          {page && !documentOwnsTitle ? (
-            <h1 className="text-2xl font-semibold tracking-tight">{page.title}</h1>
-          ) : null}
+          {page && !documentOwnsTitle ? <h1 className="page-title">{page.title}</h1> : null}
         </header>
 
         {pageQuery.isPending && path !== '' ? <PageSkeleton /> : null}

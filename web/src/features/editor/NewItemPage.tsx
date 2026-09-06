@@ -9,6 +9,7 @@ import { DiagnosticList } from '@/components/editor/DiagnosticList';
 import { FrontMatterForm } from '@/components/editor/FrontMatterForm';
 import { MarkdownEditor } from '@/components/editor/MarkdownEditor';
 import { Button } from '@/components/ui/button';
+import { fieldClasses } from '@/components/ui/field';
 import { Label } from '@/components/ui/label';
 import type { FrontMatterValues } from '@/features/editor/front-matter';
 import { emptyValues, hasErrors, validateValues } from '@/features/editor/front-matter';
@@ -17,8 +18,7 @@ import { parseNewItemSearch } from '@/features/editor/search';
 import type { EditableItemType } from '@/features/editor/templates';
 import { bodyTemplate, editableItemTypes, isPristineTemplate } from '@/features/editor/templates';
 
-const selectClass =
-  'h-9 w-full rounded-md border border-input bg-background px-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
+const selectClass = `${fieldClasses} h-9 px-2`;
 
 /** Create an epic, story, task or milestone and open its detail page. */
 export function NewItemPage() {
@@ -52,7 +52,9 @@ export function NewItemPage() {
   // The workflow arrives asynchronously; adopt its initial status once.
   useEffect(() => {
     if (schema.initialStatus === '') return;
-    setValues((current) => (current.status === '' ? { ...current, status: schema.initialStatus } : current));
+    setValues((current) =>
+      current.status === '' ? { ...current, status: schema.initialStatus } : current,
+    );
   }, [schema.initialStatus]);
 
   const changeType = (next: EditableItemType) => {
@@ -116,7 +118,7 @@ export function NewItemPage() {
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="font-mono text-xs text-muted-foreground">{projectKey}</p>
-          <h1 className="text-2xl font-semibold tracking-tight">New item</h1>
+          <h1 className="page-title">New item</h1>
         </div>
         <div className="flex items-center gap-2">
           <Button
@@ -181,7 +183,9 @@ export function NewItemPage() {
       />
 
       <section className="space-y-2" aria-label="Body">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Body</h2>
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+          Body
+        </h2>
         <MarkdownEditor label="Item body" value={body} readOnly={readOnly} onChange={setBody} />
       </section>
     </div>

@@ -92,9 +92,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           <li
             key={item.id}
             className={cn(
-              'pointer-events-auto rounded-md border bg-card p-3 pr-9 text-sm shadow-lg',
+              'pointer-events-auto animate-slide-in rounded-md border bg-elevated p-3 pr-9 text-sm shadow-overlay',
               item.variant === 'destructive'
-                ? 'border-destructive/40 text-destructive'
+                ? 'border-destructive/40 bg-destructive/10 text-destructive'
                 : 'border-border text-card-foreground',
             )}
           >
@@ -109,7 +109,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                 onClick={() => {
                   dismiss(item.id);
                 }}
-                className="absolute -right-6 -top-1 rounded p-1 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                className="absolute -right-6 -top-1 rounded-sm p-1 text-subtle-foreground transition-colors duration-fast hover:bg-secondary hover:text-foreground"
               >
                 <X aria-hidden="true" className="h-3.5 w-3.5" />
               </button>

@@ -45,14 +45,14 @@ export function ConflictDialog({
         aria-modal="true"
         aria-labelledby="conflict-title"
         aria-describedby="conflict-description"
-        className="w-full max-w-md space-y-4 rounded-lg border border-border bg-card p-5 text-card-foreground shadow-lg"
+        className="w-full max-w-md space-y-4 rounded-lg border border-border bg-card p-5 text-card-foreground shadow-overlay"
       >
         <h2 id="conflict-title" className="text-base font-semibold">
           {itemId} changed on disk
         </h2>
         <p id="conflict-description" className="text-sm text-muted-foreground">
-          Someone (or something) wrote this file after you opened it, so the revision check
-          failed. Nothing has been saved yet.
+          Someone (or something) wrote this file after you opened it, so the revision check failed.
+          Nothing has been saved yet.
         </p>
         <div className="flex flex-wrap justify-end gap-2">
           <Button ref={cancelRef} variant="ghost" disabled={busy} onClick={onCancel}>

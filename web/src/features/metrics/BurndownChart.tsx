@@ -28,7 +28,11 @@ export function BurndownChart({ burndown }: { burndown: Burndown }) {
   const observed = points.filter((point) => point.observed);
   const scopeMoved = observed.some((point) => point.scope !== observed[0]?.scope);
   const max = niceMax(
-    Math.max(burndown.committedPoints, ...observed.map((point) => Math.max(point.scope, point.remaining)), 1),
+    Math.max(
+      burndown.committedPoints,
+      ...observed.map((point) => Math.max(point.scope, point.remaining)),
+      1,
+    ),
   );
   const ticks = ticksOf(max);
 
@@ -190,7 +194,7 @@ export function BurndownChart({ burndown }: { burndown: Burndown }) {
         {hovered && (
           <div
             role="status"
-            className="pointer-events-none absolute left-2 top-2 rounded-md border border-border bg-popover px-3 py-2 text-xs shadow-sm"
+            className="pointer-events-none absolute left-2 top-2 rounded-md border border-border bg-popover px-3 py-2 text-xs shadow-pop"
           >
             <p className="font-medium text-popover-foreground">{shortDate(hovered.date)}</p>
             {hovered.observed ? (

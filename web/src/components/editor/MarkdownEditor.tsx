@@ -13,13 +13,11 @@ import { yaml as yamlLanguage } from '@codemirror/lang-yaml';
 import {
   LanguageDescription,
   bracketMatching,
-  defaultHighlightStyle,
   indentOnInput,
   syntaxHighlighting,
 } from '@codemirror/language';
 import { highlightSelectionMatches, searchKeymap } from '@codemirror/search';
 import { Compartment, EditorState } from '@codemirror/state';
-import { oneDark } from '@codemirror/theme-one-dark';
 import {
   EditorView,
   drawSelection,
@@ -28,12 +26,21 @@ import {
   keymap,
   placeholder as placeholderExt,
 } from '@codemirror/view';
-import { Bold, Code, Heading2, Italic, Link2, ListChecks, PanelRightClose, PanelRightOpen } from 'lucide-react';
+import {
+  Bold,
+  Code,
+  Heading2,
+  Italic,
+  Link2,
+  ListChecks,
+  PanelRightClose,
+  PanelRightOpen,
+} from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
+import { editorHighlightStyle, editorTheme } from '@/components/editor/editor-theme';
 import { insertLink, toggleLinePrefix, wrapSelection } from '@/components/editor/markdown-commands';
 import { MarkdownPreview } from '@/components/editor/MarkdownPreview';
-import { useIsDarkTheme } from '@/components/editor/theme';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/cn';
 
@@ -52,13 +59,6 @@ export type MarkdownEditorProps = {
   /** Item ids offered as `[[wikilink]]` completions. */
   references?: EditorReference[];
 };
-
-const lightTheme = EditorView.theme({
-  '&': { backgroundColor: 'transparent', color: 'inherit' },
-  '.cm-content': { fontFamily: 'var(--font-mono)', fontSize: '13px', padding: '10px 12px' },
-  '.cm-gutters': { display: 'none' },
-  '&.cm-focused': { outline: 'none' },
-});
 
 function referenceCompletions(references: EditorReference[]) {
   const options: Completion[] = references.map((ref) => ({
@@ -98,7 +98,6 @@ export function MarkdownEditor({
   const editableCompartment = useRef(new Compartment()).current;
   const completionCompartment = useRef(new Compartment()).current;
   const [showPreview, setShowPreview] = useState(false);
-  const isDark = useIsDarkTheme();
 
   useEffect(() => {
     onChangeRef.current = onChange;
@@ -112,10 +111,9 @@ export function MarkdownEditor({
     }
   }, []);
 
-  const themeExtension = useMemo(
-    () => (isDark ? [oneDark, lightTheme] : [syntaxHighlighting(defaultHighlightStyle), lightTheme]),
-    [isDark],
-  );
+  // One theme for both colour schemes: it is written against the design tokens,
+  // so `data-theme` alone re-colours the editor and nothing has to re-mount.
+  const themeExtension = useMemo(() => [editorTheme, syntaxHighlighting(editorHighlightStyle)], []);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -145,7 +143,11 @@ export function MarkdownEditor({
           markdown({
             base: markdownLanguage,
             codeLanguages: [
-              LanguageDescription.of({ name: 'yaml', alias: ['yml'], load: () => Promise.resolve(yamlLanguage()) }),
+              LanguageDescription.of({
+                name: 'yaml',
+                alias: ['yml'],
+                load: () => Promise.resolve(yamlLanguage()),
+              }),
             ],
           }),
           EditorView.contentAttributes.of({ 'aria-label': label, role: 'textbox' }),
@@ -230,23 +232,57 @@ export function MarkdownEditor({
 
   return (
     <div className={cn('flex flex-col gap-2', className)}>
-      <div className="flex flex-wrap items-center gap-1" role="toolbar" aria-label={`${label} formatting`}>
-        <ToolbarButton label="Bold" onClick={run((v) => { wrapSelection(v, '**'); })}>
+      <div
+        className="flex flex-wrap items-center gap-0.5 rounded-md border border-border bg-surface-muted/50 p-1"
+        role="toolbar"
+        aria-label={`${label} formatting`}
+      >
+        <ToolbarButton
+          label="Bold"
+          onClick={run((v) => {
+            wrapSelection(v, '**');
+          })}
+        >
           <Bold aria-hidden="true" className="h-4 w-4" />
         </ToolbarButton>
-        <ToolbarButton label="Italic" onClick={run((v) => { wrapSelection(v, '_'); })}>
+        <ToolbarButton
+          label="Italic"
+          onClick={run((v) => {
+            wrapSelection(v, '_');
+          })}
+        >
           <Italic aria-hidden="true" className="h-4 w-4" />
         </ToolbarButton>
-        <ToolbarButton label="Heading" onClick={run((v) => { toggleLinePrefix(v, '## '); })}>
+        <ToolbarButton
+          label="Heading"
+          onClick={run((v) => {
+            toggleLinePrefix(v, '## ');
+          })}
+        >
           <Heading2 aria-hidden="true" className="h-4 w-4" />
         </ToolbarButton>
-        <ToolbarButton label="Task list item" onClick={run((v) => { toggleLinePrefix(v, '- [ ] '); })}>
+        <ToolbarButton
+          label="Task list item"
+          onClick={run((v) => {
+            toggleLinePrefix(v, '- [ ] ');
+          })}
+        >
           <ListChecks aria-hidden="true" className="h-4 w-4" />
         </ToolbarButton>
-        <ToolbarButton label="Link" onClick={run((v) => { insertLink(v); })}>
+        <ToolbarButton
+          label="Link"
+          onClick={run((v) => {
+            insertLink(v);
+          })}
+        >
           <Link2 aria-hidden="true" className="h-4 w-4" />
         </ToolbarButton>
-        <ToolbarButton label="Code" onClick={run((v) => { wrapSelection(v, '`'); })}>
+        <ToolbarButton
+          label="Code"
+          onClick={run((v) => {
+            wrapSelection(v, '`');
+          })}
+        >
           <Code aria-hidden="true" className="h-4 w-4" />
         </ToolbarButton>
         <div className="ml-auto">
@@ -273,7 +309,7 @@ export function MarkdownEditor({
         <div
           ref={hostRef}
           data-testid="markdown-editor"
-          className="min-h-[18rem] overflow-auto rounded-md border border-input bg-background focus-within:ring-2 focus-within:ring-ring"
+          className="min-h-[18rem] overflow-auto rounded-md border border-input/60 bg-surface-muted/40 transition-colors duration-fast focus-within:border-input focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 focus-within:ring-offset-background"
         />
         {showPreview ? <MarkdownPreview value={value} className="min-h-[18rem]" /> : null}
       </div>

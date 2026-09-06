@@ -38,7 +38,7 @@ export function WorkspaceSearch() {
 
   return (
     <section aria-labelledby="workspace-search-heading" className="space-y-3">
-      <h2 id="workspace-search-heading" className="text-lg font-semibold tracking-tight">
+      <h2 id="workspace-search-heading" className="text-base font-semibold tracking-tight">
         Search
       </h2>
 
@@ -73,7 +73,7 @@ export function WorkspaceSearch() {
           ) : null}
 
           {enabled && !results.isPending && hits.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Nothing matched “{query}”.</p>
+            <p className="empty-state">Nothing matched “{query}”.</p>
           ) : null}
 
           {hits.length > 0 ? (

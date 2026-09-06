@@ -117,7 +117,7 @@ describe('code fences', () => {
   it('highlights with shiki and keeps both theme colours', async () => {
     const result = await renderMarkdown('```ts\nconst a: number = 1;\n```');
     const out = toHtml(result.root);
-    expect(out).toContain('class="shiki shiki-themes github-light github-dark"');
+    expect(out).toContain('class="shiki shiki-themes vitesse-light vitesse-dark"');
     expect(out).toContain('--shiki-light');
     expect(out).toContain('--shiki-dark');
     expect(out).toContain('const');

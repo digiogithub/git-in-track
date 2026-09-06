@@ -123,7 +123,9 @@ describe('ConflictResolver', () => {
     const statusRow = screen.getByText('status').closest('tr');
     expect(statusRow).not.toBeNull();
     await user.click(
-      screen.getAllByRole('button', { name: 'Mine' }).find((button) => statusRow?.contains(button))!,
+      screen
+        .getAllByRole('button', { name: 'Mine' })
+        .find((button) => statusRow?.contains(button))!,
     );
     await user.click(screen.getByRole('button', { name: 'Accept merged' }));
 

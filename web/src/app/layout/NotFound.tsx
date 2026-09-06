@@ -6,7 +6,7 @@ import { buttonVariants } from '@/components/ui/button';
 export function NotFound() {
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-semibold tracking-tight">Page not found</h1>
+      <h1 className="page-title">Page not found</h1>
       <p className="text-sm text-muted-foreground">
         The route does not exist. It may belong to a phase that is not implemented yet.
       </p>

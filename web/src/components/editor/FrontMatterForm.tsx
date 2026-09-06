@@ -7,6 +7,7 @@ import { ItemPicker } from '@/components/editor/ItemPicker';
 import { LinksEditor } from '@/components/editor/LinksEditor';
 import { TagInput } from '@/components/editor/TagInput';
 import { Button } from '@/components/ui/button';
+import { fieldClasses } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
@@ -29,8 +30,7 @@ export type FrontMatterFormProps = {
   className?: string;
 };
 
-const selectClass =
-  'h-9 w-full rounded-md border border-input bg-background px-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50';
+const selectClass = `${fieldClasses} h-9 px-2`;
 
 /** Which item types can be a parent of `type` (docs/03-data-model.md §8, §9). */
 function parentTypes(type: ItemType): ItemType[] {

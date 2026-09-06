@@ -7,14 +7,25 @@ import {
 
 import { cn } from '@/lib/cn';
 
-/** Unstyled-ish table primitives; the data grid logic lives in the feature. */
+/**
+ * Unstyled-ish table primitives; the data grid logic lives in the feature.
+ *
+ * Density is the whole design here: a 2rem header, 2.25rem rows, hairline
+ * separators and a hover that tints rather than boxes. Zebra striping is
+ * deliberately absent — with separators this soft it would add a second,
+ * competing rhythm.
+ */
 export const Table = forwardRef<HTMLTableElement, HTMLAttributes<HTMLTableElement>>(function Table(
   { className, ...props },
   ref,
 ) {
   return (
     <div className="relative w-full overflow-x-auto">
-      <table ref={ref} className={cn('w-full caption-bottom text-sm', className)} {...props} />
+      <table
+        ref={ref}
+        className={cn('w-full caption-bottom border-collapse text-sm', className)}
+        {...props}
+      />
     </div>
   );
 });
@@ -23,7 +34,9 @@ export const TableHeader = forwardRef<
   HTMLTableSectionElement,
   HTMLAttributes<HTMLTableSectionElement>
 >(function TableHeader({ className, ...props }, ref) {
-  return <thead ref={ref} className={cn('[&_tr]:border-b', className)} {...props} />;
+  return (
+    <thead ref={ref} className={cn('[&_tr]:border-b [&_tr]:border-border', className)} {...props} />
+  );
 });
 
 export const TableBody = forwardRef<
@@ -39,7 +52,7 @@ export const TableRow = forwardRef<HTMLTableRowElement, HTMLAttributes<HTMLTable
       <tr
         ref={ref}
         className={cn(
-          'border-b border-border transition-colors hover:bg-secondary/60 data-[selected=true]:bg-secondary',
+          'border-b border-border/70 transition-colors duration-fast hover:bg-surface-muted/60 data-[selected=true]:bg-accent-subtle/60',
           className,
         )}
         {...props}
@@ -54,7 +67,7 @@ export const TableHead = forwardRef<HTMLTableCellElement, ThHTMLAttributes<HTMLT
       <th
         ref={ref}
         className={cn(
-          'h-9 whitespace-nowrap px-3 text-left align-middle text-xs font-medium text-muted-foreground',
+          'h-8 whitespace-nowrap px-3 text-left align-middle text-2xs font-medium uppercase tracking-[0.08em] text-subtle-foreground',
           className,
         )}
         {...props}

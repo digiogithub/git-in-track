@@ -61,9 +61,9 @@ function PromptDialog({ request }: { request: CredentialRequest }) {
         <DialogHeader>
           <DialogTitle>{request.host} needs a token</DialogTitle>
           <DialogDescription id="credential-prompt-description">
-            {request.remoteUrl} asked for a credential. The token is kept in this tab’s memory
-            only, for {request.host} and no other host, and is forgotten when you reload or sign
-            out. It is never written to storage or to a file.
+            {request.remoteUrl} asked for a credential. The token is kept in this tab’s memory only,
+            for {request.host} and no other host, and is forgotten when you reload or sign out. It
+            is never written to storage or to a file.
           </DialogDescription>
         </DialogHeader>
 

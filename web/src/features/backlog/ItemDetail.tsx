@@ -7,6 +7,7 @@ import { useProvider } from '@/api/provider-context';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { fieldClasses } from '@/components/ui/field';
 import { Progress } from '@/components/ui/progress';
 import { Select } from '@/components/ui/select';
 import { ToastProvider, useToast } from '@/components/ui/toast';
@@ -179,7 +180,7 @@ function CommentsPanel({ item, projectKey }: { item: Item; projectKey: string })
       <CardContent className="space-y-4">
         {comments.isPending ? <p className="text-sm text-muted-foreground">Loading…</p> : null}
         {comments.isSuccess && comments.data.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No comments yet.</p>
+          <p className="empty-state">No comments yet.</p>
         ) : null}
         <ul aria-label="Comment thread" className="space-y-3">
           {(comments.data ?? []).map((comment) => (
@@ -209,7 +210,7 @@ function CommentsPanel({ item, projectKey }: { item: Item; projectKey: string })
             onChange={(event) => {
               setDraft(event.target.value);
             }}
-            className="w-full rounded-md border border-input bg-background p-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+            className={`${fieldClasses} p-2`}
           />
           <div className="flex items-center gap-2">
             <Button
@@ -343,7 +344,7 @@ function ItemDetailView() {
           <PriorityBadge priority={item.priority} />
         </div>
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <h1 className="text-2xl font-semibold tracking-tight">{item.title}</h1>
+          <h1 className="page-title">{item.title}</h1>
           <div className="flex items-center gap-2">
             <StatusPicker item={item} project={project} projectKey={projectKey} />
             <FeatureLink
@@ -477,7 +478,7 @@ function ItemDetailView() {
           {childrenQuery.isPending ? (
             <p className="text-sm text-muted-foreground">Loading…</p>
           ) : children.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Nothing is parented to this item yet.</p>
+            <p className="empty-state">Nothing is parented to this item yet.</p>
           ) : (
             <ul aria-label="Child items" className="divide-y divide-border">
               {children.map((child) => (

@@ -33,7 +33,7 @@ export function TeamPanel() {
   return (
     <section aria-labelledby="team-heading" className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 id="team-heading" className="text-lg font-semibold tracking-tight">
+        <h2 id="team-heading" className="text-base font-semibold tracking-tight">
           Team
         </h2>
         <TeamSelector />

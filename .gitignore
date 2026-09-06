@@ -25,3 +25,4 @@ Thumbs.db
 
 # gintrack local state (never commit caches or tokens)
 .gintrack-cache/
+.pando*

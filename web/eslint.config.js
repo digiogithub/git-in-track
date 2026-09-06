@@ -113,5 +113,16 @@ export default tseslint.config(
       '@typescript-eslint/unbound-method': 'off',
     },
   },
+  {
+    // Node-side maintenance scripts (`npm run tokens:check`). They are not part
+    // of a tsconfig project and they run outside the browser, so the
+    // type-checked rules are turned off and the globals are node's.
+    files: ['scripts/**/*.mjs'],
+    ...tseslint.configs.disableTypeChecked,
+    languageOptions: {
+      globals: { ...globals.node },
+      parserOptions: { projectService: false, project: null },
+    },
+  },
   prettier,
 );

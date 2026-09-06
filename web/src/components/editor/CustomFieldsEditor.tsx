@@ -1,5 +1,6 @@
 import type { Diagnostic } from '@/api/provider';
 import { FieldIssue } from '@/components/editor/DiagnosticList';
+import { fieldClasses } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -15,8 +16,7 @@ export type CustomFieldsEditorProps = {
   className?: string;
 };
 
-const selectClass =
-  'h-9 w-full rounded-md border border-input bg-background px-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
+const selectClass = `${fieldClasses} h-9 px-2`;
 
 function asText(value: unknown): string {
   if (value === undefined || value === null) return '';
@@ -107,7 +107,9 @@ export function CustomFieldsEditor({
                         : 'text'
                 }
                 disabled={disabled}
-                value={field.type === 'list' && Array.isArray(value) ? value.join(', ') : asText(value)}
+                value={
+                  field.type === 'list' && Array.isArray(value) ? value.join(', ') : asText(value)
+                }
                 onChange={(event) => {
                   const raw = event.target.value;
                   if (field.type === 'number') {

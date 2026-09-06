@@ -122,8 +122,7 @@ export function valuesToYaml(values: FrontMatterValues): string {
 }
 
 export type YamlParseResult =
-  | { ok: true; values: FrontMatterValues }
-  | { ok: false; issues: Diagnostic[] };
+  { ok: true; values: FrontMatterValues } | { ok: false; issues: Diagnostic[] };
 
 function issue(code: string, message: string, field?: string): Diagnostic {
   return { code, severity: 'error', message, ...(field ? { field } : {}) };
@@ -145,7 +144,11 @@ function readLinks(raw: unknown, issues: Diagnostic[]): Link[] {
     const target = entry.target;
     if (typeof kind !== 'string' || !linkKinds.includes(kind as LinkKind)) {
       issues.push(
-        issue('E-ENUM', `Unknown link kind: ${String(kind)}. Use one of ${linkKinds.join(', ')}`, 'links'),
+        issue(
+          'E-ENUM',
+          `Unknown link kind: ${String(kind)}. Use one of ${linkKinds.join(', ')}`,
+          'links',
+        ),
       );
       continue;
     }
@@ -308,7 +311,12 @@ export function validateValues(
 
   for (const link of values.links) {
     if (!idPattern.test(link.target)) {
-      push('W-REF-DANGLING', 'warning', `Link target "${link.target}" is not a valid item id`, 'links');
+      push(
+        'W-REF-DANGLING',
+        'warning',
+        `Link target "${link.target}" is not a valid item id`,
+        'links',
+      );
     }
   }
 
@@ -358,8 +366,18 @@ export function validateValues(
     if (def.type === 'bool' && typeof value !== 'boolean') {
       push('E-CF-TYPE', 'error', `Custom field "${key}" must be true or false`, `custom.${key}`);
     }
-    if (def.type === 'date' && typeof value === 'string' && value !== '' && !datePattern.test(value)) {
-      push('E-DATE-FORMAT', 'error', `Custom field "${key}" must be a YYYY-MM-DD date`, `custom.${key}`);
+    if (
+      def.type === 'date' &&
+      typeof value === 'string' &&
+      value !== '' &&
+      !datePattern.test(value)
+    ) {
+      push(
+        'E-DATE-FORMAT',
+        'error',
+        `Custom field "${key}" must be a YYYY-MM-DD date`,
+        `custom.${key}`,
+      );
     }
   }
 
