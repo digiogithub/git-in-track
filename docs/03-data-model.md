@@ -679,6 +679,16 @@ its children.
 An epic MUST NOT have `parent`. Stories point *up* to their epic; epics do not list their children
 (that would duplicate state and create merge conflicts on every story creation).
 
+**Deleting is soft by default.** `deleted: true` keeps the file, its id, its path and its
+history: the id is never reused (R-ID-3), a merge cannot resurrect a stale copy, and every
+`parent`, `milestone` and `links[]` entry that named the item still resolves — to an item
+marked deleted rather than to nothing. A deleted item is excluded from lists, boards, search
+and metrics unless a caller asks for it (`includeDeleted`). Removing the file is a hard
+delete, and it is deliberate: `gintrack item delete --hard` and
+`DELETE /api/v1/items/{id}?hard=true`. The web app only ever soft-deletes, after showing what
+still points at the item ([ADR-026](./adr/ADR-026-the-web-app-soft-deletes-and-warns-first.md),
+[doc 05 §8.4](./05-web-app.md)).
+
 ### 7.2 Body conventions
 
 ```

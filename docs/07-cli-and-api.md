@@ -1491,7 +1491,9 @@ POST   /api/v1/items
 GET    /api/v1/items/{id}
 PATCH  /api/v1/items/{id}               If-Match: <rev>
 PUT    /api/v1/items/{id}               If-Match: <rev>   (full replace incl. body)
-DELETE /api/v1/items/{id}               If-Match: <rev>
+DELETE /api/v1/items/{id}               If-Match: <rev>   ?hard=true removes the file
+GET    /api/v1/items/{id}/references                      what still points at the item
+POST   /api/v1/items/{id}/tasks         If-Match: <rev>   {"line":34,"checked":true}
 POST   /api/v1/items/{id}/move          If-Match: <rev>   {"status":"in_review"}
 GET    /api/v1/items/{id}/comments
 POST   /api/v1/items/{id}/comments   If-Match: <item rev> optional, honored when sent
@@ -1574,6 +1576,54 @@ POST /api/v1/items/ACME-T-0311/comments
   "path":"docs/.pmngr/comments/ACME-T-0311/20260903T104012Z-marta.md",
   "created":"2026-09-03T10:40:12Z", "rev":"sha256:c41a…9f0" }
 ```
+
+**Deleting.** `DELETE` soft-deletes by default (docs/03 §7.1): the file keeps its id, its
+path and its history and gains `deleted: true`, so the id is never reused, a merge cannot
+resurrect a stale copy, and everything that referenced it still resolves — to an item marked
+deleted. `?hard=true` removes the file instead. Both answer `204 No Content`.
+
+```json
+GET /api/v1/items/ACME-US-0042/references
+200
+{
+  "id": "ACME-US-0042",
+  "references": [
+    {"kind":"board","id":"delivery","path":".pmngr/boards/delivery.md","title":"Delivery",
+     "field":"order.in_progress","ref":"ACME/ACME-US-0042"},
+    {"kind":"item","id":"ACME-T-0311","path":"docs/.pmngr/tasks/ACME-T-0311-wire-oidc.md",
+     "title":"Wire OIDC discovery endpoint","type":"task","field":"parent","ref":"ACME-US-0042"},
+    {"kind":"sprint","id":"ACME-TEAM-S-0004","path":".pmngr/sprints/ACME-TEAM-S-0004.md",
+     "title":"Sprint 4","field":"items","ref":"ACME/ACME-US-0042"}
+  ],
+  "children": [
+    {"kind":"item","id":"ACME-T-0311","path":"docs/.pmngr/tasks/ACME-T-0311-wire-oidc.md",
+     "title":"Wire OIDC discovery endpoint","type":"task","field":"parent","ref":"ACME-US-0042"}
+  ]
+}
+```
+
+The search covers `parent`, `milestone` and every `links[]` entry of every item of the
+project, plus the column orders and `filters.milestone` of every board, the `items` and
+`committed` of every sprint, and the `task` of every promoted retro action, across every
+open team repository. It is a read: it never refuses a delete, it tells a client what a
+delete would touch (`core.ItemReferences`, the item-level sibling of the project-level
+`core.TeamProjectReferences` behind `team.project.remove`).
+
+```json
+POST /api/v1/items/ACME-US-0042/tasks
+If-Match: sha256:6f1c…a09
+{"line": 34, "checked": true}
+
+200 OK
+ETag: "sha256:9d22…7b1"
+{ "id":"ACME-US-0042", "rev":"sha256:9d22…7b1", "body":"…\n- [x] Discovery cached\n…" }
+```
+
+`line` is the 1-based line of the task-list marker **inside the body**, which is what the
+web app's renderer stamps on every rendered checkbox. The core rewrites the single character
+between the brackets on that line and leaves every other byte of the document alone; a line
+that is not a task-list item — prose, or a `- [ ]` inside a fenced code block — is refused
+with `task_list_mismatch` (422), which means the body has changed since it was rendered.
 
 #### Boards, sprints, retrospectives
 
