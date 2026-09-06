@@ -23,10 +23,23 @@ export type MarkdownLinkProps = {
 /** Renders an in-app link. The KB viewer supplies a TanStack Router `<Link>`. */
 export type MarkdownLinkRenderer = (props: MarkdownLinkProps) => ReactElement;
 
+/**
+ * Flips one task-list checkbox. `line` is the 1-based line of the marker in the
+ * source the tree was rendered from, as stamped by `rehypeTaskList`.
+ *
+ * A host that supplies one turns the rendered checkboxes into controls; without
+ * it they stay disabled, which is what every read-only surface wants.
+ */
+export type ToggleTask = (line: number, checked: boolean) => void;
+
 export type MarkdownContextValue = {
   /** Turns a vault-relative asset path into a URL the browser can load. */
   resolveAsset?: ResolveAsset;
   renderLink?: MarkdownLinkRenderer;
+  /** Set to make task-list checkboxes interactive. */
+  onToggleTask?: ToggleTask;
+  /** Disables the checkboxes while a toggle is in flight. */
+  taskBusy?: boolean;
 };
 
 export const MarkdownContext = createContext<MarkdownContextValue>({});

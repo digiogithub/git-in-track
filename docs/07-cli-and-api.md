@@ -223,6 +223,14 @@ git:
   authorName: ""         # empty -> read from the repo/global git config
   authorEmail: ""
   signCommits: false     # gpg/ssh signing; the system backend only
+  # The browser-git CORS proxy the companion serves at /cors-proxy/
+  # (06-git-sync.md §6.3, ADR-025). It forwards only the three git smart-HTTP
+  # endpoints, only to the hosts below, and only for an authenticated caller on
+  # a trusted origin.
+  corsProxy:
+    enabled: true          # false removes the endpoint; it answers 501 with the reason
+    allowRepoRemotes: true # allow the registered repositories' own remote hosts
+    allowedHosts: []       # extra hosts, `host` or `host:port`; no schemes, no wildcards
 
 index:
   cacheDir: ""           # empty -> the directory the configuration file is in
@@ -1159,7 +1167,10 @@ Catalog of `code` values: `unauthorized`, `forbidden`, `not_found`, `invalid_req
 `sprint_already_active`, `board_in_use`, `project_exists`, `team_exists`,
 `team_project_exists`, `team_project_referenced`, `git_dirty`,
 `git_auth_failed`,
-`git_conflict`, `index_unavailable`, `rate_limited`, `not_implemented`, `internal`.
+`git_conflict`, `index_unavailable`, `rate_limited`, `not_implemented`, `internal`,
+and the CORS proxy's own: `cors_proxy_disabled`, `cors_proxy_forbidden`,
+`cors_proxy_bad_target`, `cors_proxy_host_not_allowed`, `cors_proxy_target_blocked`,
+`cors_proxy_too_large`, `cors_proxy_upstream_failed` (see the CORS proxy under §5.2).
 
 `wip_limit_exceeded` (HTTP 409) is a *refusal the caller may repeat*: a board's WIP limit is
 advisory (doc 04 R-COL-5), so the move is declined once with the column and the limit in `detail`,
@@ -1480,7 +1491,9 @@ POST   /api/v1/items
 GET    /api/v1/items/{id}
 PATCH  /api/v1/items/{id}               If-Match: <rev>
 PUT    /api/v1/items/{id}               If-Match: <rev>   (full replace incl. body)
-DELETE /api/v1/items/{id}               If-Match: <rev>
+DELETE /api/v1/items/{id}               If-Match: <rev>   ?hard=true removes the file
+GET    /api/v1/items/{id}/references                      what still points at the item
+POST   /api/v1/items/{id}/tasks         If-Match: <rev>   {"line":34,"checked":true}
 POST   /api/v1/items/{id}/move          If-Match: <rev>   {"status":"in_review"}
 GET    /api/v1/items/{id}/comments
 POST   /api/v1/items/{id}/comments   If-Match: <item rev> optional, honored when sent
@@ -1563,6 +1576,54 @@ POST /api/v1/items/ACME-T-0311/comments
   "path":"docs/.pmngr/comments/ACME-T-0311/20260903T104012Z-marta.md",
   "created":"2026-09-03T10:40:12Z", "rev":"sha256:c41a…9f0" }
 ```
+
+**Deleting.** `DELETE` soft-deletes by default (docs/03 §7.1): the file keeps its id, its
+path and its history and gains `deleted: true`, so the id is never reused, a merge cannot
+resurrect a stale copy, and everything that referenced it still resolves — to an item marked
+deleted. `?hard=true` removes the file instead. Both answer `204 No Content`.
+
+```json
+GET /api/v1/items/ACME-US-0042/references
+200
+{
+  "id": "ACME-US-0042",
+  "references": [
+    {"kind":"board","id":"delivery","path":".pmngr/boards/delivery.md","title":"Delivery",
+     "field":"order.in_progress","ref":"ACME/ACME-US-0042"},
+    {"kind":"item","id":"ACME-T-0311","path":"docs/.pmngr/tasks/ACME-T-0311-wire-oidc.md",
+     "title":"Wire OIDC discovery endpoint","type":"task","field":"parent","ref":"ACME-US-0042"},
+    {"kind":"sprint","id":"ACME-TEAM-S-0004","path":".pmngr/sprints/ACME-TEAM-S-0004.md",
+     "title":"Sprint 4","field":"items","ref":"ACME/ACME-US-0042"}
+  ],
+  "children": [
+    {"kind":"item","id":"ACME-T-0311","path":"docs/.pmngr/tasks/ACME-T-0311-wire-oidc.md",
+     "title":"Wire OIDC discovery endpoint","type":"task","field":"parent","ref":"ACME-US-0042"}
+  ]
+}
+```
+
+The search covers `parent`, `milestone` and every `links[]` entry of every item of the
+project, plus the column orders and `filters.milestone` of every board, the `items` and
+`committed` of every sprint, and the `task` of every promoted retro action, across every
+open team repository. It is a read: it never refuses a delete, it tells a client what a
+delete would touch (`core.ItemReferences`, the item-level sibling of the project-level
+`core.TeamProjectReferences` behind `team.project.remove`).
+
+```json
+POST /api/v1/items/ACME-US-0042/tasks
+If-Match: sha256:6f1c…a09
+{"line": 34, "checked": true}
+
+200 OK
+ETag: "sha256:9d22…7b1"
+{ "id":"ACME-US-0042", "rev":"sha256:9d22…7b1", "body":"…\n- [x] Discovery cached\n…" }
+```
+
+`line` is the 1-based line of the task-list marker **inside the body**, which is what the
+web app's renderer stamps on every rendered checkbox. The core rewrites the single character
+between the brackets on that line and leaves every other byte of the document alone; a line
+that is not a task-list item — prose, or a `- [ ]` inside a fenced code block — is refused
+with `task_list_mismatch` (422), which means the body has changed since it was rendered.
 
 #### Boards, sprints, retrospectives
 
@@ -1828,6 +1889,7 @@ PATCH /api/v1/git/settings                   {"commitOnSave":true,"messageTempla
 GET   /api/v1/git/status?repo=ACME           backend, identity, branch, dirty set
 POST  /api/v1/git/commit                     {} flushes what is batched, or
                                              {"repo":"ACME","paths":[…],"message":"…"}
+GET   /api/v1/git/cors-proxy                 where the CORS proxy is, and its allow-list
 
 GET  /api/v1/sync/status                    per-repo ahead/behind/dirty
 POST /api/v1/sync/run                       {"repos":["ACME"],"dryRun":false,"push":true}
@@ -1839,6 +1901,46 @@ POST /api/v1/sync/conflicts/resolve         {"repo":"TEAM","path":"…",
                                              "hunkText":{…},"continue":true}
 POST /api/v1/sync/abort
 GET  /api/v1/git/log?item=ACME-T-0311&limit=20
+```
+
+#### The CORS proxy (GIT-US-0042, docs/06 §6.3, ADR-025)
+
+Browser-only mode cannot reach a git host directly, so the companion forwards the
+three git smart-HTTP endpoints for it. The mount point is outside the versioned
+prefix, because `isomorphic-git` builds the URL by concatenating the configured
+proxy with the remote's host and path:
+
+```http
+GET  /cors-proxy/<host>/<repo path>/info/refs?service=git-upload-pack
+GET  /cors-proxy/<host>/<repo path>/info/refs?service=git-receive-pack
+POST /cors-proxy/<host>/<repo path>/git-upload-pack
+POST /cors-proxy/<host>/<repo path>/git-receive-pack
+```
+
+Every request needs **both** an `Origin` the companion trusts and this run's
+bearer token in **`X-Gintrack-Token`** — not `Authorization`, which is left free
+for the git host's own credential and is the one header forwarded upstream. Its
+refusals, all `application/problem+json`:
+
+| Code | Status | When |
+|---|---|---|
+| `cors_proxy_disabled` | 501 | `git.corsProxy.enabled: false` |
+| `cors_proxy_forbidden` | 403 | The `Origin` is absent or not trusted |
+| `unauthorized` | 401 | No token, or the wrong one, in `X-Gintrack-Token` |
+| `cors_proxy_bad_target` | 400 / 403 / 405 | Not one of the four requests above: a path outside the git surface, `info/refs` with no smart service, a relative segment, the wrong method |
+| `cors_proxy_host_not_allowed` | 403 | The host is not a remote of a registered repository and is not in `git.corsProxy.allowedHosts` — including after a redirect |
+| `cors_proxy_target_blocked` | 403 | The host resolves to a loopback, private, link-local, CGNAT, multicast or reserved address, or redirected off HTTPS |
+| `cors_proxy_too_large` | 413 / 502 | More than 32 MiB of request body, or a response over 256 MiB |
+| `cors_proxy_upstream_failed` | 502 | The git host did not answer, or redirected more than three times |
+
+`GET /api/v1/git/cors-proxy` (bearer token, like the rest of the API) reports
+what a client needs to adopt it:
+
+```json
+{ "enabled": true, "url": "http://127.0.0.1:7317/cors-proxy",
+  "tokenHeader": "X-Gintrack-Token",
+  "allowedHosts": ["github.com:443"],
+  "maxRequestBytes": 33554432, "maxResponseBytes": 268435456 }
 ```
 
 The `/git` routes are served since GIT-US-0020 and the `/sync` routes since GIT-US-0021,
@@ -2175,6 +2277,7 @@ r.Route("/api/v1", func(api chi.Router) {
     })
 })
 r.Mount("/mcp", mcpHTTPHandler)                     // behind bearerAuth; 501 when disabled
+r.Handle("/cors-proxy/*", corsProxyHandler)         // git smart-HTTP only; ADR-025
 r.NotFound(spaHandler(webFS))                       // SPA fallback
 ```
 

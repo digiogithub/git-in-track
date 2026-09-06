@@ -34,6 +34,7 @@ describe('ItemEditorPage', () => {
 
   beforeEach(() => {
     provider = new FakeProvider();
+    localStorage.clear();
   });
 
   it('loads the item into the form and the body editor', async () => {
@@ -173,5 +174,72 @@ describe('ItemEditorPage', () => {
     renderEditorRoute(editPath, provider);
     const autosave = await screen.findByRole('switch', { name: 'Autosave' });
     expect(autosave).toHaveAttribute('aria-checked', 'false');
+  });
+
+  it('keeps an unsaved edit in a draft and offers it back after a reload', async () => {
+    const user = userEvent.setup();
+    const first = renderEditorRoute(editPath, provider);
+    await screen.findByLabelText('Title');
+
+    fireEvent.change(screen.getByLabelText('Item body'), {
+      target: { value: '## Description\n\nHalf-written.\n' },
+    });
+    await screen.findByText(/Unsaved changes/);
+
+    // The draft is per workspace and per item, and it is the only thing that
+    // survives: nothing was written to the repository.
+    expect(localStorage.getItem(`gintrack:draft:browser:ACME:${storyId}`)).toContain(
+      'Half-written.',
+    );
+    expect((await provider.getItem(storyId)).body).not.toContain('Half-written.');
+
+    // Unmount and mount again: the same tab after a reload.
+    first.unmount();
+    renderEditorRoute(editPath, provider);
+
+    const banner = await screen.findByRole('alertdialog', { name: 'Recovered draft' });
+    expect(banner).toHaveTextContent(/never written to the repository/);
+    expect(screen.getByLabelText<HTMLTextAreaElement>('Item body').value).not.toContain(
+      'Half-written.',
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Restore draft' }));
+    expect(screen.getByLabelText<HTMLTextAreaElement>('Item body').value).toBe(
+      '## Description\n\nHalf-written.\n',
+    );
+    expect(screen.queryByRole('alertdialog', { name: 'Recovered draft' })).not.toBeInTheDocument();
+  });
+
+  it('discards a recovered draft when the user asks it to', async () => {
+    const user = userEvent.setup();
+    const first = renderEditorRoute(editPath, provider);
+    await screen.findByLabelText('Title');
+    fireEvent.change(screen.getByLabelText('Item body'), { target: { value: 'scratch\n' } });
+    await screen.findByText(/Unsaved changes/);
+    first.unmount();
+
+    renderEditorRoute(editPath, provider);
+    await user.click(await screen.findByRole('button', { name: 'Discard draft' }));
+
+    expect(localStorage.getItem(`gintrack:draft:browser:ACME:${storyId}`)).toBeNull();
+    const again = renderEditorRoute(editPath, provider);
+    expect(again.queryByRole('alertdialog', { name: 'Recovered draft' })).not.toBeInTheDocument();
+  });
+
+  it('clears the draft once the edit is saved', async () => {
+    const user = userEvent.setup();
+    renderEditorRoute(editPath, provider);
+    await screen.findByLabelText('Title');
+
+    fireEvent.change(screen.getByLabelText('Item body'), { target: { value: 'Saved for good.\n' } });
+    await waitFor(() => {
+      expect(localStorage.getItem(`gintrack:draft:browser:ACME:${storyId}`)).not.toBeNull();
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => {
+      expect(localStorage.getItem(`gintrack:draft:browser:ACME:${storyId}`)).toBeNull();
+    });
   });
 });

@@ -28,6 +28,8 @@ func (s *Server) mountItems(r chi.Router) {
 	r.Put("/{id}", s.notImplemented("A full replace (PUT) arrives with Phase 3; PATCH already replaces the body."))
 	r.Delete("/{id}", s.handleItemDelete)
 	r.Post("/{id}/move", s.handleItemMove)
+	r.Get("/{id}/references", s.handleItemReferences)
+	r.Post("/{id}/tasks", s.handleItemTaskSet)
 	r.Get("/{id}/comments", s.handleCommentList)
 	r.Post("/{id}/comments", s.handleCommentAdd)
 	s.deferRoute(r, "/{id}/links", "Typed links are edited through PATCH /items/{id} until Phase 3.")
@@ -299,6 +301,63 @@ func (s *Server) handleItemMove(w http.ResponseWriter, r *http.Request) {
 	}
 	item := field(result, "item")
 	s.publishWrite(r, m, result, id, "moved")
+	writeEntity(w, r, http.StatusOK, item, revOf(item))
+}
+
+// handleItemReferences serves GET /api/v1/items/{id}/references: everything
+// that points at an item — a child's `parent`, a story's `milestone`, a typed
+// link, a card in a board column, a sprint's scope, a promoted retro action.
+//
+// It is what the web app shows before a delete, so the user reads what breaks
+// instead of a count (docs/07 section 5.5). It goes through the workspace
+// because the two halves of the answer live in different repositories.
+func (s *Server) handleItemReferences(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	result, err := s.repos.workspace().Dispatch(r.Context(), "item.references",
+		mustJSON(vault.ItemReferencesParams{ID: id, Team: teamOf(r)}))
+	if err != nil {
+		writeVaultError(w, r, err)
+		return
+	}
+	writeJSON(w, r, http.StatusOK, result)
+}
+
+// handleItemTaskSet serves POST /api/v1/items/{id}/tasks: one task-list
+// checkbox of the body, ticked or cleared. The line is the 1-based line of the
+// marker inside the body, and the write is guarded by If-Match like every other
+// edit (docs/07 section 5.5).
+func (s *Server) handleItemTaskSet(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	rev, ok := requireIfMatch(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Line    int   `json:"line"`
+		Checked *bool `json:"checked"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	if body.Line <= 0 {
+		failProblem(w, r, codeInvalidRequest, "A task toggle needs the 1-based `line` of the checkbox.")
+		return
+	}
+	if body.Checked == nil {
+		failProblem(w, r, codeInvalidRequest, "A task toggle needs `checked`.")
+		return
+	}
+	m, ok := s.mountForItem(w, r, id)
+	if !ok {
+		return
+	}
+	result, ok := s.call(w, r, m, "item.task.set",
+		map[string]any{"id": id, "rev": rev, "line": body.Line, "checked": *body.Checked})
+	if !ok {
+		return
+	}
+	item := field(result, "item")
+	s.publishWrite(r, m, result, id, "updated")
 	writeEntity(w, r, http.StatusOK, item, revOf(item))
 }
 

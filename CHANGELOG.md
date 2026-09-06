@@ -14,6 +14,22 @@ because a commit list cannot express them.
 
 ### Added
 
+- The companion serves the **git CORS proxy** browser-only mode needs at
+  `http://127.0.0.1:7317/cors-proxy/`, and the web app adopts it automatically the moment
+  it detects a companion, so the "browser UI plus local companion for networking" setup of
+  docs/06 §6.3 needs no configuration (`GIT-US-0042`, ADR-025). It is deliberately narrow:
+  the three git smart-HTTP endpoints only, an allow-list of hosts derived from the
+  registered repositories' remotes plus `git.corsProxy.allowedHosts`, HTTPS only, public
+  unicast addresses only — resolved once and dialed at the address that was checked, so DNS
+  rebinding reaches nothing — 32 MiB request and 256 MiB response caps, a 120 s deadline,
+  redirects re-validated at every hop, and headers copied through allow-lists in both
+  directions. It requires this run's bearer token in `X-Gintrack-Token` and a trusted
+  `Origin`; `Authorization` is reserved for the git host's credential and is the one header
+  forwarded upstream. `GET /api/v1/git/cors-proxy` reports the mount point and the
+  allow-list, and `git.corsProxy.enabled: false` removes the endpoint.
+- The nginx and Caddy reverse-proxy recipe docs/06 §6.3 had claimed to ship now exists, in
+  §6.3.2, with the same allow-list discipline.
+
 - A workspace can hold several team repositories, and the web app chooses which one is
   active. The choice is remembered per workspace and sent on every call that reads a
   board, a sprint, a retro or a team knowledge base, so the companion and browser-only

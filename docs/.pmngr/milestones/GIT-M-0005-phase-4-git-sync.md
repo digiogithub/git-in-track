@@ -26,7 +26,7 @@ never persists a secret.
 - [x] No credential written to disk or `localStorage` (test-enforced).
 - [ ] Commit on save batches edits into one commit per logical change.
 - [x] Push failures are recoverable and explained.
-- [ ] Browser CORS limitation documented with a working proxy recipe.
+- [x] Browser CORS limitation documented with a working proxy recipe.
 
 ## Notes
 

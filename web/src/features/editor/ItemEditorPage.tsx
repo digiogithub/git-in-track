@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Diagnostic, Item } from '@/api/provider';
 import { ProviderError } from '@/api/provider';
 import { useProvider } from '@/api/provider-context';
+import { useAppStore } from '@/app/store';
 import { DiagnosticList } from '@/components/editor/DiagnosticList';
 import { FrontMatterForm } from '@/components/editor/FrontMatterForm';
 import { MarkdownEditor } from '@/components/editor/MarkdownEditor';
@@ -12,6 +13,7 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { ConflictDialog } from '@/features/editor/ConflictDialog';
+import { clearDraft, draftKey, readDraft, writeDraft } from '@/features/editor/drafts';
 import type { FrontMatterValues } from '@/features/editor/front-matter';
 import {
   buildPatch,
@@ -32,6 +34,12 @@ const detailKey = (project: string, id: string) => ['items', project, 'detail', 
 
 const autosaveDelayMs = 2_000;
 
+/** "14:32 on 6 September" — when a recovered draft was last typed into. */
+function formatDraftTime(iso: string): string {
+  const at = new Date(iso);
+  return Number.isNaN(at.getTime()) ? 'an earlier session' : at.toLocaleString();
+}
+
 /** Item editor: front matter form + CodeMirror body, rev-checked saves. */
 export function ItemEditorPage() {
   const params = useParams({ strict: false });
@@ -40,6 +48,8 @@ export function ItemEditorPage() {
   const provider = useProvider();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const companionUrl = useAppStore((state) => state.companionUrl);
+  const storageKey = draftKey(companionUrl, projectKey, id);
 
   const projectsQuery = useQuery({
     queryKey: ['projects'],
@@ -67,6 +77,10 @@ export function ItemEditorPage() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [savedRev, setSavedRev] = useState<string | null>(null);
   const loadedRev = useRef<string | null>(null);
+  // The draft found in storage when the editor opened, until the user has said
+  // what to do with it. It is read once, on mount: a draft that arrives later
+  // would be this tab's own writing.
+  const [offered, setOffered] = useState(() => readDraft(storageKey));
 
   const item = itemQuery.data;
   const schema = useMemo(
@@ -86,6 +100,14 @@ export function ItemEditorPage() {
     setValues(valuesFromItem(item));
     setBody(item.body);
   }, [item, dirty]);
+
+  // Every keystroke of an unsaved edit reaches storage, so a reload, a crash or
+  // a closed tab finds the draft again. It is per-viewer convenience state and
+  // never a source of truth: the file on disk is (docs/05-web-app.md §8.3).
+  useEffect(() => {
+    if (!dirty || !base || !values) return;
+    writeDraft(storageKey, { rev: base.rev, values, body });
+  }, [dirty, base, values, body, storageKey]);
 
   const localDiagnostics = useMemo(
     () => (values && base ? validateValues(values, schema, base.type) : []),
@@ -121,6 +143,9 @@ export function ItemEditorPage() {
           rev = (await provider.getItem(base.id)).rev;
         }
         const saved = await provider.updateItem(base.id, patch, rev);
+        // The edit is on disk; the draft has nothing left to protect.
+        clearDraft(storageKey);
+        setOffered(null);
         loadedRev.current = saved.rev;
         setBase(saved);
         setSavedRev(saved.rev);
@@ -140,7 +165,7 @@ export function ItemEditorPage() {
         setSaving(false);
       }
     },
-    [base, values, body, saving, schema, provider, queryClient, projectKey],
+    [base, values, body, saving, schema, provider, queryClient, projectKey, storageKey],
   );
 
   useEffect(() => {
@@ -162,6 +187,10 @@ export function ItemEditorPage() {
   const reloadTheirs = useCallback(() => {
     void (async () => {
       const fresh = await provider.getItem(id);
+      // Taking their version is an explicit decision to drop the local edit,
+      // draft included; keeping it would offer the discarded text back.
+      clearDraft(storageKey);
+      setOffered(null);
       loadedRev.current = fresh.rev;
       setBase(fresh);
       setValues(valuesFromItem(fresh));
@@ -171,7 +200,7 @@ export function ItemEditorPage() {
       setDiagnostics([]);
       queryClient.setQueryData(detailKey(projectKey, fresh.id), fresh);
     })();
-  }, [provider, id, projectKey, queryClient]);
+  }, [provider, id, projectKey, queryClient, storageKey]);
 
   if (itemQuery.isPending) {
     return <p className="text-sm text-muted-foreground">Loading {id}…</p>;
@@ -227,11 +256,51 @@ export function ItemEditorPage() {
         </div>
       </header>
 
+      {offered ? (
+        <div
+          role="alertdialog"
+          aria-label="Recovered draft"
+          className="space-y-2 rounded-md border border-accent bg-secondary p-4"
+        >
+          <p className="text-sm">
+            Unsaved changes from {formatDraftTime(offered.savedAt)} were recovered from this
+            browser. They were never written to the repository.
+            {offered.rev === base.rev
+              ? ''
+              : ' The file has changed on disk since, so review them before saving.'}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              disabled={readOnly}
+              onClick={() => {
+                setValues(offered.values);
+                setBody(offered.body);
+                setDirty(true);
+                setOffered(null);
+              }}
+            >
+              Restore draft
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                clearDraft(storageKey);
+                setOffered(null);
+              }}
+            >
+              Discard draft
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
       <p className="text-sm text-muted-foreground" role="status">
         {readOnly
           ? 'This workspace is read-only.'
           : dirty
-            ? 'Unsaved changes'
+            ? 'Unsaved changes — kept in this browser until they are saved'
             : savedRev
               ? 'Saved'
               : 'No changes'}

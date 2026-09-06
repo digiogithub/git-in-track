@@ -28,6 +28,7 @@ import http from 'isomorphic-git/http/web';
 import type { SyncCommit, SyncConflict, SyncOptions, SyncResult, SyncStatus } from '@/api/provider';
 import type { DirectoryHandleLike } from '@/fs/types';
 
+import { proxyAuthHeaders } from './companion-proxy';
 import { createGitFs, type GitFs } from './fsa-fs';
 
 /** The working tree root every call operates from. */
@@ -42,9 +43,9 @@ const PREVIEW_LIMIT = 50;
 /** Why browser-only mode cannot reach a git host without a proxy (§6.3). */
 export const CORS_PROXY_REASON =
   'Git hosts do not send CORS headers, so a browser tab cannot fetch or push without a proxy. ' +
-  'Set a CORS proxy in Settings → Sync (the companion serves one at ' +
-  'http://127.0.0.1:7317/cors-proxy/ while it runs, or self-host @isomorphic-git/cors-proxy), ' +
-  'or run the companion and let it do the networking.';
+  'Run the companion (`gintrack serve`) and this tab adopts the proxy it serves at ' +
+  'http://127.0.0.1:7317/cors-proxy/ automatically, or set one yourself in Settings → Sync ' +
+  '(a self-hosted @isomorphic-git/cors-proxy, or the nginx/Caddy recipe in docs/06-git-sync.md §6.3).';
 
 /** Why an SSH remote cannot be used from a tab (§6.2). */
 export const SSH_REMOTE_REASON =
@@ -108,6 +109,18 @@ export class BrowserGitError extends Error {
     this.code = code;
     this.conflicts = conflicts;
   }
+}
+
+/**
+ * The extra request headers a proxied call needs.
+ *
+ * Only the companion's own proxy gets the companion's bearer token, and it
+ * travels in `X-Gintrack-Token` rather than `Authorization`, which belongs to
+ * the git host and is what the companion forwards upstream (§6.3).
+ */
+function proxyHeaders(opts: BrowserGitOptions): { headers?: Record<string, string> } {
+  const headers = proxyAuthHeaders(opts.corsProxy);
+  return Object.keys(headers).length === 0 ? {} : { headers };
 }
 
 /** Reads one repository's sync state. */
@@ -208,6 +221,7 @@ export async function runSync(
       ref: branch,
       singleBranch: true,
       ...(opts.corsProxy ? { corsProxy: opts.corsProxy } : {}),
+      ...proxyHeaders(opts),
       ...(opts.onAuth ? { onAuth: opts.onAuth } : {}),
       ...(opts.onAuthFailure ? { onAuthFailure: opts.onAuthFailure } : {}),
     });
@@ -378,6 +392,7 @@ async function push(fs: GitFs, status: SyncStatus, opts: BrowserGitOptions): Pro
     remote: status.remote,
     ref: status.branch,
     ...(opts.corsProxy ? { corsProxy: opts.corsProxy } : {}),
+    ...proxyHeaders(opts),
     ...(opts.onAuth ? { onAuth: opts.onAuth } : {}),
     ...(opts.onAuthFailure ? { onAuthFailure: opts.onAuthFailure } : {}),
   });

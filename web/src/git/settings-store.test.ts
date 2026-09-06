@@ -91,7 +91,7 @@ describe('browser sync settings (GIT-US-0021)', () => {
   it('is unsupported until a CORS proxy is configured, and says why', () => {
     const settings = readSyncSettings('proxy-test');
     expect(settings.supported).toBe(false);
-    expect(settings.reason).toContain('CORS proxy');
+    expect(settings.reason).toContain('without a proxy');
     // isomorphic-git has no rebase, so the strategy is forced, not stored.
     expect(settings.pullStrategy).toBe('merge');
   });

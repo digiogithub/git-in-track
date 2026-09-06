@@ -798,6 +798,7 @@ remark-parse
   → remark-rehype({ allowDangerousHtml: false })
   → rehype-slug + rehypeHeadingAnchors
   → rehypeMermaidPlaceholder             // pre.mermaid, rendered client-side
+  → rehypeTaskList                       // data-task-line on every checkbox (§8.2)
   → rehypeResolveAssets                  // repo-relative images/links → assets / routes
   → shiki (lazily imported chunk)        // dual theme, see below
   → rehype-katex (only when math enabled)
@@ -806,7 +807,8 @@ remark-parse
 ```
 
 **Sanitisation.** A hardened schema derived from `defaultSchema`:
-allow `input[type=checkbox][checked][disabled]` for task lists; allow
+allow `input[type=checkbox][checked][disabled]` for task lists, plus the
+`data-task-line` / `data-task-index` the renderer stamps on them (§8.2); allow
 `className` per element and per value, never freely — the allowlist covers
 `language-*`, `shiki*`, `callout`/`callout-*`, `wikilink*`, `heading`,
 `task-list-item`, `contains-task-list` and `footnotes`, so a document can never
@@ -895,9 +897,8 @@ CodeMirror 6, wrapped in `src/editor/`.
   the `rev` observed when the buffer was opened or last saved. On `RevConflict`
   the editor does not overwrite: it opens a merge dialog (current disk version vs.
   buffer) built on CodeMirror's merge view.
-- Drafts: unsaved buffers are mirrored to IndexedDB every 2 s keyed by
-  `(repoId, path)`; on reload the editor offers to restore. Draft entries are
-  cleared on successful save.
+- Drafts: unsaved buffers survive a reload, offered back on the next visit. See
+  §8.3 for what was actually built.
 - Commit-on-save (Phase 4): when enabled, a save also produces a commit using the
   configured template; the editor footer shows the resulting message and a
   "amend last commit" option when the previous commit touched the same file within
@@ -931,6 +932,84 @@ is an owning item and `milestone` when it is a milestone.
 Saving returns to the new item's detail page, and the relationship is visible
 straight away: the parent's children panel and the epic tree both read `parent`
 from the index the write refreshed.
+
+### 8.2 Ticking a criterion from the detail view (as built, GIT-US-0010)
+
+Acceptance criteria are the most-clicked thing in a tracker, so the detail view
+ticks them without opening the editor. A rendered checkbox carries the source
+line it came from, and a click sends that line to the core, which rewrites it.
+
+1. `rehypeTaskList` (§7) stamps `data-task-line` — the 1-based line of the list
+   marker inside the item body — on every task-list checkbox. The plugin runs
+   before sanitisation, and the attribute is allow-listed in the schema.
+2. `MarkdownContent` renders those checkboxes as controls instead of the
+   disabled markers GFM produces, but only when the host passes `onToggleTask`.
+   Every read-only surface (and a read-only workspace) simply omits it.
+3. `ItemDetail` passes one, and the click calls
+   `provider.setTaskItem(id, line, checked, rev)` → `item.task.set` →
+   `core.SetTaskListItem`.
+
+The rewrite itself is a core function, never a browser one:
+`core.SetTaskListItem(body, line, checked)` replaces the single character
+between the brackets on that line and returns the body otherwise byte for byte
+unchanged — no reflowing, no re-serialising, CRLF and a missing final newline
+included. It refuses a line that is not a task-list item, a `- [ ]` inside a
+fenced code block among them, with `task_list_mismatch`: the client is looking
+at a body that has changed since it was rendered, and the fix is to re-read it.
+
+The write is the ordinary rev-guarded one: the body goes back through
+`item.update`, so `updated` is stamped, the canonical serialiser writes the
+file, and a losing race raises `stale_revision` and the conflict path of §8,
+exactly like an editor save.
+
+### 8.3 Drafts (as built, GIT-US-0010)
+
+An unsaved edit is kept in `localStorage` under
+`gintrack:draft:<workspace>:<projectKey>:<itemId>`, written on every change and
+holding the front-matter values, the body and the `rev` the edit started from.
+The workspace half is the companion URL this tab talks to, or `browser` in
+browser-only mode (ADR-019), so two workspaces on one machine never read each
+other's drafts.
+
+On mount the editor reads the draft once. A draft it finds is **offered, never
+applied**: a banner says when it was written, warns when the file has changed on
+disk since, and gives the user "Restore draft" and "Discard draft". The draft is
+cleared on a successful save and when the user takes the disk version out of the
+conflict dialog. Drafts older than 30 days, and drafts that do not parse, are
+dropped on read.
+
+A draft is per-viewer, derived state: nothing but the editor that wrote it ever
+reads it, it never reaches a repository, and losing every draft costs a user
+their unsaved typing and nothing else. Storage that throws — a private window, a
+sandboxed frame — reads as "no draft" rather than as an error.
+
+The `useBlocker` "your unsaved changes will be lost" dialog stays: it is about
+leaving the route, and the draft is what makes the warning survivable.
+
+### 8.4 Deleting an item (as built, GIT-US-0010)
+
+The detail view carries a **Delete** button, disabled in a read-only workspace
+and on an already deleted item. It opens a confirmation that first shows what
+still points at the item, read through `provider.getItemReferences(id)` →
+`item.references` → `core.ItemReferences`:
+
+| Where | Fields searched |
+| ----- | --------------- |
+| Items of the project | `parent`, `milestone`, every `links[]` entry of every kind, qualified (`KEY/ID`) or bare |
+| Boards of every open team | the column orders, and `filters.milestone` |
+| Sprints of every open team | `items` and `committed` |
+| Retros of every open team | the `task` of a promoted action |
+
+Children are listed twice — among the references and as their own warning — 
+because a child is the one reference a delete could leave pointing at nothing.
+
+**The UI always soft-deletes** (ADR-026). The file keeps its id, its history and
+its path and gains `deleted: true` (docs/03 §7.1): the id is never reused, a
+merge cannot resurrect a stale copy, and every reference above still resolves —
+to an item marked deleted, which is a warning the user can act on, rather than
+to a dangling id. That is why the reference list is a warning and not a refusal.
+A hard delete stays a deliberate act at the CLI and the API
+(`DELETE /items/{id}?hard=true`), where the user is asking for the file to go.
 
 ---
 

@@ -33,7 +33,7 @@ isomorphic-git over File System Access handles, with the documented CORS-proxy c
       test.
 - [x] Commit on save produces one commit per logical edit, not one per keystroke.
 - [x] A push failure leaves a recoverable working tree and an actionable message.
-- [ ] The CORS limitation for browser-only mode is documented with a working proxy recipe.
+- [x] The CORS limitation for browser-only mode is documented with a working proxy recipe.
 
 ## Notes
 

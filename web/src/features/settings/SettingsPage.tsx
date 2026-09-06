@@ -20,6 +20,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { GitSettingsCard } from '@/features/settings/GitSettingsCard';
+import { SyncProxyCard } from '@/features/settings/SyncProxyCard';
 import { TeamProjectsCard } from '@/features/settings/TeamProjectsCard';
 
 /** Where the companion binary is published (docs/09-ci-cd-and-releases.md). */
@@ -107,6 +108,7 @@ export function SettingsPage() {
       <TeamProjectsCard />
 
       <GitSettingsCard />
+      <SyncProxyCard />
 
       <Card>
         <CardHeader>

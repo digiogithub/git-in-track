@@ -387,6 +387,21 @@ func (ix *Index) Item(id ItemID) (*Item, error) {
 	return &out, nil
 }
 
+// AllItems returns every indexed item, deleted ones included, sorted by id.
+//
+// It is the unpaginated read the whole-index analyses need — reference
+// analysis before a delete, for one — where a page of MaxLimit items would
+// silently answer half the question.
+func (ix *Index) AllItems() []Item {
+	ix.mu.RLock()
+	defer ix.mu.RUnlock()
+	out := make([]Item, 0, len(ix.byID))
+	for _, id := range sortedIDs(ix.byID) {
+		out = append(out, cloneItem(ix.byID[id]))
+	}
+	return out
+}
+
 // Children returns the direct children of an item, sorted by id.
 func (ix *Index) Children(id ItemID) []Item {
 	ix.mu.RLock()

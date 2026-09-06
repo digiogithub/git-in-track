@@ -48,6 +48,8 @@ import type {
   ItemFilter,
   ItemPage,
   ItemPatch,
+  ItemReference,
+  ItemReferencesResult,
   ItemStatus,
   ItemType,
   KbNode,
@@ -206,6 +208,9 @@ const PROBLEM_CODES: Record<string, ProviderErrorCode> = {
   conflict: 'stale_revision',
   validation_failed: 'validation_failed',
   workflow_transition_denied: 'validation_failed',
+  // The body changed since it was rendered, so the line a toggle addressed is
+  // no longer a checkbox: re-read the item, do not retry.
+  task_list_mismatch: 'task_list_mismatch',
   not_found: 'not_found',
   repo_not_registered: 'not_found',
   read_only: 'read_only',
@@ -1130,6 +1135,29 @@ export class CompanionProvider implements DataProvider {
     return this.#hydrate(body, id);
   }
 
+  /**
+   * Every open team repository is searched, not just the active one: a card in
+   * a team the user is not currently looking at breaks just as badly.
+   */
+  async getItemReferences(id: string): Promise<ItemReferencesResult> {
+    const body = await this.#json(`${API_PREFIX}/items/${encodeURIComponent(id)}/references`);
+    const record = asRecord(body);
+    return {
+      id,
+      references: asArray(record?.['references']) as ItemReference[],
+      children: asArray(record?.['children']) as ItemReference[],
+    };
+  }
+
+  async setTaskItem(id: string, line: number, checked: boolean, rev: string): Promise<Item> {
+    const body = await this.#json(`${API_PREFIX}/items/${encodeURIComponent(id)}/tasks`, {
+      method: 'POST',
+      rev,
+      body: { line, checked },
+    });
+    return this.#hydrate(body, id);
+  }
+
   async moveItem(id: string, status: ItemStatus, rev: string): Promise<Item> {
     const body = await this.#json(`${API_PREFIX}/items/${encodeURIComponent(id)}/move`, {
       method: 'POST',
@@ -1393,8 +1421,12 @@ export class CompanionProvider implements DataProvider {
     return result;
   }
 
-  async deleteItem(id: string, rev: string): Promise<void> {
-    await this.#json(`${API_PREFIX}/items/${encodeURIComponent(id)}`, { method: 'DELETE', rev });
+  async deleteItem(id: string, rev: string, opts: { hard?: boolean } = {}): Promise<void> {
+    const query = opts.hard ? '?hard=true' : '';
+    await this.#json(`${API_PREFIX}/items/${encodeURIComponent(id)}${query}`, {
+      method: 'DELETE',
+      rev,
+    });
   }
 
   async addComment(id: string, body: string, author = 'me'): Promise<Comment> {

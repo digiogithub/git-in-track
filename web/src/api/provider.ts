@@ -31,6 +31,8 @@ import type {
   ItemFilter,
   ItemPage,
   ItemPatch,
+  ItemReference,
+  ItemReferencesResult,
   ItemType,
   KbNode,
   KbPage,
@@ -107,6 +109,8 @@ export type {
   ItemFilter,
   ItemPage,
   ItemPatch,
+  ItemReference,
+  ItemReferencesResult,
   ItemType,
   KbNode,
   KbPage,
@@ -452,8 +456,15 @@ export type SyncSettings = {
   maxPushRetries: number;
   supported: boolean;
   reason?: string;
-  /** The configured CORS proxy; browser-only mode, never a credential. */
+  /** The CORS proxy in effect; browser-only mode, never a credential. */
   corsProxy?: string;
+  /**
+   * Where that proxy came from: `configured` when the user set it, `companion`
+   * when it is the one the running companion serves at `/cors-proxy/` — the
+   * only proxy this app ever picks on its own — and `none` when there is none
+   * (docs/06 §6.3, GIT-US-0042).
+   */
+  proxySource?: 'configured' | 'companion' | 'none';
 };
 
 /**
@@ -752,6 +763,8 @@ export type ProviderErrorCode =
   | 'team_project_exists'
   /** A board, a sprint or a retro action still references the project; force it. */
   | 'team_project_referenced'
+  /** A task toggle addressed a line that is no longer a checkbox (GIT-US-0010). */
+  | 'task_list_mismatch'
   /** A write lost a race, or a sprint already has a retro. */
   | 'conflict'
   | 'internal';
@@ -845,13 +858,33 @@ export interface DataProvider {
   readAsset(scope: KbScope, path: string): Promise<Blob>;
   search(query: SearchQuery): Promise<SearchHit[]>;
   validateItem(input: { id?: string; text?: string; path?: string }): Promise<Diagnostic[]>;
+  /**
+   * Everything that still points at an item: a child's `parent`, a story's
+   * `milestone`, a typed link, a card in a board column, a sprint's scope, a
+   * promoted retro action. The web app shows it before a delete, so the user
+   * reads what breaks rather than a count (docs/05-web-app.md §8.4).
+   */
+  getItemReferences(id: string): Promise<ItemReferencesResult>;
 
   // write (all rev-checked)
   createItem(input: ItemDraft): Promise<Item>;
   updateItem(id: string, patch: ItemPatch, rev: string): Promise<Item>;
   moveItem(id: string, status: ItemStatus, rev: string): Promise<Item>;
   updateMany(ops: UpdateOp[]): Promise<BatchResult>;
-  deleteItem(id: string, rev: string): Promise<void>;
+  /**
+   * Ticks or clears one task-list checkbox of the body. `line` is the 1-based
+   * line of the marker inside the body, as the Markdown renderer stamped it on
+   * the checkbox. The core rewrites that line and nothing else; the write is
+   * rev-guarded like every other edit.
+   */
+  setTaskItem(id: string, line: number, checked: boolean, rev: string): Promise<Item>;
+  /**
+   * Removes an item. The default is the soft delete of docs/03 §7.1 — the file
+   * stays with `deleted: true`, so the id is never reused, a merge cannot
+   * resurrect it, and a child that names it as its parent still resolves.
+   * `hard` removes the file instead.
+   */
+  deleteItem(id: string, rev: string, opts?: { hard?: boolean }): Promise<void>;
   addComment(id: string, body: string, author?: string): Promise<Comment>;
   writePage(scope: KbScope, path: string, content: string, rev?: string): Promise<KbPage>;
 

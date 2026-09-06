@@ -153,6 +153,32 @@ type Git struct {
 	// MaxPushRetries is how many times a non-fast-forward rejection is answered
 	// with a fresh fetch, integrate and push (docs/06 section 4.2).
 	MaxPushRetries int `json:"maxPushRetries" yaml:"maxPushRetries"`
+
+	// CORSProxy configures the git CORS proxy the companion serves at
+	// /cors-proxy/ for browser-only mode (docs/06 section 6.3).
+	CORSProxy CORSProxy `json:"corsProxy" yaml:"corsProxy"`
+}
+
+// CORSProxy is the `git.corsProxy` section: the browser-git CORS proxy the
+// companion serves so that a tab can reach a git host at all (docs/06-git-sync.md
+// section 6.3, ADR-025).
+//
+// The proxy is not a general-purpose forwarder. It speaks only the three git
+// smart-HTTP endpoints, only to hosts on the allow-list this section builds, and
+// only for a caller that presents the companion's bearer token from a browser
+// origin the companion already trusts.
+type CORSProxy struct {
+	// Enabled serves the endpoint. It defaults to true: a companion the user is
+	// already running is the safest proxy available to them, and the refusals
+	// above are what make it safe rather than the endpoint's absence.
+	Enabled bool `json:"enabled" yaml:"enabled"`
+	// AllowRepoRemotes puts the hosts of every registered repository's remotes
+	// on the allow-list. It defaults to true, which is what makes the proxy work
+	// with no configuration at all while still refusing every other host.
+	AllowRepoRemotes bool `json:"allowRepoRemotes" yaml:"allowRepoRemotes"`
+	// AllowedHosts are extra hosts, spelled `host` or `host:port`. A host with
+	// no port means port 443: the proxy speaks HTTPS only.
+	AllowedHosts []string `json:"allowedHosts,omitempty" yaml:"allowedHosts,omitempty"`
 }
 
 // PullStrategy selects how remote work is integrated.
@@ -212,6 +238,7 @@ func Default() *Config {
 			PullStrategy:    PullRebase,
 			PushOnSync:      true,
 			MaxPushRetries:  DefaultMaxPushRetries,
+			CORSProxy:       CORSProxy{Enabled: true, AllowRepoRemotes: true},
 		},
 		Index: Index{
 			Watch:    true,

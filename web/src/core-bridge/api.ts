@@ -1104,6 +1104,37 @@ export type TeamProjectReference = {
   ref: string;
 };
 
+/**
+ * One place something points at an item: a child's `parent`, a story's
+ * `milestone`, a typed link, a card in a board column, a sprint's scope, or the
+ * task a retro action was promoted into. It is what a delete would orphan.
+ */
+export type ItemReference = {
+  /** `item`, `board`, `sprint` or `retro`. */
+  kind: string;
+  /** The referring item or artifact. */
+  id: string;
+  path: string;
+  title?: string;
+  /** The item type of a referring item; empty for a team artifact. */
+  type?: string;
+  /** The front-matter field the reference sits in, e.g. `links.blocks`. */
+  field: string;
+  /** The reference as written: a bare id, or `<projectKey>/<itemId>`. */
+  ref: string;
+};
+
+/** What `item.references` answers. */
+export type ItemReferencesResult = {
+  id: string;
+  references: ItemReference[];
+  /**
+   * The direct children among the references, repeated: a child is the one
+   * reference a delete would leave with a dangling parent.
+   */
+  children: ItemReference[];
+};
+
 /** What `team.project.add` and `team.project.remove` answer with. */
 export type TeamProjectResult = {
   team: TeamSummary;
@@ -1413,6 +1444,22 @@ export type CoreApi = {
   'item.delete': {
     params: { id: string; rev: string; hard?: boolean };
     result: { writes: WriteSet };
+  };
+  /**
+   * Everything that points at an item, across the project repository and every
+   * open team repository. The web app shows it before a delete.
+   */
+  'item.references': {
+    params: { id: string; team?: string };
+    result: ItemReferencesResult;
+  };
+  /**
+   * Flip one task-list checkbox in the body. `line` is the 1-based line of the
+   * marker; the core rewrites that line and nothing else, under `rev`.
+   */
+  'item.task.set': {
+    params: { id: string; line: number; checked: boolean; rev: string };
+    result: { item: Item; writes: WriteSet };
   };
   'item.validate': { params: { id?: string; text?: string; path?: string }; result: Diagnostic[] };
   'item.parse': { params: { path: string; text: string }; result: Item };

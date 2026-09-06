@@ -104,6 +104,12 @@ func (w *Workspace) Dispatch(ctx context.Context, method string, raw []byte) (an
 			return nil, err
 		}
 		return w.ResolveRef(ref), nil
+	case "item.references":
+		p, err := decodeParams[ItemReferencesParams](raw)
+		if err != nil {
+			return nil, err
+		}
+		return w.ItemReferences(ctx, p)
 	case "board.list":
 		p, err := decodeParams[TeamScope](raw)
 		if err != nil {

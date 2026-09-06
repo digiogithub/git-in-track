@@ -353,6 +353,8 @@ func (v *Vault) Dispatch(ctx context.Context, method string, raw []byte) (any, e
 		return v.itemMove(ctx, raw)
 	case "item.delete":
 		return v.itemDelete(ctx, raw)
+	case "item.task.set":
+		return v.itemTaskSet(ctx, raw)
 	case "item.validate":
 		return v.itemValidate(raw)
 	case "item.parse":

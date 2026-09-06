@@ -505,6 +505,15 @@ Worker of §6.4 is not split out yet: the operations run on the main thread with
 the same abort semantics, which is enough for a backlog-sized repository and is
 the next thing to move when it is not.
 
+**As built (GIT-US-0042).** The CORS proxy §6.3 had always promised is real:
+the companion serves it at `http://127.0.0.1:7317/cors-proxy/`
+(`internal/server/cors_proxy.go`, [ADR-025](adr/ADR-025-the-cors-proxy-security-model.md)),
+and `web/src/git/companion-proxy.ts` adopts it automatically in a tab that has
+detected the companion and holds its token — so the hybrid setup needs no
+configuration at all. A workspace with no companion and no configured proxy still
+reports `git_cors_proxy_required` with the reason. The nginx and Caddy recipe
+§6.3 claimed to ship is in §6.3.2.
+
 **As built (GIT-US-0023).** The credential half is `web/src/git/credentials.ts`
 plus the prompt in `web/src/features/sync/CredentialPrompt.tsx`. A token is
 asked for only when `onAuth` fires — that is, when a host actually refuses an
@@ -533,7 +542,7 @@ no-ops). Supported operations: `clone`, `fetch`, `pull` (as fetch + merge),
 | Limitation | Impact | Mitigation |
 |---|---|---|
 | **No SSH** | `git@host:org/repo.git` remotes cannot be used | Detect SSH remotes at mount time and either ask for an HTTPS remote URL (stored as a per-repo "sync URL" override, since the on-disk `origin` stays SSH) or require the companion |
-| **CORS** | Git HTTP endpoints of GitHub/GitLab/Bitbucket do not send CORS headers, so the browser cannot talk to them directly | A CORS proxy is required (§6.3) |
+| **CORS** | Git HTTP endpoints of GitHub/GitLab/Bitbucket do not send CORS headers, so the browser cannot talk to them directly | A CORS proxy is required. The companion serves one and the app adopts it automatically; otherwise the user configures one (§6.3) |
 | **No rebase** | `isomorphic-git` has no rebase implementation | Browser mode uses **merge** as the integration strategy, always. The setting is forced and the UI explains why |
 | Merge driver is limited | `isomorphic-git`'s merge handles fast-forward and non-conflicting three-way merges; conflicting content merges are limited | We plug our own merge driver into `git.merge` (`mergeDriver`), which hands us the `base`, `ours` and `theirs` blobs of every conflicting file and takes our merged text back, so conflict resolution quality is the core's (§5.2/§5.3/§5.7) and not the library's |
 | Performance | Pack negotiation and object inflation in JS; large repos are slow | Shallow clone (`depth: 50`) and `singleBranch: true` by default; index/status via `statusMatrix` scoped to the docs folder, not the whole repo; long operations run in the git worker with progress events |
@@ -546,24 +555,203 @@ no-ops). Supported operations: `clone`, `fetch`, `pull` (as fetch + merge),
 Because `git-upload-pack` / `git-receive-pack` endpoints do not send
 `Access-Control-Allow-Origin`, browser git needs a proxy that adds them.
 
-- Default: **no proxy configured**. Git operations in browser mode are disabled
-  until the user sets one, with an explanation and a link to this document. We do
-  not silently route repository traffic — including credentials — through a
-  third-party host.
+- Default: **no proxy configured, and none invented.** We do not silently route
+  repository traffic — including credentials — through a third-party host. The
+  one exception, described below, is the companion's own proxy, which runs on the
+  user's machine and adds no third party at all.
 - `isomorphic-git`'s public `https://cors.isomorphic-git.org` is offered only as
   an explicitly-chosen convenience for public repositories, with a warning that
-  the proxy sees the traffic and any token sent with it.
-- **Recommended: self-host.** `@isomorphic-git/cors-proxy` behind the team's own
-  domain, or the reverse-proxy snippet we ship in the docs (nginx/Caddy config
-  that forwards only `/*/info/refs`, `/*/git-upload-pack`, `/*/git-receive-pack`
-  to an allowlisted set of hosts and adds the CORS headers). The companion also
-  serves one at `http://127.0.0.1:7317/cors-proxy/` when running, which makes the
-  hybrid "browser UI + local companion for networking" setup work with zero extra
-  infrastructure.
-- Proxy configuration is per workspace, with an optional per-repo override, and is
-  validated at save time by a preflight request against the repo's `info/refs`.
+  the proxy sees the traffic and any token sent with it. The app never selects
+  it; it has to be typed into Settings → CORS proxy.
+- Proxy configuration is per workspace, with an optional per-repo override, and
+  is validated by a preflight request against the repo's `info/refs`
+  ("Check against a repository" in the settings card). A `401` counts as a
+  working proxy: the request reached the git host and the host asked for a
+  credential.
 - Self-hosted git servers that already send permissive CORS headers can be used
-  with no proxy at all; the mount wizard probes for this and skips the proxy step.
+  with no proxy at all: leave the field empty and sync. There is no automatic
+  probe for this — a probe that silently decides no proxy is needed is a probe
+  that can silently be wrong about where a credential goes.
+
+#### 6.3.1 The companion's proxy (as built, GIT-US-0042)
+
+When `gintrack serve` is running, it serves a proxy at
+`http://127.0.0.1:7317/cors-proxy/`, and a tab that has detected the companion
+and holds its token adopts it automatically. That is the whole configuration of
+the hybrid "browser UI + local companion for networking" setup: none.
+
+`isomorphic-git` rewrites a remote to `<proxy>/<host>/<path>`, so a fetch of
+`https://github.com/acme/web.git` becomes
+
+```
+GET http://127.0.0.1:7317/cors-proxy/github.com/acme/web.git/info/refs?service=git-upload-pack
+```
+
+It is **not** a general-purpose forwarder. The full reasoning is
+[ADR-025](adr/ADR-025-the-cors-proxy-security-model.md); the rules it enforces
+are:
+
+| Rule | What it refuses |
+|---|---|
+| Trusted `Origin`, always required | Any page whose origin the companion does not already allow, and any caller that sends no `Origin` |
+| Bearer token in `X-Gintrack-Token` | Any caller without this run's token. `Authorization` is left free for the git host's credential and forwarded to it; the companion's token never leaves the machine |
+| Three paths only | Anything but `GET /info/refs?service=git-upload-pack\|git-receive-pack`, `POST /git-upload-pack` and `POST /git-receive-pack`, the dumb protocol included |
+| Host allow-list | Any host that is not a remote of a registered repository and is not in `git.corsProxy.allowedHosts`. The scheme upstream is always `https` |
+| Address policy | Loopback, private, link-local (so `169.254.169.254`), CGNAT, multicast and reserved ranges. The name is resolved once and the connection is made to one of the addresses that were checked, so DNS rebinding reaches nothing |
+| Limits | More than 32 MiB of request body or 256 MiB of response, or an exchange longer than 120 s |
+| Redirects | A hop off the allow-list, off `https`, off the git paths, or a fourth hop. `Authorization` is dropped when the host changes |
+| Header hygiene | Upstream: only `Accept`, `Accept-Language`, `Authorization`, `Content-Type`, `Git-Protocol` and a fixed `User-Agent`. Downstream: only `Cache-Control`, `Content-Type`, `Expires`, `Pragma`, `WWW-Authenticate` — `Set-Cookie` never reaches the tab |
+
+Configuration (docs/07 §3.2):
+
+```yaml
+git:
+  corsProxy:
+    enabled: true            # false removes the endpoint; it answers 501 with the reason
+    allowRepoRemotes: true   # put the registered repositories' remote hosts on the allow-list
+    allowedHosts:            # extra hosts, `host` or `host:port`; no schemes, no wildcards
+      - git.acme.example
+```
+
+`GET /api/v1/git/cors-proxy` reports the mount point, the token header and the
+effective allow-list. Its error codes are in docs/07 §5.4.
+
+A host reached over plain HTTP, and a self-hosted git server on the LAN, are
+refused by the address policy on purpose. Run the companion's own sync for those
+repositories rather than browser-only mode.
+
+#### 6.3.2 Self-hosting the proxy: nginx and Caddy
+
+Use these when the browser UI runs somewhere the companion is not — a shared
+static host, a colleague's machine — or when you would rather run one proxy for
+the team. Both configurations enforce the same discipline as §6.3.1's first four
+rows: three paths, an explicit host allow-list, HTTPS upstream, and no cookies in
+either direction. Neither has the companion's address policy, because neither
+needs it: the upstream host is fixed by the configuration rather than taken from
+the request.
+
+**nginx.** One `server` block per proxied git host keeps the allow-list a
+configuration fact rather than a regular expression:
+
+```nginx
+# /etc/nginx/conf.d/git-cors-proxy.conf
+#
+# Forwards only the three git smart-HTTP endpoints, only to github.com, and only
+# for the origins this team's UI is served from. Add a second `location` group
+# for a second host; do NOT introduce a variable upstream.
+
+map $http_origin $git_cors_origin {
+    default                          "";
+    "https://pm.acme.example"        $http_origin;
+    "http://127.0.0.1:7317"          $http_origin;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name git-proxy.acme.example;
+
+    # ssl_certificate / ssl_certificate_key as usual.
+
+    # Anything not matched below is refused: this is an allow-list, so the
+    # default has to be a denial.
+    location / { return 403; }
+
+    location ~ ^/github\.com/(?<repo>[A-Za-z0-9._\-/]+)/(info/refs|git-upload-pack|git-receive-pack)$ {
+        # The dumb protocol is not proxied.
+        if ($request_method = GET) {
+            set $svc $arg_service;
+        }
+        if ($svc !~ ^(git-upload-pack|git-receive-pack)?$) { return 403; }
+
+        if ($request_method = OPTIONS) {
+            add_header Access-Control-Allow-Origin      $git_cors_origin always;
+            add_header Access-Control-Allow-Methods     "GET, POST, OPTIONS" always;
+            add_header Access-Control-Allow-Headers     "Authorization, Content-Type, Git-Protocol, Accept" always;
+            add_header Access-Control-Max-Age           600 always;
+            add_header Content-Length                   0;
+            return 204;
+        }
+
+        add_header Access-Control-Allow-Origin  $git_cors_origin always;
+        add_header Access-Control-Expose-Headers "Content-Type, WWW-Authenticate" always;
+        add_header Vary Origin always;
+
+        proxy_pass                 https://github.com/$repo/$2$is_args$args;
+        proxy_ssl_server_name      on;
+        proxy_set_header Host      github.com;
+        # Neither direction carries cookies, and the client's identity is not
+        # forwarded. Authorization is: it is the git credential.
+        proxy_set_header Cookie    "";
+        proxy_hide_header          Set-Cookie;
+        proxy_set_header Origin    "";
+        proxy_set_header Referer   "";
+        proxy_set_header X-Forwarded-For "";
+        proxy_buffering            off;
+        proxy_request_buffering    off;
+        client_max_body_size       32m;
+        proxy_read_timeout         120s;
+        # Never follow a redirect blindly.
+        proxy_redirect             off;
+        proxy_intercept_errors     off;
+    }
+}
+```
+
+**Caddy.** The same allow-list, spelled as matchers:
+
+```caddyfile
+# Caddyfile
+git-proxy.acme.example {
+    @allowed_origin header Origin https://pm.acme.example http://127.0.0.1:7317
+
+    # The allow-list: one matcher per host, three paths, and the smart service
+    # query on info/refs. Everything else falls through to the 403 below.
+    @git {
+        path /github.com/*/info/refs /github.com/*/git-upload-pack /github.com/*/git-receive-pack
+        method GET POST OPTIONS
+    }
+    @dumb {
+        path /github.com/*/info/refs
+        not query service=git-upload-pack service=git-receive-pack
+    }
+    respond @dumb 403
+
+    handle @git {
+        header {
+            Access-Control-Allow-Origin "{http.request.header.Origin}"
+            Access-Control-Allow-Methods "GET, POST, OPTIONS"
+            Access-Control-Allow-Headers "Authorization, Content-Type, Git-Protocol, Accept"
+            Access-Control-Expose-Headers "Content-Type, WWW-Authenticate"
+            Vary Origin
+            -Set-Cookie
+        }
+        @preflight method OPTIONS
+        respond @preflight 204
+
+        # Only requests from an allowed origin get past here.
+        @foreign not header Origin https://pm.acme.example http://127.0.0.1:7317
+        respond @foreign 403
+
+        uri strip_prefix /github.com
+        reverse_proxy https://github.com {
+            header_up Host github.com
+            header_up -Cookie
+            header_up -Origin
+            header_up -Referer
+            header_up -X-Forwarded-For
+            transport http {
+                read_timeout 120s
+            }
+        }
+    }
+
+    respond 403
+}
+```
+
+Whichever you run, the rules that matter are the ones you must not relax: never
+take the upstream host from the request path without an allow-list, never proxy a
+path outside the three, and never forward or return cookies.
 
 ### 6.4 Browser git worker
 
@@ -1059,7 +1247,9 @@ git:
   maxPushRetries: 3             # (new)
   autoSyncIntervalMinutes: 0    # (new) 0 = manual sync only
   renameOnTitleChange: false    # (new) see §3.1
-  corsProxy: ""                 # (new) required for browser-mode git over HTTPS.
+  corsProxy: ""                 # browser-mode only; empty means "use the companion's
+                                # proxy when one is running, otherwise git over the
+                                # network is off" (§6.3)
                                 # The browser stores it per workspace rather
                                 # than in this file, which the companion owns
   cloneDepth: 50                # (new) browser-mode shallow clone depth

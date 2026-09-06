@@ -5,6 +5,7 @@
  * - `a`   → the host's router link, so in-app navigation never reloads the page
  * - `img` → an asset request, because a file behind a directory handle has no URL
  * - `pre` → the lazy Mermaid renderer when the block is a diagram
+ * - `input` → an interactive task-list checkbox when the host accepts toggles
  */
 
 import type { Element } from 'hast';
@@ -18,6 +19,7 @@ import { MarkdownContext, useMarkdownContext, type MarkdownContextValue } from '
 import { MermaidBlock } from '@/markdown/MermaidBlock';
 import '@/markdown/markdown.css';
 import { isExternalUrl } from '@/markdown/paths';
+import { taskLineOf } from '@/markdown/tasklist';
 import type { RenderResult } from '@/markdown/types';
 
 type WithNode<T> = T & { node?: Element };
@@ -96,6 +98,32 @@ function AssetImage({ path, alt, ...rest }: { path: string } & ComponentProps<'i
   return <img src={src} alt={alt ?? ''} {...rest} />;
 }
 
+/**
+ * A task-list checkbox. It stays the disabled marker GFM renders until a host
+ * supplies `onToggleTask`; then it becomes a control that reports the source
+ * line it stands for, and the host writes the body through the core.
+ */
+function MarkdownCheckbox({ node, ...rest }: WithNode<ComponentProps<'input'>>) {
+  const { onToggleTask, taskBusy } = useMarkdownContext();
+  const line = taskLineOf(node?.properties);
+  const checked = rest.checked === true;
+
+  if (!onToggleTask || line === undefined || rest.type !== 'checkbox') {
+    return <input {...rest} />;
+  }
+  return (
+    <input
+      {...rest}
+      disabled={taskBusy === true}
+      checked={checked}
+      aria-label={`Toggle task on line ${line}`}
+      onChange={() => {
+        onToggleTask(line, !checked);
+      }}
+    />
+  );
+}
+
 /** Wide tables scroll in their own container instead of widening the page. */
 function MarkdownTable({ node: _node, children, ...rest }: WithNode<ComponentProps<'table'>>) {
   return (
@@ -114,6 +142,7 @@ function MarkdownPre({ node, children, ...rest }: WithNode<ComponentProps<'pre'>
 
 const components = {
   a: MarkdownAnchor,
+  input: MarkdownCheckbox,
   img: MarkdownImage,
   pre: MarkdownPre,
   table: MarkdownTable,
@@ -132,13 +161,17 @@ export function MarkdownContent({
   className,
   resolveAsset,
   renderLink,
+  onToggleTask,
+  taskBusy,
 }: MarkdownContentProps) {
   const context = useMemo<MarkdownContextValue>(
     () => ({
       ...(resolveAsset ? { resolveAsset } : {}),
       ...(renderLink ? { renderLink } : {}),
+      ...(onToggleTask ? { onToggleTask } : {}),
+      ...(taskBusy === undefined ? {} : { taskBusy }),
     }),
-    [resolveAsset, renderLink],
+    [resolveAsset, renderLink, onToggleTask, taskBusy],
   );
 
   const content = useMemo<ReactNode>(

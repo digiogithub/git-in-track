@@ -107,4 +107,92 @@ describe('ItemDetail', () => {
     expect(screen.getByRole('button', { name: 'Post comment' })).toBeDisabled();
     expect(screen.getByText(/read-only/i)).toBeInTheDocument();
   });
+  it('ticks an acceptance criterion from the detail view', async () => {
+    const user = userEvent.setup();
+    const provider = new FakeProvider();
+    const setTaskItem = vi.spyOn(provider, 'setTaskItem');
+    renderBacklog({ path: '/p/ACME/items/ACME-US-0042', provider });
+
+    expect(await screen.findByText('1 of 2 checked')).toBeInTheDocument();
+
+    // "- [ ] PKCE flow" is line 8 of the body; the renderer stamps that line on
+    // the checkbox and the core rewrites exactly it.
+    const pending = await screen.findByRole('checkbox', { name: 'Toggle task on line 8' });
+    expect(pending).not.toBeChecked();
+    await user.click(pending);
+
+    await waitFor(() => {
+      expect(setTaskItem).toHaveBeenCalledWith('ACME-US-0042', 8, true, STORY_REV);
+    });
+    expect(await screen.findByText('2 of 2 checked')).toBeInTheDocument();
+
+    const saved = await provider.getItem('ACME-US-0042');
+    expect(saved.body).toContain('- [x] PKCE flow');
+    expect(saved.body).toContain('- [x] Button shown');
+    expect(saved.body).toContain('As an employee, I want SSO.');
+  });
+
+  it('reports a stale revision when a criterion is ticked on a stale body', async () => {
+    const user = userEvent.setup();
+    const provider = new FakeProvider();
+    vi.spyOn(provider, 'setTaskItem').mockRejectedValue(
+      new ProviderError('stale_revision', 'Item ACME-US-0042 changed on disk'),
+    );
+    renderBacklog({ path: '/p/ACME/items/ACME-US-0042', provider });
+
+    await user.click(await screen.findByRole('checkbox', { name: 'Toggle task on line 8' }));
+
+    expect(await screen.findByText('Changed on disk')).toBeInTheDocument();
+  });
+
+  it('leaves the checkboxes read-only in a read-only workspace', async () => {
+    const provider = new FakeProvider({}, { readOnly: true });
+    renderBacklog({ path: '/p/ACME/items/ACME-US-0042', provider });
+
+    const boxes = await screen.findAllByRole('checkbox');
+    for (const box of boxes) expect(box).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeDisabled();
+  });
+
+  it('lists what points at an item before deleting it', async () => {
+    const user = userEvent.setup();
+    const provider = new FakeProvider();
+    const deleteItem = vi.spyOn(provider, 'deleteItem');
+    renderBacklog({ path: '/p/ACME/items/ACME-US-0042', provider });
+
+    await user.click(await screen.findByRole('button', { name: 'Delete' }));
+
+    const dialog = within(await screen.findByRole('alertdialog', { name: /Delete ACME-US-0042/ }));
+    const references = within(await dialog.findByRole('list', { name: 'Inbound references' }));
+    expect(references.getByRole('link', { name: 'ACME-T-0107' })).toBeInTheDocument();
+    expect(references.getByText(/parent/)).toBeInTheDocument();
+    expect(dialog.getByText(/this one as their parent/)).toBeInTheDocument();
+    // Nothing is written until the confirmation.
+    expect(deleteItem).not.toHaveBeenCalled();
+
+    await user.click(dialog.getByRole('button', { name: 'Delete item' }));
+
+    await waitFor(() => {
+      expect(deleteItem).toHaveBeenCalledWith('ACME-US-0042', STORY_REV, {});
+    });
+    // Soft delete: the file stays, flagged, so nothing that referenced it dangles.
+    const deleted = await provider.getItem('ACME-US-0042');
+    expect(deleted.deleted).toBe(true);
+  });
+
+  it('closes the delete dialog without writing when it is cancelled', async () => {
+    const user = userEvent.setup();
+    const provider = new FakeProvider();
+    const deleteItem = vi.spyOn(provider, 'deleteItem');
+    renderBacklog({ path: '/p/ACME/items/ACME-US-0042', provider });
+
+    await user.click(await screen.findByRole('button', { name: 'Delete' }));
+    const dialog = await screen.findByRole('alertdialog', { name: /Delete ACME-US-0042/ });
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    });
+    expect(deleteItem).not.toHaveBeenCalled();
+  });
 });

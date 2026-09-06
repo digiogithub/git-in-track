@@ -95,8 +95,9 @@ const attributes: Attributes = {
   ol: [...inherit('ol'), ['className', 'contains-task-list']],
   li: [...inherit('li'), 'id', ['className', 'task-list-item']],
   // Task-list checkboxes: `checked` is not in the GitHub schema but is exactly
-  // what makes `- [x]` render as ticked.
-  input: [...inherit('input'), 'checked'],
+  // what makes `- [x]` render as ticked. `data-task-line` is the source line
+  // the renderer stamps on it, and the address a toggle sends back.
+  input: [...inherit('input'), 'checked', 'dataTaskLine', 'dataTaskIndex'],
   img: [
     ...inherit('img'),
     'alt',

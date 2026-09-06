@@ -18,6 +18,7 @@ import type {
   SyncSettingsPatch,
 } from '@/api/provider';
 import { CORS_PROXY_REASON } from '@/git/browser-sync';
+import { COMPANION_PROXY_REASON, companionProxyUrl } from '@/git/companion-proxy';
 import { DEFAULT_COMMIT_TEMPLATE, validateCommitTemplate } from '@/git/message';
 
 /** Key prefix; one entry per workspace. */
@@ -117,55 +118,67 @@ const SYNC_PREFIX = 'gintrack.sync.settings';
  *
  * The strategy is always `merge`: isomorphic-git has no rebase, so the setting
  * is forced rather than silently reinterpreted. `supported` is false until a
- * CORS proxy is configured, because without one a tab cannot reach a git host
+ * CORS proxy is available, because without one a tab cannot reach a git host
  * at all — and we never route repository traffic through a proxy the user did
  * not choose. The proxy URL is a setting, not a secret; no token is ever
  * written here or anywhere else in the browser (§8.2).
+ *
+ * There is exactly one proxy this function will pick on its own: the one the
+ * companion serves on the user's own machine, when the companion is running and
+ * this tab holds its token (GIT-US-0042). That adds no third party — the traffic
+ * never leaves the machine before it goes to the git host — which is why it is a
+ * default and a public proxy never is. A configured proxy always wins over it,
+ * and clearing the setting falls back to it rather than to nothing.
  */
 export function readSyncSettings(workspace = 'default'): SyncSettings {
   const raw = safeRead(syncKey(workspace));
   let corsProxy = '';
+  let pushOnSync = true;
   if (raw !== null) {
     try {
       const stored = JSON.parse(raw) as { corsProxy?: unknown; pushOnSync?: unknown };
       if (typeof stored.corsProxy === 'string') corsProxy = stored.corsProxy.trim();
-      return {
-        pullStrategy: 'merge',
-        pushOnSync: stored.pushOnSync !== false,
-        maxPushRetries: 1,
-        supported: corsProxy !== '',
-        ...(corsProxy === '' ? { reason: CORS_PROXY_REASON } : {}),
-        ...(corsProxy === '' ? {} : { corsProxy }),
-      };
+      pushOnSync = stored.pushOnSync !== false;
     } catch {
       // A corrupt entry is a settings entry: the defaults are correct.
     }
   }
+  return resolveSyncSettings(corsProxy, pushOnSync);
+}
+
+/**
+ * Builds the settings from the stored proxy, falling back to the companion's.
+ * `proxySource` says which of the two is in effect so the UI can label it, and
+ * `corsProxy` is what a sync actually uses.
+ */
+function resolveSyncSettings(configured: string, pushOnSync: boolean): SyncSettings {
+  const companion = configured === '' ? companionProxyUrl() : null;
+  const effective = configured !== '' ? configured : (companion ?? '');
   return {
     pullStrategy: 'merge',
-    pushOnSync: true,
+    pushOnSync,
     maxPushRetries: 1,
-    supported: false,
-    reason: CORS_PROXY_REASON,
+    supported: effective !== '',
+    ...(effective === '' ? { reason: CORS_PROXY_REASON } : {}),
+    ...(effective === '' ? {} : { corsProxy: effective }),
+    ...(companion === null ? {} : { reason: COMPANION_PROXY_REASON }),
+    proxySource: effective === '' ? 'none' : companion === null ? 'configured' : 'companion',
   };
 }
 
 /** Applies a patch to the sync settings and stores it. */
 export function writeSyncSettings(patch: SyncSettingsPatch, workspace = 'default'): SyncSettings {
   const current = readSyncSettings(workspace);
-  const corsProxy = (patch.corsProxy ?? current.corsProxy ?? '').trim();
+  // The stored value, never the resolved one: clearing the field must leave the
+  // companion's proxy as the fallback rather than freezing its URL into storage.
+  const stored = current.proxySource === 'configured' ? (current.corsProxy ?? '') : '';
+  const corsProxy = (patch.corsProxy ?? stored).trim();
   if (corsProxy !== '' && !/^https?:\/\//.test(corsProxy)) {
     throw new RangeError('the CORS proxy must be an http:// or https:// URL');
   }
   const pushOnSync = patch.pushOnSync ?? current.pushOnSync;
   safeWrite(syncKey(workspace), JSON.stringify({ corsProxy, pushOnSync }));
-  return {
-    pullStrategy: 'merge',
-    pushOnSync,
-    maxPushRetries: 1,
-    supported: corsProxy !== '',
-    ...(corsProxy === '' ? { reason: CORS_PROXY_REASON } : { corsProxy }),
-  };
+  return resolveSyncSettings(corsProxy, pushOnSync);
 }
 
 function syncKey(workspace: string): string {

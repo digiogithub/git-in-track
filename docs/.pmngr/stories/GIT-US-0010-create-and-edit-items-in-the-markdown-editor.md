@@ -2,7 +2,7 @@
 id: GIT-US-0010
 type: story
 title: Create and edit items in the Markdown editor
-status: in_review
+status: done
 priority: critical
 parent: GIT-EP-0002
 milestone: GIT-M-0002
@@ -11,6 +11,7 @@ labels: [web, core]
 estimate: 8
 created: 2026-09-03T00:00:00Z
 updated: 2026-09-06T00:00:00Z
+closed: 2026-09-06T00:00:00Z
 started: 2026-09-03T21:47:06Z
 links:
   - { kind: blocked_by, target: GIT-US-0009 }
@@ -38,8 +39,8 @@ the detail view without opening the editor.
 - [x] Body editing in CodeMirror supports Markdown, wikilink autocomplete and preview.
 - [x] `updated` is set on every write; `created` and `author` are never overwritten.
 - [x] Files are written through the canonical serialiser and validate cleanly.
-- [ ] Task-list checkboxes can be toggled from the detail view and persist to disk.
+- [x] Task-list checkboxes can be toggled from the detail view and persist to disk.
 - [x] Concurrent external modification is detected by `rev` and the user is warned before
       overwriting.
-- [ ] Unsaved changes survive a tab reload via a local draft, and are clearly marked.
-- [ ] Deleting an item warns about inbound references and never leaves a dangling parent.
+- [x] Unsaved changes survive a tab reload via a local draft, and are clearly marked.
+- [x] Deleting an item warns about inbound references and never leaves a dangling parent.
