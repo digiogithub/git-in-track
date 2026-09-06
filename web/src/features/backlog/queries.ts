@@ -22,6 +22,7 @@ import type {
   Item,
   ItemFilter,
   ItemPage,
+  ItemReferencesResult,
   ItemStatus,
   ProjectSummary,
 } from '@/api/provider';
@@ -38,6 +39,7 @@ export const backlogKeys = {
   detail: (project: string, id: string) => ['items', project, 'detail', id] as const,
   children: (project: string, id: string) => ['items', project, 'children', id] as const,
   comments: (project: string, id: string) => ['items', project, 'comments', id] as const,
+  references: (project: string, id: string) => ['items', project, 'references', id] as const,
 };
 
 /** Deterministic key for a filter object: property order must not matter. */
@@ -103,6 +105,20 @@ export function useComments(project: string, id: string) {
     queryKey: backlogKeys.comments(project, id),
     queryFn: () => provider.listComments(id),
     enabled: id.length > 0,
+  });
+}
+
+/**
+ * What still points at an item. It is read on demand — when the delete dialog
+ * opens — because it is a whole-index question, not something a detail view
+ * needs every time it renders.
+ */
+export function useItemReferences(project: string, id: string, enabled: boolean) {
+  const provider = useProvider();
+  return useQuery<ItemReferencesResult>({
+    queryKey: backlogKeys.references(project, id),
+    queryFn: () => provider.getItemReferences(id),
+    enabled: enabled && id.length > 0,
   });
 }
 
@@ -212,6 +228,62 @@ function restoreSnapshot(queryClient: QueryClient, context: MoveContext | undefi
   for (const [key, data] of context?.previous ?? []) {
     queryClient.setQueryData(key, data);
   }
+}
+
+export type ToggleTaskVariables = {
+  id: string;
+  /** 1-based line of the checkbox inside the body. */
+  line: number;
+  checked: boolean;
+  /** The revision the body was rendered from; a mismatch is a `stale_revision`. */
+  rev: string;
+};
+
+/**
+ * Ticks or clears one acceptance criterion from the detail view. The rewrite
+ * happens in the core — the browser sends a line number, never a body — and the
+ * fresh item replaces the cached one, so the next toggle carries the new `rev`.
+ */
+export function useToggleTask(
+  project: string,
+): UseMutationResult<Item, Error, ToggleTaskVariables> {
+  const provider = useProvider();
+  const queryClient = useQueryClient();
+
+  return useMutation<Item, Error, ToggleTaskVariables>({
+    mutationFn: ({ id, line, checked, rev }) => provider.setTaskItem(id, line, checked, rev),
+    onSuccess: (item) => {
+      queryClient.setQueryData(backlogKeys.detail(project, item.id), item);
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: backlogKeys.project(project) });
+    },
+  });
+}
+
+export type DeleteItemVariables = {
+  id: string;
+  rev: string;
+  /** Removes the file instead of flagging it. The UI never sets it (ADR-026). */
+  hard?: boolean;
+};
+
+/**
+ * Deletes an item. The web app always soft-deletes: the file keeps its id and
+ * its history, so the id is never reused, a merge cannot resurrect it, and a
+ * child that still names it as its parent resolves to a deleted item rather
+ * than to nothing (docs/03 §7.1, ADR-026).
+ */
+export function useDeleteItem(project: string): UseMutationResult<void, Error, DeleteItemVariables> {
+  const provider = useProvider();
+  const queryClient = useQueryClient();
+
+  return useMutation<void, Error, DeleteItemVariables>({
+    mutationFn: ({ id, rev, hard }) => provider.deleteItem(id, rev, hard === true ? { hard } : {}),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: backlogKeys.project(project) });
+    },
+  });
 }
 
 export type AddCommentVariables = { id: string; body: string };

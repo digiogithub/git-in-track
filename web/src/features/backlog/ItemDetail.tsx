@@ -1,4 +1,4 @@
-import { Link, useParams } from '@tanstack/react-router';
+import { Link, useNavigate, useParams } from '@tanstack/react-router';
 import { useState, type ReactNode } from 'react';
 
 import type { Item, ProjectSummary } from '@/api/provider';
@@ -19,6 +19,7 @@ import {
   StatusBadge,
   TypeBadge,
 } from '@/features/backlog/Badges';
+import { DeleteItemDialog } from '@/features/backlog/DeleteItemDialog';
 import { FeatureLink } from '@/features/backlog/FeatureLink';
 import {
   acceptanceProgress,
@@ -36,9 +37,11 @@ import {
   useBacklogEvents,
   useChildren,
   useComments,
+  useDeleteItem,
   useItem,
   useMoveItem,
   useProject,
+  useToggleTask,
 } from '@/features/backlog/queries';
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
@@ -250,8 +253,13 @@ function CommentsPanel({ item, projectKey }: { item: Item; projectKey: string })
 
 function ItemDetailView() {
   const params = useParams({ strict: false });
+  const navigate = useNavigate();
+  const provider = useProvider();
   const projectKey = params.project ?? '';
   const id = params.id ?? '';
+  const { toast } = useToast();
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   useBacklogEvents(projectKey);
 
@@ -262,6 +270,8 @@ function ItemDetailView() {
   const childrenQuery = useChildren(projectKey, id);
   const parentQuery = useItem(projectKey, item?.parent ?? '');
   const grandParentQuery = useItem(projectKey, parentQuery.data?.parent ?? '');
+  const toggleTask = useToggleTask(projectKey);
+  const deleteItem = useDeleteItem(projectKey);
 
   if (itemQuery.isPending) {
     return <p className="py-8 text-center text-sm text-muted-foreground">Loading {id}…</p>;
@@ -354,6 +364,16 @@ function ItemDetailView() {
             >
               Edit
             </FeatureLink>
+            <Button
+              variant="outline"
+              disabled={!provider.capabilities.write || item.deleted === true}
+              onClick={() => {
+                setDeleteError(null);
+                setConfirmingDelete(true);
+              }}
+            >
+              Delete
+            </Button>
           </div>
         </div>
       </header>
@@ -456,6 +476,29 @@ function ItemDetailView() {
             path={item.path}
             project={projectKey}
             cacheKey={`${item.path}@${item.rev}`}
+            taskBusy={toggleTask.isPending}
+            {...(provider.capabilities.write
+              ? {
+                  onToggleTask: (line: number, checked: boolean) => {
+                    toggleTask.mutate(
+                      { id: item.id, line, checked, rev: item.rev },
+                      {
+                        onError: (error) => {
+                          const stale =
+                            error instanceof ProviderError && error.code === 'stale_revision';
+                          toast({
+                            variant: 'destructive',
+                            title: stale ? 'Changed on disk' : 'The checkbox was not saved',
+                            description: stale
+                              ? `${item.id} was modified elsewhere. It has been reloaded — try again.`
+                              : error.message,
+                          });
+                        },
+                      },
+                    );
+                  },
+                }
+              : {})}
           />
         </CardContent>
       </Card>
@@ -496,6 +539,38 @@ function ItemDetailView() {
       </Card>
 
       <CommentsPanel item={item} projectKey={projectKey} />
+
+      {confirmingDelete ? (
+        <DeleteItemDialog
+          item={item}
+          projectKey={projectKey}
+          busy={deleteItem.isPending}
+          error={deleteError}
+          onCancel={() => {
+            setConfirmingDelete(false);
+          }}
+          onConfirm={() => {
+            setDeleteError(null);
+            deleteItem.mutate(
+              { id: item.id, rev: item.rev },
+              {
+                onSuccess: () => {
+                  setConfirmingDelete(false);
+                  toast({ title: `${item.id} deleted` });
+                  void navigate({ to: '/p/$project/items', params: { project: projectKey } });
+                },
+                onError: (error) => {
+                  setDeleteError(
+                    error instanceof ProviderError && error.code === 'stale_revision'
+                      ? `${item.id} changed on disk since this page was loaded. Reload it and try again.`
+                      : error.message,
+                  );
+                },
+              },
+            );
+          }}
+        />
+      ) : null}
     </div>
   );
 }

@@ -24,8 +24,16 @@ describe('GFM', () => {
   it('renders task lists with a checked, disabled checkbox', async () => {
     const out = await html('- [x] done\n- [ ] pending');
     expect(out).toContain('class="contains-task-list"');
-    expect(out).toContain('<input type="checkbox" checked disabled>');
-    expect(out).toContain('<input type="checkbox" disabled>');
+    expect(out).toContain('<input type="checkbox" checked disabled data-task-index="0"');
+    expect(out).toContain('<input type="checkbox" disabled data-task-index="1"');
+  });
+
+  it('stamps the source line of every task-list checkbox', async () => {
+    // The line is the address a toggle sends back to the core, which rewrites
+    // exactly that line of the body.
+    const out = await html('intro\n\n- [ ] first\n- [x] second\n');
+    expect(out).toContain('data-task-line="3"');
+    expect(out).toContain('data-task-line="4"');
   });
 
   it('renders strikethrough and autolinks', async () => {

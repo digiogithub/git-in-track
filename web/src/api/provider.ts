@@ -763,6 +763,8 @@ export type ProviderErrorCode =
   | 'team_project_exists'
   /** A board, a sprint or a retro action still references the project; force it. */
   | 'team_project_referenced'
+  /** A task toggle addressed a line that is no longer a checkbox (GIT-US-0010). */
+  | 'task_list_mismatch'
   /** A write lost a race, or a sprint already has a retro. */
   | 'conflict'
   | 'internal';
@@ -860,7 +862,7 @@ export interface DataProvider {
    * Everything that still points at an item: a child's `parent`, a story's
    * `milestone`, a typed link, a card in a board column, a sprint's scope, a
    * promoted retro action. The web app shows it before a delete, so the user
-   * reads what breaks rather than a count (docs/05-web-app.md §6.5).
+   * reads what breaks rather than a count (docs/05-web-app.md §8.4).
    */
   getItemReferences(id: string): Promise<ItemReferencesResult>;
 

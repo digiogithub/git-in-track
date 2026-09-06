@@ -37,6 +37,8 @@ import type {
   ItemFilter,
   ItemPage,
   ItemPatch,
+  ItemReference,
+  ItemReferencesResult,
   KbNode,
   KbPage,
   KbScope,
@@ -1216,14 +1218,54 @@ export class FakeProvider implements DataProvider {
     return result;
   }
 
-  deleteItem(id: string, rev: string): Promise<void> {
+  /**
+   * Stands in for `core.SetTaskListItem`. The real providers send the line to
+   * the Go core and never touch the body themselves; this double reproduces
+   * just enough of it — one line, one character — to drive a component test.
+   */
+  setTaskItem(id: string, line: number, checked: boolean, rev: string): Promise<Item> {
+    const item = this.items.get(id);
+    if (!item) return Promise.reject(new ProviderError('not_found', `Item ${id} not found`));
+    const lines = (item.body ?? '').split('\n');
+    const source = lines[line - 1];
+    const marker = source === undefined ? null : /^([ \t]*(?:[-*+]|\d+[.)])[ \t]+\[)([ xX])(\])/.exec(source);
+    if (!marker) {
+      return Promise.reject(
+        new ProviderError('validation_failed', `Line ${line} of ${id} is not a task-list item`),
+      );
+    }
+    lines[line - 1] = `${marker[1]}${checked ? 'x' : ' '}${marker[3]}${source?.slice(marker[0].length) ?? ''}`;
+    return this.updateItem(id, { body: lines.join('\n') }, rev);
+  }
+
+  /** Inbound references, computed the way `core.ItemReferences` computes them. */
+  getItemReferences(id: string): Promise<ItemReferencesResult> {
+    const references: ItemReference[] = [];
+    for (const item of this.items.values()) {
+      if (item.id === id) continue;
+      const base = { kind: 'item', id: item.id, path: item.path, title: item.title, type: item.type };
+      if (item.parent === id) references.push({ ...base, field: 'parent', ref: id });
+      if (item.milestone === id) references.push({ ...base, field: 'milestone', ref: id });
+      for (const link of item.links ?? []) {
+        if (link.target === id) references.push({ ...base, field: `links.${link.kind}`, ref: id });
+      }
+    }
+    return Promise.resolve({
+      id,
+      references,
+      children: references.filter((ref) => ref.field === 'parent'),
+    });
+  }
+
+  deleteItem(id: string, rev: string, opts: { hard?: boolean } = {}): Promise<void> {
     this.assertWritable();
     const item = this.items.get(id);
     if (!item) return Promise.reject(new ProviderError('not_found', `Item ${id} not found`));
     if (item.rev !== rev) {
       return Promise.reject(new ProviderError('stale_revision', `Item ${id} changed on disk`));
     }
-    this.items.set(id, { ...item, deleted: true, rev: this.nextRev() });
+    if (opts.hard) this.items.delete(id);
+    else this.items.set(id, { ...item, deleted: true, rev: this.nextRev() });
     this.emit({ kind: 'items', repoId: 'repo-1', ids: [id] });
     return Promise.resolve();
   }

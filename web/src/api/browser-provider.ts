@@ -40,6 +40,7 @@ import type {
   ItemFilter,
   ItemPage,
   ItemPatch,
+  ItemReferencesResult,
   ItemStatus,
   KbNode,
   KbPage,
@@ -580,6 +581,15 @@ export class BrowserProvider implements DataProvider {
     return this.#call('item.validate', input);
   }
 
+  /**
+   * Every open team repository is searched, not just the active one: a card in
+   * a team the user is not currently looking at breaks just as badly.
+   */
+  async getItemReferences(id: string): Promise<ItemReferencesResult> {
+    await this.#ensureActive();
+    return this.#call('item.references', { id });
+  }
+
   // -------------------------------------------------------------------- write
 
   async createItem(input: ItemDraft): Promise<Item> {
@@ -621,9 +631,17 @@ export class BrowserProvider implements DataProvider {
     return result;
   }
 
-  async deleteItem(id: string, rev: string): Promise<void> {
+  async setTaskItem(id: string, line: number, checked: boolean, rev: string): Promise<Item> {
     const mount = this.#mountForItem(id, await this.#ensureWritable());
-    const { writes } = await this.#call('item.delete', { id, rev });
+    const { item, writes } = await this.#call('item.task.set', { id, line, checked, rev });
+    await this.#persist(mount, writes);
+    this.#emit({ kind: 'items', repoId: mount.id, ids: [item.id] });
+    return item;
+  }
+
+  async deleteItem(id: string, rev: string, opts: { hard?: boolean } = {}): Promise<void> {
+    const mount = this.#mountForItem(id, await this.#ensureWritable());
+    const { writes } = await this.#call('item.delete', { id, rev, ...(opts.hard ? { hard: true } : {}) });
     await this.#persist(mount, writes);
     this.#emit({ kind: 'items', repoId: mount.id, ids: [id] });
   }

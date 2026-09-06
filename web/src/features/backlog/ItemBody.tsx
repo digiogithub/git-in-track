@@ -7,6 +7,7 @@ import {
   type LinkResolution,
   type MarkdownLinkProps,
   type RenderOptions,
+  type ToggleTask,
   type WikiTarget,
 } from '@/markdown';
 
@@ -18,6 +19,14 @@ export type ItemBodyProps = {
   project: string;
   /** `path@rev`, so a re-render of the same revision is served from the cache. */
   cacheKey?: string;
+  /**
+   * Makes the task-list checkboxes interactive. It receives the 1-based line of
+   * the checkbox inside `body`; the caller sends that line to the core, which
+   * rewrites exactly that line (docs/05-web-app.md §8.2).
+   */
+  onToggleTask?: ToggleTask;
+  /** Disables the checkboxes while a toggle is in flight. */
+  taskBusy?: boolean;
 };
 
 /**
@@ -25,7 +34,14 @@ export type ItemBodyProps = {
  * §7). Wikilinks resolve into app routes: `[[ACME-US-0042]]` to the item view,
  * `[[architecture/overview]]` to the knowledge base.
  */
-export function ItemBody({ body, path, project, cacheKey }: ItemBodyProps) {
+export function ItemBody({
+  body,
+  path,
+  project,
+  cacheKey,
+  onToggleTask,
+  taskBusy,
+}: ItemBodyProps) {
   const options = useMemo<RenderOptions>(
     () => ({
       basePath: path,
@@ -68,6 +84,8 @@ export function ItemBody({ body, path, project, cacheKey }: ItemBodyProps) {
   return (
     <MarkdownContent
       result={markdown.result}
+      {...(onToggleTask ? { onToggleTask } : {})}
+      {...(taskBusy === undefined ? {} : { taskBusy })}
       renderLink={({ href, children, className, title }: MarkdownLinkProps) => (
         <FeatureLink to={href} {...(className ? { className } : {})} {...(title ? { title } : {})}>
           {children}
