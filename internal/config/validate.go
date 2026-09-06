@@ -3,8 +3,10 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -69,6 +71,11 @@ func (c *Config) Validate() error {
 	}
 	if c.Git.MaxPushRetries < 0 {
 		add("git.maxPushRetries", "must not be negative")
+	}
+	for i, host := range c.Git.CORSProxy.AllowedHosts {
+		if err := validProxyHost(host); err != nil {
+			add(fmt.Sprintf("git.corsProxy.allowedHosts[%d]", i), "%s", err.Error())
+		}
 	}
 	if c.Index.Debounce < 0 {
 		add("index.debounce", "must not be negative")
@@ -171,4 +178,31 @@ func validLogLevel(level string) bool {
 	default:
 		return false
 	}
+}
+
+// validProxyHost checks one `git.corsProxy.allowedHosts` entry. The value is a
+// bare host or `host:port` — never a URL, never a path, never a wildcard: the
+// CORS proxy compares it for equality with the host of the request it was asked
+// to forward, and a pattern would turn an allow-list into a guess.
+func validProxyHost(raw string) error {
+	host := strings.TrimSpace(raw)
+	switch {
+	case host == "":
+		return errors.New("must not be empty")
+	case strings.Contains(host, "://"):
+		return errors.New("must be a host or host:port, not a URL")
+	case strings.ContainsAny(host, "/\\@ *?"):
+		return errors.New("must be a host or host:port, with no path, credential or wildcard")
+	}
+	name := host
+	if h, port, err := net.SplitHostPort(host); err == nil {
+		name = h
+		if _, err := strconv.Atoi(port); err != nil {
+			return errors.New("the port must be a number")
+		}
+	}
+	if strings.Trim(name, "[]") == "" {
+		return errors.New("must name a host")
+	}
+	return nil
 }

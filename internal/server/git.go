@@ -360,6 +360,10 @@ func (s *Server) mountGit(r chi.Router) {
 	r.Patch("/settings", s.handleGitSettingsPatch)
 	r.Get("/status", s.handleGitStatus)
 	r.Post("/commit", s.handleGitCommit)
+	// Where the companion's CORS proxy is and which hosts it will speak to, so
+	// that browser-only mode can adopt it without the user typing a URL
+	// (GIT-US-0042, docs/06 section 6.3).
+	r.Get("/cors-proxy", s.handleCORSProxyInfo)
 }
 
 // handleGitSettings serves GET /api/v1/git/settings.

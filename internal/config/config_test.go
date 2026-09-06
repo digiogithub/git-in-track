@@ -73,7 +73,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if got.Server != want.Server || got.Git != want.Git || got.Index != want.Index || got.MCP != want.MCP || got.Log != want.Log {
+	if got.Server != want.Server || !reflect.DeepEqual(got.Git, want.Git) || got.Index != want.Index || got.MCP != want.MCP || got.Log != want.Log {
 		t.Errorf("round trip lost a section:\ngot  %+v\nwant %+v", got, want)
 	}
 	if len(got.Repos) != 1 || !reflect.DeepEqual(got.Repos[0], want.Repos[0]) {
@@ -318,6 +318,7 @@ func TestGitSettingsRoundTrip(t *testing.T) {
 				PullStrategy:    PullRebase,
 				PushOnSync:      true,
 				MaxPushRetries:  DefaultMaxPushRetries,
+				CORSProxy:       CORSProxy{Enabled: true, AllowRepoRemotes: true},
 			},
 		},
 		{
@@ -337,6 +338,21 @@ func TestGitSettingsRoundTrip(t *testing.T) {
 				PullStrategy:    PullMerge,
 				PushOnSync:      false,
 				MaxPushRetries:  5,
+				CORSProxy:       CORSProxy{Enabled: true, AllowRepoRemotes: true},
+			},
+		},
+		{
+			name: "the CORS proxy section is read",
+			yaml: "version: 1\ngit:\n  corsProxy:\n    enabled: false\n" +
+				"    allowRepoRemotes: false\n    allowedHosts:\n      - git.acme.test\n",
+			want: Git{
+				Backend:         BackendAuto,
+				CommitDebounce:  DefaultCommitDebounce,
+				MessageTemplate: DefaultCommitMessageTemplate,
+				PullStrategy:    PullRebase,
+				PushOnSync:      true,
+				MaxPushRetries:  DefaultMaxPushRetries,
+				CORSProxy:       CORSProxy{AllowedHosts: []string{"git.acme.test"}},
 			},
 		},
 	}
@@ -347,7 +363,7 @@ func TestGitSettingsRoundTrip(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Parse: %v", err)
 			}
-			if cfg.Git != tc.want {
+			if !reflect.DeepEqual(cfg.Git, tc.want) {
 				t.Fatalf("git = %+v, want %+v", cfg.Git, tc.want)
 			}
 			path := filepath.Join(t.TempDir(), "config.yaml")
@@ -358,7 +374,7 @@ func TestGitSettingsRoundTrip(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Load: %v", err)
 			}
-			if reloaded.Git != tc.want {
+			if !reflect.DeepEqual(reloaded.Git, tc.want) {
 				t.Errorf("after a round trip git = %+v, want %+v", reloaded.Git, tc.want)
 			}
 		})
@@ -400,6 +416,47 @@ func TestGitCommitOnSaveEnvironment(t *testing.T) {
 			}
 			if cfg.Git.CommitOnSave != tc.want {
 				t.Errorf("commitOnSave = %v, want %v", cfg.Git.CommitOnSave, tc.want)
+			}
+		})
+	}
+}
+
+// TestValidateCORSProxyHosts checks the allow-list entries: the CORS proxy
+// compares them for equality with the host it was asked to forward to, so a URL,
+// a path or a wildcard is refused at configuration time rather than silently
+// never matching.
+func TestValidateCORSProxyHosts(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		host  string
+		valid bool
+	}{
+		{name: "a bare host", host: "git.acme.test", valid: true},
+		{name: "a host with a port", host: "git.acme.test:8443", valid: true},
+		{name: "an IPv6 literal", host: "[2001:db8::1]:443", valid: true},
+		{name: "a URL", host: "https://git.acme.test", valid: false},
+		{name: "a host with a path", host: "git.acme.test/acme", valid: false},
+		{name: "a wildcard", host: "*.acme.test", valid: false},
+		{name: "a credential", host: "user@git.acme.test", valid: false},
+		{name: "empty", host: "", valid: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := Default()
+			cfg.Git.CORSProxy.AllowedHosts = []string{tc.host}
+			err := cfg.Validate()
+			if tc.valid && err != nil {
+				t.Fatalf("Validate() = %v, want nil", err)
+			}
+			if !tc.valid {
+				if err == nil {
+					t.Fatal("Validate() = nil, want a refusal")
+				}
+				if !errors.Is(err, ErrInvalid) {
+					t.Errorf("Validate() = %v, want it to classify as ErrInvalid", err)
+				}
 			}
 		})
 	}

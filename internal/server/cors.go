@@ -20,13 +20,16 @@ const bearerSubprotocolPrefix = "bearer."
 const viteDevPort = 5173
 
 // corsHeaders are the request headers a browser may send (docs/07 §5.2).
-const corsHeaders = "Authorization, Content-Type, If-Match, X-Request-Id"
+// `X-Gintrack-Token` is the CORS proxy's own credential header: the proxy keeps
+// `Authorization` free for the git host's credential, which it forwards
+// (GIT-US-0042). `Git-Protocol` is what selects the v2 wire protocol.
+const corsHeaders = "Authorization, Content-Type, If-Match, X-Request-Id, X-Gintrack-Token, Git-Protocol"
 
 // corsMethods are the methods the API answers.
 const corsMethods = "GET, POST, PATCH, PUT, DELETE, OPTIONS"
 
 // corsExposed are the response headers a browser may read.
-const corsExposed = "ETag, X-Total-Count, X-Request-Id"
+const corsExposed = "ETag, X-Total-Count, X-Request-Id, WWW-Authenticate, X-Gintrack-Proxied-Host"
 
 // staticOrigins are the origins allowed regardless of the port the listener
 // ended up on: the loopback origins of the configured port, the Vite dev server

@@ -142,6 +142,9 @@ type Server struct {
 	// mcp is the Model Context Protocol server mounted at /mcp, nil when the
 	// endpoint is disabled.
 	mcp *mcp.Server
+	// proxy is the browser-git CORS proxy mounted at /cors-proxy/
+	// (GIT-US-0042, docs/06-git-sync.md section 6.3).
+	proxy *corsProxy
 
 	// mu guards addr, which changes once when the listener resolves a
 	// wildcard port and is read concurrently by callers printing the URL.
@@ -203,6 +206,7 @@ func New(opts Options) (*Server, error) {
 		}
 	}
 	s.mcp = s.newMCPServer(opts)
+	s.proxy = newCORSProxy(s)
 	s.router = s.routes()
 	return s, nil
 }
@@ -325,6 +329,10 @@ func (s *Server) routes() chi.Router {
 	// The MCP endpoint lives outside the REST prefix: /mcp is the path every
 	// client configuration expects, and it speaks JSON-RPC, not REST.
 	s.mountMCP(r)
+	// The CORS proxy likewise: isomorphic-git builds its URL by concatenating
+	// the configured proxy with the remote's host and path, so the mount point
+	// has to be a bare prefix.
+	s.mountCORSProxy(r)
 
 	r.NotFound(s.spaHandler())
 	r.MethodNotAllowed(s.spaHandler())
@@ -337,8 +345,10 @@ func (s *Server) timeoutExceptStream(next http.Handler) http.Handler {
 	bounded := middleware.Timeout(requestTimeout)(next)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// The event stream and the MCP endpoint are long-lived connections, not
-		// requests that must finish inside the deadline.
-		if r.URL.Path == apiPrefix+"/events" || r.URL.Path == mcpPath || strings.HasPrefix(r.URL.Path, mcpPath+"/") {
+		// requests that must finish inside the deadline; a proxied fetch is a
+		// transfer that carries its own, longer deadline (proxyTimeout).
+		if r.URL.Path == apiPrefix+"/events" || r.URL.Path == mcpPath || strings.HasPrefix(r.URL.Path, mcpPath+"/") ||
+			strings.HasPrefix(r.URL.Path, corsProxyPath+"/") {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -386,7 +396,10 @@ func (s *Server) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 			"mcpHttp":      s.mcp != nil,
 			"mcpWrite":     s.opts.MCPAllowWrite && s.mcp != nil,
 			"mcpTools":     s.mcpTools(),
-			"boards":       true,
+			// The CORS proxy that makes browser-only git reach a host at all
+			// (GIT-US-0042, docs/06 section 6.3).
+			"corsProxy": s.proxy.enabled(),
+			"boards":    true,
 		},
 		"limits": map[string]int{
 			"maxItemsPerPage": maxItemsPerPage,
