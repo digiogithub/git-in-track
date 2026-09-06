@@ -2,7 +2,7 @@
 id: GIT-EP-0005
 type: epic
 title: Git sync
-status: done
+status: in_progress
 priority: critical
 milestone: GIT-M-0005
 author: team
@@ -27,11 +27,11 @@ isomorphic-git over File System Access handles, with the documented CORS-proxy c
 
 ## Acceptance Criteria
 
-- [ ] Two clones edited concurrently are reconciled through the UI, including one real
+- [x] Two clones edited concurrently are reconciled through the UI, including one real
       conflict, without touching a terminal.
 - [x] No credential is written to disk or to `localStorage` by git-in-track, proven by a
       test.
-- [ ] Commit on save produces one commit per logical edit, not one per keystroke.
+- [x] Commit on save produces one commit per logical edit, not one per keystroke.
 - [x] A push failure leaves a recoverable working tree and an actionable message.
 - [ ] The CORS limitation for browser-only mode is documented with a working proxy recipe.
 
