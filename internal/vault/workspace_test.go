@@ -364,3 +364,189 @@ func rawWorkspaceCall(t *testing.T, w *Workspace, method string, params any) env
 	}
 	return env
 }
+
+// secondTeamFixtureRoot is the other team repository of the multi-team tests.
+const secondTeamFixtureRoot = "../../testdata/fixtures/team-second"
+
+// twoTeamWorkspace opens both team fixtures next to the project fixture, in
+// both operating modes: the workspace GIT-US-0036 made legal.
+func twoTeamWorkspace(t *testing.T, browser bool) *Workspace {
+	t.Helper()
+	if browser {
+		w := NewWorkspace()
+		loadFixture(t, w, "demo-team", RoleTeam, teamFixtureRoot)
+		loadFixture(t, w, "platform-team", RoleTeam, secondTeamFixtureRoot)
+		loadFixture(t, w, "demo", RoleProject, fixtureRoot)
+		return w
+	}
+	w := NewWorkspace()
+	for _, m := range []struct{ id, role, root string }{
+		{"demo-team", RoleTeam, teamFixtureRoot},
+		{"platform-team", RoleTeam, secondTeamFixtureRoot},
+		{"demo", RoleProject, fixtureRoot},
+	} {
+		if _, err := w.Attach(m.id, m.role, openFixture(t, m.root)); err != nil {
+			t.Fatalf("attach %s: %v", m.id, err)
+		}
+	}
+	return w
+}
+
+// twoTeamModes runs a subtest against a two-team workspace in both modes.
+func twoTeamModes(t *testing.T, run func(t *testing.T, w *Workspace)) {
+	t.Helper()
+	t.Run("companion", func(t *testing.T) { run(t, twoTeamWorkspace(t, false)) })
+	t.Run("browser", func(t *testing.T) { run(t, twoTeamWorkspace(t, true)) })
+}
+
+func TestWorkspaceHoldsSeveralTeams(t *testing.T) {
+	twoTeamModes(t, func(t *testing.T, w *Workspace) {
+		t.Run("every team is mounted, not just the first", func(t *testing.T) {
+			mounts := w.TeamMounts()
+			if len(mounts) != 2 {
+				t.Fatalf("team mounts = %d, want 2", len(mounts))
+			}
+			if mounts[0].ID != "demo-team" || mounts[1].ID != "platform-team" {
+				t.Errorf("mount order = %s, %s", mounts[0].ID, mounts[1].ID)
+			}
+		})
+
+		t.Run("a second team is no longer a diagnostic", func(t *testing.T) {
+			for _, d := range w.Diagnostics() {
+				if d.Code == core.CodeTeamKey {
+					t.Errorf("a second team repository is legal, got %+v", d)
+				}
+			}
+		})
+
+		t.Run("team.list answers with both", func(t *testing.T) {
+			list := decode[TeamListResult](t, wsCall(t, w, "team.list", nil))
+			if list.Total != 2 || len(list.Teams) != 2 {
+				t.Fatalf("team.list = %+v", list)
+			}
+			if list.Teams[0].Key != "DEMO-TEAM" || list.Teams[1].Key != "PLATFORM-TEAM" {
+				t.Errorf("keys = %s, %s", list.Teams[0].Key, list.Teams[1].Key)
+			}
+		})
+
+		t.Run("a team is resolved by key and by repository id", func(t *testing.T) {
+			for _, name := range []string{"PLATFORM-TEAM", "platform-team"} {
+				summary := decode[teamSummary](t, wsCall(t, w, "team.get", map[string]string{"team": name}))
+				if summary.Key != "PLATFORM-TEAM" {
+					t.Errorf("team.get %q = %s", name, summary.Key)
+				}
+			}
+		})
+
+		t.Run("naming no team is refused while two are open", func(t *testing.T) {
+			env := rawWorkspaceCall(t, w, "team.get", map[string]string{})
+			if env.OK || env.Error.Code != "invalid_request" {
+				t.Fatalf("team.get without a team = %+v", env)
+			}
+		})
+
+		t.Run("an unknown team is not found", func(t *testing.T) {
+			env := rawWorkspaceCall(t, w, "team.get", map[string]string{"team": "NOPE"})
+			if env.OK || env.Error.Code != "not_found" {
+				t.Fatalf("team.get NOPE = %+v", env)
+			}
+		})
+
+		t.Run("boards follow the team they are asked for", func(t *testing.T) {
+			for _, tc := range []struct {
+				name  string
+				team  string
+				first string
+				count int
+			}{
+				{name: "the delivery team", team: "DEMO-TEAM", first: "delivery", count: 2},
+				{name: "the platform team", team: "PLATFORM-TEAM", first: "platform", count: 1},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					result := decode[BoardListResult](t,
+						wsCall(t, w, "board.list", map[string]string{"team": tc.team}))
+					if len(result.Boards) != tc.count {
+						t.Fatalf("boards = %d, want %d", len(result.Boards), tc.count)
+					}
+					if result.Boards[0].ID != tc.first {
+						t.Errorf("first board = %s, want %s", result.Boards[0].ID, tc.first)
+					}
+				})
+			}
+		})
+
+		t.Run("a board of the other team is not on this one", func(t *testing.T) {
+			env := rawWorkspaceCall(t, w, "board.get",
+				map[string]string{"board": "platform", "team": "DEMO-TEAM"})
+			if env.OK {
+				t.Error("the delivery team does not hold the platform board")
+			}
+		})
+
+		t.Run("retros and sprints follow the same team", func(t *testing.T) {
+			sprints := decode[SprintListResult](t,
+				wsCall(t, w, "sprint.list", map[string]string{"team": "DEMO-TEAM"}))
+			if len(sprints.Sprints) == 0 {
+				t.Error("the delivery team holds a sprint")
+			}
+			empty := decode[SprintListResult](t,
+				wsCall(t, w, "sprint.list", map[string]string{"team": "PLATFORM-TEAM"}))
+			if len(empty.Sprints) != 0 {
+				t.Errorf("the platform team holds no sprint, got %d", len(empty.Sprints))
+			}
+			retros := decode[RetroListResult](t,
+				wsCall(t, w, "retro.list", map[string]string{"team": "DEMO-TEAM"}))
+			if len(retros.Retros) == 0 {
+				t.Error("the delivery team holds a retro")
+			}
+		})
+
+		t.Run("a board call naming no team is refused rather than guessed", func(t *testing.T) {
+			env := rawWorkspaceCall(t, w, "board.list", map[string]string{})
+			if env.OK || env.Error.Code != "invalid_request" {
+				t.Fatalf("board.list without a team = %+v", env)
+			}
+		})
+
+		t.Run("workspace.list carries every team", func(t *testing.T) {
+			summary := decode[workspaceSummary](t, wsCall(t, w, "workspace.list", nil))
+			if len(summary.Teams) != 2 {
+				t.Fatalf("workspace teams = %d, want 2", len(summary.Teams))
+			}
+			if summary.Team == nil || summary.Team.Key != "DEMO-TEAM" {
+				t.Errorf("the legacy single-team field must repeat the first team, got %+v", summary.Team)
+			}
+		})
+	})
+}
+
+func TestWorkspaceSingleTeamNeedsNoName(t *testing.T) {
+	modes(t, func(t *testing.T, w *Workspace) {
+		summary := decode[teamSummary](t, wsCall(t, w, "team.get", nil))
+		if summary.Key != "DEMO-TEAM" {
+			t.Fatalf("team.get = %s", summary.Key)
+		}
+		boards := decode[BoardListResult](t, wsCall(t, w, "board.list", nil))
+		if len(boards.Boards) == 0 {
+			t.Error("a workspace with one team lists its boards with no team named")
+		}
+	})
+}
+
+func TestWorkspaceDuplicateTeamKey(t *testing.T) {
+	w := NewWorkspace()
+	for _, id := range []string{"one", "two"} {
+		if _, err := w.Attach(id, RoleTeam, openFixture(t, teamFixtureRoot)); err != nil {
+			t.Fatalf("attach %s: %v", id, err)
+		}
+	}
+	found := false
+	for _, d := range w.Diagnostics() {
+		if d.Code == core.CodeTeamKey && d.Severity == core.SeverityError {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("two repositories declaring DEMO-TEAM must be reported, got %v", w.Diagnostics())
+	}
+}

@@ -121,6 +121,8 @@ func (v *Vault) ProjectSnapshotOf(
 // SnapshotRefreshParams is the input of "snapshot.refresh": which projects to
 // regenerate, and who is asking.
 type SnapshotRefreshParams struct {
+	// TeamScope names the team repository this call acts on.
+	TeamScope
 	// Projects limits the run to these keys; empty means every declared
 	// project a repository of the workspace serves.
 	Projects []string `json:"projects,omitempty"`
@@ -167,8 +169,8 @@ type SnapshotRefreshResult struct {
 
 // SnapshotList reports the committed snapshot of every project team.yaml
 // declares, whether it exists, when it was generated and whether it is stale.
-func (w *Workspace) SnapshotList() (SnapshotRefreshResult, error) {
-	c, err := w.boardContext()
+func (w *Workspace) SnapshotList(team string) (SnapshotRefreshResult, error) {
+	c, err := w.boardContext(team)
 	if err != nil {
 		return SnapshotRefreshResult{}, err
 	}
@@ -194,7 +196,7 @@ func (w *Workspace) SnapshotList() (SnapshotRefreshResult, error) {
 func (w *Workspace) RefreshSnapshots(
 	ctx context.Context, p SnapshotRefreshParams,
 ) (SnapshotRefreshResult, error) {
-	c, err := w.boardContext()
+	c, err := w.boardContext(p.Team)
 	if err != nil {
 		return SnapshotRefreshResult{}, err
 	}

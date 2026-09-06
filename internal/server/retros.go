@@ -33,6 +33,7 @@ func (s *Server) handleRetroList(w http.ResponseWriter, r *http.Request) {
 		"sprint": r.URL.Query().Get("sprint"),
 		"board":  r.URL.Query().Get("board"),
 		"state":  r.URL.Query().Get("state"),
+		"team":   teamOf(r),
 	}
 	result, err := s.repos.workspace().Dispatch(r.Context(), "retro.list", mustJSON(params))
 	if err != nil {
@@ -46,7 +47,7 @@ func (s *Server) handleRetroList(w http.ResponseWriter, r *http.Request) {
 // ETag.
 func (s *Server) handleRetroGet(w http.ResponseWriter, r *http.Request) {
 	result, err := s.repos.workspace().Dispatch(r.Context(), "retro.get",
-		mustJSON(map[string]string{"id": chi.URLParam(r, "id")}))
+		mustJSON(map[string]string{"id": chi.URLParam(r, "id"), "team": teamOf(r)}))
 	if err != nil {
 		writeVaultError(w, r, err)
 		return
@@ -65,6 +66,7 @@ func (s *Server) handleRetroCreate(w http.ResponseWriter, r *http.Request) {
 	if r.ContentLength > 0 && !decodeBody(w, r, &body) {
 		return
 	}
+	body.Team = teamFallback(r, body.Team)
 	result, err := s.repos.workspace().Dispatch(r.Context(), "retro.create", mustJSON(body))
 	if err != nil {
 		writeVaultError(w, r, err)
@@ -85,7 +87,10 @@ func (s *Server) handleRetroUpdate(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &patch) {
 		return
 	}
-	params := vault.RetroUpdateParams{ID: chi.URLParam(r, "id"), Rev: rev, Patch: patch}
+	params := vault.RetroUpdateParams{
+		TeamScope: vault.TeamScope{Team: teamOf(r)},
+		ID:        chi.URLParam(r, "id"), Rev: rev, Patch: patch,
+	}
 	result, err := s.repos.workspace().Dispatch(r.Context(), "retro.update", mustJSON(params))
 	if err != nil {
 		writeVaultError(w, r, err)
@@ -117,7 +122,8 @@ func (s *Server) handleRetroPromote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	params := vault.RetroPromoteParams{
-		ID: chi.URLParam(r, "id"), Action: body.Action,
+		TeamScope: vault.TeamScope{Team: teamOf(r)},
+		ID:        chi.URLParam(r, "id"), Action: body.Action,
 		Project: body.Project, Labels: body.Labels, Rev: rev,
 	}
 	result, err := s.repos.workspace().Dispatch(r.Context(), "retro.promote", mustJSON(params))

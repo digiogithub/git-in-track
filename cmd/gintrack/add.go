@@ -32,6 +32,9 @@ type addPayload struct {
 	Config    string   `json:"config"`
 	// Created is the project `--key` scaffolded, absent when none was.
 	Created *initPayload `json:"created,omitempty"`
+	// CreatedTeam is the team repository `--team --key` scaffolded, absent when
+	// none was.
+	CreatedTeam *teamPayload `json:"createdTeam,omitempty"`
 }
 
 // newAddCommand registers a repository in the active workspace.
@@ -56,16 +59,23 @@ Repeat --docs to declare more of them.
 A repository with no backlog at all is a repository with nothing to show. Pass
 --key to create the project while registering, or run "gintrack init" first:
 
-  gintrack add ~/code/acme --key ACME --name "ACME Platform" --docs docs`,
+  gintrack add ~/code/acme --key ACME --name "ACME Platform" --docs docs
+
+--team registers a team repository, and a team repository is a folder holding a
+team.yaml: every board, sprint and retro reads that file. Registering a folder
+without one is therefore refused, with the command that creates it — or pass
+--key to create it here and now:
+
+  gintrack add ~/code/acme-team --team --key ACME-TEAM --name "ACME Delivery"`,
 		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runAdd(cmd, flags, local, args[0])
 		},
 	}
 
-	cmd.Flags().BoolVar(&local.team, "team", false, "register as a team repository")
+	cmd.Flags().BoolVar(&local.team, "team", false, "register as a team repository; the folder must hold a team.yaml, or --key creates one")
 	cmd.Flags().StringArrayVar(&local.docs, "docs", nil, "documentation folder, relative to the repository root (repeatable)")
-	cmd.Flags().StringVar(&local.key, "key", "", "create a project with this key when the repository has no backlog")
+	cmd.Flags().StringVar(&local.key, "key", "", "create a project (or, with --team, a team repository) with this key when the folder has none")
 	cmd.Flags().StringVar(&local.name, "name", "", "human name of the created project; defaults to the key")
 	cmd.Flags().BoolVar(&local.noGit, "no-git", false, "register a folder that is not a git working tree")
 	cmd.Flags().BoolVar(&local.asJSON, "json", false, "print machine-readable JSON")
@@ -108,7 +118,13 @@ func runAdd(cmd *cobra.Command, flags *globalFlags, local *addFlags, target stri
 			break
 		}
 	}
-	created, err := createProjectOnAdd(registered, local)
+	var created *initPayload
+	var createdTeam *teamPayload
+	if local.team {
+		createdTeam, err = createTeamOnAdd(registered, local)
+	} else {
+		created, err = createProjectOnAdd(registered, local)
+	}
 	if err != nil {
 		return err
 	}
@@ -125,13 +141,14 @@ func runAdd(cmd *cobra.Command, flags *globalFlags, local *addFlags, target stri
 	p := flags.printer(cmd, local.asJSON)
 	if p.JSONMode() {
 		return render(p.JSON(addPayload{
-			Workspace: res.Workspace,
-			Repo:      newRepoInfo(repo),
-			Git:       config.IsGitRepo(repo.Path),
-			Projects:  view.Keys(),
-			Items:     view.Stats.Items,
-			Config:    res.Path,
-			Created:   created,
+			Workspace:   res.Workspace,
+			Repo:        newRepoInfo(repo),
+			Git:         config.IsGitRepo(repo.Path),
+			Projects:    view.Keys(),
+			Items:       view.Stats.Items,
+			Config:      res.Path,
+			Created:     created,
+			CreatedTeam: createdTeam,
 		}))
 	}
 	p.Printf("added %s repository %s  %s  (docs: %s, %s)\n",
@@ -146,7 +163,14 @@ func runAdd(cmd *cobra.Command, flags *globalFlags, local *addFlags, target stri
 	if created != nil {
 		p.Printf("created project %s (%s) in %s\n", created.Key, created.Name, created.ConfigPath)
 	}
-	if len(view.Projects) == 0 {
+	if createdTeam != nil {
+		p.Printf("created team repository %s (%s) in %s\n",
+			createdTeam.Key, createdTeam.Name, createdTeam.ConfigPath)
+		p.Printf("declare the projects this team owns in %s (docs/04 section 3.3)\n", createdTeam.ConfigPath)
+	}
+	// A team repository holds no backlog of its own by the hard rule of docs/04
+	// section 1, so the missing-project warning would be exactly wrong there.
+	if !local.team && len(view.Projects) == 0 {
 		p.Warnf("warning: no .pmngr/project.yaml was found under %s\n", repo.Path)
 		p.Warnf("create one with `gintrack init %s --key <KEY>`\n", repo.Path)
 	}
@@ -199,6 +223,48 @@ func createProjectOnAdd(repo *config.Repo, local *addFlags) (*initPayload, error
 		DocsFolder:  ref.DocsPath,
 		BacklogPath: ref.BacklogPath,
 		ConfigPath:  ref.ConfigPath,
+	}, nil
+}
+
+// createTeamOnAdd makes sure that a repository registered with --team really is
+// one, and creates it when `--key` asks for that.
+//
+// The role recorded in the configuration is reported, never enforced: every
+// team surface — boards, sprints, retros, the team knowledge base — keys off a
+// parsed root team.yaml. Registering a folder without one used to succeed
+// silently and then fail on every one of those calls, so it is refused here,
+// with the command that fixes it.
+func createTeamOnAdd(repo *config.Repo, local *addFlags) (*teamPayload, error) {
+	key := core.TeamKey(strings.TrimSpace(local.key))
+	hasTeamFile := config.Detect(repo.Path).Team
+	if key == "" {
+		if hasTeamFile {
+			return nil, nil
+		}
+		return nil, failf(exitValidation,
+			"%s holds no %s, so it is not a team repository: boards, sprints and retros all read that file\n"+
+				"create it while registering with `gintrack add %s --team --key <KEY>`, "+
+				"or on its own with `gintrack init %s --team --key <KEY>`",
+			repo.Path, core.TeamFileName, repo.Path, repo.Path)
+	}
+	if !core.ValidTeamKey(key) {
+		return nil, failf(exitValidation, "%q is not a team key: it must match [A-Z][A-Z0-9-]{1,15}", key)
+	}
+	fsys, err := osfs.New(repo.Path)
+	if err != nil {
+		return nil, fmt.Errorf("open %s: %w", repo.Path, err)
+	}
+	ref, err := createTeamAt(fsys, repo.Path, core.NewTeam{Key: key, Name: local.name})
+	if err != nil {
+		return nil, err
+	}
+	return &teamPayload{
+		Key:           string(ref.Key),
+		Name:          ref.Name,
+		Root:          repo.Path,
+		ConfigPath:    ref.ConfigPath,
+		KnowledgePath: ref.KnowledgePath,
+		TeamDirPath:   ref.TeamDirPath,
 	}, nil
 }
 

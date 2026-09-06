@@ -38,8 +38,10 @@ func (s *Server) kbScope(w http.ResponseWriter, r *http.Request) (*mount, string
 		return m, key, true
 	}
 	// A team knowledge base is addressed by its team key: it is a scope of the
-	// team repository's index, not a project (docs/04 section 4).
-	if m, found := s.repos.workspace().TeamMount(); found {
+	// team repository's index, not a project (docs/04 section 4). Every mounted
+	// team is a candidate, so /teams/{key}/kb reaches the team it names rather
+	// than only the first one open (GIT-US-0036).
+	for _, m := range s.repos.workspace().TeamMounts() {
 		if team := m.Vault.Team(); team != nil && string(team.Key) == key {
 			if owner, ok := s.repos.lookup(m.ID); ok {
 				return owner, key, true

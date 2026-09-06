@@ -324,6 +324,8 @@ func (v *Vault) Dispatch(ctx context.Context, method string, raw []byte) (any, e
 
 	case "team.get":
 		return v.teamGet()
+	case "team.create":
+		return v.teamCreate(ctx, raw)
 	case "ref.resolve":
 		return v.refResolve(raw)
 

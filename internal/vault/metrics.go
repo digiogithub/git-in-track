@@ -75,8 +75,8 @@ func (w *Workspace) historySource() HistorySource {
 // It never fails because history is missing. A host that cannot read git gets
 // the `updated` approximation, and a reference no history covers is reported as
 // unknown on every day rather than counted as work that was never done.
-func (w *Workspace) SprintMetrics(ctx context.Context, id string) (core.SprintMetricsView, error) {
-	c, err := w.sprintContext(ctx)
+func (w *Workspace) SprintMetrics(ctx context.Context, team, id string) (core.SprintMetricsView, error) {
+	c, err := w.sprintContext(ctx, team)
 	if err != nil {
 		return core.SprintMetricsView{}, err
 	}

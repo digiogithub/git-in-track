@@ -34,12 +34,17 @@ func (s *Server) mountAPI(api chi.Router) {
 		p.Get("/workspaces/{name}", s.handleWorkspace)
 		p.Post("/workspaces", s.notImplemented("Creating a workspace is a configuration change; use `gintrack config`."))
 		p.Get("/repos", s.handleRepos)
-		p.Post("/repos", s.notImplemented("Registering a repository is a configuration change; use `gintrack add`."))
+		// Registration stays with the CLI; the route answers 501 with the exact
+		// command to run rather than a bare refusal (GIT-US-0035, ADR-020).
+		p.Post("/repos", s.handleRegisterRepo)
 		p.Get("/repos/{id}", s.handleRepo)
 		p.Delete("/repos/{id}", s.notImplemented("Unregistering a repository is a configuration change; use `gintrack rm`."))
 		p.Post("/repos/{id}/reindex", s.handleReindex)
 		// Scaffolding a backlog into a repository that has none (GIT-US-0031).
 		p.Post("/repos/{id}/projects", s.handleCreateProject)
+		// Scaffolding a team repository into a repository that is not one
+		// (GIT-US-0034).
+		p.Post("/repos/{id}/team", s.handleCreateTeam)
 
 		// Projects and their knowledge base.
 		p.Get("/projects", s.handleProjects)
@@ -51,6 +56,10 @@ func (s *Server) mountAPI(api chi.Router) {
 		p.Get("/teams", s.handleTeams)
 		p.Get("/teams/{key}", s.handleTeam)
 		p.Route("/teams/{key}/kb", s.mountKB)
+		// The project list of a team: connecting a repository to a team and
+		// disconnecting it again (GIT-US-0037, docs/04 section 3.9).
+		p.Post("/teams/{key}/projects", s.handleTeamProjectAdd)
+		p.Delete("/teams/{key}/projects/{project}", s.handleTeamProjectRemove)
 		p.Get("/refs", s.handleResolveRef)
 		// Committed index snapshots: what a board renders for a project this
 		// machine has not cloned (docs/04 section 6).

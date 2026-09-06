@@ -362,13 +362,14 @@ Registers a repository in the current workspace.
 ```
 gintrack add <path> [flags]
 
-  --team              Register as a team repository (role: team)
+  --team              Register as a team repository (role: team). The folder
+                      must hold a team.yaml, or --key creates one
   --docs strings      Documentation/KB folder relative to the repo root.
                       Repeatable: every occurrence is declared, the first one
                       is the primary (default: auto-detected)
-  --key string        Create a project with this key when the repository has
-                      no backlog (see 4.14 `gintrack init`)
-  --name string       Human name of the created project; defaults to the key
+  --key string        Create a project — or, with --team, a team repository —
+                      with this key when the folder has none (see 4.14)
+  --name string       Human name of what is created; defaults to the key
   --no-git            Register a folder that is not a git working tree
   --workspace string  Target workspace (created if it does not exist)
   --json              Machine-readable output
@@ -404,6 +405,27 @@ configuration: /home/jose/.config/gintrack/config.yaml
 $ gintrack add ~/code/acme-team --team
 added team repository acme-team  /home/jose/code/acme-team  (docs: knowledge, 41 items)
 ```
+
+**`--team` needs a `team.yaml`.** The role recorded in the configuration is *reported, never
+enforced*: every team surface — boards, sprints, retros, the team knowledge base — keys off a
+parsed root `team.yaml`. Registering a folder without one used to succeed silently and then
+fail on every one of those calls, so it is refused instead, with the command that fixes it
+(exit code 3), and `--key` creates the team repository in the same command
+([ADR-020](./adr/ADR-020-creating-a-team-repository.md), GIT-US-0034):
+
+```bash
+$ gintrack add ~/code/acme-team --team
+gintrack: /home/jose/code/acme-team holds no team.yaml, so it is not a team repository: …
+create it while registering with `gintrack add /home/jose/code/acme-team --team --key <KEY>`, …
+
+$ gintrack add ~/code/acme-team --team --key ACME-TEAM --name "ACME Delivery Team"
+added team repository acme-team  /home/jose/code/acme-team  (docs: knowledge, 0 items)
+created team repository ACME-TEAM (ACME Delivery Team) in team.yaml
+declare the projects this team owns in team.yaml (docs/04 section 3.3)
+```
+
+Nothing is registered when the refusal fires: the configuration file is written only after
+the whole command succeeds.
 
 `gintrack rm <id>` removes a registration (never touching files on disk).
 
@@ -742,7 +764,11 @@ Checks performed:
 2. **Configuration** — unknown keys, unreadable repo paths, duplicate registrations,
    workspaces with zero repos, token strength.
 3. **Repository** — is a git working tree, has a remote, docs folder exists, `.pmngr`
-   scaffold present, `project.yaml`/`team.yaml` parse and validate.
+   scaffold present, `project.yaml`/`team.yaml` parse and validate. What is required
+   depends on the role: a repository registered as a **team** repository is checked for a
+   root `team.yaml` and never for a backlog — it holds none by the hard rule of doc 04 §1 —
+   and a team registration without that file is an error naming
+   `gintrack init <path> --team --key <KEY>` (GIT-US-0034).
 4. **Content** — front matter parses; required fields present; `type` matches the folder;
    `status` is in the project workflow; `parent` exists and has the right type; `milestone`
    exists; `links[]` targets resolve; `assignees` are known team members (warning only);
@@ -908,8 +934,9 @@ WEB      —                            skipped     (not cloned in this workspac
 
 ### 4.14 `gintrack init [path]`
 
-Creates a project backlog in a repository that does not have one, so that a team can start
-from an empty repository without hand-writing a `project.yaml`.
+Creates a project backlog in a repository that does not have one — or, with `--team`, a whole
+team repository — so that a team can start from an empty repository without hand-writing a
+`project.yaml` or a `team.yaml`.
 
 ```
 gintrack init [path] [flags]           # path defaults to "."
@@ -920,8 +947,10 @@ gintrack init [path] [flags]           # path defaults to "."
   --timezone string     IANA timezone for date-only fields (default: UTC)
   --docs string         Documentation folder, "." for the repository root
                         (default: docs)
+  --knowledge string    With --team, the knowledge-base folder
+                        (default: knowledge)
   --register            Register the repository in the active workspace too
-  --team                With --register, register it as a team repository
+  --team                Create a team repository instead of a project
   --json                Machine-readable output
 ```
 
@@ -950,6 +979,41 @@ repository root and its first-level directories on its own (doc 03 R-DISC-1,
 - The same scaffolder serves every surface: `core.CreateProject` in the shared core, reached
   by this command, by `gintrack add --key`, by `POST /repos/{id}/projects` (§5.5) and by the
   add-repository wizard of the web app.
+
+#### `gintrack init --team` — a team repository
+
+With `--team` the command writes what [doc 04 §2](./04-team-repository.md) prescribes instead:
+`team.yaml` at the repository root (schema 1, the key, the name, the documented defaults, an
+empty `members:` and an empty `projects:`), the `.pmngr/boards/`, `.pmngr/sprints/`,
+`.pmngr/retros/` and `.pmngr/index/` folders, and a `knowledge/` base with an `index.md`
+landing page. `--docs` plays no part: `team.yaml` sits at the root by R-TEAM-LOC-1.
+
+A team key is `[A-Z][A-Z0-9-]{1,15}` — hyphens are allowed, unlike a project key.
+
+```bash
+$ gintrack init ~/code/acme-team --team --key ACME-TEAM --name "ACME Delivery Team" --register
+created team repository ACME-TEAM (ACME Delivery Team) in team.yaml
+  boards, sprints and retros go in .pmngr
+  the team knowledge base is knowledge
+registered team repository acme-team  /home/jose/code/acme-team
+declare the projects this team owns in team.yaml (docs/04 section 3.3)
+```
+
+The `--json` payload is a different shape from the project one — a team repository has no
+backlog and no documentation folder:
+
+```json
+{"key":"ACME-TEAM","name":"ACME Delivery Team","root":"/home/jose/code/acme-team",
+ "configPath":"team.yaml","knowledgePath":"knowledge","teamDirPath":".pmngr","repo":{…}}
+```
+
+- Exit codes: 2 without `--key`, 3 for a key the grammar refuses, 5 for a folder that already
+  holds a `team.yaml` — the routing table of a workspace is never overwritten.
+- The projects list starts empty on purpose, and that is not an error: see
+  [ADR-020](./adr/ADR-020-creating-a-team-repository.md).
+- The same scaffolder serves every surface: `core.CreateTeam`, reached by this command, by
+  `gintrack add --team --key`, by `POST /repos/{id}/team` (§5.5) and by the add-repository
+  wizard of the web app.
 
 ---
 
@@ -1078,7 +1142,9 @@ Catalog of `code` values: `unauthorized`, `forbidden`, `not_found`, `invalid_req
 `validation_failed`, `invalid_front_matter`, `precondition_required`, `stale_revision`,
 `conflict`, `duplicate_id`, `workflow_transition_denied`, `read_only`,
 `repo_not_registered`, `repo_not_cloned`, `wip_limit_exceeded`, `sprint_overlap`,
-`sprint_already_active`, `board_in_use`, `project_exists`, `git_dirty`, `git_auth_failed`,
+`sprint_already_active`, `board_in_use`, `project_exists`, `team_exists`,
+`team_project_exists`, `team_project_referenced`, `git_dirty`,
+`git_auth_failed`,
 `git_conflict`, `index_unavailable`, `rate_limited`, `not_implemented`, `internal`.
 
 `wip_limit_exceeded` (HTTP 409) is a *refusal the caller may repeat*: a board's WIP limit is
@@ -1094,6 +1160,16 @@ not — the caller has to change the dates.
 `project_exists` (HTTP 409) refuses to scaffold a project into a documentation folder that
 already holds a `project.yaml` (doc 03 R-NEW-2). A backlog is never overwritten, so the caller
 picks another folder or opens the one that is there.
+
+`team_project_exists` (HTTP 409) refuses to declare a project key a team already declares: the
+`projects:` list is keyed by project key alone (doc 04 R-PROJ-1), so a second entry would make
+every reference into it ambiguous. It is not repeatable with `force` — the caller edits the
+entry that is there.
+
+`team_project_referenced` (HTTP 409) has the shape of `wip_limit_exceeded`: disconnecting a
+project a board, a sprint or a retro action still points at is declined once, with the
+references named in `detail`, and the same request with `force` goes through. It exists so that
+`ref:` entries are never orphaned silently (doc 04 §3.9).
 
 `duplicate_id` and `board_in_use` (HTTP 409) guard a board's life cycle: a board file is named
 after its id, so `POST /boards` refuses a slug that is already taken rather than replacing
@@ -1154,6 +1230,23 @@ GET    /api/v1/repos/{key}
 DELETE /api/v1/repos/{key}              (unregisters; never deletes files)
 POST   /api/v1/repos/{key}/reindex      {"full":true}
 POST   /api/v1/repos/{key}/projects     {"docsFolder":"docs","key":"ACME","name":"ACME Platform"}
+POST   /api/v1/repos/{key}/team         {"key":"ACME-TEAM","name":"ACME Delivery Team"}
+```
+
+**`POST /api/v1/repos` answers `501 not_implemented`, on purpose.** Registering a repository
+writes the user's configuration file, and that file belongs to the CLI: the companion read it
+at startup, so a server-side write would make the running process disagree with the file on
+disk, and it would let a browser tab add arbitrary paths of the machine to the workspace. The
+response carries the exact command instead of a bare refusal, built from the `path`, `role`
+and `docs` of the request ([ADR-020](./adr/ADR-020-creating-a-team-repository.md)):
+
+```json
+POST /api/v1/repos
+{ "path": "/home/jose/code/acme-team", "role": "team" }
+501
+{ "type": "…/problems/not-implemented", "title": "Not implemented", "status": 501,
+  "code": "not_implemented",
+  "detail": "Registering a repository is a change to your gintrack configuration, which only the CLI writes. Run this command, then reload: gintrack add /home/jose/code/acme-team --team" }
 ```
 
 `POST /api/v1/repos/{key}/projects` scaffolds a backlog in a registered repository that has
@@ -1180,6 +1273,28 @@ Failures use the codes of §5.4: `422 validation_failed` for a key outside
 `404 repo_not_registered` for an unknown repository. The registration in the configuration
 file is not rewritten — that is a CLI concern (`gintrack add`, `gintrack init`).
 
+`POST /api/v1/repos/{key}/team` is its team counterpart (GIT-US-0034). It turns a registered
+repository into a team repository: `team.yaml` at the root plus the `.pmngr/` artifact folders
+and the `knowledge/` base of [doc 04 §2](./04-team-repository.md), through the same
+`core.CreateTeam` the CLI runs. It answers `201` with the team as `GET /api/v1/teams/{key}`
+reports it, plus the files it wrote.
+
+```json
+POST /api/v1/repos/acme-team/team
+{ "key": "ACME-TEAM", "name": "ACME Delivery Team" }
+201
+{
+  "team": { "key": "ACME-TEAM", "name": "ACME Delivery Team", "root": ".",
+            "knowledgePath": "knowledge", "members": [], "projects": [], "diagnostics": [ … ] },
+  "writes": { "written": [{ "path": "team.yaml", "text": "schema: 1\n…" }], "removed": [] }
+}
+```
+
+Its body accepts `root`, `key`, `name`, `description`, `timezone`, `knowledgePath` and
+`members`. Failures: `422 validation_failed` for a key outside `[A-Z][A-Z0-9-]{1,15}` or a
+malformed member handle, `409 team_exists` for a folder that already holds a `team.yaml`,
+`404 repo_not_registered` for an unknown repository.
+
 ```json
 GET /api/v1/repos/ACME
 200
@@ -1201,11 +1316,34 @@ GET /api/v1/repos/ACME
 #### Teams and cross-repository references
 
 ```http
-GET /api/v1/workspace                   # every open repository, its projects, the team among them
-GET /api/v1/teams                       # zero or one team repository
+GET /api/v1/workspace                   # every open repository, its projects, the teams among them
+GET /api/v1/teams                       # every mounted team repository, in mount order
 GET /api/v1/teams/{key}                 # team.yaml: members, projects, policies, diagnostics
+POST /api/v1/teams/{key}/projects       # declare a project repository in team.yaml
+DELETE /api/v1/teams/{key}/projects/{project}   # ?force=true to break references
 GET /api/v1/refs?ref=ACME/ACME-US-0042  # where a cross-repository reference points
 ```
+
+`GET /api/v1/teams` answers `{ "teams": [...], "total": n }` — a list even when it holds one entry,
+so a client can tell "no team repository is registered" from an error. `{key}` in
+`GET /api/v1/teams/{key}` is the `key:` of a `team.yaml` or the id of the repository holding it,
+and it is resolved against every mounted team.
+
+**Naming the team.** A workspace may hold several team repositories (doc 04 §3.8), so every
+team-scoped route — `/boards`, `/sprints`, `/retros`, `/snapshots` and `/teams/{key}/kb` — takes
+the team it acts on:
+
+```http
+GET   /api/v1/boards?team=ACME-TEAM
+GET   /api/v1/sprints?team=ACME-TEAM&board=delivery
+POST  /api/v1/retros?team=ACME-TEAM      # or "team": "ACME-TEAM" in the body
+```
+
+Omitting `team` selects the only registered team, which is why a single-team workspace and every
+CLI verb keep working unchanged. Omitting it while two or more are registered is `400
+invalid_request` naming the field to set, never an answer from an arbitrary team; an unknown team
+is `404 not_found`. No active team is stored server-side — the client sends its choice on every
+call ([ADR-019](./adr/ADR-019-active-team-is-client-state-threaded-per-call.md)).
 
 `GET /api/v1/teams/{key}` answers with the parsed `team.yaml` (doc 04 §3) plus, for every declared
 project, whether a clone of it is open in this workspace:
@@ -1226,6 +1364,39 @@ project, whether a clone of it is open in this workspace:
   "diagnostics": []
 }
 ```
+
+**The project list (GIT-US-0037).** `POST /api/v1/teams/{key}/projects` declares a project
+repository in that team's `team.yaml`, and `DELETE /api/v1/teams/{key}/projects/{project}`
+disconnects it. Both go through the vault methods `team.project.add` and `team.project.remove`,
+so the file a companion writes and the file a browser writes are the same bytes, and both answer
+with the team as `GET /api/v1/teams/{key}` reports it, the entry that changed, the references a
+removal broke and the write set. The team travels in the path here rather than as `?team=`,
+because the project list belongs to one team repository and to nothing else.
+
+```json
+POST /api/v1/teams/ACME-TEAM/projects
+{ "key": "TOOLS", "name": "Internal Tools", "repo": "https://github.com/acme/tools.git",
+  "defaultBranch": "main", "docsPath": "docs" }
+201
+{
+  "team": { "key": "ACME-TEAM", "projects": [ … ] },
+  "project": { "key": "TOOLS", "name": "Internal Tools", "docsPath": "docs" },
+  "writes": [{ "vaultId": "acme-team", "written": [{ "path": "team.yaml", "text": "schema: 1\n…" }],
+               "removed": [] }]
+}
+```
+
+The body is one entry of doc 04 §3.3: `key`, `name`, `repo`, `defaultBranch`, `docsPath`, `host`,
+`webUrl`, `color` and `archived`. Failures: `400 invalid_request` for a body with no `key`,
+`422 validation_failed` for a key outside `[A-Z][A-Z0-9]{1,9}` or a missing `repo`/`docsPath`,
+`409 team_project_exists` for a key the team already declares (R-PROJ-1), `404 not_found` for an
+unknown team.
+
+A removal that would leave a board, a sprint or a retro action pointing at an undeclared project
+is `409 team_project_referenced`, whose `detail` names what breaks; `?force=true` repeats it and
+accepts that, and the answer then lists the references under `references`. `local_hints` is not
+written by either route — hints are per-machine and belong in the user's own configuration
+(R-PROJ-3).
 
 `GET /api/v1/refs` resolves `<projectKey>/<itemId>` across every mounted repository. A reference
 into a project nobody cloned is **not** a 404 — it is the normal state of a team board (doc 04 §7):

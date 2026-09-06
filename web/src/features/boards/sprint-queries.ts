@@ -21,27 +21,31 @@ import type {
 import { useProvider } from '@/api/provider-context';
 import { backlogKeys } from '@/features/backlog/queries';
 import { boardKeys } from '@/features/boards/queries';
+import { useActiveTeamKey } from '@/features/workspace/active-team';
 
 /** Key factory. Every sprint key lives under the `sprints` prefix. */
 export const sprintKeys = {
   all: () => ['sprints'] as const,
-  list: (filter: SprintFilter = {}) => ['sprints', 'list', filter.board ?? '', filter.state ?? ''] as const,
-  detail: (id: string) => ['sprints', 'detail', id] as const,
+  list: (filter: SprintFilter = {}, team = '') =>
+    ['sprints', 'list', filter.board ?? '', filter.state ?? '', team] as const,
+  detail: (id: string, team = '') => ['sprints', 'detail', id, team] as const,
 };
 
 export function useSprints(filter: SprintFilter = {}) {
   const provider = useProvider();
+  const team = useActiveTeamKey();
   return useQuery<SprintSummary[]>({
-    queryKey: sprintKeys.list(filter),
-    queryFn: () => provider.listSprints(filter),
+    queryKey: sprintKeys.list(filter, team),
+    queryFn: () => provider.listSprints(filter, team),
   });
 }
 
 export function useSprint(id: string | undefined) {
   const provider = useProvider();
+  const team = useActiveTeamKey();
   return useQuery<SprintView>({
-    queryKey: sprintKeys.detail(id ?? ''),
-    queryFn: () => provider.getSprint(id ?? ''),
+    queryKey: sprintKeys.detail(id ?? '', team),
+    queryFn: () => provider.getSprint(id ?? '', team),
     enabled: Boolean(id),
   });
 }
@@ -49,8 +53,9 @@ export function useSprint(id: string | undefined) {
 /** Everything a sprint write invalidates: the sprint, the boards and the items. */
 function useSprintInvalidation(): (result: SprintResult) => void {
   const queryClient = useQueryClient();
+  const team = useActiveTeamKey();
   return (result) => {
-    queryClient.setQueryData(sprintKeys.detail(result.sprint.sprint.id), result.sprint);
+    queryClient.setQueryData(sprintKeys.detail(result.sprint.sprint.id, team), result.sprint);
     void queryClient.invalidateQueries({ queryKey: sprintKeys.all() });
     void queryClient.invalidateQueries({ queryKey: boardKeys.all() });
     for (const carried of result.report?.carried ?? []) {
@@ -65,8 +70,9 @@ function useSprintInvalidation(): (result: SprintResult) => void {
 export function useCreateSprint(): UseMutationResult<SprintResult, Error, SprintDraft> {
   const provider = useProvider();
   const settle = useSprintInvalidation();
+  const team = useActiveTeamKey();
   return useMutation<SprintResult, Error, SprintDraft>({
-    mutationFn: (draft) => provider.createSprint(draft),
+    mutationFn: (draft) => provider.createSprint(draft, team),
     onSuccess: settle,
   });
 }
@@ -77,8 +83,9 @@ export type SprintEdit = { id: string; patch: SprintPatch; rev?: string | undefi
 export function useUpdateSprint(): UseMutationResult<SprintResult, Error, SprintEdit> {
   const provider = useProvider();
   const settle = useSprintInvalidation();
+  const team = useActiveTeamKey();
   return useMutation<SprintResult, Error, SprintEdit>({
-    mutationFn: (edit) => provider.updateSprint(edit.id, edit.patch, edit.rev),
+    mutationFn: (edit) => provider.updateSprint(edit.id, edit.patch, edit.rev, team),
     onSuccess: settle,
   });
 }
@@ -88,8 +95,9 @@ export type SprintStart = { id: string; rev?: string | undefined; force?: boolea
 export function useStartSprint(): UseMutationResult<SprintResult, Error, SprintStart> {
   const provider = useProvider();
   const settle = useSprintInvalidation();
+  const team = useActiveTeamKey();
   return useMutation<SprintResult, Error, SprintStart>({
-    mutationFn: (input) => provider.startSprint(input.id, input.rev, input.force),
+    mutationFn: (input) => provider.startSprint(input.id, input.rev, input.force, team),
     onSuccess: settle,
   });
 }
@@ -99,8 +107,9 @@ export type SprintClose = { id: string; carry: SprintCarry[]; rev?: string | und
 export function useCloseSprint(): UseMutationResult<SprintResult, Error, SprintClose> {
   const provider = useProvider();
   const settle = useSprintInvalidation();
+  const team = useActiveTeamKey();
   return useMutation<SprintResult, Error, SprintClose>({
-    mutationFn: (input) => provider.closeSprint(input.id, input.carry, input.rev),
+    mutationFn: (input) => provider.closeSprint(input.id, input.carry, input.rev, team),
     onSuccess: settle,
   });
 }

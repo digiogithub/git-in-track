@@ -1,0 +1,39 @@
+# Second fixture team repository. It exists so that the tests can open a
+# workspace holding two teams at once, which is what GIT-US-0036 made legal:
+# a second team.yaml used to register and then be ignored.
+schema: 1
+key: PLATFORM-TEAM
+name: Platform Team
+description: Fixture team sharing the Demo Shop backlog with the delivery team.
+timezone: Europe/Madrid
+
+knowledge:
+  path: knowledge
+
+cadence:
+  sprint_length_days: 7
+  sprint_start_weekday: monday
+  retro_after_sprint: false
+
+defaults:
+  board: platform
+
+snapshots:
+  enabled: false
+
+members:
+  - handle: nuria
+    name: Nuria Vidal
+    role: lead
+    emails: [nuria@example.com]
+    capacity: 1.0
+    active: true
+
+projects:
+  - key: DEMO
+    name: Demo Shop
+    repo: https://github.com/example/demo-shop.git
+    default_branch: main
+    docs_path: docs
+    host: github
+    web_url: https://github.com/example/demo-shop

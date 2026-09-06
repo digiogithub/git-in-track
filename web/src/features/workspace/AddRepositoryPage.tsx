@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
-import { CheckCircle2, FolderGit2, Info } from 'lucide-react';
+import { CheckCircle2, FolderGit2, Info, Terminal, Users } from 'lucide-react';
 import { useState } from 'react';
 
+import type { RepoKind } from '@/api/provider';
 import { useProvider } from '@/api/provider-context';
 import { useAppStore } from '@/app/store';
 import { Button } from '@/components/ui/button';
@@ -10,6 +11,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import {
   detectDocsFolders,
+  detectTeam,
   getVault,
   normalizeDocsFolder,
   SUPPORT_MATRIX,
@@ -17,6 +19,7 @@ import {
 } from '@/fs';
 
 import { CreateProjectForm, type CreateProjectValues } from './CreateProjectForm';
+import { CreateTeamForm, type CreateTeamValues } from './CreateTeamForm';
 import { FolderPickers } from './FolderPickers';
 
 const CUSTOM_CHOICE = '__custom__';
@@ -36,6 +39,8 @@ export function AddRepositoryPage() {
   const [choice, setChoice] = useState<string | null>(null);
   const [customFolder, setCustomFolder] = useState('docs');
   const [error, setError] = useState<string | null>(null);
+  /** The role the user picked; null until they do, when detection decides. */
+  const [role, setRole] = useState<RepoKind | null>(null);
 
   const detection = useQuery({
     queryKey: ['vault-detection', pendingVaultId],
@@ -46,6 +51,7 @@ export function AddRepositoryPage() {
       const files = await vault.readTextFiles();
       return {
         candidates: detectDocsFolders(files),
+        team: detectTeam(files),
         fileCount: files.length,
         writable: vault.capabilities.write,
         name: vault.name,
@@ -102,7 +108,53 @@ export function AddRepositoryPage() {
     },
   });
 
+  /**
+   * Mounting a folder that already holds a `team.yaml`. The role is what makes
+   * the workspace read boards, sprints and retros out of it, so it is chosen
+   * deliberately rather than assumed (story GIT-US-0035).
+   */
+  const mountTeam = useMutation({
+    mutationFn: async () => {
+      if (!pendingVaultId) throw new Error('No folder is selected');
+      return provider.mountRepo({ kind: 'team', location: pendingVaultId, docsFolder: '' });
+    },
+    onSuccess: finish,
+    onError: (cause: Error) => {
+      setError(cause.message);
+    },
+  });
+
+  /**
+   * A folder that is not a team repository yet is mounted first and then
+   * written into: the core has to hold the folder before it can scaffold a
+   * `team.yaml` in it (story GIT-US-0034).
+   */
+  const createTeam = useMutation({
+    mutationFn: async (values: CreateTeamValues) => {
+      if (!pendingVaultId) throw new Error('No folder is selected');
+      await provider.mountRepo({ kind: 'team', location: pendingVaultId, docsFolder: '' });
+      return provider.createTeam({
+        repoId: pendingVaultId,
+        key: values.key,
+        ...(values.name === '' ? {} : { name: values.name }),
+        ...(values.description === '' ? {} : { description: values.description }),
+      });
+    },
+    onSuccess: finish,
+    onError: (cause: Error) => {
+      setError(cause.message);
+    },
+  });
+
   const candidates: DocsFolderCandidate[] = detection.data?.candidates ?? [];
+  /** The `team.yaml` detection found at the root, or null. */
+  const teamFound = detection.data?.team ?? null;
+  /**
+   * The role in force: what the user chose, or what the markers imply — a root
+   * `team.yaml` means team, anything else means project.
+   */
+  const kind: RepoKind = role ?? (teamFound ? 'team' : 'project');
+  const teamBusy = createTeam.isPending || mountTeam.isPending;
   /** No backlog anywhere: the wizard offers to create one instead of a dead end. */
   const noBacklog = detection.isSuccess && candidates.length === 0;
   /** Folders detection saw, plus the convention, offered as one-click choices. */
@@ -114,11 +166,39 @@ export function AddRepositoryPage() {
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <header className="space-y-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Add repository</h1>
+        <h1 className="page-title">Add repository</h1>
         <p className="text-sm text-muted-foreground">
           Choose a folder on this device. It is read in the browser: nothing is uploaded.
         </p>
       </header>
+
+      {provider.kind === 'companion' ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Terminal aria-hidden="true" className="h-4 w-4" />
+              Register it with the CLI
+            </CardTitle>
+            <CardDescription>
+              With the companion running, the workspace is the configuration file it read at
+              startup, and only the CLI writes that file. The web app cannot register a repository
+              for you, so here is the command that does.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm">
+            <pre className="overflow-x-auto rounded-md bg-secondary p-3 text-xs">
+              <code>
+                gintrack add /path/to/repo --key ACME{'\n'}
+                gintrack add /path/to/team-repo --team --key ACME-TEAM
+              </code>
+            </pre>
+            <p className="text-muted-foreground">
+              The second form creates the <code>team.yaml</code> when the folder has none. Reload
+              this page afterwards.
+            </p>
+          </CardContent>
+        </Card>
+      ) : null}
 
       <Card>
         <CardHeader>
@@ -147,9 +227,10 @@ export function AddRepositoryPage() {
       {pendingVaultId ? (
         <Card>
           <CardHeader>
-            <CardTitle>2. Documentation folder</CardTitle>
+            <CardTitle>2. What is this repository?</CardTitle>
             <CardDescription>
-              The backlog lives in <code>.pmngr/</code> inside the documentation folder.
+              A project repository holds a backlog in <code>.pmngr/</code>; a team repository holds
+              a <code>team.yaml</code> with the boards, sprints and retros of a team.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -170,7 +251,96 @@ export function AddRepositoryPage() {
               </p>
             ) : null}
 
-            {noBacklog ? (
+            {detection.isSuccess ? (
+              <fieldset className="space-y-2">
+                <legend className="text-sm font-medium">Role</legend>
+                <label className="flex items-start gap-2 text-sm" htmlFor="role-project">
+                  <input
+                    id="role-project"
+                    type="radio"
+                    name="repo-role"
+                    className="mt-1"
+                    value="project"
+                    checked={kind === 'project'}
+                    onChange={() => {
+                      setError(null);
+                      setRole('project');
+                    }}
+                  />
+                  <span>
+                    Project repository
+                    <span className="block text-xs text-muted-foreground">
+                      {candidates.length === 0
+                        ? 'No .pmngr/project.yaml found — one can be created below.'
+                        : `${candidates.length} backlog folder(s) detected.`}
+                    </span>
+                  </span>
+                </label>
+                <label className="flex items-start gap-2 text-sm" htmlFor="role-team">
+                  <input
+                    id="role-team"
+                    type="radio"
+                    name="repo-role"
+                    className="mt-1"
+                    value="team"
+                    checked={kind === 'team'}
+                    onChange={() => {
+                      setError(null);
+                      setRole('team');
+                    }}
+                  />
+                  <span>
+                    Team repository
+                    <span className="block text-xs text-muted-foreground">
+                      {teamFound
+                        ? `team.yaml found${teamFound.teamKey ? ` · ${teamFound.teamKey}` : ''}${
+                            teamFound.teamName ? ` — ${teamFound.teamName}` : ''
+                          }`
+                        : 'No team.yaml found — one can be created below.'}
+                    </span>
+                  </span>
+                </label>
+              </fieldset>
+            ) : null}
+
+            {kind === 'team' ? (
+              <div className="space-y-3">
+                {teamFound ? (
+                  <p className="flex items-start gap-2 rounded-md bg-secondary p-3 text-sm">
+                    <Users aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />
+                    <span>
+                      This folder holds a <code>team.yaml</code>. Mounting it as a team repository
+                      is what makes its boards, sprints and retrospectives appear.
+                    </span>
+                  </p>
+                ) : (
+                  <>
+                    <p className="flex items-start gap-2 rounded-md bg-secondary p-3 text-sm">
+                      <Info aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />
+                      <span>
+                        No <code>team.yaml</code> was found. Registering the folder without one
+                        would leave every board, sprint and retro failing, so it is created here
+                        instead.
+                      </span>
+                    </p>
+                    <CreateTeamForm
+                      busy={teamBusy}
+                      onSubmit={(values) => {
+                        setError(null);
+                        createTeam.mutate(values);
+                      }}
+                    />
+                  </>
+                )}
+                {error ? (
+                  <p role="alert" className="text-sm text-destructive">
+                    {error}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+
+            {kind === 'team' ? null : noBacklog ? (
               <div className="space-y-3">
                 <p className="flex items-start gap-2 rounded-md bg-secondary p-3 text-sm">
                   <Info aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />
@@ -199,7 +369,7 @@ export function AddRepositoryPage() {
               </div>
             ) : null}
 
-            {noBacklog ? null : (
+            {kind === 'team' || noBacklog ? null : (
               <fieldset className="space-y-2">
                 <legend className="text-sm font-medium">Detected folders</legend>
                 {candidates.map((candidate) => (
@@ -269,7 +439,40 @@ export function AddRepositoryPage() {
         </Card>
       ) : null}
 
-      {pendingVaultId && !noBacklog ? (
+      {pendingVaultId && kind === 'team' && teamFound ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>3. Confirm</CardTitle>
+            <CardDescription>
+              Mounting indexes the team repository and stores the folder handle in this browser so
+              it reopens next time.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm">
+              Team: <code>{teamFound.teamKey ?? 'team.yaml'}</code>
+              {teamFound.teamName ? ` — ${teamFound.teamName}` : ''}
+            </p>
+            <Button
+              onClick={() => {
+                setError(null);
+                mountTeam.mutate();
+              }}
+              disabled={teamBusy || detection.isPending}
+            >
+              <CheckCircle2 aria-hidden="true" className="h-4 w-4" />
+              {mountTeam.isPending ? 'Mounting…' : 'Mount team repository'}
+            </Button>
+            {error ? (
+              <p role="alert" className="text-sm text-destructive">
+                {error}
+              </p>
+            ) : null}
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {pendingVaultId && kind === 'project' && !noBacklog ? (
         <Card>
           <CardHeader>
             <CardTitle>3. Confirm</CardTitle>

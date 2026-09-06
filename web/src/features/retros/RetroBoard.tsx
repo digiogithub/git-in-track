@@ -1,9 +1,7 @@
-import { useQuery } from '@tanstack/react-query';
 import { useParams } from '@tanstack/react-router';
 import { useState } from 'react';
 
 import type { RetroActionView, RetroCategory, RetroState, RetroThemeView } from '@/api/provider';
-import { useProvider } from '@/api/provider-context';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -12,6 +10,7 @@ import { Select } from '@/components/ui/select';
 import { useToast } from '@/components/ui/toast';
 import { OpenActionList } from '@/features/retros/OpenActionList';
 import { usePromoteRetroAction, useRetro, useUpdateRetro } from '@/features/retros/retro-queries';
+import { useActiveTeam } from '@/features/workspace/active-team';
 
 /** The three collection columns, in the order the file writes them. */
 const COLUMNS: { category: RetroCategory; label: string }[] = [
@@ -44,8 +43,7 @@ export function RetroBoard() {
  */
 export function RetroCanvas({ retroId }: { retroId: string }) {
   const retro = useRetro(retroId);
-  const provider = useProvider();
-  const team = useQuery({ queryKey: ['team'], queryFn: () => provider.getTeam() });
+  const team = useActiveTeam();
   const update = useUpdateRetro();
   const promote = usePromoteRetroAction();
   const { toast } = useToast();
@@ -55,8 +53,8 @@ export function RetroCanvas({ retroId }: { retroId: string }) {
 
   const view = retro.data;
   const rev = view?.retro.rev;
-  const author = team.data?.members[0]?.handle ?? '';
-  const projects = (team.data?.projects ?? []).filter((project) => project.cloned);
+  const author = team.team?.members[0]?.handle ?? '';
+  const projects = (team.team?.projects ?? []).filter((project) => project.cloned);
 
   if (retro.isPending) return <p className="text-sm text-muted-foreground">Loading retro…</p>;
   if (!view) return <p className="text-sm text-muted-foreground">No retro {retroId}.</p>;
@@ -91,7 +89,7 @@ export function RetroCanvas({ retroId }: { retroId: string }) {
   return (
     <div className="space-y-6">
       <header className="space-y-1">
-        <h1 className="flex flex-wrap items-center gap-2 text-2xl font-semibold tracking-tight">
+        <h1 className="flex flex-wrap items-center gap-2 page-title">
           {view.retro.title}
           <Badge variant="outline" size="sm" className="font-normal">
             {view.retro.state}

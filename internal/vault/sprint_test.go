@@ -99,9 +99,9 @@ func TestWorkspaceSprintRead(t *testing.T) {
 		})
 
 		t.Run("a lone vault refuses the call", func(t *testing.T) {
-			m, ok := w.TeamMount()
-			if !ok {
-				t.Fatal("the fixture workspace holds a team repository")
+			m, err := w.TeamMount("")
+			if err != nil {
+				t.Fatalf("the fixture workspace holds a team repository: %v", err)
 			}
 			var env envelope
 			if err := json.Unmarshal([]byte(m.Vault.Call("sprint.list", "null")), &env); err != nil {

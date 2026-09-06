@@ -236,6 +236,13 @@ export type TeamProjectSummary = {
   diagnostics?: Diagnostic[];
 };
 
+/**
+ * Names the team repository a call acts on: the `key:` of a team.yaml, or the
+ * id of the repository holding it. It is optional while the workspace holds a
+ * single team and required as soon as it holds two (GIT-US-0036, ADR-020).
+ */
+export type TeamScoped = { team?: string };
+
 /** The team repository of the workspace (docs/04 §3). */
 export type TeamSummary = {
   key: string;
@@ -941,7 +948,10 @@ export type WorkspaceVault = {
 /** Every open repository, the team among them, and the cross-repository findings. */
 export type WorkspaceSummary = {
   vaults: WorkspaceVault[];
+  /** The first open team, repeated from `teams` for single-team clients. */
   team?: TeamSummary;
+  /** Every open team repository, in mount order (GIT-US-0036). */
+  teams: TeamSummary[];
   diagnostics: Diagnostic[];
 };
 
@@ -1031,6 +1041,80 @@ export type ProjectCreated = {
   writes: WriteSet;
 };
 
+/** What `team.create` needs: where `team.yaml` goes and its identity. */
+export type NewTeamParams = {
+  /** Vault-relative folder; `''` and `'.'` both mean the repository root. */
+  root?: string;
+  /** ID prefix of sprints and retros, matching `[A-Z][A-Z0-9-]{1,15}`. */
+  key: string;
+  /** Display name; defaults to the key. */
+  name?: string;
+  description?: string;
+  /** IANA timezone; defaults to `UTC`. */
+  timezone?: string;
+  /** Knowledge-base folder; defaults to `knowledge`. */
+  knowledgePath?: string;
+  /** The people the team starts with; it may be empty (ADR-020). */
+  members?: TeamMember[];
+  vaultId?: string;
+};
+
+/** What `team.create` answers with: the team, and the files to persist. */
+export type TeamCreated = {
+  team: TeamSummary;
+  writes: WriteSet;
+};
+
+/**
+ * One entry of the `projects:` list of `team.yaml` (docs/04 §3.3). It is the
+ * routing declaration that decides which project a board may show and whether
+ * a card renders live from a clone or read-only from a committed snapshot;
+ * `key`, `name` and `repo` plus `docsPath` are the required half.
+ */
+export type TeamProjectDraft = {
+  /** Must equal the `key:` of that repository's own `project.yaml`. */
+  key: string;
+  /** Display name; defaults to the key. */
+  name?: string;
+  /** Canonical remote URL. */
+  repo: string;
+  /** Branch snapshot links and blob URLs are built against; defaults to `main`. */
+  defaultBranch?: string;
+  /** Folder holding `.pmngr/` inside that repository. */
+  docsPath: string;
+  host?: string;
+  webUrl?: string;
+  color?: string;
+  archived?: boolean;
+};
+
+/**
+ * One place a team artifact points at a project: the scope of a board, a
+ * column order, the `items` or `committed` list of a sprint, or the task a
+ * retro action was promoted into. It is what removing a project would orphan.
+ */
+export type TeamProjectReference = {
+  /** `board`, `sprint` or `retro`. */
+  kind: string;
+  id: string;
+  path: string;
+  /** The front-matter field the reference sits in. */
+  field: string;
+  /** `<projectKey>/<itemId>`, or the bare key when the artifact names the project. */
+  ref: string;
+};
+
+/** What `team.project.add` and `team.project.remove` answer with. */
+export type TeamProjectResult = {
+  team: TeamSummary;
+  /** The entry that was added or removed. */
+  project: TeamProjectSummary;
+  /** The references a forced removal broke; an add never produces any. */
+  references?: TeamProjectReference[];
+  /** One write set per repository; a project change touches `team.yaml` only. */
+  writes: VaultWriteSet[];
+};
+
 /** Method map: request method name → { params, result }. */
 export type CoreApi = {
   ping: { params: undefined; result: { pong: true; wasm: boolean } };
@@ -1078,8 +1162,47 @@ export type CoreApi = {
   /** Drop a repository from the workspace; it never touches files. */
   'workspace.unmount': { params: { vaultId: string }; result: { unmounted: string } };
 
-  /** The team repository of the workspace; fails with `not_found` when none is open. */
-  'team.get': { params: undefined; result: TeamSummary };
+  /**
+   * One team repository of the workspace. `team` names it; it may be omitted
+   * while a single team is open. It fails with `not_found` when none is open,
+   * and with `invalid_request` when several are and none was named.
+   */
+  'team.get': { params: TeamScoped | undefined; result: TeamSummary };
+  /** Every open team repository, in mount order (GIT-US-0036). */
+  'team.list': { params: undefined; result: { teams: TeamSummary[]; total: number } };
+  /**
+   * Turn a mounted folder into a team repository: it writes `team.yaml` plus
+   * the `.pmngr/` artifact folders and the knowledge base of docs/04 §2.
+   *
+   * It refuses a key outside `[A-Z][A-Z0-9-]{1,15}` with `validation_failed`,
+   * and a folder that already holds a `team.yaml` with `team_exists`.
+   */
+  'team.create': { params: NewTeamParams; result: TeamCreated };
+  /**
+   * Declare a project repository in a team's `team.yaml`, which is what makes
+   * its items reachable from that team's boards and sprints (docs/04 §3.9).
+   *
+   * The entry lands in key order rather than at the end of the list, so two
+   * people connecting two different projects write two hunks git can merge. A
+   * key the team already declares is refused with `team_project_exists`, and an
+   * entry missing `repo` or `docsPath` with `validation_failed`.
+   */
+  'team.project.add': {
+    params: { project: TeamProjectDraft } & TeamScoped;
+    result: TeamProjectResult;
+  };
+  /**
+   * Disconnect a project from a team. Nothing in the project repository is
+   * touched: the entry is a routing declaration, not the backlog.
+   *
+   * A project a board, a sprint or a retro action still references is refused
+   * with `team_project_referenced` and the list of references; `force` accepts
+   * leaving them pointing at a project the team no longer declares.
+   */
+  'team.project.remove': {
+    params: { key: string; force?: boolean } & TeamScoped;
+    result: TeamProjectResult;
+  };
   /** Resolve `<projectKey>/<itemId>` across every open repository. */
   'ref.resolve': { params: { ref: string }; result: RefResolution };
 
@@ -1097,11 +1220,11 @@ export type CoreApi = {
 
   /** Every board of the team repository. */
   'board.list': {
-    params: undefined;
+    params: TeamScoped | undefined;
     result: { boards: BoardSummary[]; diagnostics: Diagnostic[] };
   };
   /** One board, rendered over every open repository. */
-  'board.get': { params: { board: string }; result: BoardView };
+  'board.get': { params: { board: string } & TeamScoped; result: BoardView };
   /**
    * Move one card. It writes the item's status in its own project repository
    * and the board's `order:` list in the team repository, and nothing else
@@ -1122,12 +1245,12 @@ export type CoreApi = {
       /** Item revision the caller read. */
       itemRev?: string;
       force?: boolean;
-    };
+    } & TeamScoped;
     result: BoardMoveResult;
   };
   /** Edit a board's columns, WIP limits, filters or sprint; never its order. */
   'board.update': {
-    params: { board: string; rev?: string; patch: BoardPatch };
+    params: { board: string; rev?: string; patch: BoardPatch } & TeamScoped;
     result: { board: BoardView; writes: VaultWriteSet[] };
   };
   /**
@@ -1137,7 +1260,7 @@ export type CoreApi = {
    * slug that is already a board fails with `duplicate_id`.
    */
   'board.create': {
-    params: BoardDraft;
+    params: BoardDraft & TeamScoped;
     result: { board: BoardView; writes: VaultWriteSet[] };
   };
   /**
@@ -1147,17 +1270,17 @@ export type CoreApi = {
    * sprint is running.
    */
   'board.delete': {
-    params: { board: string; rev?: string };
+    params: { board: string; rev?: string } & TeamScoped;
     result: { board: string; writes: VaultWriteSet[] };
   };
 
   /** The sprints of the team repository, filtered by board and by state. */
   'sprint.list': {
-    params: { board?: string; state?: SprintState } | undefined;
+    params: ({ board?: string; state?: SprintState } & TeamScoped) | undefined;
     result: { sprints: SprintSummary[]; diagnostics: Diagnostic[] };
   };
   /** One sprint: its scope, the candidates for it and its metrics. */
-  'sprint.get': { params: { id: string }; result: SprintView };
+  'sprint.get': { params: { id: string } & TeamScoped; result: SprintView };
   /** Create a sprint; the id is allocated by the core from the team key. */
   'sprint.create': {
     params: {
@@ -1172,7 +1295,7 @@ export type CoreApi = {
       velocityTarget?: number;
       participants?: string[];
       author?: string;
-    };
+    } & TeamScoped;
     result: SprintResult;
   };
   /**
@@ -1196,14 +1319,17 @@ export type CoreApi = {
         addItems?: string[];
         removeItems?: string[];
       };
-    };
+    } & TeamScoped;
     result: SprintResult;
   };
   /** Make a sprint active, snapshot its commitment and point its board at it. */
-  'sprint.start': { params: { id: string; rev?: string; force?: boolean }; result: SprintResult };
+  'sprint.start': {
+    params: { id: string; rev?: string; force?: boolean } & TeamScoped;
+    result: SprintResult;
+  };
   /** Close a sprint and apply one explicit decision per unfinished item. */
   'sprint.close': {
-    params: { id: string; rev?: string; carry?: SprintCarry[] };
+    params: { id: string; rev?: string; carry?: SprintCarry[] } & TeamScoped;
     result: SprintResult;
   };
   /**
@@ -1211,7 +1337,7 @@ export type CoreApi = {
    * sprint, with the provenance of the history behind them. The three come
    * back together because they are one reconstruction of one window.
    */
-  'sprint.metrics': { params: { id: string }; result: SprintMetricsView };
+  'sprint.metrics': { params: { id: string } & TeamScoped; result: SprintMetricsView };
 
   /**
    * The retros of the team repository, newest first, with every improvement
@@ -1219,15 +1345,18 @@ export type CoreApi = {
    * new retro sees what it promised last time (docs/04 §9.1, step 7).
    */
   'retro.list': {
-    params: { sprint?: string; board?: string; state?: RetroState } | undefined;
+    params: ({ sprint?: string; board?: string; state?: RetroState } & TeamScoped) | undefined;
     result: { retros: RetroSummary[]; carried: RetroActionView[]; diagnostics: Diagnostic[] };
   };
   /** One retro: its notes, its themes by votes, its actions and what it carried. */
-  'retro.get': { params: { id: string }; result: RetroView };
+  'retro.get': { params: { id: string } & TeamScoped; result: RetroView };
   /** Create a retro; the id is allocated by the core from the team key. */
-  'retro.create': { params: RetroDraft; result: RetroResult };
+  'retro.create': { params: RetroDraft & TeamScoped; result: RetroResult };
   /** Apply one session's edits: notes, grouping, votes and actions. */
-  'retro.update': { params: { id: string; rev?: string; patch: RetroPatch }; result: RetroResult };
+  'retro.update': {
+    params: { id: string; rev?: string; patch: RetroPatch } & TeamScoped;
+    result: RetroResult;
+  };
   /**
    * Turn one improvement action into a task in a project repository and write
    * the reference back into the retro, so neither end of the link is lost. A
@@ -1235,7 +1364,13 @@ export type CoreApi = {
    * than half written (docs/04 R-RETRO-2).
    */
   'retro.promote': {
-    params: { id: string; action: string; project: string; labels?: string[]; rev?: string };
+    params: {
+      id: string;
+      action: string;
+      project: string;
+      labels?: string[];
+      rev?: string;
+    } & TeamScoped;
     result: RetroResult;
   };
 
@@ -1244,7 +1379,7 @@ export type CoreApi = {
    * age and its staleness (docs/04 §6).
    */
   'snapshot.list': {
-    params: undefined;
+    params: TeamScoped | undefined;
     result: { snapshots: SnapshotResult[]; writes: VaultWriteSet[]; dryRun?: boolean };
   };
   /**
@@ -1259,7 +1394,7 @@ export type CoreApi = {
       generatedBy?: string;
       includeClosed?: boolean;
       dryRun?: boolean;
-    };
+    } & TeamScoped;
     result: { snapshots: SnapshotResult[]; writes: VaultWriteSet[]; dryRun?: boolean };
   };
 

@@ -63,11 +63,13 @@ func statusForCode(code string) int {
 	case "validation_failed", "workflow_transition_denied", "invalid_front_matter":
 		return http.StatusUnprocessableEntity
 	case "duplicate_id", "wip_limit_exceeded", "sprint_overlap", "sprint_already_active", "board_in_use",
-		"project_exists":
+		"project_exists", "team_exists",
+		vault.TeamProjectExistsCode, vault.TeamProjectReferencedCode:
 		// A WIP limit is advisory: the move is refused once, and the caller may
 		// repeat it with `force` (docs/04 R-COL-5). Two sprints of one board
 		// sharing a day, and a second active sprint, are the same shape of
-		// refusal (docs/04 section 8.4).
+		// refusal (docs/04 section 8.4), and so is disconnecting a project a
+		// board or a sprint still references (docs/04 section 3.9).
 		return http.StatusConflict
 	case "read_only", "forbidden":
 		return http.StatusForbidden

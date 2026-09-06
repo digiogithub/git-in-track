@@ -46,11 +46,14 @@ type mountSummary struct {
 }
 
 // workspaceSummary is the answer of "workspace.list": every open repository,
-// the team repository among them if there is one, and the findings only a
-// workspace can make.
+// the team repositories among them, and the findings only a workspace can make.
+//
+// Teams holds every open team; Team repeats the first of them so that a client
+// written against the single-team contract keeps working (GIT-US-0036).
 type workspaceSummary struct {
 	Vaults      []mountSummary    `json:"vaults"`
 	Team        *teamSummary      `json:"team,omitempty"`
+	Teams       []teamSummary     `json:"teams"`
 	Diagnostics []core.Diagnostic `json:"diagnostics"`
 }
 
@@ -76,11 +79,25 @@ func (w *Workspace) Dispatch(ctx context.Context, method string, raw []byte) (an
 	case "workspace.unmount":
 		return w.unmount(raw)
 	case "team.get":
-		summary, ok := w.Team()
-		if !ok {
-			return nil, failf("not_found", "no open repository holds a %s", core.TeamFileName)
+		p, err := decodeParams[TeamScope](raw)
+		if err != nil {
+			return nil, err
 		}
-		return summary, nil
+		return w.Team(p.Team)
+	case "team.list":
+		return w.TeamList(), nil
+	case "team.project.add":
+		p, err := decodeParams[TeamProjectAddParams](raw)
+		if err != nil {
+			return nil, err
+		}
+		return w.AddTeamProject(ctx, p)
+	case "team.project.remove":
+		p, err := decodeParams[TeamProjectRemoveParams](raw)
+		if err != nil {
+			return nil, err
+		}
+		return w.RemoveTeamProject(ctx, p)
 	case "ref.resolve":
 		ref, err := decodeRefParams(raw)
 		if err != nil {
@@ -88,13 +105,17 @@ func (w *Workspace) Dispatch(ctx context.Context, method string, raw []byte) (an
 		}
 		return w.ResolveRef(ref), nil
 	case "board.list":
-		return w.Boards(ctx)
+		p, err := decodeParams[TeamScope](raw)
+		if err != nil {
+			return nil, err
+		}
+		return w.Boards(ctx, p.Team)
 	case "board.get":
 		p, err := decodeParams[BoardParams](raw)
 		if err != nil {
 			return nil, err
 		}
-		return w.BoardView(ctx, p.Board)
+		return w.BoardView(ctx, p.Team, p.Board)
 	case "board.move":
 		p, err := decodeParams[BoardMoveParams](raw)
 		if err != nil {
@@ -130,7 +151,7 @@ func (w *Workspace) Dispatch(ctx context.Context, method string, raw []byte) (an
 		if err != nil {
 			return nil, err
 		}
-		return w.Sprint(ctx, p.ID)
+		return w.Sprint(ctx, p.Team, p.ID)
 	case "sprint.create":
 		p, err := decodeParams[SprintCreateParams](raw)
 		if err != nil {
@@ -154,7 +175,7 @@ func (w *Workspace) Dispatch(ctx context.Context, method string, raw []byte) (an
 		if err != nil {
 			return nil, err
 		}
-		return w.SprintMetrics(ctx, p.ID)
+		return w.SprintMetrics(ctx, p.Team, p.ID)
 	case "sprint.close":
 		p, err := decodeParams[SprintCloseParams](raw)
 		if err != nil {
@@ -172,7 +193,7 @@ func (w *Workspace) Dispatch(ctx context.Context, method string, raw []byte) (an
 		if err != nil {
 			return nil, err
 		}
-		return w.Retro(ctx, p.ID)
+		return w.Retro(ctx, p.Team, p.ID)
 	case "retro.create":
 		p, err := decodeParams[RetroCreateParams](raw)
 		if err != nil {
@@ -192,7 +213,11 @@ func (w *Workspace) Dispatch(ctx context.Context, method string, raw []byte) (an
 		}
 		return w.PromoteRetroAction(ctx, p)
 	case "snapshot.list":
-		return w.SnapshotList()
+		p, err := decodeParams[TeamScope](raw)
+		if err != nil {
+			return nil, err
+		}
+		return w.SnapshotList(p.Team)
 	case "snapshot.refresh":
 		p, err := decodeParams[SnapshotRefreshParams](raw)
 		if err != nil {
@@ -299,7 +324,7 @@ func (w *Workspace) build() string {
 
 // list renders every open repository.
 func (w *Workspace) list() workspaceSummary {
-	out := workspaceSummary{Vaults: []mountSummary{}, Diagnostics: w.Diagnostics()}
+	out := workspaceSummary{Vaults: []mountSummary{}, Teams: []teamSummary{}, Diagnostics: w.Diagnostics()}
 	for _, m := range w.Mounts() {
 		entry := mountSummary{
 			ID:       m.ID,
@@ -317,8 +342,10 @@ func (w *Workspace) list() workspaceSummary {
 		}
 		out.Vaults = append(out.Vaults, entry)
 	}
-	if summary, ok := w.Team(); ok {
-		out.Team = &summary
+	out.Teams = w.Teams()
+	if len(out.Teams) > 0 {
+		first := out.Teams[0]
+		out.Team = &first
 	}
 	return out
 }

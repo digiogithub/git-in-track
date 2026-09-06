@@ -227,8 +227,13 @@ func (t *TeamConfig) Validate() []Diagnostic {
 			emails[email] = m.Handle
 		}
 	}
+	// An empty list is the state a team repository is created in, not a broken
+	// file: the product writes team.yaml before anybody has been listed in it,
+	// and refusing to load what it just wrote would be a lie (ADR-020). A
+	// malformed entry stays an error.
 	if len(t.Members) == 0 {
-		add(CodeTeamMemberFields, SeverityError, "members", "no member is declared")
+		add(CodeTeamMemberFields, SeverityWarning, "members",
+			"no member is declared; assignee pickers and capacity hints stay empty")
 	}
 
 	keys := make(map[ProjectKey]bool, len(t.Projects))
@@ -258,8 +263,12 @@ func (t *TeamConfig) Validate() []Diagnostic {
 				fmt.Sprintf("project %s has no web_url and none can be derived from %q; blob links are disabled", p.Key, p.Repo))
 		}
 	}
+	// Same reasoning as the member list: a team repository is legitimately
+	// created before it owns a project, and connecting one is a later act
+	// (ADR-020).
 	if len(t.Projects) == 0 {
-		add(CodeTeamProjectFields, SeverityError, "projects", "no project is declared")
+		add(CodeTeamProjectFields, SeverityWarning, "projects",
+			"no project is declared; boards have nothing to pull cards from")
 	}
 
 	sortDiagnostics(out)

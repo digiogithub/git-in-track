@@ -29,6 +29,8 @@ const SprintActiveCode = "sprint_already_active"
 // SprintListParams is the input of "sprint.list": both filters are optional and
 // ANDed, and an absent one imposes no constraint.
 type SprintListParams struct {
+	// TeamScope names the team repository this call acts on.
+	TeamScope
 	Board string `json:"board,omitempty"`
 	State string `json:"state,omitempty"`
 }
@@ -43,12 +45,16 @@ type SprintListResult struct {
 
 // SprintParams names one sprint.
 type SprintParams struct {
+	// TeamScope names the team repository this call acts on.
+	TeamScope
 	ID string `json:"id"`
 }
 
 // SprintCreateParams is the input of "sprint.create". Dates are required; the
 // id is allocated from the team key and the sprints already on disk.
 type SprintCreateParams struct {
+	// TeamScope names the team repository this call acts on.
+	TeamScope
 	Board          string   `json:"board"`
 	Title          string   `json:"title,omitempty"`
 	Start          string   `json:"start"`
@@ -81,6 +87,8 @@ type SprintPatch struct {
 
 // SprintUpdateParams is the input of "sprint.update".
 type SprintUpdateParams struct {
+	// TeamScope names the team repository this call acts on.
+	TeamScope
 	ID    string      `json:"id"`
 	Rev   string      `json:"rev,omitempty"`
 	Patch SprintPatch `json:"patch"`
@@ -90,6 +98,8 @@ type SprintUpdateParams struct {
 // its scope is copied into `committed`, and the board it belongs to is pointed
 // at it (docs/04 section 5.5).
 type SprintStartParams struct {
+	// TeamScope names the team repository this call acts on.
+	TeamScope
 	ID  string `json:"id"`
 	Rev string `json:"rev,omitempty"`
 	// Force starts a sprint on a board that already runs one. It is refused
@@ -111,6 +121,8 @@ type SprintCarry struct {
 
 // SprintCloseParams is the input of "sprint.close".
 type SprintCloseParams struct {
+	// TeamScope names the team repository this call acts on.
+	TeamScope
 	ID    string        `json:"id"`
 	Rev   string        `json:"rev,omitempty"`
 	Carry []SprintCarry `json:"carry,omitempty"`
@@ -233,9 +245,9 @@ type sprintContext struct {
 	diags   []core.Diagnostic
 }
 
-// sprintContext gathers the sprints of the team repository.
-func (w *Workspace) sprintContext(ctx context.Context) (sprintContext, error) {
-	c, err := w.boardContext()
+// sprintContext gathers the sprints of the named team repository.
+func (w *Workspace) sprintContext(ctx context.Context, team string) (sprintContext, error) {
+	c, err := w.boardContext(team)
 	if err != nil {
 		return sprintContext{}, err
 	}
@@ -300,7 +312,7 @@ func (c sprintContext) view(ctx context.Context, s *core.Sprint) core.SprintView
 // Sprints lists the sprints of the team repository, filtered by board and by
 // state, newest first — the order a sprint picker reads in.
 func (w *Workspace) Sprints(ctx context.Context, p SprintListParams) (SprintListResult, error) {
-	c, err := w.sprintContext(ctx)
+	c, err := w.sprintContext(ctx, p.Team)
 	if err != nil {
 		return SprintListResult{}, err
 	}
@@ -327,8 +339,8 @@ func (w *Workspace) Sprints(ctx context.Context, p SprintListParams) (SprintList
 
 // Sprint renders one sprint: its scope, the candidates the board would offer
 // and the findings of its validation.
-func (w *Workspace) Sprint(ctx context.Context, id string) (core.SprintView, error) {
-	c, err := w.sprintContext(ctx)
+func (w *Workspace) Sprint(ctx context.Context, team, id string) (core.SprintView, error) {
+	c, err := w.sprintContext(ctx, team)
 	if err != nil {
 		return core.SprintView{}, err
 	}
@@ -344,7 +356,7 @@ func (w *Workspace) Sprint(ctx context.Context, id string) (core.SprintView, err
 // sprints covering the same day make "the active sprint" meaningless
 // (docs/04 section 8.4).
 func (w *Workspace) CreateSprint(ctx context.Context, p SprintCreateParams) (SprintResult, error) {
-	c, err := w.sprintContext(ctx)
+	c, err := w.sprintContext(ctx, p.Team)
 	if err != nil {
 		return SprintResult{}, err
 	}
@@ -410,7 +422,7 @@ func (w *Workspace) CreateSprint(ctx context.Context, p SprintCreateParams) (Spr
 // repository, so moving an item in or out of a sprint never writes into a
 // project repository (docs/04 section 11, R-SPR-2).
 func (w *Workspace) UpdateSprint(ctx context.Context, p SprintUpdateParams) (SprintResult, error) {
-	c, err := w.sprintContext(ctx)
+	c, err := w.sprintContext(ctx, p.Team)
 	if err != nil {
 		return SprintResult{}, err
 	}
@@ -502,7 +514,7 @@ func (w *Workspace) UpdateSprint(ctx context.Context, p SprintUpdateParams) (Spr
 // that what was promised stays legible next to what was added later (R-SPR-1),
 // and points its board at it. Both writes stay in the team repository.
 func (w *Workspace) StartSprint(ctx context.Context, p SprintStartParams) (SprintResult, error) {
-	c, err := w.sprintContext(ctx)
+	c, err := w.sprintContext(ctx, p.Team)
 	if err != nil {
 		return SprintResult{}, err
 	}
@@ -551,7 +563,7 @@ func (w *Workspace) StartSprint(ctx context.Context, p SprintStartParams) (Sprin
 // whether to leave it, carry it into another sprint or send it back to the
 // backlog, and only those decisions write anything (R-SPR-3).
 func (w *Workspace) CloseSprint(ctx context.Context, p SprintCloseParams) (SprintResult, error) {
-	c, err := w.sprintContext(ctx)
+	c, err := w.sprintContext(ctx, p.Team)
 	if err != nil {
 		return SprintResult{}, err
 	}

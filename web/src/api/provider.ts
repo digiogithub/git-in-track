@@ -80,6 +80,9 @@ import type {
   SprintView,
   StatusCategory,
   TeamMember,
+  TeamProjectDraft,
+  TeamProjectReference,
+  TeamProjectResult,
   TeamProjectSummary,
   TeamSummary,
   WorkspaceSummary,
@@ -153,6 +156,9 @@ export type {
   SprintView,
   StatusCategory,
   TeamMember,
+  TeamProjectDraft,
+  TeamProjectReference,
+  TeamProjectResult,
   TeamProjectSummary,
   TeamSummary,
   WorkspaceSummary,
@@ -574,10 +580,46 @@ export type CreateProjectInput = {
 };
 
 /**
+ * Creating a team repository in a folder that is not one (story GIT-US-0034).
+ *
+ * It writes `team.yaml` at the folder root plus the `.pmngr/` artifact folders
+ * and the knowledge base docs/04-team-repository.md §2 prescribes. A key
+ * outside `[A-Z][A-Z0-9-]{1,15}` is refused with `validation_failed`, and a
+ * folder that already holds a `team.yaml` with `team_exists` — the routing
+ * table of the workspace is never overwritten.
+ */
+export type CreateTeamInput = {
+  /** The repository to write into; the only open one when omitted. */
+  repoId?: string;
+  /** Repository-relative folder; `''` means the root, which is where it goes. */
+  root?: string;
+  /** ID prefix of sprints and retros, matching `[A-Z][A-Z0-9-]{1,15}`. */
+  key: string;
+  /** Display name; defaults to the key. */
+  name?: string;
+  description?: string;
+  /** IANA timezone; defaults to `UTC`. */
+  timezone?: string;
+  /** Knowledge-base folder; defaults to `knowledge`. */
+  knowledgePath?: string;
+  /** The people the team starts with; it may be empty (ADR-020). */
+  members?: TeamMember[];
+};
+
+/**
  * A knowledge base scope: a project's docs folder, or the `knowledge/` folder
  * of the team repository. `teamId` is the team key of `team.yaml`.
  */
 export type KbScope = { kind: 'project'; projectKey: string } | { kind: 'team'; teamId: string };
+
+/**
+ * Spreads `{ team }` into a request only when a team was named, so a
+ * single-team workspace keeps sending exactly the payload it sent before the
+ * active team existed (GIT-US-0036).
+ */
+export function teamScope(team?: string): { team?: string } {
+  return team === undefined || team === '' ? {} : { team };
+}
 
 export type SearchQuery = {
   text: string;
@@ -619,6 +661,12 @@ export type ProviderErrorCode =
   | 'board_in_use'
   /** The documentation folder already holds a `project.yaml` (GIT-US-0031). */
   | 'project_exists'
+  /** The folder already holds a `team.yaml` (GIT-US-0034). */
+  | 'team_exists'
+  /** The team already declares this project key (GIT-US-0037, R-PROJ-1). */
+  | 'team_project_exists'
+  /** A board, a sprint or a retro action still references the project; force it. */
+  | 'team_project_referenced'
   /** A write lost a race, or a sprint already has a retro. */
   | 'conflict'
   | 'internal';
@@ -648,7 +696,14 @@ export interface DataProvider {
    * project it declares is listed, whether or not a clone of it is open: a
    * project with `cloned: false` is remote, not missing (docs/04 §7).
    */
-  getTeam(): Promise<TeamSummary | null>;
+  getTeam(team?: string): Promise<TeamSummary | null>;
+  /**
+   * Every open team repository, in mount order. A workspace may hold several
+   * since GIT-US-0036; the web app remembers which one is active and passes it
+   * as `team` to every call below that reaches a board, a sprint, a retro or a
+   * team knowledge base (ADR-020).
+   */
+  listTeams(): Promise<TeamSummary[]>;
   /**
    * Resolves a `<projectKey>/<itemId>` reference across every open repository.
    * A reference into a project nobody cloned resolves to `cloned: false` with a
@@ -662,6 +717,36 @@ export interface DataProvider {
    * the file a companion writes and the file a browser writes are identical.
    */
   createProject(input: CreateProjectInput): Promise<ProjectSummary>;
+  /**
+   * Turns a mounted folder into a team repository, and returns it as `getTeam`
+   * reports it. Both modes go through the same core code, so the `team.yaml` a
+   * companion writes and the one a browser writes are identical.
+   */
+  createTeam(input: CreateTeamInput): Promise<TeamSummary>;
+  /**
+   * Declares a project repository in a team's `team.yaml` (story GIT-US-0037,
+   * docs/04 §3.9). The link between a registered repository and the entry is
+   * the project key alone, never a path and never a remote URL.
+   *
+   * It fails with `team_project_exists` when the team already declares the key,
+   * and with `validation_failed` when the entry is missing what R-PROJ-1
+   * requires.
+   */
+  addTeamProject(project: TeamProjectDraft, team?: string): Promise<TeamProjectResult>;
+  /**
+   * Disconnects a project from a team. Nothing in the project repository is
+   * touched.
+   *
+   * It fails with `team_project_referenced` when a board, a sprint or a retro
+   * action still points at an item of that project; `force` accepts leaving
+   * those references pointing at a project the team no longer declares, and the
+   * result then lists what was broken.
+   */
+  removeTeamProject(
+    key: string,
+    opts?: { force?: boolean },
+    team?: string,
+  ): Promise<TeamProjectResult>;
   unmountRepo(repoId: string): Promise<void>;
   reindex(repoId: string, opts?: { full?: boolean }): Promise<IndexStats>;
 
@@ -687,12 +772,12 @@ export interface DataProvider {
 
   // boards (docs/04-team-repository.md §5)
   /** Every board of the team repository; empty when none is open. */
-  listBoards(): Promise<BoardSummary[]>;
+  listBoards(team?: string): Promise<BoardSummary[]>;
   /**
    * One board, rendered over every open repository. A card whose project
    * nobody cloned comes back `remote: true` with a reason, never missing.
    */
-  getBoard(slug: string): Promise<BoardView>;
+  getBoard(slug: string, team?: string): Promise<BoardView>;
   /**
    * Moves one card. It writes the item's status in its own project repository
    * and the board's `order:` list in the team repository, and nothing else.
@@ -705,45 +790,50 @@ export interface DataProvider {
    * a scrum board is scoped to. The card order is never patched here — it
    * moves one card at a time through `moveCard`.
    */
-  updateBoard(slug: string, patch: BoardPatch, rev?: string): Promise<BoardView>;
+  updateBoard(slug: string, patch: BoardPatch, rev?: string, team?: string): Promise<BoardView>;
   /**
    * Creates a board in the team repository. A board is a view, so creating one
    * adds no item anywhere: the cards it shows are the ones its project scope
    * and its filters select. A slug already taken fails with `duplicate_id`.
    */
-  createBoard(draft: BoardDraft): Promise<BoardView>;
+  createBoard(draft: BoardDraft, team?: string): Promise<BoardView>;
   /**
    * Deletes a board file, and nothing else — every item its cards referenced
    * stays where it is. A board a sprint still names fails with `board_in_use`,
    * or `sprint_already_active` when that sprint is running.
    */
-  deleteBoard(slug: string, rev?: string): Promise<void>;
+  deleteBoard(slug: string, rev?: string, team?: string): Promise<void>;
 
   // sprints (docs/04-team-repository.md §8)
   /** The sprints of the team repository, newest ids last; empty when none. */
-  listSprints(filter?: SprintFilter): Promise<SprintSummary[]>;
+  listSprints(filter?: SprintFilter, team?: string): Promise<SprintSummary[]>;
   /** One sprint: its scope, the candidates for it and its metrics. */
-  getSprint(id: string): Promise<SprintView>;
+  getSprint(id: string, team?: string): Promise<SprintView>;
   /** Creates a sprint; the core allocates the id from the team key. */
-  createSprint(input: SprintDraft): Promise<SprintResult>;
+  createSprint(input: SprintDraft, team?: string): Promise<SprintResult>;
   /**
    * Changes the goal, the dates or the scope. Every change is one write to the
    * sprint file in the team repository, so moving an item in or out of a
    * sprint stays legal for a project nobody cloned (docs/04 R-SPR-2).
    */
-  updateSprint(id: string, patch: SprintPatch, rev?: string): Promise<SprintResult>;
+  updateSprint(id: string, patch: SprintPatch, rev?: string, team?: string): Promise<SprintResult>;
   /**
    * Makes a sprint active: its scope becomes its commitment and its board is
    * pointed at it. A board already running a sprint is refused once with
    * `sprint_already_active`; repeat with `force` to run two at once.
    */
-  startSprint(id: string, rev?: string, force?: boolean): Promise<SprintResult>;
+  startSprint(id: string, rev?: string, force?: boolean, team?: string): Promise<SprintResult>;
   /**
    * Closes a sprint and reports completed against incomplete work. Closing
    * modifies no item by itself: `carry` carries one explicit decision per
    * unfinished item (R-SPR-3).
    */
-  closeSprint(id: string, carry?: SprintCarry[], rev?: string): Promise<SprintResult>;
+  closeSprint(
+    id: string,
+    carry?: SprintCarry[],
+    rev?: string,
+    team?: string,
+  ): Promise<SprintResult>;
   /**
    * One sprint's burndown, cumulative flow diagram and flow statistics, with
    * the provenance of the history behind them (docs/04 §12). The provenance is
@@ -751,7 +841,7 @@ export interface DataProvider {
    * from git, and a host without git says so and shows the approximation it
    * can draw from the `updated` stamps instead of inventing a curve.
    */
-  getSprintMetrics(id: string): Promise<SprintMetricsView>;
+  getSprintMetrics(id: string, team?: string): Promise<SprintMetricsView>;
 
   // retrospectives (docs/04-team-repository.md §9)
   /**
@@ -759,17 +849,17 @@ export interface DataProvider {
    * actions they left open. The open actions come back with the listing
    * because a team starting a new retro has to see them first (§9.1, step 7).
    */
-  listRetros(filter?: RetroFilter): Promise<RetroListing>;
+  listRetros(filter?: RetroFilter, team?: string): Promise<RetroListing>;
   /** One retro: its notes, its themes by votes, its actions and what it carried. */
-  getRetro(id: string): Promise<RetroView>;
+  getRetro(id: string, team?: string): Promise<RetroView>;
   /** Creates a retro; the core allocates the id from the team key. */
-  createRetro(input: RetroDraft): Promise<RetroResult>;
+  createRetro(input: RetroDraft, team?: string): Promise<RetroResult>;
   /**
    * Applies one session's edits. Notes and actions are added, changed and
    * removed one entry at a time, so two participants writing at once produce
    * diffs that merge rather than an entry that disappears.
    */
-  updateRetro(id: string, patch: RetroPatch, rev?: string): Promise<RetroResult>;
+  updateRetro(id: string, patch: RetroPatch, rev?: string, team?: string): Promise<RetroResult>;
   /**
    * Turns one improvement action into a task in a project repository, and
    * writes the produced reference back into the retro. A project no open
@@ -777,7 +867,7 @@ export interface DataProvider {
    * written, and the UI then offers the action as Markdown to paste
    * (docs/04 R-RETRO-2).
    */
-  promoteRetroAction(input: RetroPromotion): Promise<RetroResult>;
+  promoteRetroAction(input: RetroPromotion, team?: string): Promise<RetroResult>;
 
   // index snapshots (docs/04-team-repository.md §6)
   /**
@@ -941,6 +1031,8 @@ export type CardMove = {
   itemRev?: string;
   /** Confirms a move over a WIP limit, and an undeclared transition. */
   force?: boolean;
+  /** The team repository the board belongs to (GIT-US-0036). */
+  team?: string;
 };
 
 /** A typed provider failure. Callers switch on `code`, never on an HTTP status. */

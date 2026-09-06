@@ -26,28 +26,31 @@ import type {
 } from '@/api/provider';
 import { useProvider } from '@/api/provider-context';
 import { backlogKeys } from '@/features/backlog/queries';
+import { useActiveTeamKey } from '@/features/workspace/active-team';
 
 /** Key factory. Every retro key lives under the `retros` prefix. */
 export const retroKeys = {
   all: () => ['retros'] as const,
-  list: (filter: RetroFilter = {}) =>
-    ['retros', 'list', filter.sprint ?? '', filter.board ?? '', filter.state ?? ''] as const,
-  detail: (id: string) => ['retros', 'detail', id] as const,
+  list: (filter: RetroFilter = {}, team = '') =>
+    ['retros', 'list', filter.sprint ?? '', filter.board ?? '', filter.state ?? '', team] as const,
+  detail: (id: string, team = '') => ['retros', 'detail', id, team] as const,
 };
 
 export function useRetros(filter: RetroFilter = {}) {
   const provider = useProvider();
+  const team = useActiveTeamKey();
   return useQuery<RetroListing>({
-    queryKey: retroKeys.list(filter),
-    queryFn: () => provider.listRetros(filter),
+    queryKey: retroKeys.list(filter, team),
+    queryFn: () => provider.listRetros(filter, team),
   });
 }
 
 export function useRetro(id: string | undefined) {
   const provider = useProvider();
+  const team = useActiveTeamKey();
   return useQuery<RetroView>({
-    queryKey: retroKeys.detail(id ?? ''),
-    queryFn: () => provider.getRetro(id ?? ''),
+    queryKey: retroKeys.detail(id ?? '', team),
+    queryFn: () => provider.getRetro(id ?? '', team),
     enabled: Boolean(id),
   });
 }
@@ -55,8 +58,9 @@ export function useRetro(id: string | undefined) {
 /** Everything a retro write invalidates: the retro, the index and the tasks. */
 function useRetroInvalidation(): (result: RetroResult) => void {
   const queryClient = useQueryClient();
+  const team = useActiveTeamKey();
   return (result) => {
-    queryClient.setQueryData(retroKeys.detail(result.retro.retro.id), result.retro);
+    queryClient.setQueryData(retroKeys.detail(result.retro.retro.id, team), result.retro);
     void queryClient.invalidateQueries({ queryKey: retroKeys.all() });
     if (result.task) {
       void queryClient.invalidateQueries({ queryKey: backlogKeys.all() });
@@ -67,8 +71,9 @@ function useRetroInvalidation(): (result: RetroResult) => void {
 export function useCreateRetro(): UseMutationResult<RetroResult, Error, RetroDraft> {
   const provider = useProvider();
   const settle = useRetroInvalidation();
+  const team = useActiveTeamKey();
   return useMutation<RetroResult, Error, RetroDraft>({
-    mutationFn: (draft) => provider.createRetro(draft),
+    mutationFn: (draft) => provider.createRetro(draft, team),
     onSuccess: settle,
   });
 }
@@ -79,8 +84,9 @@ export type RetroEdit = { id: string; patch: RetroPatch; rev?: string | undefine
 export function useUpdateRetro(): UseMutationResult<RetroResult, Error, RetroEdit> {
   const provider = useProvider();
   const settle = useRetroInvalidation();
+  const team = useActiveTeamKey();
   return useMutation<RetroResult, Error, RetroEdit>({
-    mutationFn: (edit) => provider.updateRetro(edit.id, edit.patch, edit.rev),
+    mutationFn: (edit) => provider.updateRetro(edit.id, edit.patch, edit.rev, team),
     onSuccess: settle,
   });
 }
@@ -88,8 +94,9 @@ export function useUpdateRetro(): UseMutationResult<RetroResult, Error, RetroEdi
 export function usePromoteRetroAction(): UseMutationResult<RetroResult, Error, RetroPromotion> {
   const provider = useProvider();
   const settle = useRetroInvalidation();
+  const team = useActiveTeamKey();
   return useMutation<RetroResult, Error, RetroPromotion>({
-    mutationFn: (input) => provider.promoteRetroAction(input),
+    mutationFn: (input) => provider.promoteRetroAction(input, team),
     onSuccess: settle,
   });
 }

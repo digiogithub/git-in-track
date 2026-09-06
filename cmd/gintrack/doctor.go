@@ -238,7 +238,17 @@ func checkRepo(cmd *cobra.Command, local *doctorFlags, repo config.Repo, p *outp
 		add(string(core.SeverityError), err.Error(), "")
 		return report
 	}
-	if len(view.Projects) == 0 {
+	// A team repository holds no backlog of its own by the hard rule of docs/04
+	// section 1: what it must hold is a team.yaml, and a registration claiming
+	// the team role without one is the inert registration GIT-US-0034 removed.
+	switch {
+	case repo.Role == config.RoleTeam && !config.Detect(repo.Path).Team:
+		add(string(core.SeverityError),
+			"registered as a team repository but holds no "+core.TeamFileName+" under "+repo.Path,
+			"gintrack init "+repo.Path+" --team --key <KEY>")
+	case repo.Role == config.RoleTeam:
+		add("ok", "team repository: "+core.TeamFileName+" found", "")
+	case len(view.Projects) == 0:
 		add(string(core.SeverityError), "no .pmngr/project.yaml found under "+repo.Path, "gintrack add --docs <folder>")
 	}
 	for _, ref := range view.Projects {

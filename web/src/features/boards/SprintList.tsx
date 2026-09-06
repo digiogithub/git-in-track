@@ -10,6 +10,7 @@ import { useToast } from '@/components/ui/toast';
 import { NewSprintDialog } from '@/features/boards/NewSprintDialog';
 import { useBoards, useUpdateBoard } from '@/features/boards/queries';
 import { useSprints } from '@/features/boards/sprint-queries';
+import { TeamSelector } from '@/features/workspace/TeamSelector';
 
 /**
  * The sprint index (docs/04-team-repository.md §8, story GIT-US-0032).
@@ -38,7 +39,10 @@ export function SprintList() {
   return (
     <div className="space-y-6">
       <header className="space-y-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Sprints</h1>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h1 className="page-title">Sprints</h1>
+          <TeamSelector />
+        </div>
         <p className="text-sm text-muted-foreground">
           Sprints live in the team repository. A scrum board shows the one it points at; pointing it
           at another one changes the board file and no item.

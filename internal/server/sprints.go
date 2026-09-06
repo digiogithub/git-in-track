@@ -31,6 +31,7 @@ func (s *Server) handleSprintList(w http.ResponseWriter, r *http.Request) {
 	params := map[string]string{
 		"board": r.URL.Query().Get("board"),
 		"state": r.URL.Query().Get("state"),
+		"team":  teamOf(r),
 	}
 	result, err := s.repos.workspace().Dispatch(r.Context(), "sprint.list", mustJSON(params))
 	if err != nil {
@@ -44,7 +45,7 @@ func (s *Server) handleSprintList(w http.ResponseWriter, r *http.Request) {
 // the board would offer and the metrics, with the sprint's revision as ETag.
 func (s *Server) handleSprintGet(w http.ResponseWriter, r *http.Request) {
 	result, err := s.repos.workspace().Dispatch(r.Context(), "sprint.get",
-		mustJSON(map[string]string{"id": chi.URLParam(r, "id")}))
+		mustJSON(map[string]string{"id": chi.URLParam(r, "id"), "team": teamOf(r)}))
 	if err != nil {
 		writeVaultError(w, r, err)
 		return
@@ -65,7 +66,7 @@ func (s *Server) handleSprintGet(w http.ResponseWriter, r *http.Request) {
 // window: splitting them across routes would walk the history twice.
 func (s *Server) handleSprintMetrics(w http.ResponseWriter, r *http.Request) {
 	result, err := s.repos.workspace().Dispatch(r.Context(), "sprint.metrics",
-		mustJSON(map[string]string{"id": chi.URLParam(r, "id")}))
+		mustJSON(map[string]string{"id": chi.URLParam(r, "id"), "team": teamOf(r)}))
 	if err != nil {
 		writeVaultError(w, r, err)
 		return
@@ -81,6 +82,7 @@ func (s *Server) handleSprintCreate(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &body) {
 		return
 	}
+	body.Team = teamFallback(r, body.Team)
 	if body.Board == "" {
 		failProblem(w, r, codeInvalidRequest, "A sprint needs the `board` it belongs to.")
 		return
@@ -110,7 +112,10 @@ func (s *Server) handleSprintUpdate(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &patch) {
 		return
 	}
-	params := vault.SprintUpdateParams{ID: chi.URLParam(r, "id"), Rev: rev, Patch: patch}
+	params := vault.SprintUpdateParams{
+		TeamScope: vault.TeamScope{Team: teamOf(r)},
+		ID:        chi.URLParam(r, "id"), Rev: rev, Patch: patch,
+	}
 	result, err := s.repos.workspace().Dispatch(r.Context(), "sprint.update", mustJSON(params))
 	if err != nil {
 		writeVaultError(w, r, err)
@@ -132,7 +137,10 @@ func (s *Server) handleSprintStart(w http.ResponseWriter, r *http.Request) {
 	if r.ContentLength > 0 && !decodeBody(w, r, &body) {
 		return
 	}
-	params := vault.SprintStartParams{ID: chi.URLParam(r, "id"), Rev: rev, Force: body.Force}
+	params := vault.SprintStartParams{
+		TeamScope: vault.TeamScope{Team: teamOf(r)},
+		ID:        chi.URLParam(r, "id"), Rev: rev, Force: body.Force,
+	}
 	result, err := s.repos.workspace().Dispatch(r.Context(), "sprint.start", mustJSON(params))
 	if err != nil {
 		writeVaultError(w, r, err)
@@ -156,7 +164,10 @@ func (s *Server) handleSprintClose(w http.ResponseWriter, r *http.Request) {
 	if r.ContentLength > 0 && !decodeBody(w, r, &body) {
 		return
 	}
-	params := vault.SprintCloseParams{ID: chi.URLParam(r, "id"), Rev: rev, Carry: body.Carry}
+	params := vault.SprintCloseParams{
+		TeamScope: vault.TeamScope{Team: teamOf(r)},
+		ID:        chi.URLParam(r, "id"), Rev: rev, Carry: body.Carry,
+	}
 	result, err := s.repos.workspace().Dispatch(r.Context(), "sprint.close", mustJSON(params))
 	if err != nil {
 		writeVaultError(w, r, err)
@@ -178,7 +189,10 @@ func (s *Server) handleBoardUpdate(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &patch) {
 		return
 	}
-	params := vault.BoardUpdateParams{Board: chi.URLParam(r, "slug"), Rev: rev, Patch: patch}
+	params := vault.BoardUpdateParams{
+		TeamScope: vault.TeamScope{Team: teamOf(r)},
+		Board:     chi.URLParam(r, "slug"), Rev: rev, Patch: patch,
+	}
 	result, err := s.repos.workspace().Dispatch(r.Context(), "board.update", mustJSON(params))
 	if err != nil {
 		writeVaultError(w, r, err)

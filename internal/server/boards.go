@@ -37,6 +37,7 @@ func (s *Server) handleBoardCreate(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &params) {
 		return
 	}
+	params.Team = teamFallback(r, params.Team)
 	if params.Title == "" {
 		failProblem(w, r, codeInvalidRequest, "A board needs a `title`.")
 		return
@@ -64,7 +65,10 @@ func (s *Server) handleBoardDelete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	params := vault.BoardDeleteParams{Board: chi.URLParam(r, "slug"), Rev: rev}
+	params := vault.BoardDeleteParams{
+		TeamScope: vault.TeamScope{Team: teamOf(r)},
+		Board:     chi.URLParam(r, "slug"), Rev: rev,
+	}
 	result, err := s.repos.workspace().Dispatch(r.Context(), "board.delete", mustJSON(params))
 	if err != nil {
 		writeVaultError(w, r, err)
@@ -80,7 +84,8 @@ func (s *Server) handleBoardDelete(w http.ResponseWriter, r *http.Request) {
 
 // handleBoardList serves GET /api/v1/boards.
 func (s *Server) handleBoardList(w http.ResponseWriter, r *http.Request) {
-	result, err := s.repos.workspace().Dispatch(r.Context(), "board.list", nil)
+	result, err := s.repos.workspace().Dispatch(r.Context(), "board.list",
+		mustJSON(map[string]string{"team": teamOf(r)}))
 	if err != nil {
 		writeVaultError(w, r, err)
 		return
@@ -94,7 +99,7 @@ func (s *Server) handleBoardList(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleBoardGet(w http.ResponseWriter, r *http.Request) {
 	slug := chi.URLParam(r, "slug")
 	result, err := s.repos.workspace().Dispatch(r.Context(), "board.get",
-		mustJSON(map[string]string{"board": slug}))
+		mustJSON(map[string]string{"board": slug, "team": teamOf(r)}))
 	if err != nil {
 		writeVaultError(w, r, err)
 		return
@@ -152,6 +157,7 @@ func (s *Server) handleBoardCardMove(w http.ResponseWriter, r *http.Request) {
 		"board": slug, "ref": body.Ref, "toColumn": body.ToColumn,
 		"position": position, "status": body.Status,
 		"rev": rev, "itemRev": body.ItemRev, "force": force,
+		"team": teamOf(r),
 	}
 	result, err := s.repos.workspace().Dispatch(r.Context(), "board.move", mustJSON(params))
 	if err != nil {

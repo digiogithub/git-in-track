@@ -156,21 +156,78 @@ func (w *Workspace) Lookup(id string) (*Mount, bool) {
 	return m, ok
 }
 
-// TeamMount returns the repository holding a team.yaml. A workspace has at most
-// one: the first one found wins, and the rest are reported by Diagnostics.
-func (w *Workspace) TeamMount() (*Mount, bool) {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-	return w.teamMount()
+// TeamScope names the team repository a call acts on. It is embedded in the
+// params of every team-scoped method, so that the choice travels with the
+// request instead of living as session state on the host: a companion serving
+// two browser tabs and a browser-only tab serving itself then behave
+// identically (ADR-019, GIT-US-0036).
+//
+// Team accepts either the `key:` of a team.yaml or the id of the repository
+// that holds it. It is optional while a workspace holds a single team.
+type TeamScope struct {
+	Team string `json:"team,omitempty"`
 }
 
-func (w *Workspace) teamMount() (*Mount, bool) {
+// TeamMounts returns every repository holding a team.yaml, in mount order.
+func (w *Workspace) TeamMounts() []*Mount {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.teamMounts()
+}
+
+func (w *Workspace) teamMounts() []*Mount {
+	var out []*Mount
 	for _, m := range w.snapshot() {
 		if m.Vault.Team() != nil {
-			return m, true
+			out = append(out, m)
 		}
 	}
-	return nil, false
+	return out
+}
+
+// TeamMount resolves the team repository a call acts on. An empty key selects
+// the only team of the workspace; naming one becomes mandatory as soon as two
+// are open, so that a call is never answered by an arbitrary team (R-TEAM-ACT-1).
+func (w *Workspace) TeamMount(key string) (*Mount, error) {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.teamMount(key)
+}
+
+func (w *Workspace) teamMount(key string) (*Mount, error) {
+	teams := w.teamMounts()
+	if len(teams) == 0 {
+		return nil, failf("not_found", "no open repository holds a %s", core.TeamFileName)
+	}
+	if key == "" {
+		if len(teams) == 1 {
+			return teams[0], nil
+		}
+		return nil, failf("invalid_request",
+			"this workspace holds %d team repositories; name the one to act on with \"team\"",
+			len(teams))
+	}
+	for _, m := range teams {
+		if m.ID == key {
+			return m, nil
+		}
+		if team := m.Vault.Team(); team != nil && string(team.Key) == key {
+			return m, nil
+		}
+	}
+	return nil, failf("not_found", "no open team repository is called %q", key)
+}
+
+// anyTeamMount returns a team repository without asking which one. It backs the
+// answers that are about the workspace rather than about one team — reference
+// resolution falling back when no team declares the project, and the legacy
+// single-team field of "workspace.list".
+func (w *Workspace) anyTeamMount() (*Mount, bool) {
+	teams := w.teamMounts()
+	if len(teams) == 0 {
+		return nil, false
+	}
+	return teams[0], true
 }
 
 // MountForProject returns the repository exposing a project key.
@@ -211,9 +268,13 @@ func (w *Workspace) ResolveRef(ref core.Ref) refResolution {
 }
 
 func (w *Workspace) resolveRef(ref core.Ref) refResolution {
+	// A reference belongs to the team that declares the project, whichever of
+	// the open teams that is; the first team answers for a project none of them
+	// declares, so that the reason and the remote link stay as good as they were
+	// when a workspace held a single team.
 	var team *core.TeamRef
 	var snapshots *core.SnapshotSet
-	if m, ok := w.teamMount(); ok {
+	if m, ok := w.teamMountForProject(ref.Project); ok {
 		team = m.Vault.Team()
 		snapshots = m.Vault.Snapshots()
 	}
@@ -234,15 +295,61 @@ func (w *Workspace) resolveRef(ref core.Ref) refResolution {
 	return out
 }
 
-// Team renders the team repository of the workspace, with every declared
-// project marked cloned or not against the repositories that are open.
-func (w *Workspace) Team() (teamSummary, bool) {
+// teamMountForProject returns the team repository whose team.yaml declares a
+// project key, falling back to the first open team when none does.
+func (w *Workspace) teamMountForProject(key core.ProjectKey) (*Mount, bool) {
+	for _, m := range w.teamMounts() {
+		team := m.Vault.Team()
+		if team == nil || team.Config == nil {
+			continue
+		}
+		if _, declared := team.Config.Project(key); declared {
+			return m, true
+		}
+	}
+	return w.anyTeamMount()
+}
+
+// Team renders one team repository of the workspace, with every declared
+// project marked cloned or not against the repositories that are open. An
+// empty key selects the only open team; see TeamMount for the rule.
+func (w *Workspace) Team(key string) (teamSummary, error) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-	m, ok := w.teamMount()
-	if !ok {
-		return teamSummary{}, false
+	m, err := w.teamMount(key)
+	if err != nil {
+		return teamSummary{}, err
 	}
+	return w.teamSummary(m), nil
+}
+
+// TeamListResult is the answer of "team.list": every open team repository, in
+// mount order. It is a list even when it holds one entry, because a client has
+// to be able to tell "no team is open" from "one team is open".
+type TeamListResult struct {
+	Teams []teamSummary `json:"teams"`
+	Total int           `json:"total"`
+}
+
+// Teams renders every open team repository, in mount order.
+func (w *Workspace) Teams() []teamSummary {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	out := []teamSummary{}
+	for _, m := range w.teamMounts() {
+		out = append(out, w.teamSummary(m))
+	}
+	return out
+}
+
+// TeamList renders every open team repository as "team.list" answers it.
+func (w *Workspace) TeamList() TeamListResult {
+	teams := w.Teams()
+	return TeamListResult{Teams: teams, Total: len(teams)}
+}
+
+// teamSummary renders one team mount. The caller holds at least the read lock.
+func (w *Workspace) teamSummary(m *Mount) teamSummary {
 	mounts := w.snapshot()
 	lookup := func(key core.ProjectKey) (string, core.ProjectRef, bool) {
 		for _, candidate := range mounts {
@@ -254,7 +361,7 @@ func (w *Workspace) Team() (teamSummary, bool) {
 		}
 		return "", core.ProjectRef{}, false
 	}
-	return teamSummaryOf(m.Vault.Team(), m.ID, m.Vault.Snapshots(), lookup), true
+	return teamSummaryOf(m.Vault.Team(), m.ID, m.Vault.Snapshots(), lookup)
 }
 
 // Search ranks results across every open repository, keeping the source of each
@@ -333,7 +440,14 @@ func (w *Workspace) Projects(ctx context.Context) ([]projectSummary, error) {
 }
 
 // Diagnostics reports the findings that only a workspace can make: a project
-// key declared twice by two open repositories, and a second team repository.
+// key declared twice by two open repositories, and two team repositories
+// claiming the same team key.
+//
+// Holding several teams is not a finding. It is the point of GIT-US-0036: a
+// second team repository used to register and then be ignored with an
+// error-severity diagnostic, which described a limitation rather than a
+// problem with the files. What remains a real error is an ambiguous key,
+// because a request naming it could then be answered by either repository.
 func (w *Workspace) Diagnostics() []core.Diagnostic {
 	w.mu.RLock()
 	mounts := w.snapshot()
@@ -341,18 +455,21 @@ func (w *Workspace) Diagnostics() []core.Diagnostic {
 
 	var out []core.Diagnostic
 	owner := map[core.ProjectKey]string{}
-	teams := 0
+	teamOwner := map[string]string{}
 	for _, m := range mounts {
-		if m.Vault.Team() != nil {
-			teams++
-			if teams > 1 {
+		if team := m.Vault.Team(); team != nil {
+			key := string(team.Key)
+			if previous, taken := teamOwner[key]; taken {
 				out = append(out, core.Diagnostic{
 					Code:     core.CodeTeamKey,
 					Severity: core.SeverityError,
 					Path:     m.ID + "/" + core.TeamFileName,
 					Field:    "key",
-					Message:  "a workspace holds one team repository; this one is ignored",
+					Message: fmt.Sprintf("team key %s is already declared by repository %s",
+						key, previous),
 				})
+			} else {
+				teamOwner[key] = m.ID
 			}
 		}
 		for _, p := range m.Vault.Projects() {

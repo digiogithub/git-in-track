@@ -30,6 +30,8 @@ const RetroActionPromotedCode = "retro_action_promoted"
 // RetroListParams is the input of "retro.list": both filters are optional and
 // ANDed, and an absent one imposes no constraint.
 type RetroListParams struct {
+	// TeamScope names the team repository this call acts on.
+	TeamScope
 	Sprint string `json:"sprint,omitempty"`
 	Board  string `json:"board,omitempty"`
 	State  string `json:"state,omitempty"`
@@ -49,6 +51,8 @@ type RetroListResult struct {
 
 // RetroParams names one retro.
 type RetroParams struct {
+	// TeamScope names the team repository this call acts on.
+	TeamScope
 	ID string `json:"id"`
 }
 
@@ -56,6 +60,8 @@ type RetroParams struct {
 // sprint has a sensible default, because the friction of starting a retro is
 // exactly what stops teams running them.
 type RetroCreateParams struct {
+	// TeamScope names the team repository this call acts on.
+	TeamScope
 	// Sprint is the sprint being reviewed. It is optional: an incident retro
 	// belongs to no sprint (docs/04 section 9.2).
 	Sprint string `json:"sprint,omitempty"`
@@ -144,6 +150,8 @@ type RetroPatch struct {
 
 // RetroUpdateParams is the input of "retro.update".
 type RetroUpdateParams struct {
+	// TeamScope names the team repository this call acts on.
+	TeamScope
 	ID    string     `json:"id"`
 	Rev   string     `json:"rev,omitempty"`
 	Patch RetroPatch `json:"patch"`
@@ -152,6 +160,8 @@ type RetroUpdateParams struct {
 // RetroPromoteParams is the input of "retro.promote": turn one improvement
 // action into a real task in a project repository (R-RETRO-2).
 type RetroPromoteParams struct {
+	// TeamScope names the team repository this call acts on.
+	TeamScope
 	ID     string `json:"id"`
 	Action string `json:"action"`
 	// Project is the repository the task is created in.
@@ -293,8 +303,8 @@ type retroContext struct {
 }
 
 // retroContext gathers the retros of the team repository.
-func (w *Workspace) retroContext(ctx context.Context) (retroContext, error) {
-	c, err := w.sprintContext(ctx)
+func (w *Workspace) retroContext(ctx context.Context, team string) (retroContext, error) {
+	c, err := w.sprintContext(ctx, team)
 	if err != nil {
 		return retroContext{}, err
 	}
@@ -383,7 +393,7 @@ func (c retroContext) retroResult(
 // team starting a new retro sees what it promised last time before it promises
 // anything else (docs/04 section 9.1, step 7).
 func (w *Workspace) Retros(ctx context.Context, p RetroListParams) (RetroListResult, error) {
-	c, err := w.retroContext(ctx)
+	c, err := w.retroContext(ctx, p.Team)
 	if err != nil {
 		return RetroListResult{}, err
 	}
@@ -421,8 +431,8 @@ func (w *Workspace) Retros(ctx context.Context, p RetroListParams) (RetroListRes
 // Retro renders one retro: its notes, its themes ranked by votes, its actions
 // with the live state of the tasks they became, and the still-open actions of
 // the retros before it.
-func (w *Workspace) Retro(ctx context.Context, id string) (core.RetroView, error) {
-	c, err := w.retroContext(ctx)
+func (w *Workspace) Retro(ctx context.Context, team, id string) (core.RetroView, error) {
+	c, err := w.retroContext(ctx, team)
 	if err != nil {
 		return core.RetroView{}, err
 	}
@@ -438,7 +448,7 @@ func (w *Workspace) Retro(ctx context.Context, id string) (core.RetroView, error
 // from that sprint — the board, the title, the participants — because a retro
 // nobody can start in one click is a retro nobody runs.
 func (w *Workspace) CreateRetro(ctx context.Context, p RetroCreateParams) (RetroResult, error) {
-	c, err := w.retroContext(ctx)
+	c, err := w.retroContext(ctx, p.Team)
 	if err != nil {
 		return RetroResult{}, err
 	}
@@ -537,7 +547,7 @@ func (c retroContext) previousRetro(r *core.Retro) *core.Retro {
 // and reclassified, themes merged, votes cast, actions selected. Every change
 // is one write to the retro file in the team repository (docs/04 section 11).
 func (w *Workspace) UpdateRetro(ctx context.Context, p RetroUpdateParams) (RetroResult, error) {
-	c, err := w.retroContext(ctx)
+	c, err := w.retroContext(ctx, p.Team)
 	if err != nil {
 		return RetroResult{}, err
 	}
@@ -732,7 +742,7 @@ func applyRetroActions(retro *core.Retro, patch RetroPatch) error {
 // refuses rather than half-writing: the UI then offers "copy as Markdown" so a
 // human can paste the task where it belongs.
 func (w *Workspace) PromoteRetroAction(ctx context.Context, p RetroPromoteParams) (RetroResult, error) {
-	c, err := w.retroContext(ctx)
+	c, err := w.retroContext(ctx, p.Team)
 	if err != nil {
 		return RetroResult{}, err
 	}

@@ -52,6 +52,8 @@ Every ADR uses the same sections:
 | [ADR-016](ADR-016-homebrew-cask-instead-of-formula.md) | Homebrew is distributed as a cask (macOS), not as a formula | Accepted | 6 |
 | [ADR-017](ADR-017-metrics-history-from-git-not-a-stored-time-series.md) | Sprint metrics reconstruct their history from git, and say so when they cannot | Accepted | 6 |
 | [ADR-018](ADR-018-bounded-project-discovery.md) | Project discovery is bounded to the root and one level, plus what the registration declares | Accepted | 7 |
+| [ADR-019](ADR-019-active-team-is-client-state-threaded-per-call.md) | The active team is client state, threaded on every team-scoped call | Accepted | 8 |
+| [ADR-020](ADR-020-creating-a-team-repository.md) | The product creates team repositories; registering one stays with the CLI | Accepted | 8 |
 
 ## Related documents
 

@@ -76,4 +76,20 @@ describe('the retro index', () => {
     await user.click(await screen.findByRole('button', { name: 'Retro without a sprint' }));
     expect(await screen.findByText('Sprint 7 Retrospective')).toBeInTheDocument();
   });
+
+  it('cannot start a retro when no team repository is open, and says why', async () => {
+    renderList(new FakeProvider({ team: null, retros: [] }));
+
+    // The empty state names the state instead of asking for something the UI
+    // cannot do, and the control is disabled instead of failing with not_found
+    // (story GIT-US-0035).
+    expect(await screen.findByText('No team repository is open')).toBeInTheDocument();
+    const start = screen.getByRole('button', { name: 'Retro without a sprint' });
+    expect(start).toBeDisabled();
+    expect(start).toHaveAttribute('title', expect.stringMatching(/team repository/i));
+    expect(screen.getByRole('link', { name: /add or create a team repository/i })).toHaveAttribute(
+      'href',
+      '/repos/add',
+    );
+  });
 });

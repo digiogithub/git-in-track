@@ -1,36 +1,43 @@
-import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { BookOpen, CloudOff, ExternalLink, ListChecks, Users } from 'lucide-react';
 
 import type { TeamProjectSummary } from '@/api/provider';
-import { useProvider } from '@/api/provider-context';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { useActiveTeam } from '@/features/workspace/active-team';
+import { TeamSelector } from '@/features/workspace/TeamSelector';
 
 /**
- * The team repository of the workspace (docs/04-team-repository.md §3, story
- * GIT-US-0016): who is on the team, which project repositories it owns, and
- * which of those are actually cloned on this machine.
+ * The active team repository of the workspace (docs/04-team-repository.md §3,
+ * stories GIT-US-0016 and GIT-US-0036): who is on the team, which project
+ * repositories it owns, and which of those are actually cloned on this machine.
+ *
+ * A workspace may hold several team repositories. This panel renders the active
+ * one and carries the selector that switches it, because everything the panel
+ * links to — the boards, the sprints, the retros, the team knowledge base —
+ * follows that same choice.
  *
  * A project the workspace has not opened is listed and marked "not cloned"; it
  * is never hidden. Rendering its cards from a committed snapshot is
  * GIT-US-0019's job, so this panel shows the declaration and the way in.
  */
 export function TeamPanel() {
-  const provider = useProvider();
-  const team = useQuery({ queryKey: ['team'], queryFn: () => provider.getTeam() });
+  const { team: activeTeam, isPending } = useActiveTeam();
 
-  if (team.isPending || !team.data) return null;
+  if (isPending || activeTeam === undefined) return null;
 
-  const { key, name, description, members, projects, knowledgePath, diagnostics } = team.data;
+  const { key, name, description, members, projects, knowledgePath, diagnostics } = activeTeam;
   const active = members.filter((member) => member.active);
   const errors = diagnostics.filter((d) => d.severity === 'error');
 
   return (
     <section aria-labelledby="team-heading" className="space-y-3">
-      <h2 id="team-heading" className="text-lg font-semibold tracking-tight">
-        Team
-      </h2>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 id="team-heading" className="text-lg font-semibold tracking-tight">
+          Team
+        </h2>
+        <TeamSelector />
+      </div>
 
       <Card>
         <CardHeader>
