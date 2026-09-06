@@ -6,6 +6,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/digiogithub/git-in-track/internal/core"
 )
 
 // The sync pipeline of docs/06-git-sync.md section 4, story GIT-US-0021.
@@ -37,6 +39,11 @@ type State string
 
 // The states, in the precedence order resolveState applies.
 const (
+	// StateJujutsu means the repository is managed with Jujutsu: reads work and
+	// every git write is refused (GIT-US-0038). It takes precedence over every
+	// other state, because none of the others describes such a repository
+	// truthfully — a jj working copy is neither detached nor dirty.
+	StateJujutsu State = "jujutsu"
 	// StateConflicted means an integration stopped with conflicted paths.
 	StateConflicted State = "conflicted"
 	// StateInProgress means a rebase or a merge is half-done; the user has to
@@ -122,6 +129,10 @@ type SyncStatus struct {
 	Conflicted []Conflict `json:"conflicted,omitempty"`
 	// Operation is OpRebase or OpMerge when one is half-finished, else empty.
 	Operation string `json:"operation,omitempty"`
+	// Jujutsu reports a repository managed with Jujutsu. Its branch is `@`, its
+	// working copy is a commit rather than a checkout, and no git write is
+	// allowed against it (GIT-US-0038).
+	Jujutsu bool `json:"jujutsu,omitempty"`
 	// State is the headline word for this repository.
 	State State `json:"state"`
 }
@@ -131,6 +142,8 @@ type SyncStatus struct {
 func (s *SyncStatus) resolveState() {
 	s.Clean = len(s.Dirty) == 0
 	switch {
+	case s.Jujutsu:
+		s.State = StateJujutsu
 	case len(s.Conflicted) > 0:
 		s.State = StateConflicted
 	case s.Operation != "":
@@ -424,6 +437,9 @@ func (r *syncRun) preflight(ctx context.Context) (SyncStatus, error) {
 		return SyncStatus{}, err //nolint:wrapcheck // backend errors already carry a code and an actionable message
 	}
 	switch {
+	case st.Jujutsu:
+		return st, refuseJujutsu("sync", r.backend.Path(),
+			core.JujutsuFetchCommand+"` and `"+core.JujutsuPushCommand)
 	case st.Operation != "":
 		return st, failf("sync", CodeInProgress,
 			"a %s is already in progress in %s: finish it or abort it before syncing "+

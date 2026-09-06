@@ -12,6 +12,8 @@ import (
 	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
+
+	"github.com/digiogithub/git-in-track/internal/core"
 )
 
 // goGitBackend drives a working tree in process, with no external dependency.
@@ -52,6 +54,8 @@ func (b *goGitBackend) Capabilities() Capabilities {
 		Signing:           false,
 		CredentialHelpers: false,
 		PathspecCommit:    false,
+		VCS:               string(core.VCSGit),
+		Writes:            true,
 	}
 }
 

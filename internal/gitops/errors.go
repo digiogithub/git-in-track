@@ -67,6 +67,15 @@ const (
 	CodeCancelled = "git_cancelled"
 	// CodeSyncFailed is the fallback classification of a sync failure.
 	CodeSyncFailed = "git_sync_failed"
+	// CodeJujutsuWriteRefused means a git write was asked for in a Jujutsu
+	// repository and was refused before anything ran (GIT-US-0038). The message
+	// names the jj command that does the same thing safely.
+	CodeJujutsuWriteRefused = "vcs_jujutsu_write_refused"
+	// CodeJujutsuUnsupported means the folder is a Jujutsu repository whose git
+	// store lives inside `.jj`, so there is no git working tree to read from.
+	// The backlog files are still indexed and served; only git-backed features
+	// are unavailable.
+	CodeJujutsuUnsupported = "vcs_jujutsu_unsupported"
 	// CodeNotFound means the path asked about is not conflicted, normally
 	// because the integration moved on while the resolver was open
 	// (GIT-US-0022).

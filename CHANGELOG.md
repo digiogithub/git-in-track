@@ -29,10 +29,30 @@ because a commit list cannot express them.
   project key is refused with `team_project_exists`; a removal that would orphan a board,
   sprint or retro reference is refused with `team_project_referenced` unless it is forced.
 
+- Repositories managed with **Jujutsu** are recognized as such, in both layouts —
+  colocated (`.jj/` beside `.git/`) and with the git store inside `.jj/` — and reported as
+  their own kind by `gintrack ls`, `gintrack add`, `gintrack doctor`, the repository and
+  sync payloads and the web app (`GIT-US-0038`, ADR-021, docs/06 §14). A jj workspace with
+  no colocated git working tree is registered and indexed instead of being refused.
+
 ### Changed
 
 - A second team repository is no longer reported as an error and ignored. What is reported
   now is two mounted repositories declaring the same team `key:`.
+
+### Fixed
+
+- **git no longer writes behind Jujutsu.** In a jj repository git's `HEAD` sits at the
+  parent of the working-copy commit, so a `git commit` there landed on `@-`, moved no
+  bookmark and was abandoned as an orphan by the next `jj` command — unreachable from any
+  bookmark and unpublishable by `jj git push`. Commit on save, explicit commits, fetch,
+  integrate, push, abort, continue and conflict resolution are now all refused in a jj
+  repository with `vcs_jujutsu_write_refused` (HTTP 409) and a message naming the `jj`
+  command to run instead (`GIT-US-0038`).
+- A jj repository is no longer shown with a destructive "Detached HEAD" badge or as a
+  permanently dirty tree. Its branch is reported as `@`, its state is `jujutsu`, and the
+  sync panel says "Managed by Jujutsu — reads work, writes go through jj" instead of
+  advising a branch checkout that is impossible there.
 
 ## [1.0.0] — unreleased, prepared
 

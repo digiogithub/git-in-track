@@ -1084,7 +1084,93 @@ on the team repo.
 
 ---
 
-## 14. Phase mapping
+## 14. Jujutsu (jj) repositories
+
+Story `GIT-US-0038`, epic `GIT-EP-0010`. Reference: jj 0.41.
+
+A Jujutsu repository stores its commits in a git repository, so every git
+**read** the product does — log, history, metrics, diff — is correct. Every git
+**write** is not, and the product refuses all of them.
+
+### 14.1 Why a git write is unsafe there
+
+In a jj workspace the working copy is itself a commit (`@`), and git's `HEAD`
+sits at its parent (`@-`). A `git commit` therefore lands on `@-`, moves no
+bookmark, and the next `jj` command re-parents `@` onto it and abandons the
+previous working-copy commit as an orphan. The commit is unreachable from any
+bookmark, so `jj git push` would never publish it. jj also keeps git's index
+synchronized with `@`, so the working copy can read as fully staged.
+
+### 14.2 Detection
+
+`gitops.DetectVCS(path)` reports `git`, `jj` or `none`, and for jj the layout:
+
+| Layout | On disk | Git reads | Git writes |
+|---|---|---|---|
+| `colocated` | `.jj/` beside the workspace's own `.git/` | yes | refused |
+| `internal` | the git store lives inside `.jj/` (including the legacy `.jj/repo/store/git`) | no working tree to read | refused |
+
+The `.jj` marker wins over `.git`: a colocated repository has both, and calling
+it git is exactly the misreading this layer ends. The store is resolved from
+`.jj/repo/store/git_target`, following `.jj/repo` when a secondary workspace
+makes it a file.
+
+A jj repository **registers like any other** (`gintrack add`): its backlog files
+are read, indexed and served the same way. A repository with an internal store
+is registered too — only the git-backed features are unavailable, and the reason
+says so instead of claiming the folder is not a repository.
+
+The `jj` binary is resolved the way `git` is, with `jj --version` and nothing
+else: every other jj command snapshots the working copy, which is a write. The
+supported minimum is **jj 0.41**; an older one is a `gintrack doctor` warning,
+never a refusal, because the product runs no jj command yet.
+
+### 14.3 What is refused, and what it says
+
+`gitops.Open` wraps the backend of a jj repository in a guard. Reads pass
+through; every write is answered by the guard itself, before a git process is
+started:
+
+| Call | Refused with | The message names |
+|---|---|---|
+| commit on save, `POST /api/v1/git/commit` | `vcs_jujutsu_write_refused` | `jj commit -m <message>` |
+| sync preflight (including `--dry-run`) | `vcs_jujutsu_write_refused` | `jj git fetch` and `jj git push` |
+| fetch | `vcs_jujutsu_write_refused` | `jj git fetch` |
+| integrate (rebase or merge) | `vcs_jujutsu_write_refused` | `jj rebase -d <destination>` |
+| push | `vcs_jujutsu_write_refused` | `jj git push` |
+| abort | `vcs_jujutsu_write_refused` | `jj undo` |
+| continue, resolve a conflicted path | `vcs_jujutsu_write_refused` | `jj resolve` |
+| opening an `internal`-layout repository | `vcs_jujutsu_unsupported` | that reads work and writes go through jj |
+
+Over HTTP a refusal is `409 Conflict`: the request is well formed and the
+repository is healthy; the product declines to write to it with git.
+
+### 14.4 What the status says
+
+The guard corrects the two readings that were lies:
+
+- the branch is reported as `@` and `detached` is false — a jj working copy is a
+  commit, not a checkout, and the sync panel no longer paints a destructive
+  "Detached HEAD" badge over the normal state;
+- the index column is dropped from the dirty set, so a jj repository is not
+  permanently dirty; what is reported is what the working copy actually shows.
+
+`SyncStatus.jujutsu` is true and the state is `jujutsu`, which takes precedence
+over every other state. The sync panel renders it as **"Managed by Jujutsu —
+reads work, writes go through jj"** and disables Preview and Sync, rather than
+offering buttons that would be refused.
+
+### 14.5 What this layer is not
+
+It is not the jj backend. Writing through jj — `jj commit`, bookmarks instead of
+branches, `jj git push`, conflicts recorded inside commits, `jj undo` in place of
+`--abort` — is `GIT-US-0039` (generalizing the `Backend` interface) and
+`GIT-US-0040`/`GIT-US-0041` (the backend itself). Until those land a jj
+repository is read-only to this product, and it says so everywhere.
+
+---
+
+## 15. Phase mapping
 
 | Phase | Sync deliverables |
 |---|---|
@@ -1097,7 +1183,7 @@ on the team repo.
 
 ---
 
-## 15. Explicit non-goals
+## 16. Explicit non-goals
 
 - No central server, no hosted service, no realtime collaborative editing (no CRDT,
   no OT). Two people typing in the same body at the same second is a conflict, and

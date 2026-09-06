@@ -58,6 +58,42 @@ describe('SyncPanel', () => {
     ).toBeInTheDocument();
   });
 
+  it('shows a Jujutsu repository honestly and offers no git write', async () => {
+    // GIT-US-0038: jj's steady state is a detached HEAD with an index git reads
+    // as fully staged. The panel must not paint that as a destructive failure.
+    const provider = new FakeProvider();
+    provider.syncStatuses = [
+      {
+        repo: 'jj-demo',
+        path: '/tmp/jj-demo',
+        git: true,
+        vcs: { kind: 'jj', layout: 'colocated', gitDir: true },
+        pending: 0,
+        status: {
+          branch: '@',
+          detached: false,
+          clean: true,
+          trackedChanges: false,
+          remote: 'origin',
+          ahead: 0,
+          behind: 0,
+          jujutsu: true,
+          state: 'jujutsu',
+        },
+      },
+    ];
+    renderPanel(provider);
+
+    expect(await screen.findByText('Managed by Jujutsu')).toBeInTheDocument();
+    expect(screen.queryByText('Detached HEAD')).not.toBeInTheDocument();
+    expect(screen.queryByText('Uncommitted changes')).not.toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent(
+      /reads work, writes go through jj/i,
+    );
+    expect(screen.getByRole('button', { name: 'Sync' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Preview' })).toBeDisabled();
+  });
+
   it('previews what a sync would move without changing anything', async () => {
     const provider = new FakeProvider();
     provider.syncResults = [

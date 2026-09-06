@@ -10,6 +10,7 @@ import (
 
 	"github.com/digiogithub/git-in-track/internal/core"
 	"github.com/digiogithub/git-in-track/internal/core/osfs"
+	"github.com/digiogithub/git-in-track/internal/gitops"
 	"github.com/digiogithub/git-in-track/internal/vault"
 )
 
@@ -156,6 +157,7 @@ func (m *mount) info() map[string]any {
 		"path":     m.path,
 		"docs":     m.docs,
 		"projects": m.projectKeys(),
+		"vcs":      gitops.DetectVCS(m.path),
 	}
 	if m.err != nil {
 		out["error"] = m.err.Error()

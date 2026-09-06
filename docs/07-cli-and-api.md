@@ -458,12 +458,16 @@ Every listed repository is indexed to count what it holds, so the command is as 
 index build. The git columns (`branch`, `clean`, `ahead`, `behind`) arrive with the git
 backend in Phase 4; until then `git` only reports whether the folder is a working tree.
 
+The `VCS` column names what manages the folder: `git`, `jj (colocated)`, `jj` or `none`
+(GIT-US-0038, doc 06 §14). A `jj` repository is read and indexed like any other and refuses
+every git write.
+
 ```
 $ gintrack ls
-ID         ROLE     PATH                   DOCS           KEYS  ITEMS
-acme-api   project  /home/jose/code/acme-api   docs        ACME    214
-acme-web   project  /home/jose/code/acme-web   documentation AWEB  176
-acme-team  team     /home/jose/code/acme-team  knowledge   —        41
+ID         ROLE     VCS             PATH                       DOCS           KEYS  ITEMS
+acme-api   project  git             /home/jose/code/acme-api   docs           ACME    214
+acme-web   project  git             /home/jose/code/acme-web   documentation  AWEB    176
+acme-team  team     jj (colocated)  /home/jose/code/acme-team  knowledge      —        41
 ```
 
 ```json
@@ -479,6 +483,7 @@ $ gintrack ls --json
       "enabled": true,
       "workspace": "work",
       "git": true,
+      "vcs": { "kind": "git", "gitDir": true },
       "projects": ["ACME"],
       "items": 214,
       "pages": 37,
@@ -763,7 +768,10 @@ Checks performed:
    config file permissions, writability of the config directory.
 2. **Configuration** — unknown keys, unreadable repo paths, duplicate registrations,
    workspaces with zero repos, token strength.
-3. **Repository** — is a git working tree, has a remote, docs folder exists, `.pmngr`
+3. **Repository** — is a git working tree or a Jujutsu workspace (GIT-US-0038: a jj
+   repository is reported as such, with "reads work, writes go through jj", and the
+   `jj` scope reports the binary and warns when it is older than 0.41 or missing while a
+   registered repository needs it), has a remote, docs folder exists, `.pmngr`
    scaffold present, `project.yaml`/`team.yaml` parse and validate. What is required
    depends on the role: a repository registered as a **team** repository is checked for a
    root `team.yaml` and never for a backlog — it holds none by the hard rule of doc 04 §1 —
@@ -1951,7 +1959,11 @@ at every step, so `phase` (`done` | `conflicts` | `failed`), `code` and `message
 happened and what to do next. The codes are the `git_*` set of doc 06 §12:
 `git_dirty_tree`, `git_no_remote`, `git_no_upstream`, `git_unexpected_branch`,
 `git_operation_in_progress`, `git_auth_required`, `git_network_unavailable`,
-`git_host_key_unverified`, `git_conflict`, `git_push_rejected`, `git_cancelled`.
+`git_host_key_unverified`, `git_conflict`, `git_push_rejected`, `git_cancelled`,
+plus `vcs_jujutsu_write_refused` and `vcs_jujutsu_unsupported` (doc 06 §14). A repository
+managed with Jujutsu carries `"vcs": {"kind":"jj","layout":"colocated"}` in the status and
+state `jujutsu`; every write against it is refused with `409 Conflict` and a message naming
+the `jj` command to run instead.
 `POST /api/v1/sync/abort` undoes a half-finished rebase or merge and answers with the
 repository's fresh status.
 
@@ -2241,7 +2253,17 @@ from every call:
 package gitops
 
 // Open binds a backend to a working tree; Kind is auto | go-git | system.
+// A Jujutsu working tree is wrapped in a guard that refuses every git write
+// with vcs_jujutsu_write_refused (GIT-US-0038, doc 06 §14); one whose git store
+// lives inside .jj is refused with vcs_jujutsu_unsupported.
 func Open(path string, opts Options) (Backend, error)
+
+// DetectVCS reports git | jj | none, and the jj layout: colocated | internal.
+func DetectVCS(path string) core.VCSInfo
+
+// ResolveJujutsu locates the jj binary and reads `jj --version`, the only jj
+// command this package runs: every other one snapshots the working copy.
+func ResolveJujutsu(binary string) (path, version string, err error)
 
 type Backend interface {
     Name() string                                     // "go-git" | "system"

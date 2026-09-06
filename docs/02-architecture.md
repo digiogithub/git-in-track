@@ -875,6 +875,28 @@ Repository content is untrusted input. Consequences:
 
 ---
 
+## 12.1 Version-control kinds
+
+The product supports two version-control systems, and the boundary between them
+follows the WASM rule of §5.1 exactly (`GIT-US-0038`, `GIT-EP-0010`, doc 06 §14):
+
+- **`internal/core`** owns the *vocabulary*: `core.VCS` (`git`, `jj`, `none`),
+  `core.VCSLayout` (`colocated`, `internal`), the labels, the summary sentence
+  and the wording of a refusal. It is pure — no filesystem, no process — so both
+  hosts and every surface describe a repository with the same words.
+- **`internal/gitops`** owns the *plumbing*: `DetectVCS` reads the `.jj` marker
+  and the store target off disk, `ResolveJujutsu` probes the binary, and `Open`
+  wraps a Jujutsu working tree in a guard that answers every write itself.
+- **`internal/config`** reports the kind in `Detect` and registers a Jujutsu
+  repository like any other, in either layout.
+
+The rule the layering enforces is one sentence: **a git write never reaches a
+repository the product did not detect as git.** The Jujutsu backend that will
+make writes work through `jj` is `GIT-US-0039` to `GIT-US-0041`; until then a jj
+repository is read-only and says so.
+
+---
+
 ## 13. Open architectural questions
 
 Each of these becomes an ADR when decided; none blocks Phase 0.

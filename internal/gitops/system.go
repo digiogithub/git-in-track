@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/digiogithub/git-in-track/internal/core"
 )
 
 // systemBackend shells out to the git binary. It is the default whenever a
@@ -52,6 +54,8 @@ func (b *systemBackend) Capabilities() Capabilities {
 		Signing:           true,
 		CredentialHelpers: true,
 		PathspecCommit:    true,
+		VCS:               string(core.VCSGit),
+		Writes:            true,
 	}
 }
 

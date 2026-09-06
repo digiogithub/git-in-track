@@ -448,6 +448,18 @@ export function toRepoInfo(value: unknown): RepoInfo {
     state: asString(record['error']) === undefined ? 'ready' : 'error',
     projects: asStringArray(record['projects']) ?? (asString(record['key']) ? [id] : []),
   };
+  const vcs = asRecord(record['vcs']);
+  if (vcs) {
+    const kind = asString(vcs['kind']);
+    if (kind === 'git' || kind === 'jj' || kind === 'none') {
+      const layout = asString(vcs['layout']);
+      repo.vcs = {
+        kind,
+        ...(layout === 'colocated' || layout === 'internal' ? { layout } : {}),
+        ...(typeof vcs['gitDir'] === 'boolean' ? { gitDir: vcs['gitDir'] } : {}),
+      };
+    }
+  }
   put(repo, 'error', asString(record['error']));
   put(repo, 'lastIndexedAt', asString(record['lastIndexed']));
   if (git) {

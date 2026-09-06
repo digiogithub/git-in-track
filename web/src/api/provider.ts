@@ -266,6 +266,7 @@ export type GitCommit = {
  * (docs/06-git-sync.md §4, story GIT-US-0021).
  */
 export type SyncState =
+  | 'jujutsu'
   | 'conflicted'
   | 'in_progress'
   | 'detached'
@@ -311,8 +312,30 @@ export type SyncStatus = {
   conflicted?: SyncConflict[];
   /** `rebase` or `merge` when one is half-finished, else absent. */
   operation?: string;
+  /**
+   * True for a repository managed with Jujutsu. Its branch is `@`, its working
+   * copy is a commit rather than a checkout, and every git write is refused
+   * (GIT-US-0038).
+   */
+  jujutsu?: boolean;
   state: SyncState;
 };
+
+/** What manages a repository on disk (GIT-US-0038). */
+export type RepoVCS = {
+  kind: 'git' | 'jj' | 'none';
+  /** Jujutsu only: `colocated` when the workspace has a git directory of its own. */
+  layout?: 'colocated' | 'internal';
+  gitDir?: boolean;
+};
+
+/** The sentence every surface shows for a Jujutsu repository. */
+export const JUJUTSU_SUMMARY = 'Managed by Jujutsu — reads work, writes go through jj';
+
+/** True when a repository is managed with Jujutsu, whatever its layout. */
+export function isJujutsu(vcs: RepoVCS | undefined): boolean {
+  return vcs?.kind === 'jj';
+}
 
 /** One repository in a sync status listing. */
 export type SyncRepoStatus = {
@@ -320,6 +343,8 @@ export type SyncRepoStatus = {
   path: string;
   /** False when the folder is not a git working tree; `reason` says so. */
   git: boolean;
+  /** What manages the folder. A `jj` repository is read-only to this product. */
+  vcs?: RepoVCS;
   reason?: string;
   backend?: string;
   status?: SyncStatus;
@@ -541,6 +566,8 @@ export type RepoInfo = {
   error?: string;
   /** Project keys discovered inside this repository. */
   projects: string[];
+  /** What manages the repository on disk; absent in browser-only mode. */
+  vcs?: RepoVCS;
 };
 
 export type MountInput = {

@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/digiogithub/git-in-track/internal/core"
 )
 
 // Kind selects the git implementation a repository is driven with
@@ -66,6 +68,14 @@ type Capabilities struct {
 	// PathspecCommit reports whether a commit can be limited to a pathspec
 	// regardless of what else is staged in the index.
 	PathspecCommit bool `json:"pathspecCommit"`
+	// VCS is the version-control system of the working tree, "git" or "jj"
+	// (GIT-US-0038).
+	VCS string `json:"vcs,omitempty"`
+	// VCSLayout is the Jujutsu layout, empty for git.
+	VCSLayout string `json:"vcsLayout,omitempty"`
+	// Writes reports whether this backend may write to the repository at all.
+	// It is false for a Jujutsu repository, where every git write is refused.
+	Writes bool `json:"writes"`
 }
 
 // Status is the part of `git status` the UI needs. Ahead and Behind are filled
@@ -228,18 +238,39 @@ func Open(path string, opts Options) (Backend, error) {
 		opts.Now = time.Now
 	}
 
+	// A Jujutsu repository is opened read-only: the backend is wrapped in a
+	// guard that refuses every git write before it runs (GIT-US-0038). One
+	// whose git store lives inside `.jj` has no git working tree at all, so
+	// there is nothing to open — the backlog files are still indexed.
+	info := DetectVCS(abs)
+	if info.IsJujutsu() && info.Layout == core.LayoutInternal {
+		return nil, failf("open", CodeJujutsuUnsupported, "%s is %s", abs, info.Summary())
+	}
+
 	switch kind {
 	case KindSystem:
-		return openSystem(abs, opts)
+		b, err := openSystem(abs, opts)
+		if err != nil {
+			return nil, err
+		}
+		return guardJujutsu(b, info), nil
 	case KindGoGit:
-		return openGoGit(abs, opts)
+		b, err := openGoGit(abs, opts)
+		if err != nil {
+			return nil, err
+		}
+		return guardJujutsu(b, info), nil
 	case KindAuto:
 		if _, _, err := resolveGit(opts.GitBinary); err == nil {
 			if b, sysErr := openSystem(abs, opts); sysErr == nil {
-				return b, nil
+				return guardJujutsu(b, info), nil
 			}
 		}
-		return openGoGit(abs, opts)
+		b, err := openGoGit(abs, opts)
+		if err != nil {
+			return nil, err
+		}
+		return guardJujutsu(b, info), nil
 	}
 	return nil, failf("open", CodeUnsupported, "unknown git backend %q", string(kind))
 }

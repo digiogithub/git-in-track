@@ -6,6 +6,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/digiogithub/git-in-track/internal/config"
+	"github.com/digiogithub/git-in-track/internal/core"
+	"github.com/digiogithub/git-in-track/internal/gitops"
 )
 
 // lsFlags mirrors the flags of docs/07 section 4.3.
@@ -31,14 +33,17 @@ func newRepoInfo(r config.Repo) repoInfo {
 // lsRepo is one row of `gintrack ls --json`.
 type lsRepo struct {
 	repoInfo
-	Workspace string   `json:"workspace"`
-	Git       bool     `json:"git"`
-	Projects  []string `json:"projects"`
-	Items     int      `json:"items"`
-	Pages     int      `json:"pages"`
-	Errors    int      `json:"errors"`
-	Warnings  int      `json:"warnings"`
-	Error     string   `json:"error,omitempty"`
+	Workspace string `json:"workspace"`
+	Git       bool   `json:"git"`
+	// VCS is the version-control system managing the folder: "git", "jj" or
+	// "none" (GIT-US-0038).
+	VCS      core.VCSInfo `json:"vcs"`
+	Projects []string     `json:"projects"`
+	Items    int          `json:"items"`
+	Pages    int          `json:"pages"`
+	Errors   int          `json:"errors"`
+	Warnings int          `json:"warnings"`
+	Error    string       `json:"error,omitempty"`
 }
 
 // lsPayload is what `gintrack ls --json` prints.
@@ -81,7 +86,12 @@ func runLs(cmd *cobra.Command, flags *globalFlags, local *lsFlags) error {
 	rows := make([]lsRepo, 0, len(res.Config.Repos))
 	for _, ws := range workspaceNames(res, local.all) {
 		for _, repo := range res.Config.WorkspaceRepos(ws) {
-			row := lsRepo{repoInfo: newRepoInfo(repo), Workspace: ws, Git: config.IsGitRepo(repo.Path)}
+			row := lsRepo{
+				repoInfo:  newRepoInfo(repo),
+				Workspace: ws,
+				Git:       config.IsGitRepo(repo.Path),
+				VCS:       gitops.DetectVCS(repo.Path),
+			}
 			view, err := openRepo(cmd.Context(), repo, false)
 			if err != nil {
 				row.Error = err.Error()
@@ -103,13 +113,16 @@ func runLs(cmd *cobra.Command, flags *globalFlags, local *lsFlags) error {
 		p.Printf("no repository is registered in workspace %q\nregister one with `gintrack add <path>`\n", res.Workspace)
 		return nil
 	}
-	headers := []string{"ID", "ROLE", "PATH", "DOCS", "KEYS", "ITEMS"}
+	headers := []string{"ID", "ROLE", "VCS", "PATH", "DOCS", "KEYS", "ITEMS"}
 	if local.all {
 		headers = append([]string{"WORKSPACE"}, headers...)
 	}
 	table := make([][]string, 0, len(rows))
 	for _, r := range rows {
-		cells := []string{r.ID, string(r.Role), r.Path, orDash(r.Docs), orDash(joinOrDash(r.Projects)), strconv.Itoa(r.Items)}
+		cells := []string{
+			r.ID, string(r.Role), r.VCS.Label(), r.Path,
+			orDash(r.Docs), orDash(joinOrDash(r.Projects)), strconv.Itoa(r.Items),
+		}
 		if local.all {
 			cells = append([]string{r.Workspace}, cells...)
 		}

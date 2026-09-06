@@ -109,6 +109,7 @@ func runDoctor(cmd *cobra.Command, flags *globalFlags, local *doctorFlags) error
 		return err
 	}
 	payload := doctorPayload{Config: append(checkConfig(res), checkGit(res.Config)...)}
+	payload.Config = append(payload.Config, checkJujutsu(res.Config)...)
 
 	repos := res.Config.WorkspaceRepos(res.Workspace)
 	if local.repo != "" {
@@ -179,6 +180,43 @@ func checkGit(cfg *config.Config) []checkResult {
 	return []checkResult{result}
 }
 
+// checkJujutsu reports the jj binary when any registered repository is managed
+// with Jujutsu. It says nothing at all otherwise: a user with no jj repository
+// should not be told about a tool they do not use.
+func checkJujutsu(cfg *config.Config) []checkResult {
+	managed := 0
+	for _, repo := range cfg.Repos {
+		if gitops.DetectVCS(repo.Path).IsJujutsu() {
+			managed++
+		}
+	}
+	if managed == 0 {
+		return nil
+	}
+	subject := fmt.Sprintf("%s managed with Jujutsu",
+		plural(managed, "repository", "repositories"))
+	_, version, err := gitops.ResolveJujutsu("")
+	switch {
+	case err != nil:
+		return []checkResult{{
+			Scope: "jj", Severity: string(core.SeverityWarning),
+			Message: subject + ", and no jj executable was found on PATH",
+			Fix:     "install jj " + core.MinJujutsuVersion + " or newer",
+		}}
+	case gitops.JujutsuTooOld(version):
+		return []checkResult{{
+			Scope: "jj", Severity: string(core.SeverityWarning),
+			Message: fmt.Sprintf("jj %s is older than the supported %s (%s)",
+				version, core.MinJujutsuVersion, subject),
+			Fix: "upgrade jj to " + core.MinJujutsuVersion + " or newer",
+		}}
+	}
+	return []checkResult{{
+		Scope: "jj", Severity: "ok",
+		Message: fmt.Sprintf("jj %s, %s: reads work, writes go through jj", version, subject),
+	}}
+}
+
 // checkConfig inspects the configuration file itself.
 func checkConfig(res *config.Resolution) []checkResult {
 	var out []checkResult
@@ -229,7 +267,10 @@ func checkRepo(cmd *cobra.Command, local *doctorFlags, repo config.Repo, p *outp
 		add(string(core.SeverityError), "unreadable path "+repo.Path, "gintrack rm "+repo.ID)
 		return report
 	}
-	if !config.IsGitRepo(repo.Path) {
+	switch vcs := gitops.DetectVCS(repo.Path); {
+	case vcs.IsJujutsu():
+		add("ok", repo.Path+" is "+vcs.Summary(), "")
+	case vcs.Kind == core.VCSNone:
 		add(string(core.SeverityWarning), repo.Path+" is not a git working tree", "")
 	}
 

@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import type { SyncRepoStatus, SyncResult, SyncSettings, SyncState } from '@/api/provider';
+import { isJujutsu, JUJUTSU_SUMMARY } from '@/api/provider';
 import { useOptionalProvider } from '@/api/provider-context';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -36,6 +37,9 @@ const STATE_LABELS: Record<
   conflicted: { label: 'Conflicts', variant: 'destructive' },
   in_progress: { label: 'Rebase in progress', variant: 'destructive' },
   detached: { label: 'Detached HEAD', variant: 'destructive' },
+  // A jj working copy is a commit, not a checkout: it is neither detached nor
+  // dirty, and nothing here is wrong (GIT-US-0038).
+  jujutsu: { label: 'Managed by Jujutsu', variant: 'outline' },
   no_remote: { label: 'No remote', variant: 'outline' },
   no_upstream: { label: 'No upstream branch', variant: 'outline' },
 };
@@ -184,7 +188,13 @@ function RepoRow({
   onResolve: (path: string) => void;
 }) {
   const status = repo.status;
-  const state = status?.state ?? 'no_remote';
+  /**
+   * A Jujutsu repository is read-only to this product until the jj backend
+   * lands: every git write is refused, so the panel says so instead of
+   * offering buttons that fail (GIT-US-0038).
+   */
+  const jujutsu = isJujutsu(repo.vcs) || status?.jujutsu === true;
+  const state = jujutsu ? 'jujutsu' : (status?.state ?? 'no_remote');
   const tone = STATE_LABELS[state];
 
   return (
@@ -198,7 +208,7 @@ function RepoRow({
           <Button
             variant="outline"
             size="sm"
-            disabled={!repo.git || !enabled || busy !== null}
+            disabled={!repo.git || jujutsu || !enabled || busy !== null}
             onClick={() => {
               onRun(repo.repo, true);
             }}
@@ -207,7 +217,7 @@ function RepoRow({
           </Button>
           <Button
             size="sm"
-            disabled={!repo.git || !enabled || busy !== null}
+            disabled={!repo.git || jujutsu || !enabled || busy !== null}
             onClick={() => {
               onRun(repo.repo, false);
             }}
@@ -217,7 +227,15 @@ function RepoRow({
         </div>
       </CardHeader>
       <CardContent className="space-y-3 text-sm">
-        {repo.git && status ? (
+        {jujutsu ? (
+          <p role="status" className="text-muted-foreground">
+            {JUJUTSU_SUMMARY}. Fetch with <code>jj git fetch</code> and publish with{' '}
+            <code>jj git push</code>; git would commit onto the parent of the working-copy commit
+            and move no bookmark.
+          </p>
+        ) : null}
+
+        {!jujutsu && repo.git && status ? (
           <dl className="grid grid-cols-2 gap-x-6 gap-y-1 sm:grid-cols-4">
             <Field label="Branch" value={status.branch} />
             <Field label="Remote" value={status.upstream ?? status.remote ?? '—'} />
@@ -227,9 +245,11 @@ function RepoRow({
               value={status.clean ? 'none' : `${status.dirty?.length ?? 0} file(s)`}
             />
           </dl>
-        ) : (
+        ) : null}
+
+        {!jujutsu && !(repo.git && status) ? (
           <p className="text-muted-foreground">{repo.reason}</p>
-        )}
+        ) : null}
 
         {repo.pending > 0 ? (
           <p className="text-muted-foreground">

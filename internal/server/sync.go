@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/digiogithub/git-in-track/internal/config"
+	"github.com/digiogithub/git-in-track/internal/core"
 	"github.com/digiogithub/git-in-track/internal/gitops"
 )
 
@@ -31,9 +32,13 @@ type syncRepoStatus struct {
 	Repo string `json:"repo"`
 	Path string `json:"path"`
 	// Git is false when the folder is not a git working tree; Reason says so.
-	Git     bool   `json:"git"`
-	Reason  string `json:"reason,omitempty"`
-	Backend string `json:"backend,omitempty"`
+	Git bool `json:"git"`
+	// VCS is what manages the folder, so the panel can render a Jujutsu
+	// repository honestly instead of as a detached, permanently dirty git one
+	// (GIT-US-0038).
+	VCS     core.VCSInfo `json:"vcs"`
+	Reason  string       `json:"reason,omitempty"`
+	Backend string       `json:"backend,omitempty"`
 	// Status is nil only when reading it failed, which Reason then explains.
 	Status *gitops.SyncStatus `json:"status,omitempty"`
 	// Pending is how many edits commit-on-save has batched but not committed;
@@ -113,7 +118,7 @@ func (s *Server) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
 
 // syncStatusOf reads one repository's sync state.
 func (s *Server) syncStatusOf(ctx context.Context, m *mount) syncRepoStatus {
-	out := syncRepoStatus{Repo: m.id, Path: m.path, Pending: s.git.pending()}
+	out := syncRepoStatus{Repo: m.id, Path: m.path, Pending: s.git.pending(), VCS: s.git.vcsFor(m.id)}
 	backend, ok := s.git.backendFor(m.id)
 	if !ok {
 		out.Reason = s.git.reasonFor(m.id)
