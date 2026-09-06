@@ -51,7 +51,9 @@ export function CumulativeFlowChart({ flow }: { flow: CumulativeFlow }) {
       return next;
     });
     const lower = days.map((_, i) => (upper[i] ?? 0) - (days[i]?.counts[band] ?? 0));
-    const top = upper.map((value, i) => `${i === 0 ? 'M' : 'L'}${xAt(i, days.length)} ${yAt(value, max)}`);
+    const top = upper.map(
+      (value, i) => `${i === 0 ? 'M' : 'L'}${xAt(i, days.length)} ${yAt(value, max)}`,
+    );
     const bottom = lower
       .map((value, i) => ({ value, i }))
       .reverse()
@@ -77,9 +79,22 @@ export function CumulativeFlowChart({ flow }: { flow: CumulativeFlow }) {
           onMouseLeave={() => setActive(null)}
         >
           <defs>
-            <pattern id="cfd-unknown" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+            <pattern
+              id="cfd-unknown"
+              width="6"
+              height="6"
+              patternUnits="userSpaceOnUse"
+              patternTransform="rotate(45)"
+            >
               <rect width="6" height="6" style={{ fill: 'hsl(var(--chart-unknown))' }} />
-              <line x1="0" y1="0" x2="0" y2="6" style={{ stroke: 'hsl(var(--card))' }} strokeWidth={2} />
+              <line
+                x1="0"
+                y1="0"
+                x2="0"
+                y2="6"
+                style={{ stroke: 'hsl(var(--card))' }}
+                strokeWidth={2}
+              />
             </pattern>
           </defs>
 
@@ -152,7 +167,7 @@ export function CumulativeFlowChart({ flow }: { flow: CumulativeFlow }) {
         {hovered && (
           <div
             role="status"
-            className="pointer-events-none absolute left-2 top-2 rounded-md border border-border bg-popover px-3 py-2 text-xs shadow-sm"
+            className="pointer-events-none absolute left-2 top-2 rounded-md border border-border bg-popover px-3 py-2 text-xs shadow-pop"
           >
             <p className="font-medium text-popover-foreground">{shortDate(hovered.date)}</p>
             <ul className="text-muted-foreground">

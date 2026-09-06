@@ -1,6 +1,7 @@
 import { Plus, Trash2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { fieldClasses } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import type { Link, LinkKind } from '@/core-bridge/api';
 import { linkKinds } from '@/features/editor/front-matter';
@@ -13,8 +14,7 @@ export type LinksEditorProps = {
   className?: string;
 };
 
-const selectClass =
-  'h-9 rounded-md border border-input bg-background px-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
+const selectClass = `${fieldClasses} h-9 w-auto px-2`;
 
 /** Typed relations (docs/03-data-model.md §12): a kind plus a target item id. */
 export function LinksEditor({ links, onChange, disabled = false, className }: LinksEditorProps) {

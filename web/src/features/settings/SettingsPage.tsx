@@ -54,7 +54,7 @@ export function SettingsPage() {
   return (
     <div className="space-y-6">
       <header className="space-y-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
+        <h1 className="page-title">Settings</h1>
         <p className="text-sm text-muted-foreground">Workspace, appearance, sync and agents.</p>
       </header>
 

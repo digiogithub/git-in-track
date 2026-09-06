@@ -17,12 +17,17 @@ const severityStyles: Record<Diagnostic['severity'], string> = {
 export function DiagnosticList({ diagnostics, title, className }: DiagnosticListProps) {
   if (diagnostics.length === 0) return null;
   return (
-    <div className={cn('rounded-md border border-border bg-secondary/40 p-3', className)} role="alert">
+    <div
+      className={cn('rounded-md border border-border bg-secondary/40 p-3', className)}
+      role="alert"
+    >
       {title ? <p className="mb-1 text-xs font-semibold uppercase tracking-wide">{title}</p> : null}
       <ul className="space-y-1 text-sm">
         {diagnostics.map((d, index) => (
           <li key={`${d.code}-${d.field ?? ''}-${index}`} className={severityStyles[d.severity]}>
-            <code className="mr-2 rounded bg-background px-1 py-0.5 text-xs">{d.code}</code>
+            <code className="mr-2 rounded-sm border border-border bg-code px-1 py-0.5 font-mono text-xs">
+              {d.code}
+            </code>
             {d.message}
             {d.field ? <span className="ml-1 text-muted-foreground">({d.field})</span> : null}
           </li>

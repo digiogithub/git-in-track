@@ -56,7 +56,7 @@ export function SprintMetricsBody({ view }: { view: SprintMetricsView }) {
   return (
     <div className="space-y-6">
       <header className="space-y-1">
-        <h1 className="text-2xl font-semibold tracking-tight">{sprint.title} — metrics</h1>
+        <h1 className="page-title">{sprint.title} — metrics</h1>
         <p className="text-sm text-muted-foreground">
           {sprint.start} to {sprint.end} · {sprint.metrics.items} items · board {sprint.board}
         </p>
@@ -106,7 +106,9 @@ export function SprintMetricsBody({ view }: { view: SprintMetricsView }) {
               Burndown as a table
             </summary>
             <Table>
-              <TableCaption>Every day of {burndown.sprint}, with the numbers plotted above.</TableCaption>
+              <TableCaption>
+                Every day of {burndown.sprint}, with the numbers plotted above.
+              </TableCaption>
               <TableHeader>
                 <TableRow>
                   <TableHead>Day</TableHead>
@@ -133,7 +135,9 @@ export function SprintMetricsBody({ view }: { view: SprintMetricsView }) {
                     <TableCell className="tabular-nums">
                       {point.observed ? formatNumber(point.done) : '—'}
                     </TableCell>
-                    <TableCell className="tabular-nums">{point.observed ? point.unknown : '—'}</TableCell>
+                    <TableCell className="tabular-nums">
+                      {point.observed ? point.unknown : '—'}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -310,7 +314,7 @@ export function MetricsIndex() {
   return (
     <div className="space-y-6">
       <header className="space-y-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Metrics</h1>
+        <h1 className="page-title">Metrics</h1>
         <p className="text-sm text-muted-foreground">
           Burndown and cumulative flow, computed from what is already in git. Pick a sprint.
         </p>

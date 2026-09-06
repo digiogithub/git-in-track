@@ -192,7 +192,7 @@ export function ItemEditorPage() {
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="font-mono text-xs text-muted-foreground">{base.id}</p>
-          <h1 className="text-2xl font-semibold tracking-tight">Edit {base.title}</h1>
+          <h1 className="page-title">Edit {base.title}</h1>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2">
@@ -259,7 +259,9 @@ export function ItemEditorPage() {
       />
 
       <section className="space-y-2" aria-label="Body">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Body</h2>
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+          Body
+        </h2>
         <MarkdownEditor
           label="Item body"
           value={body}
@@ -290,7 +292,7 @@ export function ItemEditorPage() {
         <div
           role="alertdialog"
           aria-label="Unsaved changes"
-          className="fixed inset-x-0 bottom-0 z-40 flex flex-wrap items-center justify-between gap-3 border-t border-border bg-card p-4 shadow-lg"
+          className="fixed inset-x-0 bottom-0 z-40 flex flex-wrap items-center justify-between gap-3 border-t border-border bg-card p-4 shadow-overlay"
         >
           <p className="text-sm">Leave the editor? Your unsaved changes will be lost.</p>
           <div className="flex gap-2">

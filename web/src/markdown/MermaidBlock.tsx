@@ -13,6 +13,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 
+import { mermaidThemeVariables } from '@/markdown/mermaid-theme';
 import { useThemeMode } from '@/markdown/theme';
 
 let sequence = 0;
@@ -53,7 +54,8 @@ export function MermaidBlock({ source, className }: MermaidBlockProps) {
         mermaid.initialize({
           startOnLoad: false,
           securityLevel: 'strict',
-          theme: theme === 'dark' ? 'dark' : 'default',
+          theme: 'base',
+          themeVariables: mermaidThemeVariables(theme),
         });
         const rendered = await mermaid.render(id, source);
         if (!cancelled) {

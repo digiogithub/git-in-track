@@ -5,20 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="color-scheme" content="light dark" />
-    <meta name="theme-color" content="#F7F4EF" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#191714" media="(prefers-color-scheme: dark)" />
-    <meta
-      name="description"
-      content="git-in-track — git-native, Markdown-first project management"
-    />
-    <title>git-in-track</title>
+    <title>git-in-track — design system</title>
     <script>
-      /*
-       * Applies the stored theme before first paint, so a dark-mode user is
-       * never flashed a bright page. The key and the three values are the
-       * contract in `src/app/theme.ts`; `system` stores nothing and lets
-       * `prefers-color-scheme` decide.
-       */
       (function () {
         try {
           var stored = window.localStorage.getItem('gintrack:theme');
@@ -33,6 +21,6 @@
   </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+    <script type="module" src="/src/dev/styleguide-main.tsx"></script>
   </body>
 </html>

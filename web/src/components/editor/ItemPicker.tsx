@@ -135,7 +135,7 @@ export function ItemPicker({
           id={listId}
           role="listbox"
           aria-label={`${label} suggestions`}
-          className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border border-border bg-popover p-1 shadow-md"
+          className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border border-border bg-popover p-1 shadow-pop"
         >
           {options.map((option) => (
             <li key={option.id} role="option" aria-selected={option.id === value}>

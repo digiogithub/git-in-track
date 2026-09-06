@@ -57,7 +57,7 @@ export function MilestoneList() {
     <div className="space-y-4">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div className="space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight">Milestones</h1>
+          <h1 className="page-title">Milestones</h1>
           <p className="text-sm text-muted-foreground">
             Delivery checkpoints of <strong>{projectKey}</strong>, earliest due date first.
           </p>

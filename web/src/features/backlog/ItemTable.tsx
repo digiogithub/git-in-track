@@ -309,7 +309,7 @@ function ItemTableView() {
     <div className="space-y-4" ref={containerRef}>
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div className="space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight">Items</h1>
+          <h1 className="page-title">Items</h1>
           <p className="text-sm text-muted-foreground">
             Epics, stories, tasks and milestones of <strong>{projectKey}</strong>
             {itemsQuery.isSuccess ? ` — ${items.length} of ${total}` : null}
@@ -398,49 +398,54 @@ function ItemTableView() {
 
       {items.length > 0 ? (
         <>
-          <Table>
-            <TableHeader>
-              {table.getHeaderGroups().map((group) => (
-                <TableRow key={group.id}>
-                  {group.headers.map((header) => (
-                    <TableHead
-                      key={header.id}
-                      aria-sort={
-                        sorting[0]?.id === header.column.id
-                          ? sorting[0]?.desc
-                            ? 'descending'
-                            : 'ascending'
-                          : undefined
-                      }
-                    >
-                      {header.isPlaceholder ? null : typeof header.column.columnDef.header ===
-                        'string' ? (
-                        <SortableHeader
-                          label={header.column.columnDef.header}
-                          columnId={header.column.id}
-                          sorting={sorting}
-                          onSort={applySort}
-                        />
-                      ) : (
-                        <table.FlexRender header={header} />
-                      )}
-                    </TableHead>
-                  ))}
-                </TableRow>
-              ))}
-            </TableHeader>
-            <TableBody>
-              {table.getRowModel().rows.map((row) => (
-                <TableRow key={row.id} data-selected={row.getIsSelected()}>
-                  {row.getAllCells().map((cell) => (
-                    <TableCell key={cell.id}>
-                      <table.FlexRender cell={cell} />
-                    </TableCell>
-                  ))}
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          {/* The backlog is the densest surface in the app, so the grid gets a
+              panel of its own: one border around the whole thing reads as a
+              single object, where a bare table dissolves into the page. */}
+          <div className="overflow-hidden rounded-lg border border-border bg-card shadow-card">
+            <Table>
+              <TableHeader className="bg-surface-muted/50">
+                {table.getHeaderGroups().map((group) => (
+                  <TableRow key={group.id}>
+                    {group.headers.map((header) => (
+                      <TableHead
+                        key={header.id}
+                        aria-sort={
+                          sorting[0]?.id === header.column.id
+                            ? sorting[0]?.desc
+                              ? 'descending'
+                              : 'ascending'
+                            : undefined
+                        }
+                      >
+                        {header.isPlaceholder ? null : typeof header.column.columnDef.header ===
+                          'string' ? (
+                          <SortableHeader
+                            label={header.column.columnDef.header}
+                            columnId={header.column.id}
+                            sorting={sorting}
+                            onSort={applySort}
+                          />
+                        ) : (
+                          <table.FlexRender header={header} />
+                        )}
+                      </TableHead>
+                    ))}
+                  </TableRow>
+                ))}
+              </TableHeader>
+              <TableBody>
+                {table.getRowModel().rows.map((row) => (
+                  <TableRow key={row.id} data-selected={row.getIsSelected()}>
+                    {row.getAllCells().map((cell) => (
+                      <TableCell key={cell.id}>
+                        <table.FlexRender cell={cell} />
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
 
           <div className="flex items-center justify-between gap-3">
             <p className="text-xs text-muted-foreground">

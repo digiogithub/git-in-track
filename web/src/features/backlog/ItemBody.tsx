@@ -47,7 +47,7 @@ export function ItemBody({ body, path, project, cacheKey }: ItemBodyProps) {
   const markdown = useMarkdown(body, options);
 
   if (body.trim().length === 0) {
-    return <p className="text-sm text-muted-foreground">This item has no body yet.</p>;
+    return <p className="empty-state">This item has no body yet.</p>;
   }
 
   if (markdown.status === 'error') {

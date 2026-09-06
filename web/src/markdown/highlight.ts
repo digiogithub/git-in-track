@@ -35,14 +35,23 @@ import markdown from 'shiki/langs/markdown.mjs';
 import sql from 'shiki/langs/sql.mjs';
 import typescript from 'shiki/langs/typescript.mjs';
 import yaml from 'shiki/langs/yaml.mjs';
-import githubDark from 'shiki/themes/github-dark.mjs';
-import githubLight from 'shiki/themes/github-light.mjs';
+import vitesseDark from 'shiki/themes/vitesse-dark.mjs';
+import vitesseLight from 'shiki/themes/vitesse-light.mjs';
 import { visit } from 'unist-util-visit';
 
 import { codeLanguage, MERMAID_LANGUAGE, textContent } from '@/markdown/code';
 
-/** Light/dark pair; the CSS variables are swapped by the app theme. */
-const THEMES = { light: 'github-light', dark: 'github-dark' } as const;
+/**
+ * Light/dark pair; the CSS variables are swapped by the app theme.
+ *
+ * Vitesse rather than GitHub: its two palettes are low-saturation and warm,
+ * which is the same brief the app's own tokens answer — a GitHub-blue keyword
+ * on warm paper is the one thing on the page that looks pasted in. The code
+ * *background* is not taken from the theme at all; `markdown.css` paints it
+ * with the `--code` token so a snippet sits on the same warm plane as the rest
+ * of the document.
+ */
+const THEMES = { light: 'vitesse-light', dark: 'vitesse-dark' } as const;
 
 /**
  * The default set of docs/05-web-app.md §7 — ts, js, go, json, yaml, bash, sql,
@@ -75,7 +84,7 @@ let highlighter: Promise<HighlighterCore> | null = null;
 
 function getHighlighter(): Promise<HighlighterCore> {
   highlighter ??= createHighlighterCore({
-    themes: [githubLight, githubDark],
+    themes: [vitesseLight, vitesseDark],
     langs: LANGUAGES,
     langAlias: LANGUAGE_ALIASES,
     engine: createJavaScriptRegexEngine({ forgiving: true }),

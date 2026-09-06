@@ -27,6 +27,7 @@ model described in [03-data-model.md](./03-data-model.md).
 | 10 | [Development guidelines](./10-development-guidelines.md) | Coding standards, commits, testing, local workflow, definition of done |
 | 11 | [Roadmap](./11-roadmap.md) | Phases, milestones, epics, stories, estimates, risks |
 | 12 | [1.0 release readiness](./12-release-readiness-1-0.md) | Evidence for every milestone exit criterion and vision goal; the known gaps shipped in 1.0; what the maintainer must still do |
+| 13 | [Design system](./13-design-system.md) | Tokens, themes, the component rules the UI is built from, and the contrast checks that keep them honest |
 | — | [ADRs](./adr/README.md) | Architecture decision records |
 | — | [CHANGELOG](../CHANGELOG.md) | Release notes, compatibility promise, known limitations, operational notes |
 

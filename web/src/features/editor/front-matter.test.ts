@@ -104,9 +104,7 @@ describe('validateValues', () => {
     const values = { ...valuesFromItem(story), estimate: 7, labels: ['made-up'] };
     const diagnostics = validateValues(values, schema, 'story');
     const warnings = diagnostics.filter((d) => d.severity === 'warning').map((d) => d.code);
-    expect(warnings).toEqual(
-      expect.arrayContaining(['W-ESTIMATE-SCALE', 'W-LABEL-UNDECLARED']),
-    );
+    expect(warnings).toEqual(expect.arrayContaining(['W-ESTIMATE-SCALE', 'W-LABEL-UNDECLARED']));
     expect(hasErrors(diagnostics)).toBe(false);
   });
 
@@ -119,7 +117,9 @@ describe('validateValues', () => {
   it('honours custom field declarations from project.yaml', () => {
     const project = {
       ...sampleProject,
-      custom_fields: [{ key: 'risk', type: 'enum', values: ['low', 'high'], applies_to: ['story'] }],
+      custom_fields: [
+        { key: 'risk', type: 'enum', values: ['low', 'high'], applies_to: ['story'] },
+      ],
     } as unknown as ProjectSummary;
     const withCustom = readProjectSchema(project);
     const values = { ...valuesFromItem(story), custom: { risk: 'unknown' } };

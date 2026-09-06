@@ -108,7 +108,7 @@ export function WorkspaceHome() {
   return (
     <div className="space-y-6">
       <header className="space-y-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Workspace</h1>
+        <h1 className="page-title">Workspace</h1>
         <p className="text-sm text-muted-foreground">
           {companion
             ? 'Repositories registered with the companion. Run `gintrack add <path>` to register another one.'
@@ -157,7 +157,7 @@ export function WorkspaceHome() {
       <WorkspaceSearch />
 
       <section aria-labelledby="repos-heading" className="space-y-3">
-        <h2 id="repos-heading" className="text-lg font-semibold tracking-tight">
+        <h2 id="repos-heading" className="text-base font-semibold tracking-tight">
           Repositories
         </h2>
 

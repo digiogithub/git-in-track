@@ -321,7 +321,9 @@ function FieldRow({
       </th>
       <td className="py-2 pr-3">{show(field.ours)}</td>
       <td className="py-2 pr-3">{show(field.theirs)}</td>
-      <td className="py-2 pr-3">{show(choice === 'ours' ? field.ours : choice === 'theirs' ? field.theirs : field.merged)}</td>
+      <td className="py-2 pr-3">
+        {show(choice === 'ours' ? field.ours : choice === 'theirs' ? field.theirs : field.merged)}
+      </td>
       <td className="py-2">
         <div className="flex gap-1">
           <Button

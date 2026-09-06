@@ -12,16 +12,7 @@ import type { ItemType, Priority, ProjectSummary } from '@/api/provider';
 export type StatusDef = ProjectSummary['statuses'][number];
 
 export type CustomFieldType =
-  | 'string'
-  | 'text'
-  | 'number'
-  | 'bool'
-  | 'date'
-  | 'timestamp'
-  | 'enum'
-  | 'person'
-  | 'list'
-  | 'url';
+  'string' | 'text' | 'number' | 'bool' | 'date' | 'timestamp' | 'enum' | 'person' | 'list' | 'url';
 
 export type CustomFieldDef = {
   key: string;

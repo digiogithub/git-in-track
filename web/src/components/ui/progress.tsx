@@ -30,11 +30,14 @@ export const Progress = forwardRef<HTMLDivElement, ProgressProps>(function Progr
       aria-valuenow={value}
       aria-valuetext={`${percent}%`}
       aria-label={label ?? 'Progress'}
-      className={cn('h-2 w-full overflow-hidden rounded-full bg-secondary', className)}
+      className={cn('h-1.5 w-full overflow-hidden rounded-full bg-surface-muted', className)}
       {...props}
     >
       <div
-        className={cn('h-full rounded-full bg-accent transition-[width]', indicatorClassName)}
+        className={cn(
+          'h-full rounded-full bg-accent transition-[width] duration-500 ease-out',
+          indicatorClassName,
+        )}
         style={{ width: `${percent}%` }}
       />
     </div>

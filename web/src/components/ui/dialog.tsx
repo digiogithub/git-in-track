@@ -20,7 +20,10 @@ export const DialogOverlay = forwardRef<
   return (
     <DialogPrimitive.Overlay
       ref={ref}
-      className={cn('fixed inset-0 z-50 bg-foreground/40 backdrop-blur-[1px]', className)}
+      className={cn(
+        'fixed inset-0 z-50 animate-fade-in bg-overlay/50 backdrop-blur-[2px]',
+        className,
+      )}
       {...props}
     />
   );
@@ -36,14 +39,14 @@ export const DialogContent = forwardRef<
       <DialogPrimitive.Content
         ref={ref}
         className={cn(
-          'fixed left-1/2 top-1/2 z-50 w-[min(32rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-card p-5 shadow-lg',
+          'fixed left-1/2 top-1/2 z-50 w-[min(32rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 animate-scale-in rounded-lg border border-border bg-elevated p-5 text-foreground shadow-overlay',
           className,
         )}
         {...props}
       >
         {children}
         <DialogPrimitive.Close
-          className="absolute right-3 top-3 rounded-md p-1 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="absolute right-3 top-3 rounded-sm p-1 text-subtle-foreground transition-colors duration-fast hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           aria-label="Close"
         >
           <X aria-hidden="true" className="h-4 w-4" />
@@ -68,7 +71,7 @@ export const DialogTitle = forwardRef<
   return (
     <DialogPrimitive.Title
       ref={ref}
-      className={cn('text-base font-semibold leading-none', className)}
+      className={cn('text-base font-semibold leading-none tracking-tight', className)}
       {...props}
     />
   );

@@ -21,7 +21,7 @@ export function KbBacklinks({ project, backlinks }: KbBacklinksProps) {
         <span className="ml-2 text-muted-foreground">{backlinks.length}</span>
       </h2>
       {backlinks.length === 0 ? (
-        <p className="text-sm text-muted-foreground">Nothing links here yet.</p>
+        <p className="empty-state">Nothing links here yet.</p>
       ) : (
         <ul className="flex flex-wrap gap-2">
           {backlinks.map((target) => (

@@ -94,7 +94,7 @@ export function SyncPanel() {
   return (
     <div className="space-y-6">
       <header className="space-y-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Sync</h1>
+        <h1 className="page-title">Sync</h1>
         <p className="text-sm text-muted-foreground">
           Fetch everyone else’s work, {settings?.pullStrategy ?? 'rebase'} yours on top of it and
           push. Nothing here can lose a commit: a run that fails leaves your files exactly as they
@@ -118,7 +118,7 @@ export function SyncPanel() {
       ) : null}
 
       {repos.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No repository is open in this workspace.</p>
+        <p className="empty-state">No repository is open in this workspace.</p>
       ) : null}
 
       {repos.map((repo) => (
@@ -268,8 +268,7 @@ function RepoRow({
         {conflictedPaths(repo, result).length > 0 ? (
           <div className="space-y-2 rounded-md border border-destructive/40 p-3">
             <p className="text-destructive">
-              {conflictedPaths(repo, result).length} file(s) need a decision before this
-              {' '}
+              {conflictedPaths(repo, result).length} file(s) need a decision before this{' '}
               {repo.status?.operation ?? 'integration'} can finish. Nothing was pushed and the
               repository can still be restored.
             </p>

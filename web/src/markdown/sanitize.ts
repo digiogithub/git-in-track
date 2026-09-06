@@ -24,8 +24,12 @@ type AttributeValues = Attributes[string];
 const CALLOUT_CLASS = /^callout-[a-z]+$/;
 const LANGUAGE_CLASS = /^language-[\w+#.-]+$/;
 const SHIKI_CLASS = /^shiki/;
-/** Shiki's dual-theme markup names the themes in the class list. */
-const SHIKI_THEME_CLASS = /^github-(light|dark)$/;
+/**
+ * Shiki's dual-theme markup names the themes in the class list. Keep this in
+ * step with `THEMES` in `highlight.ts`: a name that is not allowed here is
+ * dropped, and the block loses the class the stylesheet keys off.
+ */
+const SHIKI_THEME_CLASS = /^vitesse-(light|dark)$/;
 
 /**
  * Inherits the GitHub schema's attributes for one element minus its

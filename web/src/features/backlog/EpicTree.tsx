@@ -159,7 +159,7 @@ export function EpicTree() {
     <div className="space-y-4">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div className="space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight">Epics</h1>
+          <h1 className="page-title">Epics</h1>
           <p className="text-sm text-muted-foreground">
             Every epic of <strong>{projectKey}</strong> with its stories and tasks.
           </p>

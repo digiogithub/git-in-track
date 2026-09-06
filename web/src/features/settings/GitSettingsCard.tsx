@@ -88,8 +88,8 @@ export function GitSettingsCard() {
       <CardContent className="space-y-4 text-sm">
         <p className="text-muted-foreground">
           Every edit is committed to the repository it belongs to, a short moment after you stop
-          typing, so a burst of keystrokes becomes one commit. It is off by default and never
-          pushes anything on its own.
+          typing, so a burst of keystrokes becomes one commit. It is off by default and never pushes
+          anything on its own.
         </p>
 
         {settings.supported ? null : (

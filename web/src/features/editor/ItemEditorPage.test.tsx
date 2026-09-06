@@ -141,7 +141,9 @@ describe('ItemEditorPage', () => {
     await user.click(toggle);
 
     const raw = await screen.findByLabelText('Front matter YAML');
-    expect((raw satisfies HTMLElement as HTMLTextAreaElement).value).toContain('title: Login with SSO');
+    expect((raw satisfies HTMLElement as HTMLTextAreaElement).value).toContain(
+      'title: Login with SSO',
+    );
 
     fireEvent.change(raw, {
       target: { value: 'title: Renamed in YAML\nstatus: todo\nlabels:\n  - security\n' },
