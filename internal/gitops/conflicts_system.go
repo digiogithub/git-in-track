@@ -13,8 +13,9 @@ import (
 // stopped, so nothing is recomputed and nothing can disagree with what
 // `git status` says.
 
-// ConflictFile reads the three versions of one conflicted path out of the
-// index: stage 1 is the merge base, stage 2 ours, stage 3 theirs.
+// ConflictFile produces the three sides of one conflicted path. This backend
+// reads them out of git's index, where stage 1 is the merge base, stage 2 ours
+// and stage 3 theirs.
 func (b *systemBackend) ConflictFile(ctx context.Context, path string) (ConflictVersions, error) {
 	path = filepath.ToSlash(strings.TrimSpace(path))
 	if path == "" {
@@ -29,7 +30,7 @@ func (b *systemBackend) ConflictFile(ctx context.Context, path string) (Conflict
 		return ConflictVersions{}, notConflicted("conflict", path, b.path)
 	}
 
-	out := ConflictVersions{Path: path, Kind: conflict.Kind}
+	out := ConflictVersions{Path: path, Kind: conflict.Kind, Markers: MarkersGit}
 	stages, err := b.conflictStages(ctx, path)
 	if err != nil {
 		return ConflictVersions{}, err
@@ -97,17 +98,18 @@ func (b *systemBackend) blob(ctx context.Context, oid string) (string, error) {
 }
 
 // ResolvePath writes one resolution, stages it and, when nothing is left
-// conflicted and the caller asked for it, continues the rebase or merge.
+// conflicted and the caller asked for it, carries the integration forward.
 //
 // Every step is recoverable: the file is written before it is staged, and a
-// failed continue leaves the operation in progress, which Abort still undoes.
+// failed resume leaves the integration unfinished, which Undo still takes
+// back.
 func (b *systemBackend) ResolvePath(ctx context.Context, req ResolveRequest) (ResolveResult, error) {
 	path := filepath.ToSlash(strings.TrimSpace(req.Path))
 	st, err := b.SyncStatus(ctx)
 	if err != nil {
 		return ResolveResult{}, err
 	}
-	if st.Operation == "" {
+	if !st.Unfinished {
 		return ResolveResult{}, failf("resolve", CodeInProgress,
 			"no rebase or merge is in progress in %s: there is nothing to resolve", b.path)
 	}
@@ -130,11 +132,11 @@ func (b *systemBackend) ResolvePath(ctx context.Context, req ResolveRequest) (Re
 		return out, nil
 	}
 
-	res, err := b.Continue(ctx)
+	res, err := b.Resume(ctx)
 	if err != nil {
 		return out, err
 	}
-	out.Continued, out.Integration = true, &res
+	out.Continued, out.Result = true, &res
 	if final, statusErr := b.SyncStatus(ctx); statusErr == nil {
 		out.Status = final
 	}

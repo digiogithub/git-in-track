@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/digiogithub/git-in-track/internal/config"
+	"github.com/digiogithub/git-in-track/internal/core"
 	"github.com/digiogithub/git-in-track/internal/gitops"
 )
 
@@ -31,7 +32,16 @@ type syncRepoStatus struct {
 	Repo string `json:"repo"`
 	Path string `json:"path"`
 	// Git is false when the folder is not a git working tree; Reason says so.
-	Git     bool   `json:"git"`
+	Git bool `json:"git"`
+	// VCS is what manages the folder, so the panel can render a Jujutsu
+	// repository honestly instead of as a detached, permanently dirty git one
+	// (GIT-US-0038).
+	VCS core.VCSInfo `json:"vcs"`
+	// Writes reports whether this repository can be written to at all. It is
+	// what the panel disables its buttons from, rather than "is it jj": since
+	// GIT-US-0041 a jj repository writes through jj, and only one that has no
+	// jj binary installed is read-only.
+	Writes  bool   `json:"writes"`
 	Reason  string `json:"reason,omitempty"`
 	Backend string `json:"backend,omitempty"`
 	// Status is nil only when reading it failed, which Reason then explains.
@@ -113,7 +123,7 @@ func (s *Server) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
 
 // syncStatusOf reads one repository's sync state.
 func (s *Server) syncStatusOf(ctx context.Context, m *mount) syncRepoStatus {
-	out := syncRepoStatus{Repo: m.id, Path: m.path, Pending: s.git.pending()}
+	out := syncRepoStatus{Repo: m.id, Path: m.path, Pending: s.git.pending(), VCS: s.git.vcsFor(m.id)}
 	backend, ok := s.git.backendFor(m.id)
 	if !ok {
 		out.Reason = s.git.reasonFor(m.id)
@@ -121,6 +131,7 @@ func (s *Server) syncStatusOf(ctx context.Context, m *mount) syncRepoStatus {
 	}
 	out.Git = true
 	out.Backend = backend.Name()
+	out.Writes = backend.Capabilities().Writes
 	st, err := backend.SyncStatus(ctx)
 	if err != nil {
 		out.Reason = err.Error()
@@ -284,9 +295,10 @@ func (s *Server) refreshSnapshotsAfterSync(ctx context.Context, results []gitops
 	}
 }
 
-// handleSyncAbort serves POST /api/v1/sync/abort: undo a half-finished rebase
-// or merge, which is the "get me back where I was" escape hatch of docs/06
-// section 12, failures 6 and 8.
+// handleSyncAbort serves POST /api/v1/sync/abort: take back an integration
+// that has not settled, which is the "get me back where I was" escape hatch of
+// docs/06 section 12, failures 6 and 8. Which mechanism does it is the
+// backend's — git aborts, a jj backend undoes an operation (GIT-US-0039).
 func (s *Server) handleSyncAbort(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Repo string `json:"repo"`
@@ -305,7 +317,7 @@ func (s *Server) handleSyncAbort(w http.ResponseWriter, r *http.Request) {
 			"Repository "+m.id+" is not a git working tree: "+s.git.reasonFor(m.id))
 		return
 	}
-	if err := backend.Abort(r.Context()); err != nil {
+	if err := backend.Undo(r.Context()); err != nil {
 		writeGitError(w, r, err)
 		return
 	}

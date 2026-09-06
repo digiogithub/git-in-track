@@ -29,10 +29,83 @@ because a commit list cannot express them.
   project key is refused with `team_project_exists`; a removal that would orphan a board,
   sprint or retro reference is refused with `team_project_referenced` unless it is forced.
 
+- Repositories managed with **Jujutsu** are recognized as such, in both layouts —
+  colocated (`.jj/` beside `.git/`) and with the git store inside `.jj/` — and reported as
+  their own kind by `gintrack ls`, `gintrack add`, `gintrack doctor`, the repository and
+  sync payloads and the web app (`GIT-US-0038`, ADR-021, docs/06 §14). A jj workspace with
+  no colocated git working tree is registered and indexed instead of being refused.
+- A **`jj` backend** reads a Jujutsu repository through `jj` itself, alongside `system` and
+  `go-git` and selected for a jj working tree in either layout (`GIT-US-0040`, docs/06
+  §14.4-14.5). It reports the real bookmark as the line of work with the bookmark as its
+  push target, jj's own dirty set instead of git's index, the tracked remote bookmark with
+  ahead/behind counted over a revset against it, `undo: operation_log` with nothing to
+  resume, and the three sides of a conflict materialized out of the commit that records
+  them with `markers: "jj"`. A **non-colocated repository is now readable at all** — status,
+  conflicts and, for the first time, sprint metrics. Every read carries
+  `--ignore-working-copy`, so looking at a repository never snapshots the user's working
+  copy or adds an entry to the operation log.
+- **Jujutsu repositories are writable.** Commit on save, explicit commits, fetch,
+  integrate, push, undo and conflict resolution all go through `jj`, so a jj repository is
+  a first-class repository rather than a read-only special case (`GIT-US-0041`, ADR-024,
+  docs/06 §14.6-14.7). A commit is `jj commit -m <message> -- <paths>`, which records
+  exactly those paths and leaves every other edit in the new working-copy commit, followed
+  by a fast-forward `jj bookmark move` — without it the work would be reachable from `@`
+  alone and `jj git push` would never publish it. A sync runs `jj git fetch`,
+  `jj rebase -b @ -d <upstream>` (or a `jj new` merge commit) and
+  `jj git push -b <bookmark>` with its dry run; `jj undo` takes an operation back over the
+  operation log; a conflict is resolved by writing the merged file and squashing it into
+  the commit that records it. Each row of `GET /api/v1/sync/status` now carries `writes`,
+  which is what the sync panel disables its buttons from.
+
 ### Changed
 
 - A second team repository is no longer reported as an error and ignored. What is reported
   now is two mounted repositories declaring the same team `key:`.
+- The version-control backend interface (`internal/gitops.Backend`) is expressed only in
+  concepts git and Jujutsu both have, so the coming jj backend can implement it without
+  faking an index, a `MERGE_HEAD` or a branch (`GIT-US-0039`, ADR-022, docs/06 §14.6): a
+  commit covers *exactly* a set of paths, an unfinished *integration* reports how it is
+  undone (`abort` or `operation_log`) and resumed (`continue` or nothing), a conflict is
+  three sides the backend produces however it can plus the marker dialect of the working
+  file, and a *line of work* (a branch or a bookmark) replaces the branch-plus-detached
+  pair. `Backend.Abort`/`Continue` are now `Undo`/`Resume`. **No API and no behavior
+  changed:** every JSON field and every `git_*`/`vcs_*` code is where it was, and the new
+  fields (`lineKind`, `pushTarget`, `unfinished`, `undo`, `resume`, `markers`) are
+  additive.
+
+### Fixed
+
+- **git no longer writes behind Jujutsu.** In a jj repository git's `HEAD` sits at the
+  parent of the working-copy commit, so a `git commit` there landed on `@-`, moved no
+  bookmark and was abandoned as an orphan by the next `jj` command — unreachable from any
+  bookmark and unpublishable by `jj git push`. Every such write was first refused with
+  `vcs_jujutsu_write_refused` (HTTP 409) and a message naming the `jj` command to run
+  instead (`GIT-US-0038`), and now goes through `jj` itself (`GIT-US-0041`). The refusal
+  remains for the one case that has no safe answer: a jj repository with **no jj binary
+  installed**.
+- A jj repository is no longer shown with a destructive "Detached HEAD" badge or as a
+  permanently dirty tree. Its branch is reported as `@` — as its bookmark, once the `jj`
+  backend of `GIT-US-0040` is driving it — and the sync panel says "Managed by Jujutsu —
+  reads and writes go through jj" instead of advising a branch checkout that is
+  impossible there.
+- A jj repository's sync state is the truthful one (`up_to_date`, `ahead`, `behind`,
+  `diverged`, `dirty`, `conflicted`) instead of the `jujutsu` placeholder, which now means
+  "no jj binary is installed, so the read-only git guard is driving this repository"
+  (`GIT-US-0040`). The `jujutsu` flag on the status is unchanged, and is what the UI reads.
+- A jj older than 0.41 is refused with `vcs_jujutsu_too_old` when a repository is opened,
+  instead of being only a `gintrack doctor` warning: the backend does not parse output it
+  has not been verified against (`GIT-US-0040`).
+- Ahead and behind no longer fail in a jj repository whose bookmark jj marks as conflicted
+  after a fetch — the state the sync preflight meets when both sides moved. The counters
+  are computed against the bookmark's local position, so the repository reads as
+  `diverged` (`GIT-US-0041`).
+- The two sides of a jj conflict are no longer swapped. jj materializes the incoming work
+  as the `+++++++` snapshot and the user's own commit as the `%%%%%%%` diff — the opposite
+  of git's index during a rebase — so "keep mine" kept the wrong side in a jj repository
+  (`GIT-US-0041`).
+- A dirty working copy no longer blocks a sync in a jj repository. There the working copy
+  *is* a commit, so a rebase carries it along instead of overwriting a checkout
+  (`GIT-US-0041`).
 
 ## [1.0.0] — unreleased, prepared
 

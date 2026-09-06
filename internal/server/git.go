@@ -36,6 +36,9 @@ type gitState struct {
 	backends map[string]gitops.Backend
 	// reasons says why a repository has no backend, so the UI can explain it.
 	reasons map[string]string
+	// vcs is what manages each repository: git, jj or nothing. It is read from
+	// disk once, with the backends (GIT-US-0038).
+	vcs map[string]core.VCSInfo
 	// resolved is the backend name `auto` picked, for /capabilities.
 	resolved string
 	version  string
@@ -68,11 +71,14 @@ type gitSettings struct {
 
 // gitRepoStatus is one repository in GET /api/v1/git/status.
 type gitRepoStatus struct {
-	Repo    string `json:"repo"`
-	Path    string `json:"path"`
-	Git     bool   `json:"git"`
-	Reason  string `json:"reason,omitempty"`
-	Backend string `json:"backend,omitempty"`
+	Repo string `json:"repo"`
+	Path string `json:"path"`
+	Git  bool   `json:"git"`
+	// VCS is what manages the folder. A jj repository reads like a git one and
+	// refuses every git write (GIT-US-0038).
+	VCS     core.VCSInfo `json:"vcs"`
+	Reason  string       `json:"reason,omitempty"`
+	Backend string       `json:"backend,omitempty"`
 	// Identity is the author commits are made with, empty when none resolves.
 	Identity string `json:"identity,omitempty"`
 	// IdentityError explains a missing identity, which is the one failure a
@@ -112,12 +118,14 @@ func newGitState(opts Options, reg *registry, log logger, publish func(commitEve
 		settings:   settings,
 		backends:   map[string]gitops.Backend{},
 		reasons:    map[string]string{},
+		vcs:        map[string]core.VCSInfo{},
 		configPath: opts.ConfigPath,
 		tool:       gitops.ToolName + " " + opts.Version + " (" + opts.Mode + ")",
 	}
 	g.resolved, g.version = gitops.Resolve(gitops.Kind(settings.Backend), "")
 
 	for _, m := range reg.all() {
+		g.vcs[m.id] = gitops.DetectVCS(m.path)
 		backend, err := gitops.Open(m.path, gitops.Options{
 			Backend:     gitops.Kind(settings.Backend),
 			AuthorName:  settings.AuthorName,
@@ -403,7 +411,7 @@ func (s *Server) handleGitStatus(w http.ResponseWriter, r *http.Request) {
 
 // gitStatusOf reads one repository's git state.
 func (s *Server) gitStatusOf(ctx context.Context, m *mount) gitRepoStatus {
-	out := gitRepoStatus{Repo: m.id, Path: m.path}
+	out := gitRepoStatus{Repo: m.id, Path: m.path, VCS: s.git.vcsFor(m.id)}
 	backend, ok := s.git.backendFor(m.id)
 	if !ok {
 		out.Reason = s.git.reasonFor(m.id)
@@ -421,6 +429,16 @@ func (s *Server) gitStatusOf(ctx context.Context, m *mount) gitRepoStatus {
 		out.Status = &st
 	}
 	return out
+}
+
+// vcsFor reports what manages a repository.
+func (g *gitState) vcsFor(repo string) core.VCSInfo {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	if info, ok := g.vcs[repo]; ok {
+		return info
+	}
+	return core.VCSInfo{Kind: core.VCSNone}
 }
 
 // reasonFor explains why a repository has no backend.
@@ -530,8 +548,13 @@ func writeGitError(w http.ResponseWriter, r *http.Request, err error) {
 	}
 	status := http.StatusInternalServerError
 	switch code {
-	case gitops.CodeNoIdentity, gitops.CodeTemplateInvalid, gitops.CodeUnsupported:
+	case gitops.CodeNoIdentity, gitops.CodeTemplateInvalid, gitops.CodeUnsupported,
+		gitops.CodeJujutsuUnsupported:
 		status = http.StatusBadRequest
+	case gitops.CodeJujutsuWriteRefused:
+		// The request is well formed and the repository is fine; the product
+		// declines to write to it with git (GIT-US-0038).
+		status = http.StatusConflict
 	case gitops.CodeNotFound:
 		// The conflict list the resolver was opened from is stale: the
 		// integration moved on, so the client refetches instead of retrying.

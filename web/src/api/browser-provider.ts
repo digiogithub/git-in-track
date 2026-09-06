@@ -1015,6 +1015,7 @@ export class BrowserProvider implements DataProvider {
           path: mount.name,
           git: false,
           backend: 'isomorphic-git',
+          writes: true,
           pending: 0,
         };
         const handle = handleOf(mount.vault);

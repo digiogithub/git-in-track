@@ -230,9 +230,16 @@ export type GitRepoStatus = {
   /** Set when no identity resolves, which blocks committing entirely. */
   identityError?: string;
   status?: {
+    /** The current line of work: a branch, or a jj working copy. */
     branch: string;
+    /** True when there is no named line of work at all (a detached HEAD). */
     detached: boolean;
+    /** What the VCS calls that line: `branch`, `bookmark`, `working-copy`. */
+    lineKind?: LineKind;
+    /** What a publish updates on the remote: a branch, or a jj bookmark. */
+    pushTarget?: string;
     clean: boolean;
+    /** Empty in a VCS with no staging area; jj commits the working copy. */
     staged: string[];
     modified: string[];
     untracked: string[];
@@ -266,6 +273,7 @@ export type GitCommit = {
  * (docs/06-git-sync.md §4, story GIT-US-0021).
  */
 export type SyncState =
+  | 'jujutsu'
   | 'conflicted'
   | 'in_progress'
   | 'detached'
@@ -292,10 +300,28 @@ export type SyncCommit = {
   date?: string;
 };
 
+/**
+ * What a VCS calls the current line of work (GIT-US-0039). Empty means there is
+ * no named one, which is git's detached HEAD.
+ */
+export type LineKind = 'branch' | 'bookmark' | 'working-copy' | '';
+
+/** How an unfinished integration is taken back (GIT-US-0039). */
+export type UndoMethod = 'abort' | 'operation_log' | '';
+
+/** How an unfinished integration is carried forward (GIT-US-0039). */
+export type ResumeMethod = 'continue' | '';
+
 /** One repository's sync state, the row the sync panel renders. */
 export type SyncStatus = {
+  /** The current line of work: a git branch, or a jj working copy. */
   branch: string;
+  /** True when there is no named line of work at all (a detached HEAD). */
   detached: boolean;
+  /** What the VCS calls that line: `branch`, `bookmark`, `working-copy`. */
+  lineKind?: LineKind;
+  /** What a publish updates on the remote: a branch, or a jj bookmark. */
+  pushTarget?: string;
   clean: boolean;
   /** Uncommitted paths: staged, modified and untracked. */
   dirty?: string[];
@@ -309,10 +335,50 @@ export type SyncStatus = {
   ahead: number;
   behind: number;
   conflicted?: SyncConflict[];
-  /** `rebase` or `merge` when one is half-finished, else absent. */
+  /** `rebase` or `merge` when one is unfinished, else absent. */
   operation?: string;
+  /**
+   * True while an integration has not settled, so nothing else may run against
+   * the repository. It is the VCS-neutral form of `operation`: jj never leaves
+   * a half-finished operation, but a commit can carry an unresolved conflict.
+   */
+  unfinished?: boolean;
+  /** How that integration is taken back: git aborts, jj undoes an operation. */
+  undo?: UndoMethod;
+  /** How it is carried forward, absent when there is nothing to carry. */
+  resume?: ResumeMethod;
+  /**
+   * True for a repository managed with Jujutsu. Its branch is `@`, its working
+   * copy is a commit rather than a checkout, and every git write is refused
+   * (GIT-US-0038).
+   */
+  jujutsu?: boolean;
   state: SyncState;
 };
+
+/** What manages a repository on disk (GIT-US-0038). */
+export type RepoVCS = {
+  kind: 'git' | 'jj' | 'none';
+  /** Jujutsu only: `colocated` when the workspace has a git directory of its own. */
+  layout?: 'colocated' | 'internal';
+  gitDir?: boolean;
+};
+
+/** The sentence every surface shows for a Jujutsu repository. */
+export const JUJUTSU_SUMMARY = 'Managed by Jujutsu — reads and writes go through jj';
+
+/**
+ * The sentence shown for a jj repository the product cannot write to: the jj
+ * binary is missing, so the read-only guard of GIT-US-0038 is driving.
+ */
+export const JUJUTSU_READ_ONLY =
+  'Managed by Jujutsu, and no jj binary was found: reads work, and every write is refused ' +
+  'rather than made behind jj\u2019s back.';
+
+/** True when a repository is managed with Jujutsu, whatever its layout. */
+export function isJujutsu(vcs: RepoVCS | undefined): boolean {
+  return vcs?.kind === 'jj';
+}
 
 /** One repository in a sync status listing. */
 export type SyncRepoStatus = {
@@ -320,6 +386,14 @@ export type SyncRepoStatus = {
   path: string;
   /** False when the folder is not a git working tree; `reason` says so. */
   git: boolean;
+  /** What manages the folder: git, jj, or nothing. */
+  vcs?: RepoVCS;
+  /**
+   * False when the repository cannot be written to at all — today only a jj
+   * workspace with no jj binary installed. It is what a surface disables its
+   * write actions from, rather than "is it jj" (GIT-US-0041).
+   */
+  writes?: boolean;
   reason?: string;
   backend?: string;
   status?: SyncStatus;
@@ -436,7 +510,11 @@ export type ConflictMerge = {
   warnings?: string[];
 };
 
-/** The three versions of a conflicted path, as the index holds them. */
+/**
+ * The three sides of a conflicted path, however the backend produced them:
+ * git reads its index stages, a Jujutsu backend reads the conflict recorded
+ * inside the commit (GIT-US-0039).
+ */
 export type ConflictVersions = {
   path: string;
   kind: string;
@@ -450,6 +528,11 @@ export type ConflictVersions = {
   rebased?: boolean;
   /** The working copy, conflict markers included: the manual edit starts here. */
   working?: string;
+  /**
+   * The dialect those markers are written in. jj adds `%%%%%%%` and `+++++++`
+   * to git's, so a parser must honour what it is told rather than assume.
+   */
+  markers?: 'git' | 'jj';
   /** Binary conflicts have no structured resolution: keep mine or keep theirs. */
   binary: boolean;
 };
@@ -541,6 +624,8 @@ export type RepoInfo = {
   error?: string;
   /** Project keys discovered inside this repository. */
   projects: string[];
+  /** What manages the repository on disk; absent in browser-only mode. */
+  vcs?: RepoVCS;
 };
 
 export type MountInput = {

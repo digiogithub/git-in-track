@@ -108,14 +108,16 @@ func TestLsTable(t *testing.T) {
 	if len(rows) != 2 {
 		t.Fatalf("rows = %q", rows)
 	}
-	if got := columns(rows[0]); strings.Join(got, "|") != "ID|ROLE|PATH|DOCS|KEYS|ITEMS" {
+	if got := columns(rows[0]); strings.Join(got, "|") != "ID|ROLE|VCS|PATH|DOCS|KEYS|ITEMS" {
 		t.Errorf("headers = %v", got)
 	}
 	cells := columns(rows[1])
-	if len(cells) != 6 {
+	if len(cells) != 7 {
 		t.Fatalf("cells = %v", cells)
 	}
-	if cells[0] != "acme-api" || cells[1] != "project" || cells[3] != "docs" || cells[4] != "DEMO" || cells[5] != "5" {
+	// The VCS column names what manages the folder (GIT-US-0038).
+	if cells[0] != "acme-api" || cells[1] != "project" || cells[2] != "git" ||
+		cells[4] != "docs" || cells[5] != "DEMO" || cells[6] != "5" {
 		t.Errorf("row = %v", cells)
 	}
 }

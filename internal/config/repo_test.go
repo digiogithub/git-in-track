@@ -282,3 +282,74 @@ func TestDetectARootBacklog(t *testing.T) {
 		t.Errorf("docs folder = %q, want the repository root", det.DocsFolder)
 	}
 }
+
+// newJujutsuDir builds a jj workspace on disk without needing the jj binary:
+// what the detector reads is the marker folder and the store target
+// (GIT-US-0038). A colocated workspace points its store at its own `.git`.
+func newJujutsuDir(t *testing.T, colocated bool, files ...string) string {
+	t.Helper()
+	dir := newRepoDir(t, colocated, files...)
+	store := filepath.Join(dir, ".jj", "repo", "store")
+	if err := os.MkdirAll(store, 0o755); err != nil {
+		t.Fatalf("create the jj store: %v", err)
+	}
+	target := "git"
+	if colocated {
+		target = filepath.Join("..", "..", "..", ".git")
+	} else if err := os.MkdirAll(filepath.Join(store, "git"), 0o755); err != nil {
+		t.Fatalf("create the internal git store: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(store, "git_target"), []byte(target+"\n"), 0o600); err != nil {
+		t.Fatalf("write git_target: %v", err)
+	}
+	return dir
+}
+
+// TestAddRepoAcceptsAJujutsuRepository covers both layouts: a jj workspace is
+// registered and reported as jj, never as plain git, and one with no colocated
+// git working tree is no longer refused outright (GIT-US-0038).
+func TestAddRepoAcceptsAJujutsuRepository(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		colocated bool
+		git       bool
+	}{
+		{name: "colocated", colocated: true, git: true},
+		{name: "the store lives inside .jj", colocated: false, git: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := newJujutsuDir(t, tc.colocated, "docs/.pmngr/project.yaml")
+
+			if !IsJujutsuRepo(dir) {
+				t.Fatal("the folder was not recognized as a jj workspace")
+			}
+			if !IsVersionedRepo(dir) {
+				t.Fatal("a jj workspace is not reported as version-controlled")
+			}
+			det := Detect(dir)
+			if !det.VCS.IsJujutsu() {
+				t.Fatalf("detection = %+v, want a jj workspace", det.VCS)
+			}
+			if det.VCS.WritableByGit() {
+				t.Error("a jj workspace is reported as writable by git")
+			}
+			if det.Git != tc.git {
+				t.Errorf("git = %v, want %v", det.Git, tc.git)
+			}
+
+			c := Default()
+			repo, err := c.AddRepo(dir, "", "")
+			if err != nil {
+				t.Fatalf("add a jj repository: %v", err)
+			}
+			if repo.DocsFolder != "docs" {
+				t.Errorf("docs folder = %q", repo.DocsFolder)
+			}
+		})
+	}
+}

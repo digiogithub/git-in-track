@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/digiogithub/git-in-track/internal/core"
 )
 
 // The sync pipeline against real repositories (GIT-US-0021, AC 9).
@@ -91,8 +93,8 @@ func TestSyncStatus(t *testing.T) {
 				if st.State != StateUpToDate {
 					t.Fatalf("state = %q, want %q (%+v)", st.State, StateUpToDate, st)
 				}
-				if st.Branch != "main" || st.Remote != "origin" || st.Upstream != "origin/main" {
-					t.Fatalf("branch/remote/upstream = %q/%q/%q", st.Branch, st.Remote, st.Upstream)
+				if st.Name != "main" || st.Remote != "origin" || st.Upstream != "origin/main" {
+					t.Fatalf("branch/remote/upstream = %q/%q/%q", st.Name, st.Remote, st.Upstream)
 				}
 				if st.Ahead != 0 || st.Behind != 0 || !st.Clean {
 					t.Fatalf("counters = %d/%d clean=%v", st.Ahead, st.Behind, st.Clean)
@@ -330,19 +332,26 @@ func TestSyncDiverged(t *testing.T) {
 				if st.State != StateConflicted || st.Operation != OpRebase {
 					t.Fatalf("state=%q operation=%q", st.State, st.Operation)
 				}
+				// The neutral half of the same fact (GIT-US-0039): the
+				// integration is unfinished, git takes it back with `--abort`
+				// and carries it forward with `--continue`.
+				if !st.Unfinished || st.Undo != UndoAbort || st.Resume != ResumeContinue {
+					t.Fatalf("integration = %+v", st.Integration)
+				}
 				// A second sync refuses rather than making it worse.
 				if _, err := Sync(t.Context(), backend, syncOpts(StrategyRebase)); CodeOf(err) != CodeInProgress {
 					t.Fatalf("second sync code = %q, want %q", CodeOf(err), CodeInProgress)
 				}
-				if err := backend.Abort(t.Context()); err != nil {
-					t.Fatalf("Abort: %v", err)
+				if err := backend.Undo(t.Context()); err != nil {
+					t.Fatalf("Undo: %v", err)
 				}
 				st, err = backend.SyncStatus(t.Context())
 				if err != nil {
 					t.Fatalf("SyncStatus after abort: %v", err)
 				}
-				if st.Operation != "" || len(st.Conflicted) != 0 {
-					t.Fatalf("the abort left the tree in %q with %d conflicts", st.Operation, len(st.Conflicted))
+				if st.Unfinished || len(st.Conflicted) != 0 {
+					t.Fatalf("the undo left the tree in %q with %d conflicts",
+						st.Operation, len(st.Conflicted))
 				}
 			})
 
@@ -485,9 +494,15 @@ type stubBackend struct {
 	fetches      int
 }
 
-func (s *stubBackend) Name() string               { return "stub" }
-func (s *stubBackend) Path() string               { return "/stub" }
-func (s *stubBackend) Capabilities() Capabilities { return Capabilities{Backend: "stub"} }
+func (s *stubBackend) Name() string { return "stub" }
+func (s *stubBackend) Path() string { return "/stub" }
+
+// Capabilities reports a writable git-shaped backend: the preflight refuses a
+// backend that cannot write at all, which is the read-only guard of
+// GIT-US-0038 and not what this stub stands in for.
+func (s *stubBackend) Capabilities() Capabilities {
+	return Capabilities{Backend: "stub", VCS: string(core.VCSGit), Writes: true}
+}
 
 func (s *stubBackend) Identity(context.Context) (Identity, error) {
 	return Identity{Name: "Stub", Email: "stub@example.com"}, nil
@@ -501,7 +516,8 @@ func (s *stubBackend) Commit(context.Context, CommitRequest) (CommitResult, erro
 
 func (s *stubBackend) SyncStatus(context.Context) (SyncStatus, error) {
 	st := SyncStatus{
-		Branch: "main", Remote: "origin", Upstream: "origin/main",
+		Line:   gitLine("main"),
+		Remote: "origin", Upstream: "origin/main",
 		Ahead: s.ahead, Behind: s.behind,
 	}
 	st.resolveState()
@@ -529,10 +545,10 @@ func (s *stubBackend) Push(context.Context, PushRequest) (PushResult, error) {
 	}
 	pushed := s.ahead
 	s.ahead = 0
-	return PushResult{Remote: "origin", Branch: "main", Pushed: pushed}, nil
+	return PushResult{Remote: "origin", Target: "main", Pushed: pushed}, nil
 }
 
-func (s *stubBackend) Abort(context.Context) error { return nil }
+func (s *stubBackend) Undo(context.Context) error { return nil }
 
 func (s *stubBackend) Commits(context.Context, LogRequest) ([]Commit, error) {
 	return []Commit{}, nil
@@ -542,7 +558,7 @@ func (s *stubBackend) History(context.Context, HistoryRequest) (FileHistory, err
 	return FileHistory{}, nil
 }
 
-func (s *stubBackend) Continue(context.Context) (IntegrateResult, error) {
+func (s *stubBackend) Resume(context.Context) (IntegrateResult, error) {
 	return IntegrateResult{}, nil
 }
 

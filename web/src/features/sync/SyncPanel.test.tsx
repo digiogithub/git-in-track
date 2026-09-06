@@ -58,6 +58,77 @@ describe('SyncPanel', () => {
     ).toBeInTheDocument();
   });
 
+  it('syncs a Jujutsu repository like any other', async () => {
+    // GIT-US-0038 stopped painting jj's steady state as a destructive failure;
+    // GIT-US-0041 made the repository writable, so the state is the truthful
+    // one and the buttons work.
+    const provider = new FakeProvider();
+    provider.syncStatuses = [
+      {
+        repo: 'jj-demo',
+        path: '/tmp/jj-demo',
+        git: true,
+        vcs: { kind: 'jj', layout: 'colocated', gitDir: true },
+        writes: true,
+        pending: 0,
+        status: {
+          branch: 'main',
+          detached: false,
+          lineKind: 'bookmark',
+          pushTarget: 'main',
+          clean: true,
+          trackedChanges: false,
+          remote: 'origin',
+          upstream: 'origin/main',
+          ahead: 2,
+          behind: 0,
+          jujutsu: true,
+          state: 'ahead',
+        },
+      },
+    ];
+    renderPanel(provider);
+
+    expect(await screen.findByText('Ahead')).toBeInTheDocument();
+    expect(screen.queryByText('Detached HEAD')).not.toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent(/reads and writes go through jj/i);
+    expect(screen.getByRole('button', { name: 'Sync' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Preview' })).toBeEnabled();
+  });
+
+  it('offers no write for a Jujutsu repository with no jj binary', async () => {
+    // The read-only guard of GIT-US-0038: `writes` is what the panel disables
+    // from, never "is it jj".
+    const provider = new FakeProvider();
+    provider.syncStatuses = [
+      {
+        repo: 'jj-demo',
+        path: '/tmp/jj-demo',
+        git: true,
+        vcs: { kind: 'jj', layout: 'colocated', gitDir: true },
+        writes: false,
+        pending: 0,
+        status: {
+          branch: '@',
+          detached: false,
+          clean: true,
+          trackedChanges: false,
+          remote: 'origin',
+          ahead: 0,
+          behind: 0,
+          jujutsu: true,
+          state: 'jujutsu',
+        },
+      },
+    ];
+    renderPanel(provider);
+
+    expect(await screen.findByText('Managed by Jujutsu')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent(/every write is refused/i);
+    expect(screen.getByRole('button', { name: 'Sync' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Preview' })).toBeDisabled();
+  });
+
   it('previews what a sync would move without changing anything', async () => {
     const provider = new FakeProvider();
     provider.syncResults = [

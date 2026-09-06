@@ -10,13 +10,15 @@ import (
 	"strings"
 
 	"github.com/digiogithub/git-in-track/internal/core"
+	"github.com/digiogithub/git-in-track/internal/gitops"
 )
 
 // Sentinel errors of repository registration.
 var (
 	// ErrDuplicateRepo reports a path that is already registered.
 	ErrDuplicateRepo = errors.New("repository already registered")
-	// ErrNotGitRepo reports a folder that is not a git working tree.
+	// ErrNotGitRepo reports a folder that is not a version-controlled working
+	// tree. A Jujutsu workspace is one (GIT-US-0038), colocated or not.
 	ErrNotGitRepo = errors.New("not a git repository")
 	// ErrNotDir reports a path that is not a directory.
 	ErrNotDir = errors.New("not a directory")
@@ -85,7 +87,11 @@ func (c *Config) AddRepoWithOptions(repoPath string, opts AddOptions) (Repo, err
 	if !info.IsDir() {
 		return Repo{}, fmt.Errorf("add %s: %w", abs, ErrNotDir)
 	}
-	if !opts.NoGit && !IsGitRepo(abs) {
+	// A Jujutsu workspace registers like a git one: its backlog files are read,
+	// indexed and served exactly the same way. Only the git write path is
+	// refused, and that refusal belongs to internal/gitops, not to registration
+	// (GIT-US-0038).
+	if !opts.NoGit && !IsVersionedRepo(abs) {
 		return Repo{}, fmt.Errorf("add %s: %w (pass --no-git to register it anyway)", abs, ErrNotGitRepo)
 	}
 	for _, existing := range c.Repos {
@@ -231,8 +237,14 @@ func withFolder(folders []string, folder string) []string {
 type Detection struct {
 	// Path is the absolute folder that was inspected.
 	Path string
-	// Git reports whether the folder is a git working tree.
+	// Git reports whether the folder is a git working tree. It stays true for a
+	// colocated Jujutsu workspace, which does have one; VCS is what says who
+	// owns it.
 	Git bool
+	// VCS is the version-control system managing the folder, and how it is laid
+	// out (GIT-US-0038). It is the field to branch on: reporting a colocated jj
+	// workspace as plain git is what let git writes reach one.
+	VCS core.VCSInfo
 	// Team reports whether a team.yaml sits at the root (R-TEAM-LOC-1).
 	Team bool
 	// Role is the role the markers imply.
@@ -247,7 +259,12 @@ type Detection struct {
 // Detect inspects a folder: is it a git working tree, is it a team repository,
 // and where does its backlog live.
 func Detect(repoPath string) Detection {
-	det := Detection{Path: repoPath, Git: IsGitRepo(repoPath), Role: RoleProject}
+	det := Detection{
+		Path: repoPath,
+		Git:  IsGitRepo(repoPath),
+		VCS:  gitops.DetectVCS(repoPath),
+		Role: RoleProject,
+	}
 	if _, err := os.Stat(filepath.Join(repoPath, TeamFileName)); err == nil {
 		det.Team = true
 		det.Role = RoleTeam
@@ -264,6 +281,19 @@ func Detect(repoPath string) Detection {
 func IsGitRepo(repoPath string) bool {
 	_, err := os.Stat(filepath.Join(repoPath, ".git"))
 	return err == nil
+}
+
+// IsJujutsuRepo reports whether a folder is a Jujutsu workspace, colocated or
+// not.
+func IsJujutsuRepo(repoPath string) bool {
+	return gitops.DetectVCS(repoPath).IsJujutsu()
+}
+
+// IsVersionedRepo reports whether a folder is a working tree of a supported
+// version-control system: a git working tree, or a Jujutsu workspace in either
+// layout.
+func IsVersionedRepo(repoPath string) bool {
+	return gitops.DetectVCS(repoPath).Kind != core.VCSNone
 }
 
 // DocsCandidates returns every documentation folder under a repository that

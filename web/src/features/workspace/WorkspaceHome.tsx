@@ -4,6 +4,7 @@ import { BookOpen, FolderGit2, ListChecks, RefreshCw, ShieldAlert, Trash2 } from
 import { useState } from 'react';
 
 import type { RepoInfo } from '@/api/provider';
+import { isJujutsu, JUJUTSU_SUMMARY } from '@/api/provider';
 import { useProvider } from '@/api/provider-context';
 import { useAppStore } from '@/app/store';
 import { Button } from '@/components/ui/button';
@@ -188,11 +189,20 @@ export function WorkspaceHome() {
                     >
                       {STATE_LABELS[repo.state]}
                     </span>
+                    {isJujutsu(repo.vcs) ? (
+                      <span
+                        title={JUJUTSU_SUMMARY}
+                        className="rounded-full bg-secondary px-2 py-0.5 text-[11px] font-medium text-secondary-foreground"
+                      >
+                        Jujutsu
+                      </span>
+                    ) : null}
                   </CardTitle>
                   <CardDescription>
                     {repo.kind === 'team' ? 'Team repository' : 'Project repository'} · docs folder:{' '}
                     <code>{repo.docsFolder === '' ? '(repository root)' : repo.docsFolder}</code>
                     {repo.lastIndexedAt ? ` · indexed ${repo.lastIndexedAt.slice(0, 16)}` : ''}
+                    {isJujutsu(repo.vcs) ? ` · ${JUJUTSU_SUMMARY}` : ''}
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-3">

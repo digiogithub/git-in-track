@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/digiogithub/git-in-track/internal/core"
 )
 
 // systemBackend shells out to the git binary. It is the default whenever a
@@ -51,7 +53,9 @@ func (b *systemBackend) Capabilities() Capabilities {
 		Hooks:             true,
 		Signing:           true,
 		CredentialHelpers: true,
-		PathspecCommit:    true,
+		ScopedCommit:      true,
+		VCS:               string(core.VCSGit),
+		Writes:            true,
 	}
 }
 
@@ -83,8 +87,7 @@ func (b *systemBackend) Status(ctx context.Context) (Status, error) {
 			return Status{}, wrap("status", CodeCommitFailed, err, "read HEAD of %s", b.path)
 		}
 	}
-	out.Branch = strings.TrimSpace(branch)
-	out.Detached = out.Branch == "HEAD"
+	out.Line = gitLine(strings.TrimSpace(branch))
 
 	raw, err := b.run(ctx, "status", "--porcelain", "--untracked-files=normal")
 	if err != nil {
@@ -309,6 +312,9 @@ func itoa(n int) string {
 // commandError carries what a failed git invocation printed, which is the only
 // actionable part of a hook refusal.
 type commandError struct {
+	// bin names the executable that failed, so a jj invocation is not reported
+	// as a git one. Empty means git, which is what every git backend passes.
+	bin    string
 	args   []string
 	output string
 	err    error
@@ -316,7 +322,11 @@ type commandError struct {
 
 // Error implements the error interface.
 func (e *commandError) Error() string {
-	msg := "git " + strings.Join(e.args, " ") + ": " + e.err.Error()
+	bin := e.bin
+	if bin == "" {
+		bin = "git"
+	}
+	msg := bin + " " + strings.Join(e.args, " ") + ": " + e.err.Error()
 	if e.output != "" {
 		msg += ": " + e.output
 	}

@@ -77,6 +77,11 @@ func TestConflictFile(t *testing.T) {
 				if !strings.Contains(versions.Working, "<<<<<<<") {
 					t.Errorf("the working copy should still carry git's markers: %q", versions.Working)
 				}
+				// The dialect those markers are written in is reported rather
+				// than assumed, because jj's is not git's (GIT-US-0039).
+				if versions.Markers != MarkersGit {
+					t.Errorf("markers = %q, want %q", versions.Markers, MarkersGit)
+				}
 			})
 
 			t.Run("a path that is not conflicted is refused", func(t *testing.T) {
@@ -148,8 +153,8 @@ func TestResolvePath(t *testing.T) {
 					t.Fatalf("operation = %q, want %q", res.Status.Operation, OpRebase)
 				}
 				// Abort is still available at this step and restores the tree.
-				if err := backend.Abort(t.Context()); err != nil {
-					t.Fatalf("Abort after a resolution: %v", err)
+				if err := backend.Undo(t.Context()); err != nil {
+					t.Fatalf("Undo after a resolution: %v", err)
 				}
 				st, err := backend.SyncStatus(t.Context())
 				if err != nil {

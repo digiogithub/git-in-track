@@ -2,6 +2,7 @@ package gitops
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -27,5 +28,34 @@ func TestMain(m *testing.M) {
 			panic(err)
 		}
 	}
-	os.Exit(m.Run())
+	cleanup := setJujutsuConfig()
+	code := m.Run()
+	cleanup()
+	os.Exit(code)
+}
+
+// setJujutsuConfig points every jj invocation of this package — the fixtures'
+// and the backend's alike — at one throwaway configuration file, so that the
+// tests neither read the developer's jj settings nor write into their home
+// directory. It returns the function that removes it.
+func setJujutsuConfig() func() {
+	dir, err := os.MkdirTemp("", "gintrack-jj-config")
+	if err != nil {
+		panic(err)
+	}
+	path := filepath.Join(dir, "config.toml")
+	body := "[user]\nname = \"Test User\"\nemail = \"test@example.com\"\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		panic(err)
+	}
+	for key, value := range map[string]string{
+		"JJ_CONFIG": path,
+		"JJ_USER":   "Test User",
+		"JJ_EMAIL":  "test@example.com",
+	} {
+		if err := os.Setenv(key, value); err != nil {
+			panic(err)
+		}
+	}
+	return func() { _ = os.RemoveAll(dir) }
 }

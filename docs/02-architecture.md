@@ -518,7 +518,7 @@ Makefile, go.mod, .goreleaser.yaml
 | `internal/vault/` | The CoreApi contract of `web/src/core-bridge/api.ts` implemented once, over a `core.FS` the host injects: `NewInMemory()` for the browser (files pushed in with `vault.load`), `Open(fsys, root)` for the companion process (files read through `internal/core/osfs`). Exposes `Call` (JSON envelope, for the WASM glue) and `Dispatch` (typed result and error, for the REST layer). **Must not import** `os`, `path/filepath` or `syscall/js`. |
 | `internal/server/` | chi router, REST handlers, WebSocket hub, static file serving of the embedded `web/dist`, localhost binding, token middleware, origin checks. Translates core errors into HTTP status codes. |
 | `internal/watcher/` | fsnotify wrapper: recursive watch registration, ignore rules (`.git/`, `node_modules/`, editor swap files), debouncing, event coalescing, and rename detection. |
-| `internal/gitops/` | Status, add, commit, fetch, merge/rebase, push, conflict enumeration, credential resolution. Two backends behind one interface: `go-git` (pure Go, always available) and `system-git` (`os/exec`, used when present and configured). A `Backend` is bound to one working tree; a `Committer` batches writes so one logical edit is one commit. Native-only: it uses `os/exec` and the filesystem, so nothing here may be imported from `internal/core`. Implemented for commit-on-save in GIT-US-0020; status, fetch, integrate (rebase or merge), push, abort, continue and the sync pipeline over them in GIT-US-0021, whose go-git half fast-forwards only and refuses what it cannot do correctly. Credential resolution — the user's helper and ssh-agent, a non-interactive environment that can never hang on a prompt, and redaction of every secret shape from git's own output — landed in GIT-US-0023. The structured conflict surface — `ConflictFile` (the base/ours/theirs blobs of a conflicted path, read from the index stages, with the sides normalised to the user's frame during a rebase) and `ResolvePath` (write, stage, continue) — landed in GIT-US-0022; the merge those blobs feed is `internal/core`, so browser mode runs it too. `History` — every revision of a set of paths, with the instant each was committed, plus a cache keyed by HEAD — landed in GIT-US-0028 and is what the sprint metrics reconstruct their time series from ([ADR-017](./adr/ADR-017-metrics-history-from-git-not-a-stored-time-series.md)); the arithmetic over those revisions is `internal/core`, so the numbers are the same in both hosts. |
+| `internal/gitops/` | Status, add, commit, fetch, merge/rebase, push, conflict enumeration, credential resolution. Three backends behind one interface: `go-git` (pure Go, always available), `system-git` (`os/exec`, used when present and configured) and `jj` (`os/exec`, selected for a Jujutsu working tree in either layout; reads in GIT-US-0040, writes in GIT-US-0041 — doc 06 §14). The interface is VCS-neutral since GIT-US-0039: it speaks of a *line of work* (a branch or a bookmark), an *integration that has not settled* and how to undo or resume it, a commit that covers *exactly these paths*, and three conflict sides a backend produces however it can — so a Jujutsu backend can implement it without an index, a `MERGE_HEAD` or a branch ([ADR-022](./adr/ADR-022-a-vcs-neutral-backend-interface.md)). A `Backend` is bound to one working tree; a `Committer` batches writes so one logical edit is one commit. Native-only: it uses `os/exec` and the filesystem, so nothing here may be imported from `internal/core`. Implemented for commit-on-save in GIT-US-0020; status, fetch, integrate (rebase or merge), push, undo, resume and the sync pipeline over them in GIT-US-0021, whose go-git half fast-forwards only and refuses what it cannot do correctly. Credential resolution — the user's helper and ssh-agent, a non-interactive environment that can never hang on a prompt, and redaction of every secret shape from git's own output — landed in GIT-US-0023. The structured conflict surface — `ConflictFile` (the base/ours/theirs sides of a conflicted path — read from the index stages by both git backends — with the sides normalised to the user's frame during a rebase and the marker dialect of the working file named rather than assumed) and `ResolvePath` (write, stage, continue) — landed in GIT-US-0022; the merge those blobs feed is `internal/core`, so browser mode runs it too. `History` — every revision of a set of paths, with the instant each was committed, plus a cache keyed by HEAD — landed in GIT-US-0028 and is what the sprint metrics reconstruct their time series from ([ADR-017](./adr/ADR-017-metrics-history-from-git-not-a-stored-time-series.md)); the arithmetic over those revisions is `internal/core`, so the numbers are the same in both hosts. |
 | `internal/mcp/` | MCP tool definitions, JSON schemas, stdio transport, and the streamable HTTP handler mounted by `internal/server`. Landed in GIT-US-0024 with twelve tools — `list_items`, `search_items`, `get_item`, `create_epic`, `create_story`, `create_task`, `update_item`, `add_comment`, `move_on_board`, `list_kb_pages`, `get_kb_page`, `search_kb` — and `create_milestone` in GIT-US-0033, thirteen in all, served identically over both transports, read-only unless writes are enabled. Its whole dependency on the rest of the product is one interface, `Dispatch(ctx, method, params) (any, error)`, which `*vault.Workspace` satisfies: no tool contains business logic, and schemas are inferred from the Go types of each handler by the official Go MCP SDK ([ADR-015](adr/ADR-015-official-go-mcp-sdk-and-verb-noun-tools.md)). Path arguments are confined to the mounted roots, lexically and after symlink resolution. |
 | `wasm/` | `main_js.go` (WASM entry, `//go:build js && wasm`) and nothing else: it marshals strings in and out of JavaScript and delegates every method to `internal/vault`. The TypeScript glue copied into the web build lives here too. Built to `web/public/core.wasm`. |
 | `web/` | The React application. `web/src/core-bridge/` is the only place that talks to the worker or the REST client; `web/src/datasource/` exposes the mode-agnostic interface; feature folders sit above it. Built to `web/dist`, embedded by `internal/server`. |
@@ -872,6 +872,47 @@ Repository content is untrusted input. Consequences:
 - **Release.** GitHub Actions on tag `v*` runs GoReleaser: linux/darwin/windows ×
   amd64/arm64, archives plus checksums attached to the GitHub Release, unsigned in
   v1 ([ADR-011](adr/ADR-011-goreleaser-unsigned-artifacts.md)).
+
+---
+
+## 12.1 Version-control kinds
+
+The product supports two version-control systems, and the boundary between them
+follows the WASM rule of §5.1 exactly (`GIT-US-0038`/`GIT-US-0040`,
+`GIT-EP-0010`, doc 06 §14):
+
+- **`internal/core`** owns the *vocabulary*: `core.VCS` (`git`, `jj`, `none`),
+  `core.VCSLayout` (`colocated`, `internal`), the labels, the summary sentence
+  and the wording of a refusal. It is pure — no filesystem, no process — so both
+  hosts and every surface describe a repository with the same words.
+- **`internal/gitops`** owns the *plumbing*: `DetectVCS` reads the `.jj` marker
+  and the store target off disk, `ResolveJujutsu` probes the binary, and `Open`
+  binds a Jujutsu working tree to the `jj` backend — a third implementation of
+  `Backend` alongside `system` and `go-git`, selected for a jj working tree
+  whatever `git.backend` says, in both layouts. It answers every read by running
+  `jj` with `--ignore-working-copy`, so that reading a repository never
+  snapshots the user's working copy, and since `GIT-US-0041` it answers every
+  write with a jj command too: `jj commit -- <paths>` plus a fast-forward
+  `jj bookmark move` for commit on save
+  ([ADR-024](./adr/ADR-024-commit-on-save-moves-the-jujutsu-bookmark.md)),
+  `jj git fetch`, `jj rebase`, `jj git push`, `jj undo`, and a resolution
+  squashed into the commit that records the conflict. Only the writes that have
+  to see the disk drop `--ignore-working-copy`. Its one non-jj read is
+  `History`, which walks the git object store jj commits into so the metrics
+  stay affordable
+  ([ADR-023](./adr/ADR-023-jujutsu-history-from-the-git-object-store.md)). With
+  no jj binary installed, a colocated repository degrades to the read-only guard
+  of `GIT-US-0038` over a git backend, and that is the only configuration in
+  which a write is still refused.
+- **`internal/config`** reports the kind in `Detect` and registers a Jujutsu
+  repository like any other, in either layout.
+
+The rule the layering enforces is one sentence: **a git write never reaches a
+repository the product did not detect as git.** Reading through `jj` landed in
+`GIT-US-0040` and writing through it in `GIT-US-0041`, so a Jujutsu repository
+is a first-class repository: it commits on save, syncs and resolves conflicts
+like any other, and `Capabilities.writes` — not the VCS kind — is what a surface
+disables its write actions from.
 
 ---
 

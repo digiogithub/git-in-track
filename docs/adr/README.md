@@ -54,6 +54,10 @@ Every ADR uses the same sections:
 | [ADR-018](ADR-018-bounded-project-discovery.md) | Project discovery is bounded to the root and one level, plus what the registration declares | Accepted | 7 |
 | [ADR-019](ADR-019-active-team-is-client-state-threaded-per-call.md) | The active team is client state, threaded on every team-scoped call | Accepted | 8 |
 | [ADR-020](ADR-020-creating-a-team-repository.md) | The product creates team repositories; registering one stays with the CLI | Accepted | 8 |
+| [ADR-021](ADR-021-jujutsu-is-a-first-class-vcs-kind.md) | Jujutsu is a first-class VCS kind, and git never writes behind it | Accepted | 9 |
+| [ADR-022](ADR-022-a-vcs-neutral-backend-interface.md) | The backend interface is VCS-neutral: a line of work, an integration, three sides | Accepted | 9 |
+| [ADR-023](ADR-023-jujutsu-history-from-the-git-object-store.md) | A Jujutsu repository's file history is read from the git object store, not with `jj file show` | Accepted | 9 |
+| [ADR-024](ADR-024-commit-on-save-moves-the-jujutsu-bookmark.md) | Commit on save in Jujutsu records the paths and fast-forwards the bookmark | Accepted | 9 |
 
 ## Related documents
 

@@ -458,12 +458,19 @@ Every listed repository is indexed to count what it holds, so the command is as 
 index build. The git columns (`branch`, `clean`, `ahead`, `behind`) arrive with the git
 backend in Phase 4; until then `git` only reports whether the folder is a working tree.
 
+The `VCS` column names what manages the folder: `git`, `jj (colocated)`, `jj` or `none`
+(GIT-US-0038, doc 06 §14). A `jj` repository is read and indexed like any other. Since
+GIT-US-0040 its reads go through the `jj` binary — the real bookmark as the line of work,
+jj's own dirty set, ahead/behind against the tracked remote bookmark, and conflicts read
+out of the commit that records them — in both layouts. Every write is still refused;
+writing through `jj` is GIT-US-0041.
+
 ```
 $ gintrack ls
-ID         ROLE     PATH                   DOCS           KEYS  ITEMS
-acme-api   project  /home/jose/code/acme-api   docs        ACME    214
-acme-web   project  /home/jose/code/acme-web   documentation AWEB  176
-acme-team  team     /home/jose/code/acme-team  knowledge   —        41
+ID         ROLE     VCS             PATH                       DOCS           KEYS  ITEMS
+acme-api   project  git             /home/jose/code/acme-api   docs           ACME    214
+acme-web   project  git             /home/jose/code/acme-web   documentation  AWEB    176
+acme-team  team     jj (colocated)  /home/jose/code/acme-team  knowledge      —        41
 ```
 
 ```json
@@ -479,6 +486,7 @@ $ gintrack ls --json
       "enabled": true,
       "workspace": "work",
       "git": true,
+      "vcs": { "kind": "git", "gitDir": true },
       "projects": ["ACME"],
       "items": 214,
       "pages": 37,
@@ -763,7 +771,13 @@ Checks performed:
    config file permissions, writability of the config directory.
 2. **Configuration** — unknown keys, unreadable repo paths, duplicate registrations,
    workspaces with zero repos, token strength.
-3. **Repository** — is a git working tree, has a remote, docs folder exists, `.pmngr`
+3. **Repository** — is a git working tree or a Jujutsu workspace (GIT-US-0038: a jj
+   repository is reported as such, with "reads and writes go through jj", and the
+   `jj` scope reports the binary and warns when it is older than 0.41 or missing while a
+   registered repository needs it — with GIT-US-0040 that warning has teeth, because a
+   repository whose jj is older than 0.41 fails to open with `vcs_jujutsu_too_old` and one
+   with no jj binary at all falls back to the read-only git guard, or to no backend when
+   its store lives inside `.jj`), has a remote, docs folder exists, `.pmngr`
    scaffold present, `project.yaml`/`team.yaml` parse and validate. What is required
    depends on the role: a repository registered as a **team** repository is checked for a
    root `team.yaml` and never for a backlog — it holds none by the hard rule of doc 04 §1 —
@@ -1951,7 +1965,18 @@ at every step, so `phase` (`done` | `conflicts` | `failed`), `code` and `message
 happened and what to do next. The codes are the `git_*` set of doc 06 §12:
 `git_dirty_tree`, `git_no_remote`, `git_no_upstream`, `git_unexpected_branch`,
 `git_operation_in_progress`, `git_auth_required`, `git_network_unavailable`,
-`git_host_key_unverified`, `git_conflict`, `git_push_rejected`, `git_cancelled`.
+`git_host_key_unverified`, `git_conflict`, `git_push_rejected`, `git_cancelled`,
+plus `vcs_jujutsu_write_refused`, `vcs_jujutsu_unsupported` and `vcs_jujutsu_too_old`
+(doc 06 §14). A repository managed with Jujutsu carries
+`"vcs": {"kind":"jj","layout":"colocated"}` in the status and `"jujutsu": true`; since
+GIT-US-0040 its `state` is the truthful one (`up_to_date`, `ahead`, `behind`, `diverged`,
+`dirty`, `conflicted`), and the `jujutsu` state is now what a repository reports when no jj
+binary is installed and the read-only git guard is driving it. Since GIT-US-0041 a write
+goes through jj — commit, fetch, integrate, push, undo and conflict resolution — and each
+row of `GET /api/v1/sync/status` carries `"writes": true|false`, which is what a surface
+disables its write actions from. `vcs_jujutsu_write_refused` with `409 Conflict`, naming
+the `jj` command to run instead, is now only what a jj repository with **no jj binary**
+answers.
 `POST /api/v1/sync/abort` undoes a half-finished rebase or merge and answers with the
 repository's fresh status.
 
@@ -2240,22 +2265,45 @@ from every call:
 ```go
 package gitops
 
-// Open binds a backend to a working tree; Kind is auto | go-git | system.
+// Open binds a backend to a working tree; Kind is auto | go-git | system | jj.
+// A Jujutsu working tree is bound to the jj backend whatever Kind says, in
+// either layout (GIT-US-0040, doc 06 §14): the git backends read HEAD, which
+// sits at @-, and the index, which jj keeps synchronized with @. The jj backend
+// reads and writes through the jj binary (GIT-US-0041): jj commit -- <paths>
+// plus a fast-forward jj bookmark move, jj git fetch, jj rebase, jj git push,
+// jj undo and a resolution squashed into the conflicted commit. A jj older than 0.41 fails with
+// vcs_jujutsu_too_old; with no jj binary a colocated repository falls back to
+// the read-only guard of GIT-US-0038 and one whose git store lives inside .jj
+// is refused with vcs_jujutsu_unsupported.
 func Open(path string, opts Options) (Backend, error)
 
+// DetectVCS reports git | jj | none, and the jj layout: colocated | internal.
+func DetectVCS(path string) core.VCSInfo
+
+// ResolveJujutsu locates the jj binary and reads `jj --version`. Every read of
+// the backend carries --ignore-working-copy, because without it jj snapshots the
+// working copy first — a write, and one a status poll must never make. Only the
+// writes that have to see the disk (commit, rebase, squash, undo) drop it.
+func ResolveJujutsu(binary string) (path, version string, err error)
+
+// Every concept in this interface exists in git and in Jujutsu, so a jj
+// backend can implement it without faking an index, a MERGE_HEAD or a branch
+// (GIT-US-0039, ADR-022). Where the two differ, the difference is data the
+// backend reports — Line.Kind, Integration.Undo/Resume, ConflictVersions.Markers
+// — and never an assumption the caller makes.
 type Backend interface {
-    Name() string                                     // "go-git" | "system"
+    Name() string                                     // "go-git" | "system" | "jj"
     Path() string
     Capabilities() Capabilities
     Identity(ctx context.Context) (Identity, error)
     Status(ctx context.Context) (Status, error)
     Commit(ctx context.Context, req CommitRequest) (CommitResult, error)
-    // Fetch, Integrate, Push, Abort, Continue and Commits are added by
+    // Fetch, Integrate, Push, Undo, Resume and Commits are added by
     // GIT-US-0021; ConflictFile and ResolvePath by GIT-US-0022.
 }
 
 type CommitRequest struct {
-    Paths      []string // repo-relative; a path that is gone stages a deletion
+    Paths      []string // repo-relative; the whole of the commit, nothing else
     Message    Message  // Subject + Body (the trailers)
     Author     Identity // empty -> resolved from the git configuration chain
     Sign       bool     // system backend only; go-git fails with git_unsupported
@@ -2271,39 +2319,67 @@ type CommitResult struct {
 }
 
 type Capabilities struct {
-    Backend, Version                                   string
-    Hooks, Signing, CredentialHelpers, PathspecCommit  bool
+    Backend, Version                                 string
+    Hooks, Signing, CredentialHelpers, ScopedCommit  bool  // JSON: pathspecCommit
+    VCS, VCSLayout                                   string
+    Writes                                           bool
+}
+
+// Line is the current line of work and where publishing it sends it. It
+// replaces the branch name plus detached flag of GIT-US-0021, so that a jj
+// bookmark — which is not a branch and does not move on commit — can satisfy it.
+type Line struct {
+    Name       string    // JSON: branch. "main", or the VCS's name for an
+                         // unnamed working copy ("HEAD", "@")
+    Anonymous  bool      // JSON: detached. No named line of work at all
+    Kind       LineKind  // JSON: lineKind. branch | bookmark | working-copy | ""
+    PushTarget string    // JSON: pushTarget. What a publish updates on the remote
 }
 
 type Status struct {
-    Branch                      string
-    Detached, Clean             bool
-    Staged, Modified, Untracked []string
+    Line
+    Clean                       bool
+    Staged, Modified, Untracked []string  // Staged is empty in a VCS with no index
+}
+
+// Integration is an integration that has not settled, in terms both VCSs have.
+// git: a half-finished rebase or merge, undone with --abort, carried forward
+// with --continue. jj: nothing is ever half-finished, conflicts live inside the
+// commits, `jj undo` takes the operation back and there is nothing to continue.
+type Integration struct {
+    Operation  string        // JSON: operation. "" | "rebase" | "merge" | …
+    Unfinished bool          // JSON: unfinished. Nothing else may run yet
+    Undo       UndoMethod    // JSON: undo. "abort" | "operation_log" | ""
+    Resume     ResumeMethod  // JSON: resume. "continue" | ""
 }
 
 // SyncStatus is the status indicator: everything a repository row shows.
 type SyncStatus struct {
-    Branch, Remote, RemoteURL, Upstream string      // RemoteURL is credential-free
-    Detached, Clean, Tracked            bool
+    Line                                            // branch, detached, lineKind, pushTarget
+    Integration                                     // operation, unfinished, undo, resume
+    Remote, RemoteURL, Upstream         string      // RemoteURL is credential-free
+    Clean, Tracked                      bool
     Dirty                               []string
     Ahead, Behind                       int
     Conflicted                          []Conflict
-    Operation                           string      // "" | "rebase" | "merge"
+    Jujutsu                             bool
     State                               State       // up_to_date | ahead | behind |
 }                                                   // diverged | dirty | conflicted | …
 
-// The sync half of the Backend interface (GIT-US-0021).
+// The sync half of the Backend interface (GIT-US-0021, generalized by
+// GIT-US-0039).
 SyncStatus(ctx) (SyncStatus, error)
 Fetch(ctx, FetchRequest) (FetchResult, error)
 Integrate(ctx, IntegrateRequest) (IntegrateResult, error)   // rebase or merge
-Push(ctx, PushRequest) (PushResult, error)
-Abort(ctx) error                                            // system backend only
-Continue(ctx) (IntegrateResult, error)                      // system backend only
+Push(ctx, PushRequest) (PushResult, error)                  // req.Target, not a branch
+Undo(ctx) error                                             // git: --abort; jj: jj undo
+Resume(ctx) (IntegrateResult, error)                        // git: --continue; jj: nothing
 Commits(ctx, LogRequest) ([]Commit, error)                  // dry-run previews
 
 // The structured conflict surface (GIT-US-0022, doc 06 section 5.7).
-ConflictFile(ctx, path string) (ConflictVersions, error)    // index stages 1/2/3
-ResolvePath(ctx, ResolveRequest) (ResolveResult, error)     // write, stage, continue
+ConflictFile(ctx, path string) (ConflictVersions, error)    // the three sides, however
+                                                            // the backend produces them
+ResolvePath(ctx, ResolveRequest) (ResolveResult, error)     // record, then carry forward
 
 // The pipeline over them: preflight, fetch, integrate, push, with the
 // non-fast-forward retry ladder of doc 06 section 4.2.

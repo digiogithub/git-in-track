@@ -440,17 +440,23 @@ marker. The package is WASM-safe, so browser mode runs the same code through
 `conflict.merge` on the core bridge.
 
 **The git plumbing — `internal/gitops`.** `Backend` gained
-`ConflictFile(ctx, path)`, which reads stages 1, 2 and 3 of a conflicted path out
-of the index (base, ours, theirs) plus the working copy and a binary flag, and
-`ResolvePath(ctx, req)`, which writes one resolution, stages it and — once no
-conflicted path is left and the caller asked for it — continues the rebase or
-merge. **Sides are normalised to the user's frame of reference**: during a rebase
-git replays local commits onto the upstream, so its stage 2 is the *remote* work;
-`ConflictFile` swaps them back and sets `rebased: true`, so "keep mine" always
-means the commit this user made. Reading works on both backends; applying a
-resolution is system-git only, for the same reason `Abort` and `Continue` are
-(go-git has no rebase), and go-git says so with `git_unsupported` instead of
-half-resolving. Abort remains available at every step.
+`ConflictFile(ctx, path)`, which produces the three sides of a conflicted path
+(base, ours, theirs) plus the working copy, the marker dialect that copy is
+written in and a binary flag, and `ResolvePath(ctx, req)`, which records one
+resolution and — once no conflicted path is left and the caller asked for it —
+carries the integration forward. Where the three sides come from is the
+backend's business: both git backends read index stages 1, 2 and 3, and a jj
+backend materializes them from the conflict recorded inside the commit
+(§14.5). **Sides are normalised to the user's frame of reference**: during a
+rebase git replays local commits onto the upstream, so its stage 2 is the
+*remote* work; `ConflictFile` swaps them back and sets `rebased: true`, so "keep
+mine" always means the commit this user made. jj materializes its two sides the
+other way round — the `+++++++` snapshot is the incoming work and the
+`%%%%%%%` diff is the user's own commit — so there the sides are already in the
+user's frame and only `rebased` is reported. Reading works on both backends;
+applying a resolution is system-git only, for the same reason `Undo` and
+`Resume` are (go-git has no rebase), and go-git says so with `git_unsupported`
+instead of half-resolving. Undo remains available at every step.
 
 **The API — `internal/server/conflicts.go`.**
 `GET /api/v1/sync/conflicts/file?repo=&path=` serves the three versions and the
@@ -585,9 +591,11 @@ compatible binary is on `PATH`, else go-git), `go-git`, or `system`.
 `internal/gitops` binds one `Backend` to one working tree, so the caller passes
 no repository path per call. It exposes `Name`, `Path`, `Capabilities`,
 `Identity`, `Status` and `Commit` (GIT-US-0020), the sync half added by
-GIT-US-0021 (`SyncStatus`, `Fetch`, `Integrate`, `Push`, `Abort`, `Continue`
+GIT-US-0021 (`SyncStatus`, `Fetch`, `Integrate`, `Push`, `Undo`, `Resume`
 and `Commits`) and the structured conflict surface added by GIT-US-0022
-(`ConflictFile` and `ResolvePath`, §5.7).
+(`ConflictFile` and `ResolvePath`, §5.7). GIT-US-0039 restated every one of
+those in terms both git and jj have (§14.8); `Undo` and `Resume` are what
+GIT-US-0021 called `Abort` and `Continue`.
 
 A third go-git gap matters to sync, on top of the two below: **go-git has no
 rebase, and its merge is fast-forward only.** The go-git backend therefore
@@ -1084,7 +1092,275 @@ on the team repo.
 
 ---
 
-## 14. Phase mapping
+## 14. Jujutsu (jj) repositories
+
+Stories `GIT-US-0038`, `GIT-US-0039`, `GIT-US-0040` and `GIT-US-0041`, epic
+`GIT-EP-0010`. Reference: jj 0.41.
+
+A Jujutsu repository is **read and written through jj**, and never through git.
+The reads used to go through the git repository jj commits into, and three of
+them were wrong there: git's `HEAD` sits at `@-`, git's index is kept
+synchronized with `@`, and a non-colocated repository has no git working tree at
+all. Since `GIT-US-0040` a dedicated `jj` backend answers them from jj itself,
+and since `GIT-US-0041` the same backend commits, fetches, integrates, pushes,
+undoes and resolves with jj commands. A jj repository is a first-class
+repository; what is still refused is a jj repository with **no jj binary
+installed**, which falls back to the read-only guard of `GIT-US-0038`.
+
+### 14.1 Why a git write is unsafe there
+
+In a jj workspace the working copy is itself a commit (`@`), and git's `HEAD`
+sits at its parent (`@-`). A `git commit` therefore lands on `@-`, moves no
+bookmark, and the next `jj` command re-parents `@` onto it and abandons the
+previous working-copy commit as an orphan. The commit is unreachable from any
+bookmark, so `jj git push` would never publish it. jj also keeps git's index
+synchronized with `@`, so the working copy can read as fully staged.
+
+### 14.2 Detection
+
+`gitops.DetectVCS(path)` reports `git`, `jj` or `none`, and for jj the layout:
+
+| Layout | On disk | Git reads | Git writes |
+|---|---|---|---|
+| `colocated` | `.jj/` beside the workspace's own `.git/` | yes | refused |
+| `internal` | the git store lives inside `.jj/` (including the legacy `.jj/repo/store/git`) | no working tree to read | refused |
+
+The `.jj` marker wins over `.git`: a colocated repository has both, and calling
+it git is exactly the misreading this layer ends. The store is resolved from
+`.jj/repo/store/git_target`, following `.jj/repo` when a secondary workspace
+makes it a file.
+
+A jj repository **registers like any other** (`gintrack add`): its backlog files
+are read, indexed and served the same way. A repository with an internal store
+is registered too — only the git-backed features are unavailable, and the reason
+says so instead of claiming the folder is not a repository.
+
+The `jj` binary is resolved the way `git` is, with `jj --version`. The supported
+minimum is **jj 0.41**: `gintrack doctor` warns about an older one, and opening
+a repository with it fails with `vcs_jujutsu_too_old` rather than parsing output
+this build has never been verified against.
+
+### 14.3 What is refused, and what it says
+
+With jj installed nothing in the list below is refused any more: the `jj`
+backend answers it. The guard is what still refuses, and it drives only a
+**colocated** jj repository whose jj binary is missing — reads pass through it,
+and every write is answered by the guard itself, before a git process is
+started:
+
+| Call | Refused with | The message names |
+|---|---|---|
+| commit on save, `POST /api/v1/git/commit` | `vcs_jujutsu_write_refused` | `jj commit -m <message>` |
+| sync preflight (including `--dry-run`) | `vcs_jujutsu_write_refused` | `jj git fetch` and `jj git push` |
+| fetch | `vcs_jujutsu_write_refused` | `jj git fetch` |
+| integrate (rebase or merge) | `vcs_jujutsu_write_refused` | `jj rebase -d <destination>` |
+| push | `vcs_jujutsu_write_refused` | `jj git push` |
+| abort | `vcs_jujutsu_write_refused` | `jj undo` |
+| continue, resolve a conflicted path | `vcs_jujutsu_write_refused` | `jj resolve` |
+| opening an `internal`-layout repository **with no jj binary installed** | `vcs_jujutsu_unsupported` | that reads work and writes go through jj |
+| opening any jj repository with a jj older than 0.41 | `vcs_jujutsu_too_old` | the installed version and the minimum |
+
+Over HTTP a refusal is `409 Conflict`: the request is well formed and the
+repository is healthy; the product declines to write to it with git. The
+preflight refusal is keyed on `Capabilities.writes`, not on "is it jj", so a jj
+repository with jj installed passes it like any other.
+
+### 14.4 Which backend drives a jj repository
+
+`gitops.Open` picks the `jj` backend for a jj working tree whatever
+`git.backend` says, in both layouts. `system` and `go-git` are settings about
+*which git* to use, and neither of them can read a jj repository correctly.
+
+| Situation | Backend | What works |
+|---|---|---|
+| jj 0.41+ installed, either layout | `jj` | every read below; writes refused |
+| no jj binary, `colocated` | `system`/`go-git` behind the read-only guard of `GIT-US-0038` | the corrected git reading: line `@`, no index column, state `jujutsu` |
+| no jj binary, `internal` | none | the backlog files are still indexed and served |
+
+The guard is therefore the degraded path, and `SyncStatus.state = "jujutsu"` is
+its signature. With jj driving, the state is the truthful one — `up_to_date`,
+`ahead`, `behind`, `diverged`, `dirty`, `conflicted` — and `SyncStatus.jujutsu`
+stays `true`, which is what keeps the panel rendering the repository as
+jj-managed. What disables a write button is `Capabilities.writes` (mirrored as
+`writes` on each row of `GET /api/v1/sync/status`), never the VCS kind.
+
+### 14.5 Reading through jj
+
+Every read is a `jj` invocation with a `--no-graph -T` template and `\x1f`
+separators, the same unit separator the git backends use.
+
+| Read | jj command |
+|---|---|
+| line of work | `jj log --no-graph -T '<names>' -r 'heads(::@ & bookmarks())'` |
+| dirty set | `jj diff --summary -r @` |
+| bookmarks and their tracking | `jj bookmark list --all-remotes -T …` |
+| remote and its URL | `jj git remote list` |
+| ahead / behind | `jj log -r '"main"@"origin".."main"'` and the reverse |
+| conflicted paths | `jj log -T 'conflict' -r @`, then `jj resolve --list` |
+| the three sides of a conflict | `jj file show -r @ <path>` |
+| commits | `jj log --no-graph -T … -r '<from>..<to>'` |
+| file history | the git object store jj commits into ([ADR-023](./adr/ADR-023-jujutsu-history-from-the-git-object-store.md)) |
+
+**Reading never snapshots the working copy.** Almost every jj command snapshots
+it first, which writes a new working-copy commit and an entry in the operation
+log; a status poll or an indexer that did that would rewrite the user's
+repository as a side effect of looking at it. Every invocation therefore carries
+`--ignore-working-copy`, and a test drives the whole read surface against a
+repository with un-snapshotted edits and compares `jj op log` before and after.
+The consequence is deliberate and worth stating: what is reported is the last
+state jj snapshotted, not the instant contents of the disk.
+
+**The line of work** is the nearest bookmark among the ancestors of `@`, because
+a bookmark does not move when the working-copy commit does. It is reported with
+`lineKind: "bookmark"`, `detached: false` and `pushTarget` set to the bookmark
+`jj git push` would move. A working copy with no bookmark reachable from it is
+reported as `@` with `lineKind: "working-copy"` — still not anonymous, because a
+jj working copy is a commit with a name of its own.
+
+**The dirty set has no index behind it.** jj commits the working copy itself, so
+the three buckets of the published status map onto `jj diff --summary -r @` like
+this:
+
+| Bucket | jj | Why |
+|---|---|---|
+| `staged` | always empty | jj has no staging area. Git's index reports the whole working copy here, because jj keeps it synchronized with `@` — the misreading this layer exists to end |
+| `untracked` | the `A` paths | the closest true statement to git's "content no commit holds yet": a path the parent commit does not have |
+| `modified` | the `M` and `D` paths | content `@` changed or removed against its parent |
+
+`trackedChanges` is true when any `M` or `D` path is present, which is what a
+caller uses to tell "work on top of the history" from "brand new files".
+
+**Conflicts live inside commits.** A non-colocated repository has no index
+stages to read, so the three sides are materialized out of the conflicted commit
+with `jj file show`: the `%%%%%%%` section is a diff from the merge base to the
+first side and the `+++++++` section is the second side verbatim.
+`ConflictVersions.markers` is `jj`, so no reader parses git's grammar over it.
+A conflicted commit with a single parent is a rebased revision, so its sides are
+swapped back into the user's frame of reference (`rebased: true`) exactly as
+they are during a git rebase — "ours" is always the user's own work. jj renders
+a deleted side as an empty one, so the deletion is carried by the conflict
+`kind` (`delete-modify`) rather than by an absent side.
+
+**History and metrics.** The burndown and the CFD of `GIT-US-0028` are rebuilt
+from the file history, which is read from the git object store jj commits into
+rather than with `jj file show` — one operating-system process per blob would
+make the metrics unusable. The walk starts at the commit *jj* reports for `@`,
+never at git's `HEAD`. This is what gives a non-colocated repository metrics for
+the first time, and it leaves a colocated one's byte-identical.
+[ADR-023](./adr/ADR-023-jujutsu-history-from-the-git-object-store.md) records
+the decision.
+
+### 14.6 Writing through jj
+
+Every write is a jj command. What makes them safe is not that they are careful
+with git, but that git is not involved at all.
+
+| Write | jj command |
+|---|---|
+| commit on save, explicit commit | `jj commit -m <message> -- <paths>`, then `jj bookmark move <bookmark> --to <new commit>` |
+| fetch | `jj git fetch --remote <remote>` |
+| integrate, rebase strategy | `jj rebase -b @ -d <upstream>` |
+| integrate, merge strategy | `jj new --no-edit -m <subject> <line> <upstream>`, then the same rebase of `@` onto it, then the bookmark move |
+| push, and its dry run | `jj git push --remote <remote> -b <bookmark>` (`--dry-run`) |
+| undo | `jj undo` (and `jj op restore <id>` for going further back) |
+| resolve a conflicted path | write the merged file, snapshot it, then `jj squash --from @ --into <conflicted commit> -- <path>` |
+
+**Snapshotting is chosen per command.** The read half of section 14.5 never
+snapshots. A write that has to see what is on disk — commit, rebase, squash,
+undo — deliberately does, by dropping `--ignore-working-copy`. A write that only
+moves refs — fetch, push, `bookmark move` — keeps it, so a background sync never
+turns the user's un-snapshotted edits into a working-copy commit as a side
+effect of talking to the network.
+
+**Commit on save records the paths and moves the bookmark.** `jj commit -- <paths>`
+splits the working-copy commit: the named paths become the new commit and every
+other edit stays in the fresh working copy on top, which is
+`CommitRequest.Paths` honored exactly, with no index anywhere. The commit is
+then followed by a fast-forward `jj bookmark move`, because in jj a bookmark
+does *not* follow a commit — without it the work would be reachable from `@`
+alone and `jj git push` would never publish it, which is the second half of the
+damage this epic exists to prevent.
+[ADR-024](./adr/ADR-024-commit-on-save-moves-the-jujutsu-bookmark.md) records the
+decision, including why `jj squash` and `jj describe` + `jj new` were rejected.
+Two consequences are worth knowing: a commit on save is **two** entries in the
+operation log, so undoing it by hand is two `jj undo`s; and a line of work with
+no bookmark is left without one, which is a legitimate anonymous branch — the
+push then says so and names `jj bookmark create`.
+
+**A dirty working copy never blocks a jj sync.** In git, uncommitted changes to
+tracked files stop the run, because a rebase would overwrite a checkout. In jj
+the working copy *is* a commit: `jj rebase -b @` carries it along and records
+anything it cannot merge inside the result. The preflight therefore skips that
+refusal for jj, and only for jj.
+
+**Ahead and behind survive a conflicted bookmark.** A fetch that moves the
+remote bookmark while the local one has also moved makes jj mark the *name* as
+conflicted, and every revset that mentions it then fails with ``Name `main` is
+conflicted`` — which is exactly the state the preflight meets. The counters are
+therefore computed against the commit `heads(::@ & bookmarks(exact:"<name>"))`
+resolves to, which is the local position, and the repository reads as
+`diverged` rather than failing.
+
+**A rejected push keeps the retry ladder's meaning.** jj reports a bookmark the
+remote moved under us as "unexpectedly moved on the remote (reason: stale
+info)"; that is classified as `git_push_rejected`, so the documented
+fetch + integrate + push ladder of section 4.2 answers it unchanged.
+
+**Conflicts are resolved where jj records them.** `jj resolve` drives an
+interactive merge tool, and the resolver of `GIT-US-0022` has already produced a
+merged file, so the resolution is written into the working copy, snapshotted,
+and squashed into the conflicted commit — the workflow jj itself prints as a
+hint. That is what matters for publishing: the conflict lives in the bookmark's
+own commit, and jj will not push a commit that still holds one. A conflict that
+lives in the working-copy commit alone needs no squash, and the file write is
+the whole of it.
+
+**Credentials need no jj-specific handling.** jj shells out to the user's own
+git for every network operation (`git.executable-path`), so the non-interactive
+environment of section 8.1 — `GIT_TERMINAL_PROMPT=0`, the blanked askpass
+helpers, ssh's `BatchMode=yes` — reaches the process that would otherwise
+prompt, and the credential helpers, `insteadOf` rewrites and ssh-agent keys the
+user already has all apply. Every line jj prints goes through the same secret
+redaction as git's before it reaches an error, an event or the UI, and
+`classifyTransport` recognizes jj's output without translation because it *is*
+git's output.
+
+### 14.7 What is still refused, and why
+
+| Call | Answer | Why |
+|---|---|---|
+| every write in a jj repository with no jj binary | `vcs_jujutsu_write_refused` | there is no safe way to write one with git; the guard of section 14.3 is driving |
+| every write with a jj older than `core.MinJujutsuVersion` | `vcs_jujutsu_too_old` at open time | the command output has not been verified against that release |
+| `Resume` | `git_unsupported` | jj never leaves an unfinished operation; `Integration.Resume` is `ResumeNone` and faking a `--continue` would be a lie |
+| a signed commit | `git_unsupported` | signing in jj is its own `signing.behavior` setting, not something this backend turns on per commit |
+| `Push` with no bookmark on the line of work | `git_no_upstream` | jj publishes bookmarks, not working copies; the message names `jj bookmark create` |
+| repository hooks | reported as unavailable in `Capabilities.hooks` | jj runs no git hook |
+
+### 14.8 The backend interface a jj backend can satisfy
+
+`GIT-US-0039` removed the four git-only concepts from `Backend`, so that the
+backend of `GIT-US-0040` can be honest instead of faking machinery jj does not
+have ([ADR-022](./adr/ADR-022-a-vcs-neutral-backend-interface.md)). Nothing a
+user sees changed: the HTTP surface keeps every field it had, both git backends
+keep every capability, and the new information is additive.
+
+| Was (git's) | Is (both VCSs') | How git answers it | How jj will |
+|---|---|---|---|
+| `Commit` stages a pathspec through the index | `Commit` records **exactly these paths** and nothing else; the capability is `ScopedCommit` | `git add` + `git commit --only -- <paths>` | `jj commit -m … -- <paths>`, or `jj squash -- <paths>`; there is no index |
+| `SyncStatus.Operation`, a `MERGE_HEAD`/`rebase-merge` marker | `Integration{Operation, Unfinished, Undo, Resume}` — an integration has not settled, and here is how to take it back or carry it forward | `Unfinished` from the marker, `Undo: abort`, `Resume: continue` | nothing is ever half-finished; `Undo: operation_log` (`jj undo`), `Resume: ""` — resolving the conflict inside the commit is the whole of it |
+| `Abort` / `Continue`, named after git's flags | `Undo` / `Resume`, named after what they mean | `rebase --abort` / `rebase --continue` | `jj undo`; `Resume` refuses with `git_unsupported`, because there is nothing to resume |
+| `ConflictFile` reads index stages 1/2/3 | the three sides, **however the backend can produce them**, plus `markers` naming the dialect the working file uses | stages 1/2/3, `markers: git` | materialized from the conflict inside the commit, `markers: jj` (`%%%%%%%`, `+++++++`) |
+| `Status.Branch` + `Detached`, and a push of `HEAD:refs/heads/<branch>` | `Line{Name, Anonymous, Kind, PushTarget}` — the current line of work and where publishing it goes | `Kind: branch`, `PushTarget` the branch; a detached HEAD is `Anonymous` | `Kind: bookmark` with the bookmark as `PushTarget`, or `Kind: working-copy` for a bare `@` |
+
+`ResolvePath`'s precondition is now "an integration has not settled" rather than
+"an operation marker is present", which is the same test in git and a
+satisfiable one in jj, where the conflict itself is what is unsettled. The
+preflight refusal names the command of the VCS that reported the integration, so
+a jj repository is never told to run `git rebase --abort`.
+
+---
+
+## 15. Phase mapping
 
 | Phase | Sync deliverables |
 |---|---|
@@ -1097,7 +1373,7 @@ on the team repo.
 
 ---
 
-## 15. Explicit non-goals
+## 16. Explicit non-goals
 
 - No central server, no hosted service, no realtime collaborative editing (no CRDT,
   no OT). Two people typing in the same body at the same second is a conflict, and

@@ -98,7 +98,7 @@ func (s *Server) handleSyncConflictFile(w http.ResponseWriter, r *http.Request) 
 	out := conflictFileResponse{Repo: repo, Path: path, Kind: versions.Kind, Versions: versions}
 	if st, statusErr := backend.SyncStatus(r.Context()); statusErr == nil {
 		out.Operation = st.Operation
-		out.Strategy = strategyOf(st.Operation)
+		out.Strategy = strategyOf(st.Integration)
 	}
 	if !versions.Binary {
 		merge, mergeErr := core.MergeFiles(path, mergeInputOf(versions), nil)
@@ -221,17 +221,18 @@ func (s *Server) conflictBackend(w http.ResponseWriter, r *http.Request, repo st
 	return backend, m, true
 }
 
-// mergeInputOf maps the three index stages onto the core's merge input.
+// mergeInputOf maps the three sides of a conflict onto the core's merge input.
 func mergeInputOf(v gitops.ConflictVersions) core.MergeInput {
 	return core.MergeInput{Base: v.Base, Ours: v.Ours, Theirs: v.Theirs}
 }
 
-// strategyOf names the integration a half-finished operation belongs to.
-func strategyOf(operation string) gitops.Strategy {
-	if operation == gitops.OpMerge {
+// strategyOf names the integration an unsettled state belongs to, in the sync
+// vocabulary the UI already speaks.
+func strategyOf(in gitops.Integration) gitops.Strategy {
+	switch in.Operation {
+	case gitops.OpMerge:
 		return gitops.StrategyMerge
-	}
-	if operation == gitops.OpRebase {
+	case gitops.OpRebase:
 		return gitops.StrategyRebase
 	}
 	return ""

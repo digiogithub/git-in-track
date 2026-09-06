@@ -34,7 +34,7 @@ func (b *goGitBackend) SyncStatus(ctx context.Context) (SyncStatus, error) {
 	if err != nil {
 		return SyncStatus{}, err
 	}
-	out := SyncStatus{Branch: base.Branch, Detached: base.Detached}
+	out := SyncStatus{Line: base.Line}
 	out.Dirty = normalisePaths(append(append(append([]string{},
 		base.Staged...), base.Modified...), base.Untracked...))
 	out.Tracked = len(base.Staged)+len(base.Modified) > 0
@@ -44,7 +44,7 @@ func (b *goGitBackend) SyncStatus(ctx context.Context) (SyncStatus, error) {
 	}
 	b.fillRemote(&out)
 	b.fillCounters(&out)
-	out.Operation = b.operationInProgress()
+	out.Integration = gitIntegration(b.operationInProgress())
 	out.resolveState()
 	return out, nil
 }
@@ -77,7 +77,7 @@ func (b *goGitBackend) fillRemote(out *SyncStatus) {
 		return
 	}
 	remote := ""
-	if branch, ok := cfg.Branches[out.Branch]; ok && branch.Remote != "" {
+	if branch, ok := cfg.Branches[out.Name]; ok && branch.Remote != "" {
 		remote = branch.Remote
 	}
 	if remote == "" {
@@ -96,12 +96,12 @@ func (b *goGitBackend) fillRemote(out *SyncStatus) {
 	if r, ok := cfg.Remotes[remote]; ok && len(r.URLs) > 0 {
 		out.RemoteURL = redactURL(r.URLs[0])
 	}
-	if out.Branch == "" || out.Detached {
+	if out.PushTarget == "" {
 		return
 	}
-	ref := plumbing.NewRemoteReferenceName(remote, out.Branch)
+	ref := plumbing.NewRemoteReferenceName(remote, out.PushTarget)
 	if _, err := b.repo.Reference(ref, true); err == nil {
-		out.Upstream = remote + "/" + out.Branch
+		out.Upstream = remote + "/" + out.PushTarget
 	}
 }
 
@@ -130,7 +130,7 @@ func (b *goGitBackend) fillCounters(out *SyncStatus) {
 	if err != nil {
 		return
 	}
-	remoteRef, err := b.repo.Reference(plumbing.NewRemoteReferenceName(out.Remote, out.Branch), true)
+	remoteRef, err := b.repo.Reference(plumbing.NewRemoteReferenceName(out.Remote, out.Name), true)
 	if err != nil {
 		return
 	}
@@ -285,7 +285,7 @@ func (b *goGitBackend) Fetch(ctx context.Context, req FetchRequest) (FetchResult
 	}
 	branch := req.Branch
 	if branch == "" {
-		branch = st.Branch
+		branch = st.Name
 	}
 	upstream := remote + "/" + branch
 	before := b.revision(upstream)
@@ -392,11 +392,15 @@ func (b *goGitBackend) Push(ctx context.Context, req PushRequest) (PushResult, e
 	if remote == "" {
 		return PushResult{}, failf("push", CodeNoRemote, "%s has no git remote to push to", b.path)
 	}
-	branch := req.Branch
+	branch := req.Target
 	if branch == "" {
-		branch = st.Branch
+		branch = st.PushTarget
 	}
-	spec := config.RefSpec("refs/heads/" + st.Branch + ":refs/heads/" + branch)
+	if branch == "" {
+		return PushResult{}, failf("push", CodeUnexpectedBranch,
+			"%s has no named line of work to push: check out a branch first", b.path)
+	}
+	spec := config.RefSpec("refs/heads/" + st.Name + ":refs/heads/" + branch)
 	tc := transportContext{Op: "push", Path: b.path, Remote: remote, URL: b.remoteURL(remote)}
 	err = b.repo.PushContext(ctx, &git.PushOptions{
 		RemoteName:        remote,
@@ -406,9 +410,9 @@ func (b *goGitBackend) Push(ctx context.Context, req PushRequest) (PushResult, e
 	})
 	switch {
 	case errors.Is(err, git.NoErrAlreadyUpToDate):
-		return PushResult{Remote: remote, Branch: branch, UpToDate: true}, nil
+		return PushResult{Remote: remote, Target: branch, UpToDate: true}, nil
 	case err == nil:
-		return PushResult{Remote: remote, Branch: branch, Pushed: st.Ahead}, nil
+		return PushResult{Remote: remote, Target: branch, Pushed: st.Ahead}, nil
 	}
 	if classified := classifyTransport(tc, err, redactSecrets(err.Error())); classified != nil {
 		return PushResult{}, classified
@@ -428,16 +432,16 @@ func (b *goGitBackend) Push(ctx context.Context, req PushRequest) (PushResult, e
 		"could not push to %s/%s: your commits are safe locally and nothing was lost", remote, branch)
 }
 
-// Abort is not available in process: undoing a half-finished rebase needs the
-// reflog handling only the system backend has.
-func (b *goGitBackend) Abort(_ context.Context) error {
+// Undo is not available in process: taking back a half-finished rebase needs
+// the reflog handling only the system backend has.
+func (b *goGitBackend) Undo(_ context.Context) error {
 	return failf("abort", CodeUnsupported,
 		"the go-git backend cannot abort a rebase or a merge: run `git rebase --abort` "+
 			"or `git merge --abort` in %s, or install git so the system backend is used", b.path)
 }
 
-// Continue is not available in process, for the same reason as Abort.
-func (b *goGitBackend) Continue(_ context.Context) (IntegrateResult, error) {
+// Resume is not available in process, for the same reason as Undo.
+func (b *goGitBackend) Resume(_ context.Context) (IntegrateResult, error) {
 	return IntegrateResult{}, failf("continue", CodeUnsupported,
 		"the go-git backend cannot continue a rebase or a merge: run `git rebase --continue` "+
 			"or `git merge --continue` in %s, or install git so the system backend is used", b.path)

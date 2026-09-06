@@ -10,6 +10,7 @@ import (
 	"github.com/digiogithub/git-in-track/internal/config"
 	"github.com/digiogithub/git-in-track/internal/core"
 	"github.com/digiogithub/git-in-track/internal/core/osfs"
+	"github.com/digiogithub/git-in-track/internal/gitops"
 )
 
 // addFlags mirrors the flags of docs/07 section 4.2.
@@ -27,9 +28,11 @@ type addPayload struct {
 	Workspace string   `json:"workspace"`
 	Repo      repoInfo `json:"repo"`
 	Git       bool     `json:"git"`
-	Projects  []string `json:"projects"`
-	Items     int      `json:"items"`
-	Config    string   `json:"config"`
+	// VCS is what manages the folder: git, jj or nothing (GIT-US-0038).
+	VCS      core.VCSInfo `json:"vcs"`
+	Projects []string     `json:"projects"`
+	Items    int          `json:"items"`
+	Config   string       `json:"config"`
 	// Created is the project `--key` scaffolded, absent when none was.
 	Created *initPayload `json:"created,omitempty"`
 	// CreatedTeam is the team repository `--team --key` scaffolded, absent when
@@ -144,6 +147,7 @@ func runAdd(cmd *cobra.Command, flags *globalFlags, local *addFlags, target stri
 			Workspace:   res.Workspace,
 			Repo:        newRepoInfo(repo),
 			Git:         config.IsGitRepo(repo.Path),
+			VCS:         gitops.DetectVCS(repo.Path),
 			Projects:    view.Keys(),
 			Items:       view.Stats.Items,
 			Config:      res.Path,
@@ -153,7 +157,12 @@ func runAdd(cmd *cobra.Command, flags *globalFlags, local *addFlags, target stri
 	}
 	p.Printf("added %s repository %s  %s  (docs: %s, %s)\n",
 		repo.Role, repo.ID, repo.Path, repo.DocsFolder, describeProjects(view))
-	if !config.IsGitRepo(repo.Path) {
+	switch vcs := gitops.DetectVCS(repo.Path); {
+	case vcs.IsJujutsu():
+		// A jj repository is registered, indexed and served like any other; what
+		// it does not get is the git write path (GIT-US-0038).
+		p.Warnf("note: %s is %s\n", repo.Path, vcs.Summary())
+	case vcs.Kind == core.VCSNone:
 		p.Warnf("warning: %s is not a git working tree; git operations will be unavailable\n", repo.Path)
 	}
 	for _, candidate := range undeclaredCandidates(repo) {
