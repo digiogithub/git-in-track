@@ -239,20 +239,39 @@ func TestJujutsuGuardRefusesEveryWrite(t *testing.T) {
 	}
 }
 
-// TestJujutsuStatusIsHonest checks the two corrections the guard applies: a jj
-// working copy is neither a detached HEAD nor a permanently dirty tree.
-func TestJujutsuStatusIsHonest(t *testing.T) {
+// TestJujutsuGuardStatusIsHonest checks the two corrections the read-only guard
+// of GIT-US-0038 applies: a jj working copy is neither a detached HEAD nor a
+// permanently dirty tree.
+//
+// The guard is what drives a jj repository when no jj binary is installed.
+// Since GIT-US-0040 a repository with one is driven by the jj backend instead,
+// which answers the same questions from jj itself and is covered by
+// jj_backend_test.go, so the guard is built here directly rather than through
+// Open.
+func TestJujutsuGuardStatusIsHonest(t *testing.T) {
 	dir := newJujutsuRepo(t, true)
+	info := DetectVCS(dir)
+	if !info.IsJujutsu() || info.Layout != core.LayoutColocated {
+		t.Fatalf("DetectVCS = %+v, want a colocated jj repository", info)
+	}
 
 	for _, kind := range backends(t) {
 		t.Run(string(kind), func(t *testing.T) {
-			b, err := Open(dir, Options{Backend: kind})
-			if err != nil {
-				t.Fatalf("open the jj repository: %v", err)
+			var (
+				plain Backend
+				err   error
+			)
+			if kind == KindSystem {
+				plain, err = openSystem(dir, Options{})
+			} else {
+				plain, err = openGoGit(dir, Options{})
 			}
-			info := VCSOf(b)
-			if !info.IsJujutsu() || info.Layout != core.LayoutColocated {
-				t.Fatalf("VCSOf = %+v, want a colocated jj repository", info)
+			if err != nil {
+				t.Fatalf("open the jj repository as git: %v", err)
+			}
+			b := guardJujutsu(plain, info)
+			if got := VCSOf(b); !got.IsJujutsu() || got.Layout != core.LayoutColocated {
+				t.Fatalf("VCSOf = %+v, want a colocated jj repository", got)
 			}
 			if caps := b.Capabilities(); caps.Writes || caps.VCS != string(core.VCSJujutsu) {
 				t.Errorf("capabilities = %+v, want vcs=jj and writes=false", caps)
@@ -356,21 +375,35 @@ func TestNoGitWriteReachesAJujutsuRepository(t *testing.T) {
 	}
 }
 
-// TestOpenNonColocatedJujutsuRepository documents the decision for a jj
-// repository with no git working tree: it is not opened as a git repository,
-// and the reason names jj instead of claiming the folder is not a repository.
+// TestOpenNonColocatedJujutsuRepository covers the layout git cannot serve at
+// all. Before GIT-US-0040 it was refused outright; the jj backend reads it, and
+// asking for that backend where there is no jj working copy is still refused.
 func TestOpenNonColocatedJujutsuRepository(t *testing.T) {
 	dir := newJujutsuRepo(t, false)
-	_, err := Open(dir, Options{})
-	if err == nil {
-		t.Fatal("a non-colocated jj repository was opened as a git working tree")
+	b, err := Open(dir, Options{})
+	if err != nil {
+		t.Fatalf("a non-colocated jj repository could not be opened: %v", err)
 	}
-	if code := CodeOf(err); code != CodeJujutsuUnsupported {
-		t.Fatalf("code = %q, want %q", code, CodeJujutsuUnsupported)
+	if b.Name() != string(KindJujutsu) {
+		t.Fatalf("backend = %q, want %q", b.Name(), KindJujutsu)
 	}
-	if !strings.Contains(err.Error(), "Jujutsu") {
-		t.Errorf("the reason does not name Jujutsu: %v", err)
+	info := VCSOf(b)
+	if !info.IsJujutsu() || info.Layout != core.LayoutInternal {
+		t.Fatalf("VCSOf = %+v, want an internal jj layout", info)
 	}
+	st, err := b.Status(t.Context())
+	if err != nil {
+		t.Fatalf("status of a non-colocated repository: %v", err)
+	}
+	if st.Anonymous {
+		t.Error("a non-colocated jj working copy was reported as anonymous")
+	}
+
+	t.Run("the jj backend refuses a working tree that is not jj", func(t *testing.T) {
+		if _, gitErr := Open(newRepo(t), Options{Backend: KindJujutsu}); gitErr == nil {
+			t.Fatal("the jj backend opened a plain git working tree")
+		}
+	})
 }
 
 // TestResolveJujutsu checks the binary probe and the minimum version.

@@ -76,6 +76,10 @@ const (
 	// The backlog files are still indexed and served; only git-backed features
 	// are unavailable.
 	CodeJujutsuUnsupported = "vcs_jujutsu_unsupported"
+	// CodeJujutsuTooOld means the installed jj is older than the release this
+	// build drives (core.MinJujutsuVersion), so the backend refuses to run
+	// commands whose output it has never been verified against (GIT-US-0040).
+	CodeJujutsuTooOld = "vcs_jujutsu_too_old"
 	// CodeNotFound means the path asked about is not conflicted, normally
 	// because the integration moved on while the resolver was open
 	// (GIT-US-0022).

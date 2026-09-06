@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	git "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 )
 
@@ -24,16 +25,33 @@ func (b *goGitBackend) History(ctx context.Context, req HistoryRequest) (FileHis
 	head, err := b.repo.Head()
 	if err != nil {
 		// A repository with no commit yet has an empty history, not a failure.
+		return out, nil //nolint:nilerr // an unborn branch is an empty history
+	}
+	return walkGitHistory(ctx, b.repo, head.Hash(), b.path, req)
+}
+
+// walkGitHistory reads every revision of req.Paths out of a git object store,
+// starting from one commit.
+//
+// It is shared with the Jujutsu backend, which walks the very same kind of
+// store — jj commits into a git repository — from the commit jj reports for
+// `@` rather than from git's HEAD, which in a jj repository points at `@-`
+// (ADR-023). `label` names the repository in a failure message.
+func walkGitHistory(
+	ctx context.Context, repo *git.Repository, from plumbing.Hash, label string, req HistoryRequest,
+) (FileHistory, error) {
+	req = req.normalized()
+	out := FileHistory{Revisions: []FileRevision{}, Head: from.String()}
+	if len(req.Paths) == 0 {
 		return out, nil
 	}
-	out.Head = head.Hash().String()
 
 	wanted := make(map[string]bool, len(req.Paths))
 	for _, path := range req.Paths {
 		wanted[path] = true
 	}
 	opts := &git.LogOptions{
-		From:       head.Hash(),
+		From:       from,
 		Order:      git.LogOrderCommitterTime,
 		PathFilter: func(p string) bool { return wanted[p] },
 	}
@@ -41,16 +59,16 @@ func (b *goGitBackend) History(ctx context.Context, req HistoryRequest) (FileHis
 		since := req.Since
 		opts.Since = &since
 	}
-	iter, err := b.repo.Log(opts)
+	iter, err := repo.Log(opts)
 	if err != nil {
 		return FileHistory{}, wrap("history", CodeCommitFailed, err,
-			"read the history of %s", b.path)
+			"read the history of %s", label)
 	}
 	defer iter.Close()
 
 	err = iter.ForEach(func(commit *object.Commit) error {
 		if err := ctx.Err(); err != nil {
-			return fmt.Errorf("walk the history of %s: %w", b.path, err)
+			return fmt.Errorf("walk the history of %s: %w", label, err)
 		}
 		if out.Commits >= req.Limit {
 			out.Truncated = true
@@ -84,7 +102,7 @@ func (b *goGitBackend) History(ctx context.Context, req HistoryRequest) (FileHis
 	})
 	if err != nil && !errors.Is(err, errStopWalk) {
 		return FileHistory{}, wrap("history", CodeCommitFailed, err,
-			"walk the history of %s", b.path)
+			"walk the history of %s", label)
 	}
 	out.Revisions = dedupeRevisions(out.Revisions)
 	// A path that was already absent at the oldest commit read is not a

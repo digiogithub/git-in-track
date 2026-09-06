@@ -34,6 +34,16 @@ because a commit list cannot express them.
   their own kind by `gintrack ls`, `gintrack add`, `gintrack doctor`, the repository and
   sync payloads and the web app (`GIT-US-0038`, ADR-021, docs/06 §14). A jj workspace with
   no colocated git working tree is registered and indexed instead of being refused.
+- A **`jj` backend** reads a Jujutsu repository through `jj` itself, alongside `system` and
+  `go-git` and selected for a jj working tree in either layout (`GIT-US-0040`, docs/06
+  §14.4-14.5). It reports the real bookmark as the line of work with the bookmark as its
+  push target, jj's own dirty set instead of git's index, the tracked remote bookmark with
+  ahead/behind counted over a revset against it, `undo: operation_log` with nothing to
+  resume, and the three sides of a conflict materialized out of the commit that records
+  them with `markers: "jj"`. A **non-colocated repository is now readable at all** — status,
+  conflicts and, for the first time, sprint metrics. Every read carries
+  `--ignore-working-copy`, so looking at a repository never snapshots the user's working
+  copy or adds an entry to the operation log. Writes remain refused (`GIT-US-0041`).
 
 ### Changed
 
@@ -61,9 +71,17 @@ because a commit list cannot express them.
   repository with `vcs_jujutsu_write_refused` (HTTP 409) and a message naming the `jj`
   command to run instead (`GIT-US-0038`).
 - A jj repository is no longer shown with a destructive "Detached HEAD" badge or as a
-  permanently dirty tree. Its branch is reported as `@`, its state is `jujutsu`, and the
-  sync panel says "Managed by Jujutsu — reads work, writes go through jj" instead of
-  advising a branch checkout that is impossible there.
+  permanently dirty tree. Its branch is reported as `@` — as its bookmark, once the `jj`
+  backend of `GIT-US-0040` is driving it — and the sync panel says "Managed by Jujutsu —
+  reads work, writes go through jj" instead of advising a branch checkout that is
+  impossible there.
+- A jj repository's sync state is the truthful one (`up_to_date`, `ahead`, `behind`,
+  `diverged`, `dirty`, `conflicted`) instead of the `jujutsu` placeholder, which now means
+  "no jj binary is installed, so the read-only git guard is driving this repository"
+  (`GIT-US-0040`). The `jujutsu` flag on the status is unchanged, and is what the UI reads.
+- A jj older than 0.41 is refused with `vcs_jujutsu_too_old` when a repository is opened,
+  instead of being only a `gintrack doctor` warning: the backend does not parse output it
+  has not been verified against (`GIT-US-0040`).
 
 ## [1.0.0] — unreleased, prepared
 

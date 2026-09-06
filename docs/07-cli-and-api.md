@@ -459,8 +459,11 @@ index build. The git columns (`branch`, `clean`, `ahead`, `behind`) arrive with 
 backend in Phase 4; until then `git` only reports whether the folder is a working tree.
 
 The `VCS` column names what manages the folder: `git`, `jj (colocated)`, `jj` or `none`
-(GIT-US-0038, doc 06 §14). A `jj` repository is read and indexed like any other and refuses
-every git write.
+(GIT-US-0038, doc 06 §14). A `jj` repository is read and indexed like any other. Since
+GIT-US-0040 its reads go through the `jj` binary — the real bookmark as the line of work,
+jj's own dirty set, ahead/behind against the tracked remote bookmark, and conflicts read
+out of the commit that records them — in both layouts. Every write is still refused;
+writing through `jj` is GIT-US-0041.
 
 ```
 $ gintrack ls
@@ -771,7 +774,10 @@ Checks performed:
 3. **Repository** — is a git working tree or a Jujutsu workspace (GIT-US-0038: a jj
    repository is reported as such, with "reads work, writes go through jj", and the
    `jj` scope reports the binary and warns when it is older than 0.41 or missing while a
-   registered repository needs it), has a remote, docs folder exists, `.pmngr`
+   registered repository needs it — with GIT-US-0040 that warning has teeth, because a
+   repository whose jj is older than 0.41 fails to open with `vcs_jujutsu_too_old` and one
+   with no jj binary at all falls back to the read-only git guard, or to no backend when
+   its store lives inside `.jj`), has a remote, docs folder exists, `.pmngr`
    scaffold present, `project.yaml`/`team.yaml` parse and validate. What is required
    depends on the role: a repository registered as a **team** repository is checked for a
    root `team.yaml` and never for a backlog — it holds none by the hard rule of doc 04 §1 —
@@ -1960,10 +1966,13 @@ happened and what to do next. The codes are the `git_*` set of doc 06 §12:
 `git_dirty_tree`, `git_no_remote`, `git_no_upstream`, `git_unexpected_branch`,
 `git_operation_in_progress`, `git_auth_required`, `git_network_unavailable`,
 `git_host_key_unverified`, `git_conflict`, `git_push_rejected`, `git_cancelled`,
-plus `vcs_jujutsu_write_refused` and `vcs_jujutsu_unsupported` (doc 06 §14). A repository
-managed with Jujutsu carries `"vcs": {"kind":"jj","layout":"colocated"}` in the status and
-state `jujutsu`; every write against it is refused with `409 Conflict` and a message naming
-the `jj` command to run instead.
+plus `vcs_jujutsu_write_refused`, `vcs_jujutsu_unsupported` and `vcs_jujutsu_too_old`
+(doc 06 §14). A repository managed with Jujutsu carries
+`"vcs": {"kind":"jj","layout":"colocated"}` in the status and `"jujutsu": true`; since
+GIT-US-0040 its `state` is the truthful one (`up_to_date`, `ahead`, `behind`, `diverged`,
+`dirty`, `conflicted`), and the `jujutsu` state is now what a repository reports when no jj
+binary is installed and the read-only git guard is driving it. Every write against it is
+refused with `409 Conflict` and a message naming the `jj` command to run instead.
 `POST /api/v1/sync/abort` undoes a half-finished rebase or merge and answers with the
 repository's fresh status.
 
@@ -2252,17 +2261,24 @@ from every call:
 ```go
 package gitops
 
-// Open binds a backend to a working tree; Kind is auto | go-git | system.
-// A Jujutsu working tree is wrapped in a guard that refuses every git write
-// with vcs_jujutsu_write_refused (GIT-US-0038, doc 06 §14); one whose git store
-// lives inside .jj is refused with vcs_jujutsu_unsupported.
+// Open binds a backend to a working tree; Kind is auto | go-git | system | jj.
+// A Jujutsu working tree is bound to the jj backend whatever Kind says, in
+// either layout (GIT-US-0040, doc 06 §14): the git backends read HEAD, which
+// sits at @-, and the index, which jj keeps synchronized with @. The jj backend
+// reads through the jj binary and refuses every write with
+// vcs_jujutsu_write_refused until GIT-US-0041. A jj older than 0.41 fails with
+// vcs_jujutsu_too_old; with no jj binary a colocated repository falls back to
+// the read-only guard of GIT-US-0038 and one whose git store lives inside .jj
+// is refused with vcs_jujutsu_unsupported.
 func Open(path string, opts Options) (Backend, error)
 
 // DetectVCS reports git | jj | none, and the jj layout: colocated | internal.
 func DetectVCS(path string) core.VCSInfo
 
-// ResolveJujutsu locates the jj binary and reads `jj --version`, the only jj
-// command this package runs: every other one snapshots the working copy.
+// ResolveJujutsu locates the jj binary and reads `jj --version`. Every other jj
+// invocation of the backend carries --ignore-working-copy, because without it
+// jj snapshots the working copy first — a write, and one a status poll must
+// never make.
 func ResolveJujutsu(binary string) (path, version string, err error)
 
 // Every concept in this interface exists in git and in Jujutsu, so a jj
@@ -2271,7 +2287,7 @@ func ResolveJujutsu(binary string) (path, version string, err error)
 // backend reports — Line.Kind, Integration.Undo/Resume, ConflictVersions.Markers
 // — and never an assumption the caller makes.
 type Backend interface {
-    Name() string                                     // "go-git" | "system"
+    Name() string                                     // "go-git" | "system" | "jj"
     Path() string
     Capabilities() Capabilities
     Identity(ctx context.Context) (Identity, error)

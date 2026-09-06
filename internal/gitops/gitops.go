@@ -27,10 +27,17 @@ const (
 	// KindSystem shells out to the git executable, which is what inherits the
 	// user's credential helpers, hooks and signing setup.
 	KindSystem Kind = "system"
+	// KindJujutsu shells out to the jj executable. It is not a setting a user
+	// picks: `auto` selects it for a Jujutsu working tree, where the two git
+	// backends read the wrong line of work and the wrong dirty set, and a
+	// non-colocated repository has no git working tree at all (GIT-US-0040).
+	KindJujutsu Kind = "jj"
 )
 
 // Valid reports whether the kind is one this build knows.
-func (k Kind) Valid() bool { return k == KindAuto || k == KindGoGit || k == KindSystem }
+func (k Kind) Valid() bool {
+	return k == KindAuto || k == KindGoGit || k == KindSystem || k == KindJujutsu
+}
 
 // MinSystemGit is the oldest system git this build drives. Older binaries lack
 // `git commit --pathspec-from-file` and predate the plumbing the sync pipeline
@@ -295,6 +302,9 @@ type Options struct {
 	// GitBinary overrides the executable the system backend runs. Empty means
 	// the `git` on PATH.
 	GitBinary string
+	// JujutsuBinary overrides the executable the jj backend runs. Empty means
+	// the `jj` on PATH.
+	JujutsuBinary string
 	// AuthorName and AuthorEmail override the git configuration when both are
 	// set (docs/06 section 3.3).
 	AuthorName  string
@@ -325,13 +335,32 @@ func Open(path string, opts Options) (Backend, error) {
 		opts.Now = time.Now
 	}
 
-	// A Jujutsu repository is opened read-only: the backend is wrapped in a
-	// guard that refuses every git write before it runs (GIT-US-0038). One
-	// whose git store lives inside `.jj` has no git working tree at all, so
-	// there is nothing to open — the backlog files are still indexed.
+	// A Jujutsu working tree is driven by the jj backend, whatever `git.backend`
+	// says: the two git backends read git's HEAD, which sits at `@-`, and git's
+	// index, which jj keeps synchronized with `@`, so both of them describe a
+	// healthy jj repository as a detached and permanently dirty one
+	// (GIT-US-0040).
 	info := DetectVCS(abs)
-	if info.IsJujutsu() && info.Layout == core.LayoutInternal {
-		return nil, failf("open", CodeJujutsuUnsupported, "%s is %s", abs, info.Summary())
+	if info.IsJujutsu() {
+		b, jjErr := openJujutsu(abs, info, opts)
+		if jjErr == nil {
+			return b, nil
+		}
+		// A jj that is installed but too old is a refusal, not a fallback: this
+		// build has not been verified against its output.
+		if kind == KindJujutsu || CodeOf(jjErr) == CodeJujutsuTooOld {
+			return nil, jjErr
+		}
+		// With no jj binary at all the repository degrades to the read-only
+		// guard of GIT-US-0038 over a git backend, which only a colocated
+		// repository has. The backlog files of the other one are still indexed
+		// and served; only the git-backed features are unavailable.
+		if info.Layout == core.LayoutInternal {
+			return nil, failf("open", CodeJujutsuUnsupported, "%s is %s", abs, info.Summary())
+		}
+	} else if kind == KindJujutsu {
+		return nil, failf("open", CodeNotARepository,
+			"%s is not a Jujutsu working copy, so the jj backend cannot drive it", abs)
 	}
 
 	switch kind {
@@ -370,6 +399,13 @@ func Resolve(kind Kind, binary string) (name, version string) {
 	}
 	if kind == KindGoGit {
 		return string(KindGoGit), ""
+	}
+	if kind == KindJujutsu {
+		_, v, err := ResolveJujutsu(binary)
+		if err != nil {
+			return string(KindJujutsu), ""
+		}
+		return string(KindJujutsu), v
 	}
 	_, v, err := resolveGit(binary)
 	if err != nil {

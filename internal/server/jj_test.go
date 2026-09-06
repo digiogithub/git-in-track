@@ -74,7 +74,12 @@ func newJujutsuServer(t *testing.T, git config.Git) (*Server, string) {
 // jj — never as a detached, permanently dirty git one — and refuses every write
 // against it with the dedicated code.
 func TestJujutsuRepositorySurface(t *testing.T) {
-	t.Run("the sync status reports the kind and the jujutsu state", func(t *testing.T) {
+	// Since GIT-US-0040 the state is the truthful one — this fixture has a
+	// bookmark and no remote, so it is `no_remote` — and the `jujutsu` flag is
+	// what tells the UI to render the repository as jj-managed. The `jujutsu`
+	// state itself is now the degraded reading of a repository whose jj binary
+	// is missing.
+	t.Run("the sync status reports the kind and a truthful state", func(t *testing.T) {
 		s, _ := newJujutsuServer(t, config.Default().Git)
 		var body struct {
 			Repos []syncRepoStatus `json:"repos"`
@@ -91,8 +96,8 @@ func TestJujutsuRepositorySurface(t *testing.T) {
 		if repo.Status == nil {
 			t.Fatalf("no status was read: %s", repo.Reason)
 		}
-		if repo.Status.State != gitops.StateJujutsu {
-			t.Errorf("state = %q, want %q", repo.Status.State, gitops.StateJujutsu)
+		if repo.Status.State != gitops.StateNoRemote {
+			t.Errorf("state = %q, want %q", repo.Status.State, gitops.StateNoRemote)
 		}
 		if repo.Status.Anonymous {
 			t.Error("a jj working copy is reported as a detached HEAD")

@@ -312,6 +312,9 @@ func itoa(n int) string {
 // commandError carries what a failed git invocation printed, which is the only
 // actionable part of a hook refusal.
 type commandError struct {
+	// bin names the executable that failed, so a jj invocation is not reported
+	// as a git one. Empty means git, which is what every git backend passes.
+	bin    string
 	args   []string
 	output string
 	err    error
@@ -319,7 +322,11 @@ type commandError struct {
 
 // Error implements the error interface.
 func (e *commandError) Error() string {
-	msg := "git " + strings.Join(e.args, " ") + ": " + e.err.Error()
+	bin := e.bin
+	if bin == "" {
+		bin = "git"
+	}
+	msg := bin + " " + strings.Join(e.args, " ") + ": " + e.err.Error()
 	if e.output != "" {
 		msg += ": " + e.output
 	}
