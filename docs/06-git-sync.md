@@ -440,17 +440,20 @@ marker. The package is WASM-safe, so browser mode runs the same code through
 `conflict.merge` on the core bridge.
 
 **The git plumbing — `internal/gitops`.** `Backend` gained
-`ConflictFile(ctx, path)`, which reads stages 1, 2 and 3 of a conflicted path out
-of the index (base, ours, theirs) plus the working copy and a binary flag, and
-`ResolvePath(ctx, req)`, which writes one resolution, stages it and — once no
-conflicted path is left and the caller asked for it — continues the rebase or
-merge. **Sides are normalised to the user's frame of reference**: during a rebase
-git replays local commits onto the upstream, so its stage 2 is the *remote* work;
-`ConflictFile` swaps them back and sets `rebased: true`, so "keep mine" always
-means the commit this user made. Reading works on both backends; applying a
-resolution is system-git only, for the same reason `Abort` and `Continue` are
-(go-git has no rebase), and go-git says so with `git_unsupported` instead of
-half-resolving. Abort remains available at every step.
+`ConflictFile(ctx, path)`, which produces the three sides of a conflicted path
+(base, ours, theirs) plus the working copy, the marker dialect that copy is
+written in and a binary flag, and `ResolvePath(ctx, req)`, which records one
+resolution and — once no conflicted path is left and the caller asked for it —
+carries the integration forward. Where the three sides come from is the
+backend's business: both git backends read index stages 1, 2 and 3, and a jj
+backend materializes them from the conflict recorded inside the commit
+(§14.6). **Sides are normalised to the user's frame of reference**: during a
+rebase git replays local commits onto the upstream, so its stage 2 is the
+*remote* work; `ConflictFile` swaps them back and sets `rebased: true`, so "keep
+mine" always means the commit this user made. Reading works on both backends;
+applying a resolution is system-git only, for the same reason `Undo` and
+`Resume` are (go-git has no rebase), and go-git says so with `git_unsupported`
+instead of half-resolving. Undo remains available at every step.
 
 **The API — `internal/server/conflicts.go`.**
 `GET /api/v1/sync/conflicts/file?repo=&path=` serves the three versions and the
@@ -585,9 +588,11 @@ compatible binary is on `PATH`, else go-git), `go-git`, or `system`.
 `internal/gitops` binds one `Backend` to one working tree, so the caller passes
 no repository path per call. It exposes `Name`, `Path`, `Capabilities`,
 `Identity`, `Status` and `Commit` (GIT-US-0020), the sync half added by
-GIT-US-0021 (`SyncStatus`, `Fetch`, `Integrate`, `Push`, `Abort`, `Continue`
+GIT-US-0021 (`SyncStatus`, `Fetch`, `Integrate`, `Push`, `Undo`, `Resume`
 and `Commits`) and the structured conflict surface added by GIT-US-0022
-(`ConflictFile` and `ResolvePath`, §5.7).
+(`ConflictFile` and `ResolvePath`, §5.7). GIT-US-0039 restated every one of
+those in terms both git and jj have (§14.6); `Undo` and `Resume` are what
+GIT-US-0021 called `Abort` and `Continue`.
 
 A third go-git gap matters to sync, on top of the two below: **go-git has no
 rebase, and its merge is fast-forward only.** The go-git backend therefore
@@ -1164,9 +1169,30 @@ offering buttons that would be refused.
 
 It is not the jj backend. Writing through jj — `jj commit`, bookmarks instead of
 branches, `jj git push`, conflicts recorded inside commits, `jj undo` in place of
-`--abort` — is `GIT-US-0039` (generalizing the `Backend` interface) and
-`GIT-US-0040`/`GIT-US-0041` (the backend itself). Until those land a jj
-repository is read-only to this product, and it says so everywhere.
+`--abort` — is `GIT-US-0040`/`GIT-US-0041`. Until those land a jj repository is
+read-only to this product, and it says so everywhere.
+
+### 14.6 The backend interface a jj backend can satisfy
+
+`GIT-US-0039` removed the four git-only concepts from `Backend`, so that the
+backend of `GIT-US-0040` can be honest instead of faking machinery jj does not
+have ([ADR-022](./adr/ADR-022-a-vcs-neutral-backend-interface.md)). Nothing a
+user sees changed: the HTTP surface keeps every field it had, both git backends
+keep every capability, and the new information is additive.
+
+| Was (git's) | Is (both VCSs') | How git answers it | How jj will |
+|---|---|---|---|
+| `Commit` stages a pathspec through the index | `Commit` records **exactly these paths** and nothing else; the capability is `ScopedCommit` | `git add` + `git commit --only -- <paths>` | `jj commit -m … -- <paths>`, or `jj squash -- <paths>`; there is no index |
+| `SyncStatus.Operation`, a `MERGE_HEAD`/`rebase-merge` marker | `Integration{Operation, Unfinished, Undo, Resume}` — an integration has not settled, and here is how to take it back or carry it forward | `Unfinished` from the marker, `Undo: abort`, `Resume: continue` | nothing is ever half-finished; `Undo: operation_log` (`jj undo`), `Resume: ""` — resolving the conflict inside the commit is the whole of it |
+| `Abort` / `Continue`, named after git's flags | `Undo` / `Resume`, named after what they mean | `rebase --abort` / `rebase --continue` | `jj undo`; `Resume` refuses with `git_unsupported`, because there is nothing to resume |
+| `ConflictFile` reads index stages 1/2/3 | the three sides, **however the backend can produce them**, plus `markers` naming the dialect the working file uses | stages 1/2/3, `markers: git` | materialized from the conflict inside the commit, `markers: jj` (`%%%%%%%`, `+++++++`) |
+| `Status.Branch` + `Detached`, and a push of `HEAD:refs/heads/<branch>` | `Line{Name, Anonymous, Kind, PushTarget}` — the current line of work and where publishing it goes | `Kind: branch`, `PushTarget` the branch; a detached HEAD is `Anonymous` | `Kind: working-copy` for `@`, `PushTarget` the bookmark `jj git push` would move |
+
+`ResolvePath`'s precondition is now "an integration has not settled" rather than
+"an operation marker is present", which is the same test in git and a
+satisfiable one in jj, where the conflict itself is what is unsettled. The
+preflight refusal names the command of the VCS that reported the integration, so
+a jj repository is never told to run `git rebase --abort`.
 
 ---
 

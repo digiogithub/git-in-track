@@ -53,7 +53,7 @@ func (b *systemBackend) Capabilities() Capabilities {
 		Hooks:             true,
 		Signing:           true,
 		CredentialHelpers: true,
-		PathspecCommit:    true,
+		ScopedCommit:      true,
 		VCS:               string(core.VCSGit),
 		Writes:            true,
 	}
@@ -87,8 +87,7 @@ func (b *systemBackend) Status(ctx context.Context) (Status, error) {
 			return Status{}, wrap("status", CodeCommitFailed, err, "read HEAD of %s", b.path)
 		}
 	}
-	out.Branch = strings.TrimSpace(branch)
-	out.Detached = out.Branch == "HEAD"
+	out.Line = gitLine(strings.TrimSpace(branch))
 
 	raw, err := b.run(ctx, "status", "--porcelain", "--untracked-files=normal")
 	if err != nil {

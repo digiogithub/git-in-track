@@ -45,11 +45,11 @@ func (b *systemBackend) SyncStatus(ctx context.Context) (SyncStatus, error) {
 	}
 	out.Dirty = normalisePaths(out.Dirty)
 
-	out.Remote = b.remoteOf(ctx, out.Branch)
+	out.Remote = b.remoteOf(ctx, out.Name)
 	if out.Remote != "" {
 		out.RemoteURL = redactURL(b.remoteURL(ctx, out.Remote))
 	}
-	out.Operation = b.operationInProgress(ctx)
+	out.Integration = gitIntegration(b.operationInProgress(ctx))
 	out.resolveState()
 	return out, nil
 }
@@ -57,12 +57,12 @@ func (b *systemBackend) SyncStatus(ctx context.Context) (SyncStatus, error) {
 // parseBranchLine reads `main...origin/main [ahead 1, behind 2]`.
 func (b *systemBackend) parseBranchLine(out *SyncStatus, line string) {
 	if strings.HasPrefix(line, "HEAD (no branch)") {
-		out.Branch, out.Detached = "HEAD", true
+		out.Line = gitLine("HEAD")
 		return
 	}
 	head, counters, _ := strings.Cut(line, " [")
 	local, upstream, hasUpstream := strings.Cut(head, "...")
-	out.Branch = strings.TrimSpace(local)
+	out.Line = gitLine(strings.TrimSpace(local))
 	if hasUpstream {
 		out.Upstream = strings.TrimSpace(upstream)
 	}
@@ -191,7 +191,7 @@ func (b *systemBackend) target(st SyncStatus, remote, branch string) (resolvedRe
 		}
 	}
 	if branch == "" {
-		branch = st.Branch
+		branch = st.PushTarget
 	}
 	upstream := st.Upstream
 	if upstream == "" && remote != "" && branch != "" {
@@ -253,7 +253,7 @@ func (b *systemBackend) integrateFailure(ctx context.Context, strategy Strategy,
 	st, statusErr := b.SyncStatus(ctx)
 	res := IntegrateResult{Strategy: strategy, Before: before}
 	if statusErr == nil && len(st.Conflicted) > 0 {
-		res.Conflicts, res.Operation = st.Conflicted, st.Operation
+		res.Conflicts, res.Integration = st.Conflicted, st.Integration
 		return res, conflictError("integrate", strategy, st.Conflicted, b.path)
 	}
 	return res, &Error{
@@ -269,7 +269,7 @@ func (b *systemBackend) Push(ctx context.Context, req PushRequest) (PushResult, 
 	if err != nil {
 		return PushResult{}, err
 	}
-	remote, branch, _ := b.target(st, req.Remote, req.Branch)
+	remote, branch, _ := b.target(st, req.Remote, req.Target)
 	if remote == "" {
 		return PushResult{}, failf("push", CodeNoRemote, "%s has no git remote to push to", b.path)
 	}
@@ -281,7 +281,7 @@ func (b *systemBackend) Push(ctx context.Context, req PushRequest) (PushResult, 
 	if _, err := b.run(ctx, args...); err != nil {
 		return PushResult{}, b.pushError(ctx, err, remote, branch)
 	}
-	return PushResult{Remote: remote, Branch: branch, Pushed: st.Ahead, UpToDate: st.Ahead == 0}, nil
+	return PushResult{Remote: remote, Target: branch, Pushed: st.Ahead, UpToDate: st.Ahead == 0}, nil
 }
 
 // pushError classifies a refused push. A rejection is not a broken repository:
@@ -316,8 +316,9 @@ func (b *systemBackend) pushError(ctx context.Context, err error, remote, branch
 	}
 }
 
-// Abort undoes a half-finished rebase or merge.
-func (b *systemBackend) Abort(ctx context.Context) error {
+// Undo takes back an unfinished integration. Git's way of doing that is
+// `--abort`, which is what Integration.Undo announces as UndoAbort.
+func (b *systemBackend) Undo(ctx context.Context) error {
 	op := b.operationInProgress(ctx)
 	switch op {
 	case OpRebase:
@@ -334,28 +335,30 @@ func (b *systemBackend) Abort(ctx context.Context) error {
 	return nil
 }
 
-// Continue resumes a stopped rebase or merge. The editor is disabled so that a
-// merge message never opens one in a background process.
-func (b *systemBackend) Continue(ctx context.Context) (IntegrateResult, error) {
+// Resume carries an unfinished integration forward, which in git is
+// `--continue`. The editor is disabled so that a merge message never opens one
+// in a background process.
+func (b *systemBackend) Resume(ctx context.Context) (IntegrateResult, error) {
 	st, err := b.SyncStatus(ctx)
 	if err != nil {
 		return IntegrateResult{}, err
 	}
-	if st.Operation == "" {
+	if !st.Unfinished {
 		return IntegrateResult{}, failf("continue", CodeInProgress,
 			"no rebase or merge is in progress in %s", b.path)
 	}
+	operation := st.Operation
 	if len(st.Conflicted) > 0 {
-		return IntegrateResult{Conflicts: st.Conflicted, Operation: st.Operation},
-			conflictError("continue", Strategy(st.Operation), st.Conflicted, b.path)
+		return IntegrateResult{Conflicts: st.Conflicted, Integration: st.Integration},
+			conflictError("continue", Strategy(operation), st.Conflicted, b.path)
 	}
 	strategy := StrategyRebase
-	if st.Operation == OpMerge {
+	if operation == OpMerge {
 		strategy = StrategyMerge
 	}
 	res := IntegrateResult{Strategy: strategy, Before: b.revision(ctx, "HEAD")}
 	env := append(b.env(), "GIT_EDITOR=true")
-	if _, err := b.runWith(ctx, env, "", st.Operation, "--continue"); err != nil {
+	if _, err := b.runWith(ctx, env, "", operation, "--continue"); err != nil {
 		return b.integrateFailure(ctx, strategy, res.Before, err)
 	}
 	res.After = b.revision(ctx, "HEAD")

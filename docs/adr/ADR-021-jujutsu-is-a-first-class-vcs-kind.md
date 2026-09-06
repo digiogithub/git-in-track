@@ -74,8 +74,10 @@ happens, and no git write may reach a repository that is not detected as git.**
 - **The `Backend` interface is unchanged.** The kind is exposed through the
   optional `VCSOf(Backend)` accessor and through `Capabilities`. Generalizing the
   interface for jj's model — bookmarks instead of branches, conflicts recorded
-  inside commits, `jj undo` in place of `--abort` — is `GIT-US-0039`, and the jj
-  backend itself is `GIT-US-0040`/`GIT-US-0041`.
+  inside commits, `jj undo` in place of `--abort` — is `GIT-US-0039`, done in
+  [ADR-022](ADR-022-a-vcs-neutral-backend-interface.md), and the jj backend
+  itself is `GIT-US-0040`/`GIT-US-0041`. The guard's refusals moved with it:
+  `Abort` and `Continue` are now `Undo` and `Resume`.
 
 ## Consequences
 

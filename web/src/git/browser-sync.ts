@@ -127,9 +127,14 @@ export async function readSyncStatus(root: DirectoryHandleLike): Promise<SyncSta
   if (!branch) {
     status.branch = 'HEAD';
     status.detached = true;
+    status.lineKind = '';
     return resolveState(status);
   }
   status.branch = branch;
+  // isomorphic-git drives git and nothing else, so the line of work is always a
+  // branch and it is its own push target (GIT-US-0039).
+  status.lineKind = 'branch';
+  status.pushTarget = branch;
 
   const dirty = await readDirty(fs);
   status.dirty = dirty.paths;
@@ -148,7 +153,14 @@ export async function readSyncStatus(root: DirectoryHandleLike): Promise<SyncSta
       status.behind = counters.behind;
     }
   }
-  if (await pathExists(fs, '.git/MERGE_HEAD')) status.operation = 'merge';
+  if (await pathExists(fs, '.git/MERGE_HEAD')) {
+    // git takes a half-finished merge back with `--abort` and carries it
+    // forward with `--continue`, which is what this runtime reports.
+    status.operation = 'merge';
+    status.unfinished = true;
+    status.undo = 'abort';
+    status.resume = 'continue';
+  }
   return resolveState(status);
 }
 
@@ -294,7 +306,7 @@ function preflight(status: SyncStatus, opts: SyncOptions & BrowserGitOptions): v
       `Branch ${status.branch} tracks no remote branch yet: push it once from a terminal, then sync.`,
     );
   }
-  if (status.operation) {
+  if (status.unfinished) {
     throw new BrowserGitError(
       'git_operation_in_progress',
       `A ${status.operation} is already in progress here: finish it or abort it before syncing.`,
@@ -500,7 +512,7 @@ async function pathExists(fs: GitFs, path: string): Promise<boolean> {
 function resolveState(status: SyncStatus): SyncStatus {
   status.clean = (status.dirty?.length ?? 0) === 0;
   if ((status.conflicted?.length ?? 0) > 0) status.state = 'conflicted';
-  else if (status.operation) status.state = 'in_progress';
+  else if (status.unfinished) status.state = 'in_progress';
   else if (status.detached) status.state = 'detached';
   else if (!status.remote) status.state = 'no_remote';
   else if (!status.upstream) status.state = 'no_upstream';

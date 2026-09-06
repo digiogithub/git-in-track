@@ -55,6 +55,7 @@ Every ADR uses the same sections:
 | [ADR-019](ADR-019-active-team-is-client-state-threaded-per-call.md) | The active team is client state, threaded on every team-scoped call | Accepted | 8 |
 | [ADR-020](ADR-020-creating-a-team-repository.md) | The product creates team repositories; registering one stays with the CLI | Accepted | 8 |
 | [ADR-021](ADR-021-jujutsu-is-a-first-class-vcs-kind.md) | Jujutsu is a first-class VCS kind, and git never writes behind it | Accepted | 9 |
+| [ADR-022](ADR-022-a-vcs-neutral-backend-interface.md) | The backend interface is VCS-neutral: a line of work, an integration, three sides | Accepted | 9 |
 
 ## Related documents
 

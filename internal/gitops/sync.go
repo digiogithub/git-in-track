@@ -46,10 +46,11 @@ const (
 	StateJujutsu State = "jujutsu"
 	// StateConflicted means an integration stopped with conflicted paths.
 	StateConflicted State = "conflicted"
-	// StateInProgress means a rebase or a merge is half-done; the user has to
-	// continue it or abort it before anything else happens.
+	// StateInProgress means an integration has not settled; the user has to
+	// carry it forward or undo it before anything else happens.
 	StateInProgress State = "in_progress"
-	// StateDetached means HEAD is not on a branch, so there is nothing to sync.
+	// StateDetached means there is no named line of work — git's detached HEAD
+	// — so there is nothing to sync.
 	StateDetached State = "detached"
 	// StateNoRemote means the repository has no remote at all.
 	StateNoRemote State = "no_remote"
@@ -68,13 +69,98 @@ const (
 	StateUpToDate State = "up_to_date"
 )
 
-// Operation names a half-finished git operation.
+// The names an unfinished integration goes by.
 const (
 	// OpRebase is a rebase stopped in the middle, `.git/rebase-merge` present.
 	OpRebase = "rebase"
 	// OpMerge is a merge stopped in the middle, `.git/MERGE_HEAD` present.
 	OpMerge = "merge"
 )
+
+// UndoMethod names how an unfinished integration is taken back (GIT-US-0039).
+type UndoMethod string
+
+// The ways a backend can undo an integration.
+const (
+	// UndoNone means it cannot be undone by this backend.
+	UndoNone UndoMethod = ""
+	// UndoAbort is git's `rebase --abort` / `merge --abort`: the half-finished
+	// operation is thrown away and the tree goes back to where it started.
+	UndoAbort UndoMethod = "abort"
+	// UndoOperationLog is Jujutsu's `jj undo` / `jj op restore`: the whole
+	// operation is reverted from the operation log. There is no half-finished
+	// state to abandon, because a jj integration always completed.
+	UndoOperationLog UndoMethod = "operation_log"
+)
+
+// ResumeMethod names how an unfinished integration is carried forward once its
+// conflicts are resolved (GIT-US-0039).
+type ResumeMethod string
+
+// The ways a backend can carry an integration forward.
+const (
+	// ResumeNone means there is nothing to carry forward: the integration
+	// already completed and the conflicts live inside the resulting commits,
+	// which is Jujutsu's model. Resolving the last file is the whole of it.
+	ResumeNone ResumeMethod = ""
+	// ResumeContinue is git's `rebase --continue` / `merge --continue`.
+	ResumeContinue ResumeMethod = "continue"
+)
+
+// Integration is the state of an integration that has not settled, in terms
+// that exist in every VCS we drive (GIT-US-0039, ADR-022).
+//
+// In git it is a half-finished rebase or merge: `Operation` names it, `Undo` is
+// UndoAbort and `Resume` is ResumeContinue. In Jujutsu no operation is ever
+// half-finished; what is unsettled is a conflict recorded inside a commit, so
+// `Undo` is UndoOperationLog and `Resume` is ResumeNone.
+//
+// It is embedded in SyncStatus and IntegrateResult, so the `operation` key of
+// the published API is unchanged and the rest is additive.
+type Integration struct {
+	// Operation is the VCS's own name for the integration — OpRebase, OpMerge,
+	// or the description a jj backend reads from the operation log — and is
+	// empty when nothing is unfinished.
+	Operation string `json:"operation,omitempty"`
+	// Unfinished reports that the repository is between two settled states, so
+	// nothing else may run against it until it is undone or carried forward.
+	// It is the neutral replacement for "an operation marker is present".
+	Unfinished bool `json:"unfinished,omitempty"`
+	// Undo is how Backend.Undo takes this integration back.
+	Undo UndoMethod `json:"undo,omitempty"`
+	// Resume is how Backend.Resume carries it forward, ResumeNone when there is
+	// nothing left to carry.
+	Resume ResumeMethod `json:"resume,omitempty"`
+}
+
+// undoHint names the command that undoes an integration, in the vocabulary of
+// the VCS that reported it. It is the tail of a message, empty when the backend
+// has no command to name.
+func undoHint(in Integration) string {
+	switch in.Undo {
+	case UndoAbort:
+		return `, or "git ` + in.Operation + ` --abort"`
+	case UndoOperationLog:
+		return `, or "` + core.JujutsuUndoCommand + `"`
+	case UndoNone:
+		return ""
+	}
+	return ""
+}
+
+// gitIntegration is the Integration a git backend reports for the operation
+// marker it found: git undoes with `--abort` and resumes with `--continue`.
+func gitIntegration(operation string) Integration {
+	if operation == "" {
+		return Integration{}
+	}
+	return Integration{
+		Operation:  operation,
+		Unfinished: true,
+		Undo:       UndoAbort,
+		Resume:     ResumeContinue,
+	}
+}
 
 // Conflict is one path an integration could not merge on its own. The
 // structured resolution of these files is GIT-US-0022; what this story owes is
@@ -105,10 +191,9 @@ type Commit struct {
 
 // SyncStatus is everything the status indicator needs for one repository.
 type SyncStatus struct {
-	// Branch is the checked-out branch, or "HEAD" when detached.
-	Branch string `json:"branch"`
-	// Detached reports a HEAD that is not on a branch.
-	Detached bool `json:"detached"`
+	// Line is the current line of work and where a push publishes it: git's
+	// checked-out branch, or a jj working copy and its bookmark.
+	Line
 	// Clean reports an unmodified working tree.
 	Clean bool `json:"clean"`
 	// Dirty lists the uncommitted paths: staged, modified and untracked.
@@ -127,8 +212,9 @@ type SyncStatus struct {
 	Behind int `json:"behind"`
 	// Conflicted lists the paths of a stopped integration.
 	Conflicted []Conflict `json:"conflicted,omitempty"`
-	// Operation is OpRebase or OpMerge when one is half-finished, else empty.
-	Operation string `json:"operation,omitempty"`
+	// Integration reports an integration that has not settled, and how it can
+	// be undone or carried forward.
+	Integration
 	// Jujutsu reports a repository managed with Jujutsu. Its branch is `@`, its
 	// working copy is a commit rather than a checkout, and no git write is
 	// allowed against it (GIT-US-0038).
@@ -146,9 +232,9 @@ func (s *SyncStatus) resolveState() {
 		s.State = StateJujutsu
 	case len(s.Conflicted) > 0:
 		s.State = StateConflicted
-	case s.Operation != "":
+	case s.Unfinished:
 		s.State = StateInProgress
-	case s.Detached:
+	case s.Anonymous:
 		s.State = StateDetached
 	case s.Remote == "":
 		s.State = StateNoRemote
@@ -205,19 +291,21 @@ type IntegrateResult struct {
 	// Before and After are HEAD around the integration.
 	Before string `json:"before,omitempty"`
 	After  string `json:"after,omitempty"`
-	// Conflicts is non-empty when the integration stopped. The repository is
-	// then left mid-rebase or mid-merge on purpose: both are resumable, and
-	// throwing the work away silently would be the destructive choice.
+	// Conflicts is non-empty when the integration stopped. What is left behind
+	// is left on purpose: it is recoverable, and throwing the work away
+	// silently would be the destructive choice.
 	Conflicts []Conflict `json:"conflicts,omitempty"`
-	// Operation is what was left in progress, when Conflicts is non-empty.
-	Operation string `json:"operation,omitempty"`
+	// Integration describes what was left unsettled, when Conflicts is
+	// non-empty, and how to undo or carry it forward.
+	Integration
 }
 
-// PushRequest asks for one push of the current branch.
+// PushRequest asks for one publish of the current line of work.
 type PushRequest struct {
 	Remote string
-	// Branch is the remote branch to update; empty means the local name.
-	Branch string
+	// Target is the name to update on the remote — a branch in git, a bookmark
+	// in jj. Empty means the current line's PushTarget.
+	Target string
 	// DryRun asks git what it would do without sending anything.
 	DryRun bool
 }
@@ -225,7 +313,9 @@ type PushRequest struct {
 // PushResult is what a push did.
 type PushResult struct {
 	Remote string `json:"remote"`
-	Branch string `json:"branch"`
+	// Target is what was updated on the remote. The JSON key keeps git's word
+	// because it is the published API of GIT-US-0021.
+	Target string `json:"branch"`
 	// UpToDate reports that the remote already had everything.
 	UpToDate bool `json:"upToDate"`
 	// Pushed is how many commits were sent.
@@ -440,12 +530,12 @@ func (r *syncRun) preflight(ctx context.Context) (SyncStatus, error) {
 	case st.Jujutsu:
 		return st, refuseJujutsu("sync", r.backend.Path(),
 			core.JujutsuFetchCommand+"` and `"+core.JujutsuPushCommand)
-	case st.Operation != "":
+	case st.Unfinished:
 		return st, failf("sync", CodeInProgress,
-			"a %s is already in progress in %s: finish it or abort it before syncing "+
-				`(POST /api/v1/sync/abort, or "git %s --abort")`,
-			st.Operation, r.backend.Path(), st.Operation)
-	case st.Detached:
+			"a %s is already in progress in %s: finish it or undo it before syncing "+
+				"(POST /api/v1/sync/abort%s)",
+			st.Operation, r.backend.Path(), undoHint(st.Integration))
+	case st.Anonymous:
 		return st, failf("sync", CodeUnexpectedBranch,
 			"%s has a detached HEAD: check out the branch you want to sync first; "+
 				"we never switch branches for you",
@@ -457,7 +547,7 @@ func (r *syncRun) preflight(ctx context.Context) (SyncStatus, error) {
 		return st, failf("sync", CodeNoUpstream,
 			"branch %s of %s tracks no remote branch: push it once with "+
 				"`git push -u %s %s`, then sync",
-			st.Branch, r.backend.Path(), st.Remote, st.Branch)
+			st.Name, r.backend.Path(), st.Remote, st.Name)
 	case !r.opts.DryRun && st.Tracked:
 		return st, failf("sync", CodeDirtyTree,
 			"%s has %d uncommitted change(s) to tracked files: commit them "+
@@ -527,7 +617,7 @@ func (r *syncRun) push(ctx context.Context) error {
 			return nil
 		}
 		r.report(PhasePush, 80, fmt.Sprintf("pushing %d commit(s) to %s", st.Ahead, st.Remote))
-		res, pushErr := r.backend.Push(ctx, PushRequest{Remote: r.opts.Remote, Branch: r.opts.Branch})
+		res, pushErr := r.backend.Push(ctx, PushRequest{Remote: r.opts.Remote, Target: r.opts.Branch})
 		if pushErr == nil {
 			r.result.Pushed += res.Pushed
 			return nil

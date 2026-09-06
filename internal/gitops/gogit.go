@@ -53,7 +53,7 @@ func (b *goGitBackend) Capabilities() Capabilities {
 		Hooks:             false,
 		Signing:           false,
 		CredentialHelpers: false,
-		PathspecCommit:    false,
+		ScopedCommit:      false,
 		VCS:               string(core.VCSGit),
 		Writes:            true,
 	}
@@ -83,12 +83,14 @@ func (b *goGitBackend) Status(_ context.Context) (Status, error) {
 	out := Status{Staged: []string{}, Modified: []string{}, Untracked: []string{}}
 	switch {
 	case err == nil:
-		out.Branch = head.Name().Short()
-		out.Detached = !head.Name().IsBranch()
+		out.Line = gitLine(head.Name().Short())
+		if !head.Name().IsBranch() {
+			out.Line = Line{Name: head.Name().Short(), Anonymous: true, Kind: LineNone}
+		}
 	case errors.Is(err, plumbing.ErrReferenceNotFound):
 		// A repository with no commit yet: HEAD points at an unborn branch.
 		if ref, refErr := b.repo.Reference(plumbing.HEAD, false); refErr == nil {
-			out.Branch = ref.Target().Short()
+			out.Line = gitLine(ref.Target().Short())
 		}
 	default:
 		return Status{}, wrap("status", CodeCommitFailed, err, "read HEAD of %s", b.path)

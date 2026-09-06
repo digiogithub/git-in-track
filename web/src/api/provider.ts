@@ -230,9 +230,16 @@ export type GitRepoStatus = {
   /** Set when no identity resolves, which blocks committing entirely. */
   identityError?: string;
   status?: {
+    /** The current line of work: a branch, or a jj working copy. */
     branch: string;
+    /** True when there is no named line of work at all (a detached HEAD). */
     detached: boolean;
+    /** What the VCS calls that line: `branch`, `bookmark`, `working-copy`. */
+    lineKind?: LineKind;
+    /** What a publish updates on the remote: a branch, or a jj bookmark. */
+    pushTarget?: string;
     clean: boolean;
+    /** Empty in a VCS with no staging area; jj commits the working copy. */
     staged: string[];
     modified: string[];
     untracked: string[];
@@ -293,10 +300,28 @@ export type SyncCommit = {
   date?: string;
 };
 
+/**
+ * What a VCS calls the current line of work (GIT-US-0039). Empty means there is
+ * no named one, which is git's detached HEAD.
+ */
+export type LineKind = 'branch' | 'bookmark' | 'working-copy' | '';
+
+/** How an unfinished integration is taken back (GIT-US-0039). */
+export type UndoMethod = 'abort' | 'operation_log' | '';
+
+/** How an unfinished integration is carried forward (GIT-US-0039). */
+export type ResumeMethod = 'continue' | '';
+
 /** One repository's sync state, the row the sync panel renders. */
 export type SyncStatus = {
+  /** The current line of work: a git branch, or a jj working copy. */
   branch: string;
+  /** True when there is no named line of work at all (a detached HEAD). */
   detached: boolean;
+  /** What the VCS calls that line: `branch`, `bookmark`, `working-copy`. */
+  lineKind?: LineKind;
+  /** What a publish updates on the remote: a branch, or a jj bookmark. */
+  pushTarget?: string;
   clean: boolean;
   /** Uncommitted paths: staged, modified and untracked. */
   dirty?: string[];
@@ -310,8 +335,18 @@ export type SyncStatus = {
   ahead: number;
   behind: number;
   conflicted?: SyncConflict[];
-  /** `rebase` or `merge` when one is half-finished, else absent. */
+  /** `rebase` or `merge` when one is unfinished, else absent. */
   operation?: string;
+  /**
+   * True while an integration has not settled, so nothing else may run against
+   * the repository. It is the VCS-neutral form of `operation`: jj never leaves
+   * a half-finished operation, but a commit can carry an unresolved conflict.
+   */
+  unfinished?: boolean;
+  /** How that integration is taken back: git aborts, jj undoes an operation. */
+  undo?: UndoMethod;
+  /** How it is carried forward, absent when there is nothing to carry. */
+  resume?: ResumeMethod;
   /**
    * True for a repository managed with Jujutsu. Its branch is `@`, its working
    * copy is a commit rather than a checkout, and every git write is refused
@@ -461,7 +496,11 @@ export type ConflictMerge = {
   warnings?: string[];
 };
 
-/** The three versions of a conflicted path, as the index holds them. */
+/**
+ * The three sides of a conflicted path, however the backend produced them:
+ * git reads its index stages, a Jujutsu backend reads the conflict recorded
+ * inside the commit (GIT-US-0039).
+ */
 export type ConflictVersions = {
   path: string;
   kind: string;
@@ -475,6 +514,11 @@ export type ConflictVersions = {
   rebased?: boolean;
   /** The working copy, conflict markers included: the manual edit starts here. */
   working?: string;
+  /**
+   * The dialect those markers are written in. jj adds `%%%%%%%` and `+++++++`
+   * to git's, so a parser must honour what it is told rather than assume.
+   */
+  markers?: 'git' | 'jj';
   /** Binary conflicts have no structured resolution: keep mine or keep theirs. */
   binary: boolean;
 };

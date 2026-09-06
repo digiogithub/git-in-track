@@ -188,13 +188,13 @@ func TestJujutsuGuardRefusesEveryWrite(t *testing.T) {
 		},
 		{
 			name:    "abort",
-			call:    func(ctx context.Context, b Backend) error { return b.Abort(ctx) },
+			call:    func(ctx context.Context, b Backend) error { return b.Undo(ctx) },
 			command: core.JujutsuUndoCommand,
 		},
 		{
 			name: "continue",
 			call: func(ctx context.Context, b Backend) error {
-				_, err := b.Continue(ctx)
+				_, err := b.Resume(ctx)
 				return err
 			},
 			command: core.JujutsuResolveCommand,
@@ -262,11 +262,11 @@ func TestJujutsuStatusIsHonest(t *testing.T) {
 			if err != nil {
 				t.Fatalf("status: %v", err)
 			}
-			if st.Detached {
+			if st.Anonymous {
 				t.Error("the jj working copy is reported as a detached HEAD")
 			}
-			if st.Branch != JujutsuWorkingCopy {
-				t.Errorf("branch = %q, want %q", st.Branch, JujutsuWorkingCopy)
+			if st.Name != JujutsuWorkingCopy {
+				t.Errorf("branch = %q, want %q", st.Name, JujutsuWorkingCopy)
 			}
 			if len(st.Staged) != 0 {
 				t.Errorf("staged = %v, want none: the index belongs to jj", st.Staged)
@@ -279,7 +279,7 @@ func TestJujutsuStatusIsHonest(t *testing.T) {
 			if !sync.Jujutsu {
 				t.Error("the sync status does not report the repository as jj")
 			}
-			if sync.Detached {
+			if sync.Anonymous {
 				t.Error("the sync status still reports a detached HEAD")
 			}
 			if sync.State != StateJujutsu {
@@ -443,14 +443,14 @@ func (s *jujutsuSpy) Push(ctx context.Context, req PushRequest) (PushResult, err
 	return s.stubBackend.Push(ctx, req)
 }
 
-func (s *jujutsuSpy) Abort(ctx context.Context) error {
+func (s *jujutsuSpy) Undo(ctx context.Context) error {
 	s.writes++
-	return s.stubBackend.Abort(ctx)
+	return s.stubBackend.Undo(ctx)
 }
 
-func (s *jujutsuSpy) Continue(ctx context.Context) (IntegrateResult, error) {
+func (s *jujutsuSpy) Resume(ctx context.Context) (IntegrateResult, error) {
 	s.writes++
-	return s.stubBackend.Continue(ctx)
+	return s.stubBackend.Resume(ctx)
 }
 
 func (s *jujutsuSpy) ResolvePath(ctx context.Context, req ResolveRequest) (ResolveResult, error) {

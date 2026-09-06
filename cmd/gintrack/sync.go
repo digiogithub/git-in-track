@@ -180,9 +180,10 @@ func syncOneRepo(
 	})
 }
 
-// abortOne undoes a half-finished rebase or merge.
+// abortOne takes back an integration that has not settled, however the backend
+// does that: git aborts, a jj backend undoes the operation (GIT-US-0039).
 func abortOne(ctx context.Context, backend gitops.Backend, id string) (gitops.SyncResult, error) {
-	if err := backend.Abort(ctx); err != nil {
+	if err := backend.Undo(ctx); err != nil {
 		return gitops.SyncResult{
 			Repo: id, Phase: gitops.PhaseFailed, Code: gitops.CodeOf(err), Message: err.Error(),
 		}, err //nolint:wrapcheck // gitops errors already carry a code and an actionable message
@@ -191,9 +192,9 @@ func abortOne(ctx context.Context, backend gitops.Backend, id string) (gitops.Sy
 	return gitops.SyncResult{Repo: id, Phase: gitops.PhaseDone, After: st}, nil
 }
 
-// continueOne resumes a rebase or merge whose conflicts were resolved.
+// continueOne carries forward an integration whose conflicts were resolved.
 func continueOne(ctx context.Context, backend gitops.Backend, id string) (gitops.SyncResult, error) {
-	res, err := backend.Continue(ctx)
+	res, err := backend.Resume(ctx)
 	if err != nil {
 		return gitops.SyncResult{
 			Repo: id, Phase: phaseOf(err), Code: gitops.CodeOf(err),

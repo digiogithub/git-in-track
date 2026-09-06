@@ -5,15 +5,32 @@ import (
 )
 
 // The structured conflict surface of story GIT-US-0022 (docs/06-git-sync.md
-// section 5).
+// section 5), generalized beyond git by GIT-US-0039 (ADR-022).
 //
-// A stopped integration leaves the three versions of every conflicted path in
-// the index: stage 1 is the merge base, stage 2 is ours, stage 3 is theirs.
-// Reading them is what turns "there were conflicts" into a resolver, and
-// writing one file back plus continuing the operation is what closes it.
+// A conflict is three sides — the merge base, the user's own side and the
+// incoming one — plus whatever the working file holds. Reading them is what
+// turns "there were conflicts" into a resolver, and writing one file back plus
+// carrying the integration forward is what closes it.
+//
+// Where those three sides come from is the backend's business: git reads the
+// index stages a stopped integration left behind (stage 1 base, stage 2 ours,
+// stage 3 theirs), and a jj backend materializes them from the conflict
+// recorded inside the commit, which is where jj keeps it. Nothing outside a
+// backend may assume an index.
 //
 // The merge itself is not here: it is `internal/core`, because browser-only
 // mode runs the same rules with no git to fall back on.
+
+// The conflict-marker dialects a working file can be written in. They differ
+// between VCSs — jj writes `%%%%%%%` and `+++++++` alongside git's `<<<<<<<` —
+// so a reader is told which one it is looking at instead of guessing.
+const (
+	// MarkersGit is git's `<<<<<<<`/`=======`/`>>>>>>>`.
+	MarkersGit = "git"
+	// MarkersJujutsu is jj's materialized conflict, which adds `%%%%%%%` diff
+	// hunks and `+++++++` snapshots.
+	MarkersJujutsu = "jj"
+)
 
 // ConflictVersions is the three sides of one conflicted path, plus whatever the
 // working tree currently holds.
@@ -37,11 +54,16 @@ type ConflictVersions struct {
 	// of reference. During a rebase git replays the local commits onto the
 	// upstream, so its stage 2 ("ours") is the remote work and stage 3
 	// ("theirs") is the user's own commit — the opposite of what "keep mine"
-	// means to a person. Ours is therefore always the user's side here.
+	// means to a person. Ours is therefore always the user's side here,
+	// whatever the VCS underneath calls it.
 	Rebased bool `json:"rebased"`
 	// Working is what the file holds right now, conflict markers included. It
 	// is what the "edit manually" escape hatch starts from.
 	Working string `json:"working,omitempty"`
+	// Markers is the dialect those markers are written in, MarkersGit or
+	// MarkersJujutsu. A reader that parses Working must honor it rather than
+	// assume git's.
+	Markers string `json:"markers,omitempty"`
 	// Binary reports a side that is not text. A binary conflict has no
 	// structured resolution: it is keep-ours or keep-theirs, and nothing else
 	// (docs/06 section 12, failure 7).
@@ -58,22 +80,25 @@ type ResolveRequest struct {
 	// Delete removes the path instead of writing it, which is how a
 	// delete/modify conflict is resolved in favor of the deletion.
 	Delete bool
-	// Continue asks for `rebase --continue` / `merge --continue` once no
-	// conflicted path is left. It is a no-op while others remain.
+	// Continue asks for the integration to be carried forward, the way
+	// Backend.Resume does, once no conflicted path is left. It is a no-op while
+	// others remain, and a no-op in a VCS whose Integration.Resume is
+	// ResumeNone: there, resolving the last file finishes the job.
 	Continue bool
 }
 
 // ResolveResult reports what a resolution did.
 type ResolveResult struct {
 	Path string `json:"path"`
-	// Staged reports that the resolved file reached the index.
+	// Staged reports that the resolution was recorded: staged in git, written
+	// into the working-copy commit in a VCS with no index.
 	Staged bool `json:"staged"`
 	// Remaining lists the paths that are still conflicted.
 	Remaining []Conflict `json:"remaining,omitempty"`
-	// Continued reports that the rebase or merge was resumed.
+	// Continued reports that the integration was carried forward.
 	Continued bool `json:"continued"`
-	// Integration is the result of the resumed operation, when there was one.
-	Integration *IntegrateResult `json:"integration,omitempty"`
+	// Result is what carrying it forward produced, when it happened.
+	Result *IntegrateResult `json:"integration,omitempty"`
 	// Status is the repository state after the resolution.
 	Status SyncStatus `json:"status"`
 }

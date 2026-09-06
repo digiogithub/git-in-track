@@ -94,7 +94,7 @@ func TestJujutsuRepositorySurface(t *testing.T) {
 		if repo.Status.State != gitops.StateJujutsu {
 			t.Errorf("state = %q, want %q", repo.Status.State, gitops.StateJujutsu)
 		}
-		if repo.Status.Detached {
+		if repo.Status.Anonymous {
 			t.Error("a jj working copy is reported as a detached HEAD")
 		}
 		if !repo.Status.Jujutsu {

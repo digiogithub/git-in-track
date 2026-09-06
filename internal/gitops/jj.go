@@ -153,9 +153,9 @@ func JujutsuTooOld(version string) bool {
 	return version != "" && !atLeast(version, MinJujutsu)
 }
 
-// vcsAware is the optional interface the guard implements. It is deliberately
-// not part of Backend: generalizing that interface is GIT-US-0039, and this
-// story adds no method to it.
+// vcsAware is the optional interface the guard implements. It stays optional
+// after GIT-US-0039: what a working tree is managed with is reported through
+// Capabilities.VCS, and this interface is the shortcut the package itself uses.
 type vcsAware interface {
 	VCSInfo() core.VCSInfo
 }
@@ -171,6 +171,14 @@ func VCSOf(b Backend) core.VCSInfo {
 		return aware.VCSInfo()
 	}
 	return core.VCSInfo{Kind: core.VCSGit, GitDir: true}
+}
+
+// jujutsuLine is the line of work of a jj working copy: the commit `@`, which
+// is neither a branch nor an anonymous head. A bookmark to publish it under is
+// what a real jj backend fills PushTarget with (GIT-US-0040); the guard writes
+// nothing, so it names none.
+func jujutsuLine() Line {
+	return Line{Name: JujutsuWorkingCopy, Kind: LineWorkingCopy}
 }
 
 // refuseJujutsu builds the refusal of one git write.
@@ -227,7 +235,7 @@ func (g *jujutsuGuard) Status(ctx context.Context) (Status, error) {
 	if err != nil {
 		return Status{}, err //nolint:wrapcheck // the backend error already carries a code and a message
 	}
-	st.Branch, st.Detached = JujutsuWorkingCopy, false
+	st.Line = jujutsuLine()
 	st.Staged = []string{}
 	st.Clean = len(st.Modified)+len(st.Untracked) == 0
 	return st, nil
@@ -242,7 +250,12 @@ func (g *jujutsuGuard) SyncStatus(ctx context.Context) (SyncStatus, error) {
 		return SyncStatus{}, err //nolint:wrapcheck // the backend error already carries a code and a message
 	}
 	st.Jujutsu = true
-	st.Branch, st.Detached = JujutsuWorkingCopy, false
+	st.Line = jujutsuLine()
+	// Nothing git found in `.git` describes a jj integration: jj's rebase
+	// always completes, and what is unsettled is recorded inside the commits.
+	// The guard therefore reports no unfinished integration and, if there ever
+	// is one, `jj undo` is what takes it back.
+	st.Integration = Integration{Undo: UndoOperationLog, Resume: ResumeNone}
 	// The dirty set is rebuilt from the working-copy column only, for the same
 	// reason Status drops the index: the index is jj's, not the user's.
 	plain, statusErr := g.Status(ctx)
@@ -277,14 +290,15 @@ func (g *jujutsuGuard) Push(_ context.Context, _ PushRequest) (PushResult, error
 	return PushResult{}, refuseJujutsu("push", g.Path(), core.JujutsuPushCommand)
 }
 
-// Abort refuses; `jj undo` is what undoes an operation in jj.
-func (g *jujutsuGuard) Abort(_ context.Context) error {
+// Undo refuses; a git `--abort` in a jj repository would rewrite refs jj owns.
+// `jj undo` is what takes an operation back, and the message names it.
+func (g *jujutsuGuard) Undo(_ context.Context) error {
 	return refuseJujutsu("abort", g.Path(), core.JujutsuUndoCommand)
 }
 
-// Continue refuses; jj records conflicts inside commits and has no
-// half-finished operation to resume.
-func (g *jujutsuGuard) Continue(_ context.Context) (IntegrateResult, error) {
+// Resume refuses; jj records conflicts inside commits and has no
+// half-finished operation to carry forward.
+func (g *jujutsuGuard) Resume(_ context.Context) (IntegrateResult, error) {
 	return IntegrateResult{}, refuseJujutsu("continue", g.Path(), core.JujutsuResolveCommand)
 }
 

@@ -289,9 +289,10 @@ func (s *Server) refreshSnapshotsAfterSync(ctx context.Context, results []gitops
 	}
 }
 
-// handleSyncAbort serves POST /api/v1/sync/abort: undo a half-finished rebase
-// or merge, which is the "get me back where I was" escape hatch of docs/06
-// section 12, failures 6 and 8.
+// handleSyncAbort serves POST /api/v1/sync/abort: take back an integration
+// that has not settled, which is the "get me back where I was" escape hatch of
+// docs/06 section 12, failures 6 and 8. Which mechanism does it is the
+// backend's — git aborts, a jj backend undoes an operation (GIT-US-0039).
 func (s *Server) handleSyncAbort(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Repo string `json:"repo"`
@@ -310,7 +311,7 @@ func (s *Server) handleSyncAbort(w http.ResponseWriter, r *http.Request) {
 			"Repository "+m.id+" is not a git working tree: "+s.git.reasonFor(m.id))
 		return
 	}
-	if err := backend.Abort(r.Context()); err != nil {
+	if err := backend.Undo(r.Context()); err != nil {
 		writeGitError(w, r, err)
 		return
 	}

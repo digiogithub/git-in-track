@@ -39,6 +39,17 @@ because a commit list cannot express them.
 
 - A second team repository is no longer reported as an error and ignored. What is reported
   now is two mounted repositories declaring the same team `key:`.
+- The version-control backend interface (`internal/gitops.Backend`) is expressed only in
+  concepts git and Jujutsu both have, so the coming jj backend can implement it without
+  faking an index, a `MERGE_HEAD` or a branch (`GIT-US-0039`, ADR-022, docs/06 §14.6): a
+  commit covers *exactly* a set of paths, an unfinished *integration* reports how it is
+  undone (`abort` or `operation_log`) and resumed (`continue` or nothing), a conflict is
+  three sides the backend produces however it can plus the marker dialect of the working
+  file, and a *line of work* (a branch or a bookmark) replaces the branch-plus-detached
+  pair. `Backend.Abort`/`Continue` are now `Undo`/`Resume`. **No API and no behavior
+  changed:** every JSON field and every `git_*`/`vcs_*` code is where it was, and the new
+  fields (`lineKind`, `pushTarget`, `unfinished`, `undo`, `resume`, `markers`) are
+  additive.
 
 ### Fixed
 

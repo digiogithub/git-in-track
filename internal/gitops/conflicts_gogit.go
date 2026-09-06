@@ -13,9 +13,9 @@ import (
 
 // The structured conflict surface of the go-git backend (GIT-US-0022).
 //
-// Reading works in process: the three stages of a conflicted path are entries
-// of the index, and their blobs are objects like any other. Resolving does not,
-// for the same reason Abort and Continue do not — go-git has no rebase and its
+// Reading works in process: this backend produces the three sides from the
+// index stages, and their blobs are objects like any other. Resolving does not,
+// for the same reason Undo and Resume do not — go-git has no rebase and its
 // merge is fast-forward only (docs/06 section 7.1) — so it refuses explicitly
 // instead of writing a file into an integration it cannot finish.
 
@@ -28,7 +28,7 @@ func (b *goGitBackend) ConflictFile(_ context.Context, path string) (ConflictVer
 		return ConflictVersions{}, wrap("conflict", CodeCommitFailed, err,
 			"read the index of %s", b.path)
 	}
-	out := ConflictVersions{Path: path, Kind: ConflictContent}
+	out := ConflictVersions{Path: path, Kind: ConflictContent, Markers: MarkersGit}
 	found := false
 	for _, entry := range idx.Entries {
 		if filepath.ToSlash(entry.Name) != path || entry.Stage == index.Merged {

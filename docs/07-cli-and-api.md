@@ -2265,6 +2265,11 @@ func DetectVCS(path string) core.VCSInfo
 // command this package runs: every other one snapshots the working copy.
 func ResolveJujutsu(binary string) (path, version string, err error)
 
+// Every concept in this interface exists in git and in Jujutsu, so a jj
+// backend can implement it without faking an index, a MERGE_HEAD or a branch
+// (GIT-US-0039, ADR-022). Where the two differ, the difference is data the
+// backend reports — Line.Kind, Integration.Undo/Resume, ConflictVersions.Markers
+// — and never an assumption the caller makes.
 type Backend interface {
     Name() string                                     // "go-git" | "system"
     Path() string
@@ -2272,12 +2277,12 @@ type Backend interface {
     Identity(ctx context.Context) (Identity, error)
     Status(ctx context.Context) (Status, error)
     Commit(ctx context.Context, req CommitRequest) (CommitResult, error)
-    // Fetch, Integrate, Push, Abort, Continue and Commits are added by
+    // Fetch, Integrate, Push, Undo, Resume and Commits are added by
     // GIT-US-0021; ConflictFile and ResolvePath by GIT-US-0022.
 }
 
 type CommitRequest struct {
-    Paths      []string // repo-relative; a path that is gone stages a deletion
+    Paths      []string // repo-relative; the whole of the commit, nothing else
     Message    Message  // Subject + Body (the trailers)
     Author     Identity // empty -> resolved from the git configuration chain
     Sign       bool     // system backend only; go-git fails with git_unsupported
@@ -2293,39 +2298,67 @@ type CommitResult struct {
 }
 
 type Capabilities struct {
-    Backend, Version                                   string
-    Hooks, Signing, CredentialHelpers, PathspecCommit  bool
+    Backend, Version                                 string
+    Hooks, Signing, CredentialHelpers, ScopedCommit  bool  // JSON: pathspecCommit
+    VCS, VCSLayout                                   string
+    Writes                                           bool
+}
+
+// Line is the current line of work and where publishing it sends it. It
+// replaces the branch name plus detached flag of GIT-US-0021, so that a jj
+// bookmark — which is not a branch and does not move on commit — can satisfy it.
+type Line struct {
+    Name       string    // JSON: branch. "main", or the VCS's name for an
+                         // unnamed working copy ("HEAD", "@")
+    Anonymous  bool      // JSON: detached. No named line of work at all
+    Kind       LineKind  // JSON: lineKind. branch | bookmark | working-copy | ""
+    PushTarget string    // JSON: pushTarget. What a publish updates on the remote
 }
 
 type Status struct {
-    Branch                      string
-    Detached, Clean             bool
-    Staged, Modified, Untracked []string
+    Line
+    Clean                       bool
+    Staged, Modified, Untracked []string  // Staged is empty in a VCS with no index
+}
+
+// Integration is an integration that has not settled, in terms both VCSs have.
+// git: a half-finished rebase or merge, undone with --abort, carried forward
+// with --continue. jj: nothing is ever half-finished, conflicts live inside the
+// commits, `jj undo` takes the operation back and there is nothing to continue.
+type Integration struct {
+    Operation  string        // JSON: operation. "" | "rebase" | "merge" | …
+    Unfinished bool          // JSON: unfinished. Nothing else may run yet
+    Undo       UndoMethod    // JSON: undo. "abort" | "operation_log" | ""
+    Resume     ResumeMethod  // JSON: resume. "continue" | ""
 }
 
 // SyncStatus is the status indicator: everything a repository row shows.
 type SyncStatus struct {
-    Branch, Remote, RemoteURL, Upstream string      // RemoteURL is credential-free
-    Detached, Clean, Tracked            bool
+    Line                                            // branch, detached, lineKind, pushTarget
+    Integration                                     // operation, unfinished, undo, resume
+    Remote, RemoteURL, Upstream         string      // RemoteURL is credential-free
+    Clean, Tracked                      bool
     Dirty                               []string
     Ahead, Behind                       int
     Conflicted                          []Conflict
-    Operation                           string      // "" | "rebase" | "merge"
+    Jujutsu                             bool
     State                               State       // up_to_date | ahead | behind |
 }                                                   // diverged | dirty | conflicted | …
 
-// The sync half of the Backend interface (GIT-US-0021).
+// The sync half of the Backend interface (GIT-US-0021, generalized by
+// GIT-US-0039).
 SyncStatus(ctx) (SyncStatus, error)
 Fetch(ctx, FetchRequest) (FetchResult, error)
 Integrate(ctx, IntegrateRequest) (IntegrateResult, error)   // rebase or merge
-Push(ctx, PushRequest) (PushResult, error)
-Abort(ctx) error                                            // system backend only
-Continue(ctx) (IntegrateResult, error)                      // system backend only
+Push(ctx, PushRequest) (PushResult, error)                  // req.Target, not a branch
+Undo(ctx) error                                             // git: --abort; jj: jj undo
+Resume(ctx) (IntegrateResult, error)                        // git: --continue; jj: nothing
 Commits(ctx, LogRequest) ([]Commit, error)                  // dry-run previews
 
 // The structured conflict surface (GIT-US-0022, doc 06 section 5.7).
-ConflictFile(ctx, path string) (ConflictVersions, error)    // index stages 1/2/3
-ResolvePath(ctx, ResolveRequest) (ResolveResult, error)     // write, stage, continue
+ConflictFile(ctx, path string) (ConflictVersions, error)    // the three sides, however
+                                                            // the backend produces them
+ResolvePath(ctx, ResolveRequest) (ResolveResult, error)     // record, then carry forward
 
 // The pipeline over them: preflight, fetch, integrate, push, with the
 // non-fast-forward retry ladder of doc 06 section 4.2.

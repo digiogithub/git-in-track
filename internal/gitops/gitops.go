@@ -65,9 +65,12 @@ type Capabilities struct {
 	// CredentialHelpers reports whether the user's configured credential
 	// helpers are used. It matters for GIT-US-0021 and GIT-US-0023.
 	CredentialHelpers bool `json:"credentialHelpers"`
-	// PathspecCommit reports whether a commit can be limited to a pathspec
-	// regardless of what else is staged in the index.
-	PathspecCommit bool `json:"pathspecCommit"`
+	// ScopedCommit reports whether a commit can be limited to an exact set of
+	// paths regardless of what else the working tree holds. Git does it with a
+	// pathspec over its index; a VCS with no index does it by naming the same
+	// files on its own commit command. The JSON key keeps git's word because
+	// it is the published API of GIT-US-0020.
+	ScopedCommit bool `json:"pathspecCommit"`
 	// VCS is the version-control system of the working tree, "git" or "jj"
 	// (GIT-US-0038).
 	VCS string `json:"vcs,omitempty"`
@@ -78,13 +81,72 @@ type Capabilities struct {
 	Writes bool `json:"writes"`
 }
 
-// Status is the part of `git status` the UI needs. Ahead and Behind are filled
-// by the sync pipeline of GIT-US-0021; commit-on-save only needs the branch and
-// the dirty set.
+// LineKind names what a line of work is in the VCS that reports it
+// (GIT-US-0039).
+type LineKind string
+
+// The kinds of line of work a backend can report.
+const (
+	// LineBranch is git's checked-out branch: it moves with every commit.
+	LineBranch LineKind = "branch"
+	// LineBookmark is a Jujutsu bookmark. It names a commit and does *not*
+	// move when the working-copy commit does, which is why a jj backend can
+	// report a line of work whose push target is a bookmark that is behind it.
+	LineBookmark LineKind = "bookmark"
+	// LineWorkingCopy is a working copy that is a commit and carries no name of
+	// its own: jj's `@`. It is a healthy steady state, not a failure.
+	LineWorkingCopy LineKind = "working-copy"
+	// LineNone is no named line of work at all: git's detached HEAD.
+	LineNone LineKind = ""
+)
+
+// Line is the current line of work and where publishing it sends it. It
+// replaces the branch name plus detached flag the interface used to carry, so
+// that a bookmark — which is not a branch and does not move on commit — can
+// satisfy it (GIT-US-0039, ADR-022).
+//
+// It is embedded in Status and SyncStatus, so the JSON keys `branch` and
+// `detached` of the published API are unchanged; `lineKind` and `pushTarget`
+// are additive.
+type Line struct {
+	// Name is what to call this line of work in a message or the UI: a branch
+	// name, a bookmark name, or the VCS's own name for an unnamed working copy
+	// ("HEAD" in git, "@" in jj).
+	Name string `json:"branch"`
+	// Anonymous reports that there is no named line of work to publish, which
+	// is git's detached HEAD. A jj working copy is *not* anonymous in this
+	// sense: it is a commit with a name of its own.
+	Anonymous bool `json:"detached"`
+	// Kind is what the VCS calls this line of work.
+	Kind LineKind `json:"lineKind,omitempty"`
+	// PushTarget is the name a publish updates on the remote — git's branch,
+	// jj's bookmark. It is empty when there is nothing to publish.
+	PushTarget string `json:"pushTarget,omitempty"`
+}
+
+// gitLine builds the Line of a git working tree from whatever HEAD resolves to.
+// Git answers the literal "HEAD" when it is detached, which is the one name
+// that is not a branch and cannot be pushed to.
+func gitLine(name string) Line {
+	if name == "HEAD" {
+		return Line{Name: name, Anonymous: true, Kind: LineNone}
+	}
+	if name == "" {
+		return Line{Kind: LineNone}
+	}
+	return Line{Name: name, Kind: LineBranch, PushTarget: name}
+}
+
+// Status is the part of a working-tree status the UI needs. Ahead and Behind
+// are filled by the sync pipeline of GIT-US-0021; commit-on-save only needs the
+// line of work and the dirty set.
 type Status struct {
-	Branch    string   `json:"branch"`
-	Detached  bool     `json:"detached"`
-	Clean     bool     `json:"clean"`
+	Line
+	Clean bool `json:"clean"`
+	// Staged is the set of paths a VCS with a staging area has already recorded
+	// for its next commit. A VCS with no staging area — jj commits the working
+	// copy itself — reports none, and never reports its working copy as staged
+	// work the user forgot about.
 	Staged    []string `json:"staged"`
 	Modified  []string `json:"modified"`
 	Untracked []string `json:"untracked"`
@@ -105,10 +167,14 @@ func (m Message) String() string {
 	return m.Subject + "\n\n" + m.Body
 }
 
-// CommitRequest is one commit: the paths to stage and the message to write.
+// CommitRequest is one commit: the exact paths it covers and the message to
+// write.
 type CommitRequest struct {
-	// Paths are repository-relative, forward-slashed. A path that no longer
-	// exists stages its deletion. Only these paths are staged (AC 5).
+	// Paths are repository-relative, forward-slashed, and are the whole of the
+	// commit: nothing outside them may be recorded (AC 5 of GIT-US-0020). A
+	// path that no longer exists records its deletion. How the backend limits
+	// the commit to them is its own business — git stages them in its index,
+	// a VCS with no index names them on its commit command.
 	Paths []string
 	// Message is the rendered message.
 	Message Message
@@ -133,18 +199,25 @@ type CommitResult struct {
 	Subject string `json:"subject,omitempty"`
 	// Author is the identity the commit was made with.
 	Author Identity `json:"author"`
-	// Paths are the paths that were staged.
+	// Paths are the paths the commit covered.
 	Paths []string `json:"paths,omitempty"`
 }
 
-// Backend is the one git abstraction of the companion process. Each instance is
-// bound to one working tree, which is what the caller has: a mounted repository
-// (docs/07 section 6.4).
+// Backend is the one version-control abstraction of the companion process.
+// Each instance is bound to one working tree, which is what the caller has: a
+// mounted repository (docs/07 section 6.4).
 //
-// The sync half of the interface (SyncStatus, Fetch, Integrate, Push, Abort,
+// The sync half of the interface (SyncStatus, Fetch, Integrate, Push, Undo,
 // Commits) landed with GIT-US-0021, and the structured conflict surface —
-// reading the base/ours/theirs blobs of a conflicted path and continuing the
-// integration from a resolution — with GIT-US-0022.
+// reading the base/ours/theirs sides of a conflicted path and carrying the
+// integration forward from a resolution — with GIT-US-0022.
+//
+// GIT-US-0039 generalized it: every concept named here exists in git and in
+// Jujutsu, so a jj backend can implement it without pretending to have an
+// index, a MERGE_HEAD or a branch (ADR-022). Where the two differ, the
+// difference is data the backend reports — Line.Kind, Integration.Undo,
+// Integration.Resume, ConflictVersions.Markers — and not an assumption the
+// caller makes.
 type Backend interface {
 	// Name is "go-git" or "system".
 	Name() string
@@ -155,33 +228,43 @@ type Backend interface {
 	// Identity resolves the author from the configuration chain, or fails with
 	// CodeNoIdentity.
 	Identity(ctx context.Context) (Identity, error)
-	// Status reports the branch and the dirty set.
+	// Status reports the current line of work and the dirty set.
 	Status(ctx context.Context) (Status, error)
-	// Commit stages exactly req.Paths and commits them. It never touches the
-	// working tree, so a failed commit loses nothing (AC 7).
+	// Commit records exactly req.Paths as one commit and nothing else. How the
+	// paths are limited to that set is the backend's business: git stages them
+	// in its index, a VCS with no index names them on its commit command. It
+	// never modifies a working file, so a failed commit loses nothing (AC 7).
 	Commit(ctx context.Context, req CommitRequest) (CommitResult, error)
 
-	// SyncStatus reports everything the status indicator needs: the branch, the
-	// dirty set, the remote, the ahead/behind counters, any conflicted path and
-	// any half-finished rebase or merge.
+	// SyncStatus reports everything the status indicator needs: the line of
+	// work, the dirty set, the remote, the ahead/behind counters, any
+	// conflicted path and any integration that has not settled.
 	SyncStatus(ctx context.Context) (SyncStatus, error)
-	// Fetch downloads the remote branch. It updates no working file, so a
+	// Fetch downloads the remote line of work. It updates no working file, so a
 	// failure here is always non-destructive.
 	Fetch(ctx context.Context, req FetchRequest) (FetchResult, error)
-	// Integrate rebases or merges req.Upstream into the current branch. An
-	// integration that conflicts fails with CodeConflict and leaves the
-	// operation in progress, which is the recoverable state Abort undoes.
+	// Integrate rebases or merges req.Upstream into the current line of work.
+	// An integration that conflicts fails with CodeConflict and leaves a state
+	// SyncStatus reports as an unfinished Integration, which Undo takes back.
 	Integrate(ctx context.Context, req IntegrateRequest) (IntegrateResult, error)
-	// Push publishes the current branch. A non-fast-forward rejection fails
-	// with CodePushRejected and leaves every local commit intact.
+	// Push publishes the current line of work to req.Target. A non-fast-forward
+	// rejection fails with CodePushRejected and leaves every local commit
+	// intact.
 	Push(ctx context.Context, req PushRequest) (PushResult, error)
-	// Abort undoes a half-finished rebase or merge, restoring the tree to what
-	// it was before the integration started.
-	Abort(ctx context.Context) error
-	// Continue resumes a half-finished rebase or merge once its conflicted
-	// paths have been resolved and staged. It fails with CodeConflict while
-	// any path is still unmerged.
-	Continue(ctx context.Context) (IntegrateResult, error)
+	// Undo takes back the unfinished integration SyncStatus reports, restoring
+	// the repository to what it was before the integration started. Which
+	// mechanism does it is the backend's business and is announced in
+	// Integration.Undo: git runs `rebase --abort` or `merge --abort`, and a jj
+	// backend runs `jj undo` against the operation log. It fails with
+	// CodeInProgress when there is nothing to take back.
+	Undo(ctx context.Context) error
+	// Resume carries an unfinished integration forward once its conflicted
+	// paths are resolved, and fails with CodeConflict while any is still
+	// unresolved. A backend whose Integration.Resume is ResumeNone — a VCS
+	// where an integration always completes and conflicts live inside the
+	// resulting commits — has nothing to resume and says so with
+	// CodeUnsupported.
+	Resume(ctx context.Context) (IntegrateResult, error)
 	// Commits lists the commits reachable from req.To but not from req.From,
 	// newest first. It is what a dry-run preview is made of.
 	Commits(ctx context.Context, req LogRequest) ([]Commit, error)
@@ -191,13 +274,17 @@ type Backend interface {
 	// rebuilt from the repository at any time.
 	History(ctx context.Context, req HistoryRequest) (FileHistory, error)
 
-	// ConflictFile reads the three versions of a conflicted path — the merge
-	// base, ours and theirs — out of the index stages a stopped integration
-	// left behind. It is what the resolver of GIT-US-0022 is built on.
+	// ConflictFile reads the three sides of a conflicted path — the merge base,
+	// the user's own side and the incoming one — however the backend can
+	// produce them: git reads index stages 1, 2 and 3, and a jj backend
+	// materializes them from the conflict recorded inside the commit. Ours is
+	// always the user's side, whatever the VCS calls it. It is what the
+	// resolver of GIT-US-0022 is built on.
 	ConflictFile(ctx context.Context, path string) (ConflictVersions, error)
-	// ResolvePath writes one path's resolution, stages it and, once nothing is
-	// left conflicted, continues the rebase or merge. Abort stays available
-	// throughout: a resolution that goes wrong is still recoverable.
+	// ResolvePath records one path's resolution and, once nothing is left
+	// conflicted, carries the integration forward the way Resume does. Undo
+	// stays available throughout: a resolution that goes wrong is still
+	// recoverable.
 	ResolvePath(ctx context.Context, req ResolveRequest) (ResolveResult, error)
 }
 
