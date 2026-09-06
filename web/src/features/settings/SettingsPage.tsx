@@ -22,6 +22,7 @@ import { Label } from '@/components/ui/label';
 import { GitSettingsCard } from '@/features/settings/GitSettingsCard';
 import { SyncProxyCard } from '@/features/settings/SyncProxyCard';
 import { TeamProjectsCard } from '@/features/settings/TeamProjectsCard';
+import { TunnelCard } from '@/features/settings/TunnelCard';
 
 /** Where the companion binary is published (docs/09-ci-cd-and-releases.md). */
 const COMPANION_DOWNLOAD_URL = 'https://github.com/digiogithub/git-in-track/releases';
@@ -104,6 +105,7 @@ export function SettingsPage() {
       </Card>
 
       {companion ? <CompanionTokenCard /> : null}
+      {companion ? <TunnelCard /> : null}
 
       <TeamProjectsCard />
 

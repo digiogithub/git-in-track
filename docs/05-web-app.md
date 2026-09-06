@@ -369,6 +369,50 @@ A duplicate key is refused before the call goes out and again by the core
 (`team_project_exists`). A removal that would orphan a `ref:` is refused with the references
 named, and the row then offers "Remove anyway", which repeats the call with `force`.
 
+**Public tunnel (`features/settings/TunnelCard.tsx`, story GIT-US-0043).** Companion
+mode only, and hidden entirely when the companion answers `supported: false`. One switch
+publishes this companion through a Cloudflare quick tunnel and shows the temporary
+`https` address to share (doc 07 §4.1 and §5.5, ADR-027).
+
+The card is written as a security surface first and a convenience second, because that is
+what it is: what a tunnel publishes is a server with read **and write** access to every
+mounted repository, behind one bearer token (doc 07 §5.1.1). Nothing opens on its own —
+the switch is the only thing that opens it — and while the tunnel is up the card carries a
+standing, unmissable notice that the workspace is on the public internet. Sharing is two
+separate controls, deliberately: the prominent one copies the **bare URL**, which is safe
+to paste anywhere because whoever opens it still has to enter the token; the link that
+carries the token is a second, quieter control with the warning that **the link is a
+credential** next to it. That link is assembled in the tab from the token this session
+already holds — it is never asked of the API and never logged.
+
+A companion started with `--token none` reports `tokenConfigured: false`, and a refused
+enable (`tunnel_requires_token`, HTTP 409) is rendered as an explanation with the fix —
+restart without `--token none` — rather than as a failure to retry.
+
+The five states the card shows, from `GET /api/v1/tunnel`:
+
+| State | Badge | What it means |
+|---|---|---|
+| `off` | Off | No tunnel. This workspace is reachable on this machine only. |
+| `starting` | Starting… | The address exists but is not reachable yet. |
+| `connected` | Public | At least one edge connection is up; the address answers. |
+| `reconnecting` | Reconnecting… | Every edge connection dropped; cloudflared is retrying. |
+| `error` | Failed | The tunnel could not be started, or died. The reason is shown. |
+
+**Why the URL appears before it is reachable.** The hostname comes from provisioning: the
+broker returns it in the same call that creates the tunnel, before any edge connection
+exists and before DNS has propagated, which takes a few seconds. Hiding the address until
+it answers would mean hiding it during the only part of the flow the user is waiting
+through, and inventing an address later would be worse. So the address is shown while the
+state is still `starting`, labelled as propagating rather than presented as a live link,
+with the copy actions disabled until the state settles — a link shared during `starting`
+fails for the person who opens it. The card polls the status while it comes up, and a
+tunnel that never settles says so instead of polling forever.
+
+Nothing here is cached or persisted. A **new hostname is minted on every enable**, so the
+card reads the status rather than remembering one, and turning the tunnel off invalidates
+every link already shared.
+
 **SettingsLayout (`/settings/*`)** — Workspace (mounted repos, remove/repair,
 re-index, clear caches), per-repo (docs folder, project key, default branch,
 ignored globs), appearance (§12), sync (branch policy, commit-on-save toggle and

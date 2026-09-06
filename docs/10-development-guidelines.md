@@ -735,11 +735,11 @@ Rules for fixtures:
 
 | Tool           | Version    | Notes                                              |
 | -------------- | ---------- | -------------------------------------------------- |
-| Go             | 1.25+      | `wasm_exec.js` is taken from `$(go env GOROOT)`     |
+| Go             | 1.26+      | `wasm_exec.js` is taken from `$(go env GOROOT)`     |
 | Node.js        | 22 LTS     | npm 10+                                            |
 | git            | 2.40+      | used by tests and by native git mode               |
 | GNU Make       | any        | Windows: use WSL, Git Bash, or run commands by hand |
-| golangci-lint  | v2.5.0     | optional: `make lint` falls back to `go run` on the pinned version |
+| golangci-lint  | v2.13.2    | optional: `make lint` falls back to `go run` on the pinned version |
 | GoReleaser     | v2         | only for `make release-snapshot`                    |
 | Chromium browser | recent   | File System Access API for browser-only mode        |
 

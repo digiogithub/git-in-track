@@ -73,7 +73,7 @@ gintrack version
 
 ### 2.2 `go install` (developers)
 
-Requires Go 1.25+. `go install` builds **without** the embedded web app, because a fresh
+Requires Go 1.26+. `go install` builds **without** the embedded web app, because a fresh
 module download holds nothing under `web/dist` but its `.gitkeep`. **There is no build
 tag**: `web/embed.go` embeds `web/dist` unconditionally and `web.Built()` reports `false`
 when the directory is empty, so `gintrack serve` says there is no embedded UI while
@@ -210,6 +210,16 @@ server:
   token: "s7Q1e...redacted...9Zk"
   idleTimeout: 0s        # Go duration; 0 never shuts down
   openBrowser: true
+  # Publishing this server through a Cloudflare quick tunnel (ADR-027, §4.1,
+  # §5.1.1). Read only at startup, and refused outright when the server has no
+  # token. A tunnel opened from the web UI is NOT written back here: it lasts
+  # for the life of the process, so a workspace is never republished on the next
+  # `serve` with nobody watching.
+  tunnel:
+    enabled: false       # open a tunnel on start, exactly as `serve --tunnel` does
+    provider: cloudflare # the only one implemented; any other value reports the
+                         # feature as unsupported rather than quietly using
+                         # Cloudflare anyway
 
 git:
   backend: auto          # auto | go-git | system
@@ -335,7 +345,45 @@ gintrack serve [flags]
   --mcp-http          Serve the Model Context Protocol at POST /mcp (doc 08 §2.2)
   --mcp-allow-write   Advertise the MCP write tools; without it /mcp is read-only
   --mcp-agent name    Agent name recorded as the author of comments written through /mcp
+  --tunnel            Publish this server through a Cloudflare quick tunnel and print
+                      the temporary public https URL (off by default; refused with
+                      --token none). See the warning below before using it.
 ```
+
+`--tunnel` opens a free Cloudflare **quick tunnel** (`*.trycloudflare.com`,
+ADR-027): no Cloudflare account, no DNS record and no inbound port. The same
+switch lives in the web app's settings (doc 05 §3.1), and either one can be used
+without the other — the flag simply opens the tunnel at startup.
+
+**Read this before you open one.** A tunnel publishes *this server*, which has
+read **and write** access to every mounted repository, to the public internet.
+The bearer token is the only thing guarding it, which is why `--tunnel` together
+with `--token none` does not start at all: `serve` exits before anything listens,
+naming the flag that has to go. §5.1.1 states the whole posture; the short
+version is that anyone with the URL loads the web app, and anyone with the token
+can rewrite the user's backlog. Cloudflare gives quick tunnels **no uptime
+guarantee** and reserves the right to investigate their use: this is a way to
+show someone a board for ten minutes, never a way to host anything. A **new
+hostname is minted on every enable**, so nothing survives a toggle and turning
+the tunnel off invalidates every link already shared — which is the only
+revocation the service offers.
+
+The tunnel is opened after the listener has an address, so the banner announces
+it in two steps and prints the public URL when it exists:
+
+```
+tunnel:     opening a public cloudflare tunnel…
+listening on http://127.0.0.1:7317
+…
+tunnel:     https://gentle-pine-mist-42.trycloudflare.com   (public; the token is still required)
+```
+
+The banner prints the bare URL and never a `?token=` link, for the reason §5.1.1
+gives. A tunnel that fails to open is a warning on stderr and nothing more: the
+run degrades to loopback only rather than exiting, because a companion that
+serves locally is more useful than one that refuses to serve at all. Shutdown
+closes the tunnel, so a process that exits never leaves a published workspace
+behind.
 
 On start it prints:
 
@@ -1065,6 +1113,43 @@ Rules:
 - The token is *not* a security boundary against other local users; on shared machines,
   document that any local process can reach loopback ports.
 
+#### 5.1.1 What the token is holding up once a tunnel is open
+
+Everything above was written for a server nobody outside the machine can reach.
+A public tunnel (§4.1, §5.5, ADR-027) removes that assumption, and it is worth
+being blunt about what is left.
+
+- **An open tunnel publishes a read-write server.** It is not a preview and not a
+  read-only view: every `/api/v1` route is reachable, including the ones that
+  create, edit and delete items, move cards, run a sync and commit to the user's
+  repositories. Whoever gets through the token has the access the user has, over
+  every mounted repository.
+- **The bearer token is the only protection.** There is no second factor, no
+  allow-list of visitors, no rate limit that would matter and no way to see who
+  is connected. That is exactly why opening a tunnel on a server started with
+  `--token none` is **refused**, with `409` and the `tunnel_requires_token`
+  problem, rather than being permitted with a warning: an unauthenticated server
+  on a public URL has no protection at all.
+- **The web app is served without authentication.** The SPA bundle sits outside
+  the auth group — it has to, because the tab needs the code that will ask for
+  the token — so *anyone holding the URL loads the interface*. Only `/api/v1`
+  demands the token. A stranger who finds the address therefore sees the login
+  surface of a real workspace, and the address, while random, travels through
+  Cloudflare's infrastructure and through whatever channel it was shared on.
+- **`https://<host>/?token=<token>` is a full credential, not a convenience
+  link.** The `?token=` form of §4.1 exists so the local browser opens ready to
+  work; over a tunnel the same link hands a stranger read and write access with
+  no password asked. Treat it exactly like a password: send it only to someone
+  you would hand your working copy to, never over a channel you would not put a
+  password on, and never paste it into an issue, a chat log or a screenshot. The
+  UI keeps the two share actions apart for this reason (doc 05 §3.1): the
+  prominent one copies the bare URL, and the link that carries the token is a
+  second, quieter control with this warning next to it.
+- **Turning the tunnel off is the revocation.** The hostname is regenerated on
+  every enable, so switching the tunnel off invalidates every link that was
+  shared. Rotating the token (`gintrack serve --token new`) is what revokes
+  access that was already granted through a link.
+
 ### 5.2 CORS
 
 Allowed origins:
@@ -1165,7 +1250,8 @@ Catalog of `code` values: `unauthorized`, `forbidden`, `not_found`, `invalid_req
 `conflict`, `duplicate_id`, `workflow_transition_denied`, `read_only`,
 `repo_not_registered`, `repo_not_cloned`, `wip_limit_exceeded`, `sprint_overlap`,
 `sprint_already_active`, `board_in_use`, `project_exists`, `team_exists`,
-`team_project_exists`, `team_project_referenced`, `git_dirty`,
+`team_project_exists`, `team_project_referenced`, `tunnel_requires_token`, `tunnel_failed`,
+`git_dirty`,
 `git_auth_failed`,
 `git_conflict`, `index_unavailable`, `rate_limited`, `not_implemented`, `internal`,
 and the CORS proxy's own: `cors_proxy_disabled`, `cors_proxy_forbidden`,
@@ -1202,6 +1288,11 @@ somebody else's board, and `DELETE /boards/{slug}` refuses while a sprint file s
 board (`sprint_already_active` when that sprint is running). Neither is repeatable with `force`:
 the caller picks another name, or moves the sprint first.
 
+`tunnel_requires_token` (HTTP 409) refuses to open a public tunnel over a server started
+with `--token none`. It is a refusal that cannot be repeated with `force`: the token is the
+only thing guarding a read-write server on a public URL (§5.1.1), so the answer is to
+restart with a token, and the problem detail says so.
+
 `not_implemented` (HTTP 501) is what a route of a later phase answers: the path exists so
 that a client learns "not yet" from the code instead of guessing from a 404.
 
@@ -1232,6 +1323,7 @@ GET /api/v1/capabilities
     "mcpTools": [],
     "search": "bleve",
     "renderer": "goldmark",
+    "tunnel": true,
     "write": true
   },
   "limits": { "maxUploadBytes": 5242880, "maxItemsPerPage": 500 },
@@ -1855,6 +1947,90 @@ Notes on sprints:
   project's workflow into the item's own repository. A decision that could not be applied comes
   back with `error` on its `carried` entry, and the closing still goes through.
 
+#### The public tunnel (GIT-US-0043, ADR-027)
+
+Three routes, inside the versioned prefix and behind the bearer token like the
+rest of the API. They read and set one process-wide switch: the companion holds
+at most one tunnel at a time.
+
+```http
+GET    /api/v1/tunnel        # the current status; never opens anything
+POST   /api/v1/tunnel        # open a tunnel;  202 Accepted
+DELETE /api/v1/tunnel        # close it;       200 with the status, now `off`
+```
+
+All three answer the same document:
+
+```json
+{"supported":true,"provider":"cloudflare","state":"off","url":"","connections":0,"since":null,"error":"","tokenConfigured":true}
+```
+
+| Field | Meaning |
+|---|---|
+| `supported` | False when this build or runtime cannot tunnel at all. A client hides the affordance rather than offering a switch that would do nothing. |
+| `provider` | The tunnelling service, `cloudflare` today. The field exists so a second provider does not change the shape. |
+| `state` | One of `off`, `starting`, `connected`, `reconnecting`, `error`. |
+| `url` | `https://<random-words>.trycloudflare.com`, empty when there is no tunnel. **Never cache or persist it**: a new hostname is minted on every enable. |
+| `connections` | Established edge connections. `0` unless the state is `connected`. |
+| `since` | RFC 3339 UTC instant the current state was entered; `null` when the tunnel is off. |
+| `error` | Why the tunnel failed, when `state` is `error`. Empty otherwise, and cleared by a successful start. |
+| `tokenConfigured` | False when the server was started with `--token none`, in which case `POST` is refused. |
+
+**`POST` answers `202 Accepted`, not `200`**, and it means what the code says: the
+tunnel is provisioned but not yet reachable. The body carries `state: "starting"`
+with `url` **already populated** — the broker hands over the hostname before any
+edge connection exists and before DNS has propagated — so a client polls `GET`
+until the state settles rather than sharing the URL straight away. Posting to an
+already-running tunnel is not an error; it returns the current status.
+
+```http
+POST /api/v1/tunnel
+202
+{"supported":true,"provider":"cloudflare","state":"starting",
+ "url":"https://gentle-pine-mist-42.trycloudflare.com","connections":0,
+ "since":"2026-09-06T09:12:44Z","error":"","tokenConfigured":true}
+```
+
+`DELETE` tears the tunnel down and waits for it, then answers `200` with the
+status back at `off`, `url` empty. Deleting a tunnel that is not running is a
+no-op with the same answer. Closing it invalidates every link that was shared,
+because the next enable gets a different hostname.
+
+**`POST` over a server with no token is refused with `409`:**
+
+```json
+{
+  "type": "https://git-in-track.dev/problems/tunnel-requires-token",
+  "title": "Tunnel requires token",
+  "status": 409,
+  "detail": "This companion runs without authentication, so a tunnel would publish the workspace to anyone holding the URL. Restart it with a token (`gintrack serve --token new`) and try again.",
+  "code": "tunnel_requires_token",
+  "instance": "/api/v1/tunnel"
+}
+```
+
+Clients switch on `code`, as everywhere else in §5.4; the `type` URI is the same
+slug with hyphens. Two other codes can come back from these routes:
+`not_implemented` (501) when `server.tunnel.provider` names a service this build
+does not implement — the same condition `supported: false` reports — and
+`tunnel_failed` (500) when the provider could not be reached, or the tunnel died
+while it was being started or stopped.
+
+A status change is broadcast on the WebSocket stream as the `tunnel.changed`
+topic (§5.6) carrying the same document, so a second open tab does not keep
+showing a workspace as private after somebody published it.
+`GET /api/v1/capabilities` reports `features.tunnel`.
+
+**A toggle made here is not written back to the configuration file.** It lasts
+for the life of the process and nothing more: an API toggle that persisted would
+republish the workspace on the next `gintrack serve` with nobody watching, which
+is a worse failure than having to flip the switch again. `server.tunnel.enabled`
+is the only thing that opens a tunnel at startup, and only `gintrack config`
+edits it.
+
+Read §5.1.1 before using any of this: what these three routes publish is a server
+with read and write access to every mounted repository, guarded by one token.
+
 #### Search
 
 ```http
@@ -2174,6 +2350,15 @@ Event types and `data` schemas:
 { "type":"conflict.resolved",
   "data": { "repo":"TEAM", "path":".pmngr/boards/platform-kanban.md",
             "resolution":"merged", "continued":true, "remaining":0 } }
+
+// tunnel.changed — the public tunnel moved between states. `data` is exactly
+// the document GET /api/v1/tunnel returns, so a tab that was not the one to
+// open the tunnel stops showing this workspace as private.
+{ "type":"tunnel.changed",
+  "data": { "supported":true, "provider":"cloudflare", "state":"connected",
+            "url":"https://gentle-pine-mist-42.trycloudflare.com",
+            "connections":4, "since":"2026-09-06T09:12:49Z",
+            "error":"", "tokenConfigured":true } }
 ```
 
 Client→server frames: `subscribe`, `unsubscribe`, `resume`, `ping`. The server sends a

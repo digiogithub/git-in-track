@@ -998,6 +998,88 @@ describe('CompanionProvider git surface (story GIT-US-0020)', () => {
   });
 });
 
+// --------------------------------------------------------------- public tunnel
+
+describe('CompanionProvider tunnel surface', () => {
+  const tunnelBody = {
+    supported: true,
+    provider: 'cloudflare',
+    state: 'connected',
+    url: 'https://calm-brave-fox.trycloudflare.com',
+    connections: 4,
+    since: '2026-09-04T09:00:00Z',
+    error: '',
+    tokenConfigured: true,
+  };
+
+  it('reads the tunnel from GET /tunnel', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(response(tunnelBody));
+    const status = await provider(fetchImpl).getTunnel();
+
+    const { url, init } = lastCall(fetchImpl);
+    expect(url).toBe(`${BASE}/api/v1/tunnel`);
+    expect(init.method ?? 'GET').toBe('GET');
+    expect(status).toEqual(tunnelBody);
+  });
+
+  it('enables the tunnel with POST /tunnel and reports the starting state', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(
+        response(
+          { ...tunnelBody, state: 'starting', connections: 0 },
+          { status: 202, statusText: 'Accepted' },
+        ),
+      );
+    const status = await provider(fetchImpl).setTunnel(true);
+
+    const { url, init } = lastCall(fetchImpl);
+    expect(url).toBe(`${BASE}/api/v1/tunnel`);
+    expect(init.method).toBe('POST');
+    // The hostname is known before the edge answers on it.
+    expect(status).toMatchObject({ state: 'starting', url: tunnelBody.url });
+  });
+
+  it('disables the tunnel with DELETE /tunnel', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(response({ ...tunnelBody, state: 'off', url: '', connections: 0 }));
+    const status = await provider(fetchImpl).setTunnel(false);
+
+    const { url, init } = lastCall(fetchImpl);
+    expect(url).toBe(`${BASE}/api/v1/tunnel`);
+    expect(init.method).toBe('DELETE');
+    expect(status).toMatchObject({ state: 'off', url: '' });
+  });
+
+  it('maps the refusal of an unauthenticated companion to its own code', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      response(
+        {
+          type: 'https://git-in-track.dev/problems/tunnel_requires_token',
+          title: 'Tunnel requires a token',
+          detail: 'The server runs with authentication disabled.',
+          status: 409,
+        },
+        { status: 409, statusText: 'Conflict' },
+      ),
+    );
+
+    // Without the mapping a 409 would read as a lost race and the UI would
+    // offer a retry for something that can never succeed.
+    await expect(provider(fetchImpl).setTunnel(true)).rejects.toMatchObject({
+      code: 'tunnel_requires_token',
+    });
+  });
+
+  it('reads an unparseable answer as no tunnel rather than as a live one', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(response({ state: 'nonsense' }));
+    const status = await provider(fetchImpl).getTunnel();
+
+    expect(status).toMatchObject({ supported: false, state: 'off', tokenConfigured: false });
+  });
+});
+
 describe('CompanionProvider — sync (GIT-US-0021)', () => {
   const syncSettingsBody = {
     pullStrategy: 'rebase',

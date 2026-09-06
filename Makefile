@@ -28,7 +28,7 @@ GO_PKGS         = $(shell go list ./... | grep -v '/web/node_modules/')
 # Keep in step with GOLANGCI_LINT_VERSION in .github/workflows/ci.yml, so that
 # `make lint` and CI always run the same linter release.
 GOLANGCI_LINT_PKG     := github.com/golangci/golangci-lint/v2/cmd/golangci-lint
-GOLANGCI_LINT_VERSION ?= v2.5.0
+GOLANGCI_LINT_VERSION ?= v2.13.2
 
 export CGO_ENABLED := 0
 

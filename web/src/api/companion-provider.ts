@@ -92,6 +92,8 @@ import type {
   TeamProjectDraft,
   TeamProjectResult,
   TeamSummary,
+  TunnelState,
+  TunnelStatus,
   Unsubscribe,
   UpdateOp,
 } from '@/api/provider';
@@ -224,6 +226,9 @@ const PROBLEM_CODES: Record<string, ProviderErrorCode> = {
   team_exists: 'team_exists',
   team_project_exists: 'team_project_exists',
   team_project_referenced: 'team_project_referenced',
+  // Opening a tunnel over a companion started without authentication is
+  // refused, not failed: the UI explains it instead of offering a retry.
+  tunnel_requires_token: 'tunnel_requires_token',
   index_unavailable: 'internal',
   rate_limited: 'internal',
   internal: 'internal',
@@ -304,7 +309,7 @@ function parseProblem(body: unknown): ProblemDocument | null {
   put(problem, 'title', asString(record['title']));
   put(problem, 'status', asNumber(record['status']));
   put(problem, 'detail', asString(record['detail']));
-  put(problem, 'code', asString(record['code']));
+  put(problem, 'code', asString(record['code']) ?? codeFromType(record['type']));
   put(problem, 'currentRev', asString(record['currentRev']));
   put(problem, 'instance', asString(record['instance']));
   const errors = asArray(record['errors'])
@@ -319,6 +324,43 @@ function parseProblem(body: unknown): ProblemDocument | null {
     });
   if (errors.length > 0) problem.errors = errors;
   return problem;
+}
+
+/**
+ * An RFC 7807 `type` URI ends in the same slug the `code` field carries
+ * (`https://…/problems/tunnel_requires_token`), so a document that names only
+ * the type still yields a code to switch on. Anything that is not a bare
+ * snake-case slug — `about:blank`, most of all — yields nothing.
+ */
+function codeFromType(value: unknown): string | undefined {
+  const type = asString(value);
+  if (type === undefined) return undefined;
+  const slug = type.split(/[/#]/).pop() ?? '';
+  return /^[a-z][a-z0-9_]*$/.test(slug) ? slug : undefined;
+}
+
+/** The states `GET /api/v1/tunnel` may report; anything else reads as `off`. */
+const TUNNEL_STATES: TunnelState[] = ['off', 'starting', 'connected', 'reconnecting', 'error'];
+
+/**
+ * Maps a tunnel document defensively. Every unknown value collapses to the
+ * safe reading: not supported, not running, no URL — never a card that claims
+ * a workspace is private when the answer was unparseable, and never one that
+ * presents an unknown state as a live public link.
+ */
+function toTunnelStatus(body: unknown): TunnelStatus {
+  const record = asRecord(body) ?? {};
+  const state = asString(record['state']);
+  return {
+    supported: record['supported'] === true,
+    provider: asString(record['provider']) ?? '',
+    state: TUNNEL_STATES.find((known) => known === state) ?? 'off',
+    url: asString(record['url']) ?? '',
+    connections: asNumber(record['connections']) ?? 0,
+    since: asString(record['since']) ?? null,
+    error: asString(record['error']) ?? '',
+    tokenConfigured: record['tokenConfigured'] === true,
+  };
 }
 
 // ------------------------------------------------------------------ mappers
@@ -1477,6 +1519,24 @@ export class CompanionProvider implements DataProvider {
     const body = await this.#json(`${API_PREFIX}/git/status${buildQuery({ repo: repoId })}`);
     const record = asRecord(body);
     return asArray(record ? record['repos'] : body) as GitRepoStatus[];
+  }
+
+  // ------------------------------------------------------------------ tunnel
+
+  /** `GET /api/v1/tunnel`. */
+  async getTunnel(): Promise<TunnelStatus> {
+    return toTunnelStatus(await this.#json(`${API_PREFIX}/tunnel`));
+  }
+
+  /**
+   * `POST /api/v1/tunnel` to open it, `DELETE` to close it. The enable answers
+   * `202` as soon as the hostname exists, which is before the edge resolves
+   * it, so the returned `state` is normally `starting` and the caller polls.
+   */
+  async setTunnel(enabled: boolean): Promise<TunnelStatus> {
+    return toTunnelStatus(
+      await this.#json(`${API_PREFIX}/tunnel`, { method: enabled ? 'POST' : 'DELETE' }),
+    );
   }
 
   /** `POST /api/v1/git/commit`; with no paths it flushes the batched edits. */

@@ -221,6 +221,46 @@ export type GitSettingsPatch = {
   signCommits?: boolean;
 };
 
+/**
+ * The lifecycle of the public tunnel (`/api/v1/tunnel`).
+ *
+ * `starting` already carries the URL: the hostname is handed out before the
+ * edge answers on it, and DNS takes a few seconds to propagate. The UI has to
+ * keep those two apart, because a link shared during `starting` fails for the
+ * person who opens it.
+ */
+export type TunnelState = 'off' | 'starting' | 'connected' | 'reconnecting' | 'error';
+
+/**
+ * The public tunnel of the companion (story: `gintrack serve --tunnel`).
+ *
+ * A tunnel puts a server that otherwise listens on `127.0.0.1`, with read and
+ * write access to the user's repositories, on the public internet. The bearer
+ * token is the only thing guarding it, so the shape carries `tokenConfigured`:
+ * the server refuses to open a tunnel when authentication is disabled, and the
+ * UI explains that rather than reporting a generic failure.
+ */
+export type TunnelStatus = {
+  /** False when this build or runtime cannot tunnel at all; hide the card. */
+  supported: boolean;
+  /** The tunnelling service in use, for example `cloudflare`. */
+  provider: string;
+  state: TunnelState;
+  /**
+   * `https://<random-words>.trycloudflare.com`, or empty when there is none.
+   * A new hostname is minted on every enable: never cache or persist it.
+   */
+  url: string;
+  /** Edge connections the tunnel holds. */
+  connections: number;
+  /** When the current tunnel came up; `null` while there is none. */
+  since: string | null;
+  /** Why the tunnel failed, when `state` is `error`. Empty otherwise. */
+  error: string;
+  /** False when the companion was started with authentication disabled. */
+  tokenConfigured: boolean;
+};
+
 /** One repository's git state (`GET /api/v1/git/status`). */
 export type GitRepoStatus = {
   repo: string;
@@ -767,6 +807,12 @@ export type ProviderErrorCode =
   | 'task_list_mismatch'
   /** A write lost a race, or a sprint already has a retro. */
   | 'conflict'
+  /**
+   * The tunnel was refused because the companion runs without authentication:
+   * publishing an unguarded workspace is never done, so this is a refusal to
+   * explain, not an error to retry.
+   */
+  | 'tunnel_requires_token'
   | 'internal';
 
 export type ChangeEvent =
@@ -1011,6 +1057,20 @@ export interface DataProvider {
   updateGitSettings(patch: GitSettingsPatch): Promise<GitSettings>;
   /** Per-repository git state: backend, identity and dirty set. */
   getGitStatus(repoId?: string): Promise<GitRepoStatus[]>;
+
+  // public tunnel (`GET|POST|DELETE /api/v1/tunnel`)
+  /**
+   * Whether a public tunnel is running and, if so, on which URL. A runtime
+   * that cannot tunnel answers `supported: false` rather than throwing.
+   */
+  getTunnel(): Promise<TunnelStatus>;
+  /**
+   * Opens or closes the tunnel. Enabling answers as soon as the hostname is
+   * known — `state` is then `starting`, not `connected` — so the caller polls
+   * `getTunnel()` until it settles. It is always an explicit user action:
+   * nothing in the app may call this on its own.
+   */
+  setTunnel(enabled: boolean): Promise<TunnelStatus>;
   /**
    * Commits now. With no `paths` it flushes what commit-on-save has batched,
    * which is the "Commit N changes" action of the sync panel.

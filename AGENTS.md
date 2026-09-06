@@ -42,7 +42,7 @@ Then read only what your task needs: `docs/01-vision-and-scope.md`,
 
 ## Tech stack
 
-- **Backend and CLI**: Go 1.25+, cobra (CLI), chi (HTTP), fsnotify, go-git,
+- **Backend and CLI**: Go 1.26+, cobra (CLI), chi (HTTP), fsnotify, go-git,
   goldmark, yaml.v3, an MCP Go SDK, and `go:embed` to embed the built frontend
   (`web/dist`) into the binary.
 - **Frontend**: React 18 + Vite + TypeScript in `web/`, with TanStack Router and
@@ -114,7 +114,7 @@ make lint        # gofmt check, go vet, golangci-lint, ESLint, tsc, workflow YAM
 
 `make lint` never skips the Go linter: when the `golangci-lint` binary is
 missing it runs the pinned release with
-`go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.5.0` — slower,
+`go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2` — slower,
 but the exact version CI uses (`GOLANGCI_LINT_VERSION` in
 `.github/workflows/ci.yml`). A lint failure therefore cannot hide locally and
 surface in CI. `make help` lists every target.

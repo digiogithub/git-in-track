@@ -16,7 +16,11 @@ const (
 	eventConflictDetected = "conflict.detected"
 	eventConflictResolved = "conflict.resolved"
 	eventResumeGap        = "resume.gap"
-	eventStreamOverflow   = "stream.overflow"
+	// eventTunnelChanged carries a /api/v1/tunnel status document every time
+	// the public tunnel changes state, so an open UI never shows a stale
+	// "private" badge for a workspace that is published.
+	eventTunnelChanged  = "tunnel.changed"
+	eventStreamOverflow = "stream.overflow"
 )
 
 // ringCapacity is how many events the hub keeps for `resume` (docs/07 §6.2).

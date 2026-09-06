@@ -60,6 +60,7 @@ Every ADR uses the same sections:
 | [ADR-024](ADR-024-commit-on-save-moves-the-jujutsu-bookmark.md) | Commit on save in Jujutsu records the paths and fast-forwards the bookmark | Accepted | 9 |
 | [ADR-025](ADR-025-the-cors-proxy-security-model.md) | The companion's CORS proxy is a git proxy, not a forwarder | Accepted | 4 |
 | [ADR-026](ADR-026-the-web-app-soft-deletes-and-warns-first.md) | The web app soft-deletes an item, after showing what points at it | Accepted | 1 |
+| [ADR-027](ADR-027-cloudflared-as-a-library-for-quick-tunnels.md) | cloudflared is embedded as a library, and a quick tunnel is a sharing convenience | Accepted | 2 |
 
 ## Related documents
 
