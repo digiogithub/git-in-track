@@ -2,11 +2,12 @@
 id: GIT-M-0008
 type: milestone
 title: Authoring from the web UI
-status: in_progress
+status: done
 priority: high
 author: team
 created: 2026-09-05T00:00:00Z
-updated: 2026-09-05T00:00:00Z
+updated: 2026-09-06T00:00:00Z
+closed: 2026-09-06T00:00:00Z
 ---
 
 ## Description
@@ -16,10 +17,10 @@ project, board and sprint without leaving the UI.
 
 ## Exit criteria
 
-- [ ] Registering a repository with no backlog asks where the project should
+- [x] Registering a repository with no backlog asks where the project should
       live and writes it there, in both operating modes.
-- [ ] Project discovery no longer reports `.pmngr/` trees that are not part of
+- [x] Project discovery no longer reports `.pmngr/` trees that are not part of
       the workspace.
-- [ ] A board can be created, edited and deleted from the web UI.
-- [ ] A scrum board's first sprint can be opened from the web UI.
-- [ ] Every item type can be created from the view where a user expects it.
+- [x] A board can be created, edited and deleted from the web UI.
+- [x] A scrum board's first sprint can be opened from the web UI.
+- [x] Every item type can be created from the view where a user expects it.

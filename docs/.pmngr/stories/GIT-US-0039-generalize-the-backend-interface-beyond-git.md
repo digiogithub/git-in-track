@@ -2,7 +2,7 @@
 id: GIT-US-0039
 type: story
 title: Generalize the backend interface beyond git
-status: in_review
+status: done
 priority: critical
 parent: GIT-EP-0010
 milestone: GIT-M-0010
@@ -11,6 +11,7 @@ labels: [core, server]
 estimate: 8
 created: 2026-09-06T00:00:00Z
 updated: 2026-09-06T00:00:00Z
+closed: 2026-09-06T00:00:00Z
 ---
 
 ## Description

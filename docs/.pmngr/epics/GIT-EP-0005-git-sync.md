@@ -9,7 +9,8 @@ author: team
 labels: [git, server, web, security]
 estimate: 26
 created: 2026-09-03T00:00:00Z
-updated: 2026-09-04T00:00:00Z
+updated: 2026-09-06T00:00:00Z
+closed: 2026-09-06T00:00:00Z
 links:
   - { kind: blocked_by, target: GIT-EP-0003 }
 ---
@@ -26,12 +27,12 @@ isomorphic-git over File System Access handles, with the documented CORS-proxy c
 
 ## Acceptance Criteria
 
-- [ ] Two clones edited concurrently are reconciled through the UI, including one real
+- [x] Two clones edited concurrently are reconciled through the UI, including one real
       conflict, without touching a terminal.
-- [ ] No credential is written to disk or to `localStorage` by git-in-track, proven by a
+- [x] No credential is written to disk or to `localStorage` by git-in-track, proven by a
       test.
-- [ ] Commit on save produces one commit per logical edit, not one per keystroke.
-- [ ] A push failure leaves a recoverable working tree and an actionable message.
+- [x] Commit on save produces one commit per logical edit, not one per keystroke.
+- [x] A push failure leaves a recoverable working tree and an actionable message.
 - [ ] The CORS limitation for browser-only mode is documented with a working proxy recipe.
 
 ## Notes

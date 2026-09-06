@@ -2,11 +2,12 @@
 id: GIT-M-0010
 type: milestone
 title: Jujutsu (jj) support
-status: in_progress
+status: done
 priority: high
 author: team
 created: 2026-09-06T00:00:00Z
 updated: 2026-09-06T00:00:00Z
+closed: 2026-09-06T00:00:00Z
 ---
 
 ## Description

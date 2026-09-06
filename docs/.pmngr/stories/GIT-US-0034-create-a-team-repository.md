@@ -2,7 +2,7 @@
 id: GIT-US-0034
 type: story
 title: Create a team repository
-status: in_review
+status: done
 priority: critical
 parent: GIT-EP-0009
 milestone: GIT-M-0009
@@ -10,7 +10,8 @@ author: team
 labels: [core, cli, web]
 estimate: 8
 created: 2026-09-05
-updated: 2026-09-05
+updated: 2026-09-06T00:00:00Z
+closed: 2026-09-06T00:00:00Z
 ---
 
 ## Description

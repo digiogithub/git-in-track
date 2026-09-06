@@ -2,7 +2,7 @@
 id: GIT-US-0031
 type: story
 title: Create a project when a repository has no backlog
-status: in_review
+status: done
 priority: high
 parent: GIT-EP-0008
 milestone: GIT-M-0008
@@ -10,7 +10,8 @@ author: team
 labels: [core, cli, web]
 estimate: 8
 created: 2026-09-05T00:00:00Z
-updated: 2026-09-05T00:00:00Z
+updated: 2026-09-06T00:00:00Z
+closed: 2026-09-06T00:00:00Z
 ---
 
 ## Description
