@@ -90,6 +90,7 @@ import type {
   TeamProjectResult,
   TeamProjectSummary,
   TeamSummary,
+  TunnelStatus,
   Unsubscribe,
   UpdateOp,
 } from '@/api/provider';
@@ -117,6 +118,11 @@ export type FakeData = {
   retros?: FakeRetro[];
   /** The day the sprint header counts its remaining days from. */
   today?: string;
+  /**
+   * Overrides on the public tunnel: an unsupported runtime, a companion
+   * started without a token, or a tunnel that is already up.
+   */
+  tunnel?: Partial<TunnelStatus>;
 };
 
 /**
@@ -701,6 +707,10 @@ export class FakeProvider implements DataProvider {
   private revCounter = 1000;
   /** Commit-on-save settings, in memory (story GIT-US-0020). */
   private git: GitSettings;
+  /** The public tunnel, in memory. */
+  private tunnel: TunnelStatus;
+  /** Reads left before a `starting` tunnel settles, so polling is testable. */
+  private tunnelReadsToConnect = 0;
 
   constructor(data: FakeData = {}, opts: { readOnly?: boolean } = {}) {
     this.capabilities = opts.readOnly ? readOnlyCapabilities : writableCapabilities;
@@ -725,6 +735,17 @@ export class FakeProvider implements DataProvider {
       pending: 0,
       supported: !opts.readOnly,
       ...(opts.readOnly ? { reason: 'This vault is read-only.' } : {}),
+    };
+    this.tunnel = {
+      supported: true,
+      provider: 'cloudflare',
+      state: 'off',
+      url: '',
+      connections: 0,
+      since: null,
+      error: '',
+      tokenConfigured: true,
+      ...data.tunnel,
     };
     this.repos = data.repos ?? [
       {
@@ -2395,6 +2416,54 @@ export class FakeProvider implements DataProvider {
     }
     this.git = { ...next, persisted: true };
     return Promise.resolve({ ...this.git });
+  }
+
+  // ------------------------------------------------------------------ tunnel
+
+  /**
+   * The tunnel, in memory. It reproduces the one behaviour the card is built
+   * around: enabling answers `starting` with a URL that is not reachable yet,
+   * and a later read reports `connected`. `tunnelReadsToConnect` counts those
+   * reads down so a test can watch the transition without a real tunnel, and
+   * the hostname is minted afresh on every enable, exactly as Cloudflare does.
+   */
+  getTunnel(): Promise<TunnelStatus> {
+    if (this.tunnel.state === 'starting') {
+      if (this.tunnelReadsToConnect > 0) this.tunnelReadsToConnect -= 1;
+      if (this.tunnelReadsToConnect === 0) {
+        this.tunnel = { ...this.tunnel, state: 'connected', connections: 4 };
+      }
+    }
+    return Promise.resolve({ ...this.tunnel });
+  }
+
+  setTunnel(enabled: boolean): Promise<TunnelStatus> {
+    if (!this.tunnel.supported) {
+      return Promise.reject(new ProviderError('read_only', 'This runtime cannot open a tunnel.'));
+    }
+    if (enabled && !this.tunnel.tokenConfigured) {
+      return Promise.reject(
+        new ProviderError(
+          'tunnel_requires_token',
+          'A tunnel needs the access token; this companion runs with authentication disabled.',
+        ),
+      );
+    }
+    if (!enabled) {
+      this.tunnelReadsToConnect = 0;
+      this.tunnel = { ...this.tunnel, state: 'off', url: '', connections: 0, since: null };
+      return Promise.resolve({ ...this.tunnel });
+    }
+    this.tunnelReadsToConnect = 1;
+    this.tunnel = {
+      ...this.tunnel,
+      state: 'starting',
+      url: `https://fake-${String(this.revCounter++)}-tunnel.trycloudflare.com`,
+      connections: 0,
+      since: `${this.today}T09:00:00Z`,
+      error: '',
+    };
+    return Promise.resolve({ ...this.tunnel });
   }
 
   getGitStatus(repoId?: string): Promise<GitRepoStatus[]> {

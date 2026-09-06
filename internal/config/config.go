@@ -127,7 +127,39 @@ type Server struct {
 	Token       string        `json:"token,omitempty" yaml:"token,omitempty"`
 	IdleTimeout time.Duration `json:"idleTimeout"     yaml:"idleTimeout"`
 	OpenBrowser bool          `json:"openBrowser"     yaml:"openBrowser"`
+
+	// Tunnel configures the public tunnel the companion can open over its
+	// loopback listener (`server.tunnel`).
+	Tunnel Tunnel `json:"tunnel" yaml:"tunnel"`
 }
+
+// Tunnel is the `server.tunnel` section: the public tunnel that exposes the
+// companion, which otherwise listens on loopback only, to the internet.
+//
+// Opening a tunnel publishes a server with read and write access to the user's
+// repositories, so the decision to open one is never taken implicitly:
+//
+//   - `enabled` is honored only at startup, by `gintrack serve` and by the
+//     `--tunnel` flag, and the server refuses to start with it set while
+//     authentication is disabled;
+//   - enabling the tunnel through POST /api/v1/tunnel deliberately does NOT
+//     write this key back. A toggle in the web UI lasts for the life of the
+//     process and nothing more: an accidental autostart on the next `serve`
+//     would publish the workspace with nobody watching, which is a far worse
+//     failure than having to flip the toggle again.
+type Tunnel struct {
+	// Enabled opens the tunnel as soon as the listener has an address. It
+	// defaults to false and is opt-in through this file or `--tunnel`.
+	Enabled bool `json:"enabled" yaml:"enabled"`
+	// Provider names the tunneling service. Only `cloudflare` — the anonymous
+	// trycloudflare.com quick tunnel — is implemented; any other value makes
+	// the feature report itself as unsupported rather than silently using
+	// Cloudflare anyway.
+	Provider string `json:"provider" yaml:"provider"`
+}
+
+// DefaultTunnelProvider is the shipped `server.tunnel.provider`.
+const DefaultTunnelProvider = "cloudflare"
 
 // Git is the git backend section.
 type Git struct {
@@ -230,6 +262,7 @@ func Default() *Config {
 			Bind:        DefaultBind,
 			Port:        DefaultPort,
 			OpenBrowser: true,
+			Tunnel:      Tunnel{Provider: DefaultTunnelProvider},
 		},
 		Git: Git{
 			Backend:         BackendAuto,

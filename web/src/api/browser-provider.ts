@@ -83,6 +83,7 @@ import type {
   SyncSettings,
   SyncSettingsPatch,
   SyncStatus,
+  TunnelStatus,
 } from '@/api/provider';
 import { ProviderError, teamScope } from '@/api/provider';
 import { hydrateOrBuild } from '@/cache/index-cache';
@@ -124,6 +125,10 @@ import {
   writeGitSettings,
   writeSyncSettings,
 } from '@/git/settings-store';
+
+/** Why browser-only mode can never open a public tunnel. */
+const BROWSER_TUNNEL_REASON =
+  'Browser-only mode runs entirely in this tab, so there is no server to publish. Run `gintrack serve` to share a workspace over a tunnel.';
 
 /** One conflicted path browser mode is holding for the resolver. */
 type PendingConflict = BrowserConflict & { resolved?: string };
@@ -1012,6 +1017,30 @@ export class BrowserProvider implements DataProvider {
 
   commitNow(): Promise<GitCommit[]> {
     return Promise.reject(new ProviderError('read_only', BROWSER_GIT_REASON));
+  }
+
+  // ------------------------------------------------------------------ tunnel
+
+  /**
+   * Browser-only mode has no server to publish: the app is the tab, and the
+   * workspace never leaves this machine. `supported: false` makes the settings
+   * card hide itself rather than offer a switch that could do nothing.
+   */
+  getTunnel(): Promise<TunnelStatus> {
+    return Promise.resolve({
+      supported: false,
+      provider: '',
+      state: 'off',
+      url: '',
+      connections: 0,
+      since: null,
+      error: '',
+      tokenConfigured: false,
+    });
+  }
+
+  setTunnel(): Promise<TunnelStatus> {
+    return Promise.reject(new ProviderError('read_only', BROWSER_TUNNEL_REASON));
   }
 
   // --------------------------------------------------------------- git sync

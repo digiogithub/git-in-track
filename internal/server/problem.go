@@ -23,6 +23,12 @@ const (
 	codeRepoNotRegistered    = "repo_not_registered"
 	codeIndexUnavailable     = "index_unavailable"
 	codeInternal             = "internal"
+	// codeTunnelRequiresToken refuses to publish a server that has no bearer
+	// token. The web client switches on this exact string.
+	codeTunnelRequiresToken = "tunnel_requires_token"
+	// codeTunnelFailed reports that the tunnel provider could not be reached or
+	// died while being started or stopped.
+	codeTunnelFailed = "tunnel_failed"
 )
 
 // problemField is one per-field validation failure of a problem document.
@@ -67,12 +73,16 @@ func statusForCode(code string) int {
 		return http.StatusUnprocessableEntity
 	case "duplicate_id", "wip_limit_exceeded", "sprint_overlap", "sprint_already_active", "board_in_use",
 		"project_exists", "team_exists",
-		vault.TeamProjectExistsCode, vault.TeamProjectReferencedCode:
+		vault.TeamProjectExistsCode, vault.TeamProjectReferencedCode,
+		codeTunnelRequiresToken:
 		// A WIP limit is advisory: the move is refused once, and the caller may
 		// repeat it with `force` (docs/04 R-COL-5). Two sprints of one board
 		// sharing a day, and a second active sprint, are the same shape of
 		// refusal (docs/04 section 8.4), and so is disconnecting a project a
-		// board or a sprint still references (docs/04 section 3.9).
+		// board or a sprint still references (docs/04 section 3.9). Opening a
+		// tunnel over a server that has no token is the same shape again: the
+		// request is well formed and refused by the state of the server, which
+		// the user changes by restarting it with a token.
 		return http.StatusConflict
 	case "read_only", "forbidden":
 		return http.StatusForbidden

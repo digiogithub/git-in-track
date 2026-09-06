@@ -83,6 +83,12 @@ func (s *Server) mountAPI(api chi.Router) {
 		p.Route("/retros", s.mountRetros)
 		// Commit-on-save and the git settings (GIT-US-0020), and the sync
 		// pipeline over them (GIT-US-0021).
+		// The public tunnel that exposes this loopback server to the internet
+		// (internal/server/tunnel.go). It sits inside the bearer-auth group and
+		// refuses to open at all when there is no token.
+		p.Get("/tunnel", s.handleTunnelStatus)
+		p.Post("/tunnel", s.handleTunnelEnable)
+		p.Delete("/tunnel", s.handleTunnelDisable)
 		p.Route("/git", s.mountGit)
 		p.Route("/sync", s.mountSync)
 	})

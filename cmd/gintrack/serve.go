@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os/signal"
@@ -31,7 +32,15 @@ type serveFlags struct {
 	mcpHTTP       bool
 	mcpAllowWrite bool
 	mcpAgent      string
+	// tunnel opens a public tunnel to this server as soon as it is listening
+	// (`server.tunnel` in the configuration).
+	tunnel bool
 }
+
+// tunnelPollInterval is how often the banner asks the server whether the tunnel
+// has a public URL yet. Provisioning it takes a network round trip, so there is
+// nothing to print at banner time.
+const tunnelPollInterval = 200 * time.Millisecond
 
 // browserDelay is how long the banner waits before opening the browser, so that
 // the listener is accepting connections by the time the page loads.
@@ -53,7 +62,12 @@ repository.
 Every route but /api/v1/health requires the bearer token printed on start.
 Pass --token none to disable authentication, which is refused unless the bind
 address is a loopback interface. Use --repo <path> to serve a repository
-without registering it in the configuration.`,
+without registering it in the configuration.
+
+--tunnel publishes this server on the internet through an anonymous Cloudflare
+quick tunnel. It is refused without a token, because the token is then the only
+thing standing between the URL and write access to your repositories, and the
+URL is never printed together with it.`,
 		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runServe(cmd, build, flags)
@@ -75,6 +89,8 @@ without registering it in the configuration.`,
 		"advertise the MCP write tools; without it /mcp is read-only")
 	cmd.Flags().StringVar(&flags.mcpAgent, "mcp-agent", "",
 		"agent name recorded as the author of comments written through /mcp")
+	cmd.Flags().BoolVar(&flags.tunnel, "tunnel", false,
+		"publish this server on the internet through a Cloudflare quick tunnel; requires a token")
 	return cmd
 }
 
@@ -93,6 +109,16 @@ func runServe(cmd *cobra.Command, build buildInfo, flags *serveFlags) error {
 	}
 	if generated && flags.token == "" {
 		persistToken(cmd, res, token)
+	}
+
+	tunnelOn := pickBool(cmd, "tunnel", flags.tunnel, cfg.Server.Tunnel.Enabled)
+	if tunnelOn && token == "" {
+		// Refused here, before anything listens, so that the reason names the
+		// flag the user actually typed. server.New refuses the same combination
+		// on its own, which is what covers the configuration-driven path.
+		return errors.New("opening a tunnel requires a bearer token: --tunnel (or server.tunnel.enabled) " +
+			"publishes this server, with write access to your repositories, to anyone holding the URL; " +
+			"drop --token none")
 	}
 
 	repos, err := mountList(cfg, res.Workspace, flags.repos)
@@ -130,6 +156,9 @@ func runServe(cmd *cobra.Command, build buildInfo, flags *serveFlags) error {
 		MCPHTTP:       pickBool(cmd, "mcp-http", flags.mcpHTTP, cfg.MCP.Enabled),
 		MCPAllowWrite: pickBool(cmd, "mcp-allow-write", flags.mcpAllowWrite, cfg.MCP.AllowWrite),
 		MCPAgent:      flags.mcpAgent,
+		// The public tunnel. Only the startup path may turn it on implicitly;
+		// a toggle made in the web UI is never written back to the file.
+		Tunnel: config.Tunnel{Enabled: tunnelOn, Provider: cfg.Server.Tunnel.Provider},
 	}
 	srv, err := server.New(opts)
 	if err != nil {
@@ -143,6 +172,9 @@ func runServe(cmd *cobra.Command, build buildInfo, flags *serveFlags) error {
 
 	if opts.OpenBrowser {
 		go openWhenReady(ctx, cmd, srv, token)
+	}
+	if opts.Tunnel.Enabled {
+		go announceTunnel(ctx, cmd, srv)
 	}
 
 	if err := srv.Start(ctx); err != nil {
@@ -286,6 +318,14 @@ func printBanner(cmd *cobra.Command, build buildInfo, srv *server.Server, token 
 	if opts.MCPHTTP {
 		banner("mcp:        %s/mcp (%s)\n", srv.URL(), writeMode(opts.MCPAllowWrite))
 	}
+	if opts.Tunnel.Enabled {
+		provider := opts.Tunnel.Provider
+		if provider == "" {
+			provider = config.DefaultTunnelProvider
+		}
+		// The URL does not exist yet; announceTunnel prints it when it does.
+		banner("tunnel:     opening a public %s tunnel…\n", provider)
+	}
 	banner("listening on %s\n", srv.URL())
 	if token != "" {
 		banner("token:      %s\n", token)
@@ -301,6 +341,33 @@ func printBanner(cmd *cobra.Command, build buildInfo, srv *server.Server, token 
 		return
 	}
 	banner("press Ctrl+C to stop\n")
+}
+
+// announceTunnel prints the public URL once the tunnel has one. The tunnel is
+// provisioned after the listener comes up, so the banner cannot carry it; this
+// polls the server until the URL exists or the run ends.
+//
+// It prints the bare URL and never a link carrying the token: the hostname is
+// public by construction, the token is not, and a share link would put the one
+// secret protecting the repositories into whatever chat window the URL lands in.
+func announceTunnel(ctx context.Context, cmd *cobra.Command, srv *server.Server) {
+	ticker := time.NewTicker(tunnelPollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		switch status := srv.TunnelStatus(); {
+		case status.URL != "":
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "tunnel:     %s   (public; the token is still required)\n", status.URL)
+			return
+		case status.Err != "":
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: the public tunnel could not be opened: %s\n", status.Err)
+			return
+		}
+	}
 }
 
 // openWhenReady opens the browser once the listener has had a moment to come

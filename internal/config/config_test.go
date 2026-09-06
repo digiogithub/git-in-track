@@ -381,6 +381,67 @@ func TestGitSettingsRoundTrip(t *testing.T) {
 	}
 }
 
+// TestServerTunnelRoundTrip checks the `server.tunnel` section: a file that
+// predates it keeps the shipped defaults — the tunnel off, Cloudflare as the
+// provider — and every key survives a save and a load.
+func TestServerTunnelRoundTrip(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+		want Tunnel
+	}{
+		{
+			name: "a file that predates the section keeps the defaults",
+			yaml: "version: 1\nserver:\n  port: 7317\n",
+			want: Tunnel{Provider: DefaultTunnelProvider},
+		},
+		{
+			name: "autostart is opt-in through the file",
+			yaml: "version: 1\nserver:\n  tunnel:\n    enabled: true\n",
+			want: Tunnel{Enabled: true, Provider: DefaultTunnelProvider},
+		},
+		{
+			name: "the provider can be named",
+			yaml: "version: 1\nserver:\n  tunnel:\n    provider: cloudflare\n",
+			want: Tunnel{Provider: "cloudflare"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := Parse([]byte(tc.yaml))
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			if !reflect.DeepEqual(cfg.Server.Tunnel, tc.want) {
+				t.Fatalf("server.tunnel = %+v, want %+v", cfg.Server.Tunnel, tc.want)
+			}
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			if err := Save(path, cfg); err != nil {
+				t.Fatalf("Save: %v", err)
+			}
+			reloaded, err := Load(path)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if !reflect.DeepEqual(reloaded.Server.Tunnel, tc.want) {
+				t.Errorf("after a round trip server.tunnel = %+v, want %+v", reloaded.Server.Tunnel, tc.want)
+			}
+		})
+	}
+}
+
+// TestDefaultTunnelIsOff pins the one default that matters for safety: a
+// configuration nobody has edited never publishes the workspace.
+func TestDefaultTunnelIsOff(t *testing.T) {
+	if Default().Server.Tunnel.Enabled {
+		t.Error("the tunnel is enabled by default")
+	}
+	if got := Default().Server.Tunnel.Provider; got != DefaultTunnelProvider {
+		t.Errorf("provider = %q, want %q", got, DefaultTunnelProvider)
+	}
+}
+
 // TestGitCommitOnSaveEnvironment checks the GINTRACK_GIT_COMMIT_ON_SAVE
 // override of docs/07 section 3.3.
 func TestGitCommitOnSaveEnvironment(t *testing.T) {

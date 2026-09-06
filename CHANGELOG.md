@@ -14,6 +14,25 @@ because a commit list cannot express them.
 
 ### Added
 
+- `gintrack serve` can **publish itself through a free Cloudflare quick tunnel**
+  (`*.trycloudflare.com`), from the `--tunnel` flag or from a switch in the web app's
+  settings, and shows the temporary public `https` address to share (`GIT-US-0043`,
+  ADR-027, docs/07 §4.1 and §5.5, docs/05 §3.1). No Cloudflare account, no DNS record and
+  no inbound port: cloudflared is linked as a **library** in `internal/tunnel`, never
+  spawned as a binary and never through its `cmd/` tree. `GET|POST|DELETE /api/v1/tunnel`
+  read and set it, `tunnel.changed` broadcasts every state change to other tabs,
+  `features.tunnel` reports whether the runtime can tunnel at all, and `server.tunnel`
+  configures it.
+  **Read this before turning it on:** an open tunnel publishes a server with read *and*
+  write access to every mounted repository, and the bearer token is the only thing
+  guarding it — which is why opening a tunnel over a companion started with `--token none`
+  is refused outright (`tunnel_requires_token`, HTTP 409). The web app is served without
+  authentication, so anyone holding the address loads the interface; only `/api/v1`
+  requires the token. A `https://<host>/?token=<token>` link is a full credential and must
+  be treated like a password. Cloudflare gives quick tunnels no uptime guarantee and
+  reserves the right to investigate their use: this is a sharing convenience, never a
+  production path. A new hostname is minted on every enable, so nothing survives a toggle
+  and turning the tunnel off invalidates every link already shared.
 - The companion serves the **git CORS proxy** browser-only mode needs at
   `http://127.0.0.1:7317/cors-proxy/`, and the web app adopts it automatically the moment
   it detects a companion, so the "browser UI plus local companion for networking" setup of
@@ -75,6 +94,18 @@ because a commit list cannot express them.
 
 ### Changed
 
+- **Building git-in-track now requires Go 1.26** (was 1.25). `go.mod` declares `go 1.26.0`
+  and CI's `GO_VERSION` moved to `1.26`. This is not a choice: cloudflared's own `go.mod`
+  declares 1.26, and embedding it (`GIT-US-0043`, ADR-027) raises this module's directive
+  with it. Nothing changes for users of the release binaries; contributors and anyone
+  running `go install` need a 1.26 toolchain. The same dependency adds **13.9 MB** to
+  the binary (54.4 MB → 68.3 MB, stripped) and about 60 indirect modules —
+  `quic-go`, the Prometheus client stack, seven OpenTelemetry modules, `sentry-go`,
+  `gopsutil`, `urfave/cli`. `sentry-go` is linked but never initialised: `sentry.Init` is
+  called only under cloudflared's `cmd/` tree, which this module does not import, so there
+  is no telemetry egress from it. cloudflared publishes no semver tags, so the dependency
+  is pinned to the pseudo-version `v0.0.0-20260903222438-2253eeeb25a4`. ADR-027 records the
+  trade-off in full.
 - A second team repository is no longer reported as an error and ignored. What is reported
   now is two mounted repositories declaring the same team `key:`.
 - The version-control backend interface (`internal/gitops.Backend`) is expressed only in

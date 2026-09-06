@@ -121,6 +121,14 @@ type Options struct {
 	// MCPAgent is the name agent-authored comments are attributed to. Empty
 	// means the default the MCP package picks.
 	MCPAgent string
+
+	// Tunnel is the `server.tunnel` section: the provider and whether a tunnel
+	// is opened as soon as the listener has an address. Enabling it publishes
+	// this server on the internet, so New refuses it without a token.
+	Tunnel config.Tunnel
+	// NewTunnel builds the tunnel driver. Tests replace it with a stub;
+	// production leaves it nil and gets the Cloudflare quick tunnel.
+	NewTunnel TunnelFactory
 }
 
 // Server owns the router and the HTTP listener.
@@ -145,6 +153,8 @@ type Server struct {
 	// proxy is the browser-git CORS proxy mounted at /cors-proxy/
 	// (GIT-US-0042, docs/06-git-sync.md section 6.3).
 	proxy *corsProxy
+	// tunnel owns the public tunnel toggled at /api/v1/tunnel.
+	tunnel *tunnelState
 
 	// mu guards addr, which changes once when the listener resolves a
 	// wildcard port and is read concurrently by callers printing the URL.
@@ -177,6 +187,16 @@ func New(opts Options) (*Server, error) {
 	if opts.Token == "" && !isLoopback(opts.Bind) {
 		return nil, fmt.Errorf("refusing to serve %s without a token: authentication may only be disabled on loopback", opts.Bind)
 	}
+	// A tunnel keeps the bind on loopback, so the check above never fires for
+	// it: without this one, autostarting a tunnel on a server with no token
+	// would publish the repositories, writes included, to anyone with the URL.
+	if opts.Tunnel.Enabled && opts.Token == "" {
+		return nil, errTunnelNeedsToken
+	}
+	if opts.Tunnel.Enabled && opts.Tunnel.Provider != "" && opts.Tunnel.Provider != config.DefaultTunnelProvider {
+		return nil, fmt.Errorf("refusing to open a %q tunnel: this build only implements %q",
+			opts.Tunnel.Provider, config.DefaultTunnelProvider)
+	}
 
 	if opts.Workspace == "" {
 		opts.Workspace = config.DefaultWorkspaceName
@@ -207,6 +227,7 @@ func New(opts Options) (*Server, error) {
 	}
 	s.mcp = s.newMCPServer(opts)
 	s.proxy = newCORSProxy(s)
+	s.tunnel = newTunnelState(opts)
 	s.router = s.routes()
 	return s, nil
 }
@@ -274,6 +295,11 @@ func (s *Server) Start(ctx context.Context) error {
 
 	s.startWatch(ctx)
 	defer s.stopWatch()
+	// The tunnel forwards to the address the listener just resolved, so it can
+	// only be opened here, and it is closed before the process exits so that no
+	// published workspace outlives the server.
+	s.startTunnel(ctx)
+	defer s.stopTunnel(context.WithoutCancel(ctx))
 	// A shutdown must not drop an edit that was still inside the debounce
 	// window, so the committer is flushed before the listener closes.
 	defer s.git.close(context.WithoutCancel(ctx))
@@ -399,7 +425,10 @@ func (s *Server) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 			// The CORS proxy that makes browser-only git reach a host at all
 			// (GIT-US-0042, docs/06 section 6.3).
 			"corsProxy": s.proxy.enabled(),
-			"boards":    true,
+			// The public tunnel of /api/v1/tunnel: whether this build can open
+			// one at all, not whether one is running.
+			"tunnel": s.tunnelSupported(),
+			"boards": true,
 		},
 		"limits": map[string]int{
 			"maxItemsPerPage": maxItemsPerPage,
