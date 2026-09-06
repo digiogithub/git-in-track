@@ -2,11 +2,12 @@
 id: GIT-M-0004
 type: milestone
 title: Phase 3 — Team repository and boards
-status: in_progress
+status: done
 author: team
 labels: [core, web]
 created: 2026-09-03T00:00:00Z
-updated: 2026-09-04T00:00:00Z
+updated: 2026-09-06T00:00:00Z
+closed: 2026-09-06T00:00:00Z
 links:
   - { kind: relates_to, target: GIT-EP-0004 }
 custom:
@@ -22,11 +23,11 @@ references for projects that are not cloned locally.
 
 ## Acceptance Criteria
 
-- [ ] A board shows cards from a cloned project and a remote-only project.
-- [ ] A drag writes exactly one item status and the board `order:` list.
-- [ ] Concurrent card moves produce a mergeable YAML diff.
-- [ ] WIP limits enforced visually and never silently exceeded.
-- [ ] Scrum board scopes to the active sprint with goal and dates.
+- [x] A board shows cards from a cloned project and a remote-only project.
+- [x] A drag writes exactly one item status and the board `order:` list.
+- [x] Concurrent card moves produce a mergeable YAML diff.
+- [x] WIP limits enforced visually and never silently exceeded.
+- [x] Scrum board scopes to the active sprint with goal and dates.
 
 ## Notes
 

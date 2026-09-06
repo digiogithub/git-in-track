@@ -6,7 +6,7 @@ status: in_progress
 author: team
 labels: [git, security]
 created: 2026-09-03T00:00:00Z
-updated: 2026-09-04T00:00:00Z
+updated: 2026-09-06T00:00:00Z
 links:
   - { kind: relates_to, target: GIT-EP-0005 }
 custom:
@@ -23,9 +23,9 @@ never persists a secret.
 ## Acceptance Criteria
 
 - [ ] Two concurrent clones reconciled through the UI, conflict included.
-- [ ] No credential written to disk or `localStorage` (test-enforced).
+- [x] No credential written to disk or `localStorage` (test-enforced).
 - [ ] Commit on save batches edits into one commit per logical change.
-- [ ] Push failures are recoverable and explained.
+- [x] Push failures are recoverable and explained.
 - [ ] Browser CORS limitation documented with a working proxy recipe.
 
 ## Notes

@@ -2,7 +2,7 @@
 id: GIT-US-0037
 type: story
 title: Manage a team's projects from settings
-status: in_review
+status: done
 priority: high
 parent: GIT-EP-0009
 milestone: GIT-M-0009
@@ -10,7 +10,8 @@ author: team
 labels: [core, web, server]
 estimate: 5
 created: 2026-09-05T00:00:00Z
-updated: 2026-09-05T00:00:00Z
+updated: 2026-09-06T00:00:00Z
+closed: 2026-09-06T00:00:00Z
 ---
 
 ## Description

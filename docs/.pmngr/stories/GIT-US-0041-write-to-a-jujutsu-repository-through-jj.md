@@ -2,7 +2,7 @@
 id: GIT-US-0041
 type: story
 title: Write to a Jujutsu repository through jj
-status: in_review
+status: done
 priority: high
 parent: GIT-EP-0010
 milestone: GIT-M-0010
@@ -11,6 +11,7 @@ labels: [core, cli, web]
 estimate: 13
 created: 2026-09-06T00:00:00Z
 updated: 2026-09-06T00:00:00Z
+closed: 2026-09-06T00:00:00Z
 ---
 
 ## Description

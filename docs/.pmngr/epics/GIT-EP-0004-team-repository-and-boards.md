@@ -2,14 +2,15 @@
 id: GIT-EP-0004
 type: epic
 title: Team repository and boards
-status: in_progress
+status: done
 priority: high
 milestone: GIT-M-0004
 author: team
 labels: [core, web, server]
 estimate: 26
 created: 2026-09-03T00:00:00Z
-updated: 2026-09-04T00:00:00Z
+updated: 2026-09-06T00:00:00Z
+closed: 2026-09-06T00:00:00Z
 links:
   - { kind: blocked_by, target: GIT-EP-0003 }
 ---
@@ -26,13 +27,13 @@ from the index snapshot committed under `.pmngr/index/<projectKey>.json`.
 
 ## Acceptance Criteria
 
-- [ ] A board in `testdata/fixtures/team-basic` shows cards from two projects, one cloned
+- [x] A board in `testdata/fixtures/team-basic` shows cards from two projects, one cloned
       and one remote-only.
-- [ ] Dragging a card rewrites exactly one item file's `status` and the board's `order:`
+- [x] Dragging a card rewrites exactly one item file's `status` and the board's `order:`
       list, and nothing else.
-- [ ] Two people moving different cards produce a mergeable YAML diff.
-- [ ] WIP limits are enforced visually and cannot be exceeded silently.
-- [ ] Scrum boards scope to the active sprint and show its goal and dates.
+- [x] Two people moving different cards produce a mergeable YAML diff.
+- [x] WIP limits are enforced visually and cannot be exceeded silently.
+- [x] Scrum boards scope to the active sprint and show its goal and dates.
 
 ## Notes
 

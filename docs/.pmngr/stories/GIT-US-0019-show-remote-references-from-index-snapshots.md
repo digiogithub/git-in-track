@@ -2,7 +2,7 @@
 id: GIT-US-0019
 type: story
 title: Show remote references from index snapshots
-status: in_review
+status: done
 priority: high
 parent: GIT-EP-0004
 milestone: GIT-M-0004
@@ -10,7 +10,8 @@ author: team
 labels: [core, server, web]
 estimate: 5
 created: 2026-09-03T00:00:00Z
-updated: 2026-09-04T00:00:00Z
+updated: 2026-09-06T00:00:00Z
+closed: 2026-09-06T00:00:00Z
 links:
   - { kind: blocked_by, target: GIT-US-0016 }
 ---

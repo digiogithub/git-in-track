@@ -2,7 +2,7 @@
 id: GIT-EP-0010
 type: epic
 title: Jujutsu (jj) repository support
-status: in_progress
+status: done
 priority: high
 milestone: GIT-M-0010
 author: team
@@ -10,6 +10,7 @@ labels: [core, cli, web]
 estimate: 34
 created: 2026-09-06T00:00:00Z
 updated: 2026-09-06T00:00:00Z
+closed: 2026-09-06T00:00:00Z
 ---
 
 ## Description

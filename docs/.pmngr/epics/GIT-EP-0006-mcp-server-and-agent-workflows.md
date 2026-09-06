@@ -9,7 +9,7 @@ author: team
 labels: [mcp, core, docs]
 estimate: 16
 created: 2026-09-03T00:00:00Z
-updated: 2026-09-04T00:00:00Z
+updated: 2026-09-06T00:00:00Z
 links:
   - { kind: blocked_by, target: GIT-EP-0003 }
 ---
@@ -29,10 +29,10 @@ attributed and reviewed.
 
 - [ ] An agent over MCP claims a `todo` story, moves it to `in_progress`, opens a PR and
       comments on the story, with no human file edits in the loop.
-- [ ] Two agents writing the same item concurrently produce exactly one success and one
+- [x] Two agents writing the same item concurrently produce exactly one success and one
       `rev` conflict; no update is ever lost.
 - [ ] Tool schemas are documented and stable; a schema change bumps the MINOR version.
-- [ ] `AGENTS.md` is published and is the single reference for agent contributors.
+- [x] `AGENTS.md` is published and is the single reference for agent contributors.
 
 ## Notes
 

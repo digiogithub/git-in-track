@@ -2,7 +2,7 @@
 id: GIT-US-0033
 type: story
 title: Reach every create flow from where the user is
-status: in_review
+status: done
 priority: medium
 parent: GIT-EP-0008
 milestone: GIT-M-0008
@@ -10,7 +10,8 @@ author: team
 labels: [web, mcp]
 estimate: 5
 created: 2026-09-05T00:00:00Z
-updated: 2026-09-05T00:00:00Z
+updated: 2026-09-06T00:00:00Z
+closed: 2026-09-06T00:00:00Z
 ---
 
 ## Description

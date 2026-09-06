@@ -2,7 +2,7 @@
 id: GIT-US-0027
 type: story
 title: Capture retrospectives and improvement actions
-status: in_review
+status: done
 priority: high
 parent: GIT-EP-0007
 milestone: GIT-M-0007
@@ -10,7 +10,8 @@ author: team
 labels: [web, core]
 estimate: 5
 created: 2026-09-03T00:00:00Z
-updated: 2026-09-04T00:00:00Z
+updated: 2026-09-06T00:00:00Z
+closed: 2026-09-06T00:00:00Z
 links:
   - { kind: blocked_by, target: GIT-US-0018 }
 ---

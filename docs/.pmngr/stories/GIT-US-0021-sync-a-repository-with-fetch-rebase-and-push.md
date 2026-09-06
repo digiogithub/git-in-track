@@ -2,7 +2,7 @@
 id: GIT-US-0021
 type: story
 title: Sync a repository with fetch, rebase and push
-status: in_review
+status: done
 priority: critical
 parent: GIT-EP-0005
 milestone: GIT-M-0005
@@ -10,7 +10,8 @@ author: team
 labels: [git, server, web]
 estimate: 8
 created: 2026-09-03T00:00:00Z
-updated: 2026-09-04T00:00:00Z
+updated: 2026-09-06T00:00:00Z
+closed: 2026-09-06T00:00:00Z
 links:
   - { kind: blocked_by, target: GIT-US-0020 }
 ---

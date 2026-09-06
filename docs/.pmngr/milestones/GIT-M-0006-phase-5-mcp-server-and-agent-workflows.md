@@ -6,7 +6,7 @@ status: in_progress
 author: team
 labels: [mcp, docs]
 created: 2026-09-03T00:00:00Z
-updated: 2026-09-04T00:00:00Z
+updated: 2026-09-06T00:00:00Z
 links:
   - { kind: relates_to, target: GIT-EP-0006 }
 custom:
@@ -23,9 +23,9 @@ rev-based optimistic locking, plus the AGENTS.md conventions for safe agent cont
 ## Acceptance Criteria
 
 - [ ] An agent claims a story, works it and comments, with no human file edits.
-- [ ] Concurrent agent writes yield one success and one `rev` conflict.
+- [x] Concurrent agent writes yield one success and one `rev` conflict.
 - [ ] Tool schemas documented and versioned.
-- [ ] `AGENTS.md` published and referenced from the README.
+- [x] `AGENTS.md` published and referenced from the README.
 
 ## Notes
 

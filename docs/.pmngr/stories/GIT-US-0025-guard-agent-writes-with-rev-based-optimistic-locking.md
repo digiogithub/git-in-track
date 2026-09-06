@@ -2,7 +2,7 @@
 id: GIT-US-0025
 type: story
 title: Guard agent writes with rev-based optimistic locking
-status: in_review
+status: done
 priority: critical
 parent: GIT-EP-0006
 milestone: GIT-M-0006
@@ -10,7 +10,8 @@ author: team
 labels: [mcp, core, server]
 estimate: 5
 created: 2026-09-03T00:00:00Z
-updated: 2026-09-04T00:00:00Z
+updated: 2026-09-06T00:00:00Z
+closed: 2026-09-06T00:00:00Z
 links:
   - { kind: blocked_by, target: GIT-US-0024 }
 ---
