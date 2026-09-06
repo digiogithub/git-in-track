@@ -43,7 +43,19 @@ because a commit list cannot express them.
   them with `markers: "jj"`. A **non-colocated repository is now readable at all** — status,
   conflicts and, for the first time, sprint metrics. Every read carries
   `--ignore-working-copy`, so looking at a repository never snapshots the user's working
-  copy or adds an entry to the operation log. Writes remain refused (`GIT-US-0041`).
+  copy or adds an entry to the operation log.
+- **Jujutsu repositories are writable.** Commit on save, explicit commits, fetch,
+  integrate, push, undo and conflict resolution all go through `jj`, so a jj repository is
+  a first-class repository rather than a read-only special case (`GIT-US-0041`, ADR-024,
+  docs/06 §14.6-14.7). A commit is `jj commit -m <message> -- <paths>`, which records
+  exactly those paths and leaves every other edit in the new working-copy commit, followed
+  by a fast-forward `jj bookmark move` — without it the work would be reachable from `@`
+  alone and `jj git push` would never publish it. A sync runs `jj git fetch`,
+  `jj rebase -b @ -d <upstream>` (or a `jj new` merge commit) and
+  `jj git push -b <bookmark>` with its dry run; `jj undo` takes an operation back over the
+  operation log; a conflict is resolved by writing the merged file and squashing it into
+  the commit that records it. Each row of `GET /api/v1/sync/status` now carries `writes`,
+  which is what the sync panel disables its buttons from.
 
 ### Changed
 
@@ -66,14 +78,15 @@ because a commit list cannot express them.
 - **git no longer writes behind Jujutsu.** In a jj repository git's `HEAD` sits at the
   parent of the working-copy commit, so a `git commit` there landed on `@-`, moved no
   bookmark and was abandoned as an orphan by the next `jj` command — unreachable from any
-  bookmark and unpublishable by `jj git push`. Commit on save, explicit commits, fetch,
-  integrate, push, abort, continue and conflict resolution are now all refused in a jj
-  repository with `vcs_jujutsu_write_refused` (HTTP 409) and a message naming the `jj`
-  command to run instead (`GIT-US-0038`).
+  bookmark and unpublishable by `jj git push`. Every such write was first refused with
+  `vcs_jujutsu_write_refused` (HTTP 409) and a message naming the `jj` command to run
+  instead (`GIT-US-0038`), and now goes through `jj` itself (`GIT-US-0041`). The refusal
+  remains for the one case that has no safe answer: a jj repository with **no jj binary
+  installed**.
 - A jj repository is no longer shown with a destructive "Detached HEAD" badge or as a
   permanently dirty tree. Its branch is reported as `@` — as its bookmark, once the `jj`
   backend of `GIT-US-0040` is driving it — and the sync panel says "Managed by Jujutsu —
-  reads work, writes go through jj" instead of advising a branch checkout that is
+  reads and writes go through jj" instead of advising a branch checkout that is
   impossible there.
 - A jj repository's sync state is the truthful one (`up_to_date`, `ahead`, `behind`,
   `diverged`, `dirty`, `conflicted`) instead of the `jujutsu` placeholder, which now means
@@ -82,6 +95,17 @@ because a commit list cannot express them.
 - A jj older than 0.41 is refused with `vcs_jujutsu_too_old` when a repository is opened,
   instead of being only a `gintrack doctor` warning: the backend does not parse output it
   has not been verified against (`GIT-US-0040`).
+- Ahead and behind no longer fail in a jj repository whose bookmark jj marks as conflicted
+  after a fetch — the state the sync preflight meets when both sides moved. The counters
+  are computed against the bookmark's local position, so the repository reads as
+  `diverged` (`GIT-US-0041`).
+- The two sides of a jj conflict are no longer swapped. jj materializes the incoming work
+  as the `+++++++` snapshot and the user's own commit as the `%%%%%%%` diff — the opposite
+  of git's index during a rebase — so "keep mine" kept the wrong side in a jj repository
+  (`GIT-US-0041`).
+- A dirty working copy no longer blocks a sync in a jj repository. There the working copy
+  *is* a commit, so a rebase carries it along instead of overwriting a checkout
+  (`GIT-US-0041`).
 
 ## [1.0.0] — unreleased, prepared
 

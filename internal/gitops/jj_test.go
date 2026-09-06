@@ -312,14 +312,21 @@ func TestJujutsuGuardStatusIsHonest(t *testing.T) {
 // drives the two write paths that could reach a jj repository — commit on save
 // and a full sync — against a real one and proves that git's refs, HEAD and
 // object graph are byte-identical afterwards.
+//
+// It exercises the guard of GIT-US-0038 directly, because that is the path a
+// git backend can still reach a jj repository by: a colocated workspace with no
+// jj binary installed. Where jj *is* installed the writes go through jj
+// (GIT-US-0041), and TestJujutsuCommitOnSaveKeepsTheGraphIntact is what proves
+// they leave the change graph whole.
 func TestNoGitWriteReachesAJujutsuRepository(t *testing.T) {
 	dir := newJujutsuRepo(t, true)
 	before := gitSnapshot(t, dir)
 
-	b, err := Open(dir, Options{Backend: KindSystem})
+	plain, err := openSystem(dir, Options{})
 	if err != nil {
-		t.Fatalf("open the jj repository: %v", err)
+		t.Skipf("this test needs the system git backend to stand in for the guard: %v", err)
 	}
+	b := guardJujutsu(plain, DetectVCS(dir))
 
 	t.Run("commit on save", func(t *testing.T) {
 		var got Outcome

@@ -56,18 +56,23 @@ func (b *jujutsuBackend) ConflictFile(ctx context.Context, path string) (Conflic
 	out := parseJujutsuConflict(materialized)
 	out.Path, out.Kind = path, conflict.Kind
 
-	// A conflicted commit with a single parent is a rebased revision: jj
-	// replayed the user's own commit onto a destination, so the `+++++++` side
-	// is the user's work and the side the diff runs to is the incoming one.
-	// That is the same inversion git's rebase produces, and Ours must always be
-	// the user's side (ADR-022).
+	// A conflicted commit with a single parent is a rebased revision, and it is
+	// reported as such — but its sides are *not* swapped, which is where jj
+	// differs from git and where GIT-US-0041's end-to-end round trip caught the
+	// read half getting it backwards.
+	//
+	// jj stores a conflict as one snapshot plus one diff, and materializes them
+	// in that order: the `+++++++` snapshot is the rebase *destination* — the
+	// incoming work — and the `%%%%%%%` diff runs from the merge base to the
+	// rebased revision, which is the user's own commit. The parser already puts
+	// the diff side in Ours, so Ours is the user's side to begin with. Git's
+	// index is the one that needs swapping, because its stage 2 during a rebase
+	// is the upstream (ADR-022).
 	parents, parentsErr := b.parentCount(ctx)
 	if parentsErr != nil {
 		return ConflictVersions{}, parentsErr
 	}
-	if parents < 2 {
-		out.swapSides()
-	}
+	out.Rebased = parents < 2
 
 	if raw, readErr := os.ReadFile(filepath.Join(b.path, filepath.FromSlash(path))); readErr == nil {
 		out.Working = string(raw)

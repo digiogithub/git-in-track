@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/digiogithub/git-in-track/internal/core"
 )
 
 // The sync pipeline against real repositories (GIT-US-0021, AC 9).
@@ -492,9 +494,15 @@ type stubBackend struct {
 	fetches      int
 }
 
-func (s *stubBackend) Name() string               { return "stub" }
-func (s *stubBackend) Path() string               { return "/stub" }
-func (s *stubBackend) Capabilities() Capabilities { return Capabilities{Backend: "stub"} }
+func (s *stubBackend) Name() string { return "stub" }
+func (s *stubBackend) Path() string { return "/stub" }
+
+// Capabilities reports a writable git-shaped backend: the preflight refuses a
+// backend that cannot write at all, which is the read-only guard of
+// GIT-US-0038 and not what this stub stands in for.
+func (s *stubBackend) Capabilities() Capabilities {
+	return Capabilities{Backend: "stub", VCS: string(core.VCSGit), Writes: true}
+}
 
 func (s *stubBackend) Identity(context.Context) (Identity, error) {
 	return Identity{Name: "Stub", Email: "stub@example.com"}, nil

@@ -200,8 +200,9 @@ func checkJujutsu(cfg *config.Config) []checkResult {
 	case err != nil:
 		return []checkResult{{
 			Scope: "jj", Severity: string(core.SeverityWarning),
-			Message: subject + ", and no jj executable was found on PATH",
-			Fix:     "install jj " + core.MinJujutsuVersion + " or newer",
+			Message: subject + ", and no jj executable was found on PATH: " +
+				"they are read-only until one is",
+			Fix: "install jj " + core.MinJujutsuVersion + " or newer",
 		}}
 	case gitops.JujutsuTooOld(version):
 		return []checkResult{{
@@ -213,7 +214,9 @@ func checkJujutsu(cfg *config.Config) []checkResult {
 	}
 	return []checkResult{{
 		Scope: "jj", Severity: "ok",
-		Message: fmt.Sprintf("jj %s, %s: reads work, writes go through jj", version, subject),
+		Message: fmt.Sprintf(
+			"jj %s, %s: reads and writes — commit, sync and conflict resolution — go through jj",
+			version, subject),
 	}}
 }
 

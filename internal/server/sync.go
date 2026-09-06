@@ -36,9 +36,14 @@ type syncRepoStatus struct {
 	// VCS is what manages the folder, so the panel can render a Jujutsu
 	// repository honestly instead of as a detached, permanently dirty git one
 	// (GIT-US-0038).
-	VCS     core.VCSInfo `json:"vcs"`
-	Reason  string       `json:"reason,omitempty"`
-	Backend string       `json:"backend,omitempty"`
+	VCS core.VCSInfo `json:"vcs"`
+	// Writes reports whether this repository can be written to at all. It is
+	// what the panel disables its buttons from, rather than "is it jj": since
+	// GIT-US-0041 a jj repository writes through jj, and only one that has no
+	// jj binary installed is read-only.
+	Writes  bool   `json:"writes"`
+	Reason  string `json:"reason,omitempty"`
+	Backend string `json:"backend,omitempty"`
 	// Status is nil only when reading it failed, which Reason then explains.
 	Status *gitops.SyncStatus `json:"status,omitempty"`
 	// Pending is how many edits commit-on-save has batched but not committed;
@@ -126,6 +131,7 @@ func (s *Server) syncStatusOf(ctx context.Context, m *mount) syncRepoStatus {
 	}
 	out.Git = true
 	out.Backend = backend.Name()
+	out.Writes = backend.Capabilities().Writes
 	st, err := backend.SyncStatus(ctx)
 	if err != nil {
 		out.Reason = err.Error()

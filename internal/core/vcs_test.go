@@ -37,7 +37,7 @@ func TestVCSInfoDescribes(t *testing.T) {
 			info:     VCSInfo{Kind: VCSJujutsu, Layout: LayoutInternal},
 			label:    "jj",
 			writable: false,
-			summary:  "managed by Jujutsu, with no colocated git working tree — reads work, writes go through jj",
+			summary:  "managed by Jujutsu, with no colocated git working tree — reads and writes go through jj",
 		},
 		{
 			name:     "an unmanaged folder",

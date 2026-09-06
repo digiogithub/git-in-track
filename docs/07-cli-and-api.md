@@ -772,7 +772,7 @@ Checks performed:
 2. **Configuration** — unknown keys, unreadable repo paths, duplicate registrations,
    workspaces with zero repos, token strength.
 3. **Repository** — is a git working tree or a Jujutsu workspace (GIT-US-0038: a jj
-   repository is reported as such, with "reads work, writes go through jj", and the
+   repository is reported as such, with "reads and writes go through jj", and the
    `jj` scope reports the binary and warns when it is older than 0.41 or missing while a
    registered repository needs it — with GIT-US-0040 that warning has teeth, because a
    repository whose jj is older than 0.41 fails to open with `vcs_jujutsu_too_old` and one
@@ -1971,8 +1971,12 @@ plus `vcs_jujutsu_write_refused`, `vcs_jujutsu_unsupported` and `vcs_jujutsu_too
 `"vcs": {"kind":"jj","layout":"colocated"}` in the status and `"jujutsu": true`; since
 GIT-US-0040 its `state` is the truthful one (`up_to_date`, `ahead`, `behind`, `diverged`,
 `dirty`, `conflicted`), and the `jujutsu` state is now what a repository reports when no jj
-binary is installed and the read-only git guard is driving it. Every write against it is
-refused with `409 Conflict` and a message naming the `jj` command to run instead.
+binary is installed and the read-only git guard is driving it. Since GIT-US-0041 a write
+goes through jj — commit, fetch, integrate, push, undo and conflict resolution — and each
+row of `GET /api/v1/sync/status` carries `"writes": true|false`, which is what a surface
+disables its write actions from. `vcs_jujutsu_write_refused` with `409 Conflict`, naming
+the `jj` command to run instead, is now only what a jj repository with **no jj binary**
+answers.
 `POST /api/v1/sync/abort` undoes a half-finished rebase or merge and answers with the
 repository's fresh status.
 
@@ -2265,8 +2269,9 @@ package gitops
 // A Jujutsu working tree is bound to the jj backend whatever Kind says, in
 // either layout (GIT-US-0040, doc 06 §14): the git backends read HEAD, which
 // sits at @-, and the index, which jj keeps synchronized with @. The jj backend
-// reads through the jj binary and refuses every write with
-// vcs_jujutsu_write_refused until GIT-US-0041. A jj older than 0.41 fails with
+// reads and writes through the jj binary (GIT-US-0041): jj commit -- <paths>
+// plus a fast-forward jj bookmark move, jj git fetch, jj rebase, jj git push,
+// jj undo and a resolution squashed into the conflicted commit. A jj older than 0.41 fails with
 // vcs_jujutsu_too_old; with no jj binary a colocated repository falls back to
 // the read-only guard of GIT-US-0038 and one whose git store lives inside .jj
 // is refused with vcs_jujutsu_unsupported.
@@ -2275,10 +2280,10 @@ func Open(path string, opts Options) (Backend, error)
 // DetectVCS reports git | jj | none, and the jj layout: colocated | internal.
 func DetectVCS(path string) core.VCSInfo
 
-// ResolveJujutsu locates the jj binary and reads `jj --version`. Every other jj
-// invocation of the backend carries --ignore-working-copy, because without it
-// jj snapshots the working copy first — a write, and one a status poll must
-// never make.
+// ResolveJujutsu locates the jj binary and reads `jj --version`. Every read of
+// the backend carries --ignore-working-copy, because without it jj snapshots the
+// working copy first — a write, and one a status poll must never make. Only the
+// writes that have to see the disk (commit, rebase, squash, undo) drop it.
 func ResolveJujutsu(binary string) (path, version string, err error)
 
 // Every concept in this interface exists in git and in Jujutsu, so a jj

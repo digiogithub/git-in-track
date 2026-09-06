@@ -17,7 +17,7 @@ import (
 // the conflict resolver and the metrics need, answered by jj itself rather than
 // by the git repository jj commits into. The write half — Commit, Fetch,
 // Integrate, Push, Undo, Resume, ResolvePath — is GIT-US-0041 and lives in
-// jj_writes.go, where it is still refused.
+// jj_writes.go.
 //
 // Two rules govern every line here.
 //
@@ -31,7 +31,9 @@ import (
 // copy before it runs, which creates a working-copy commit and an entry in the
 // operation log. An indexer or a status poll that did that would rewrite the
 // user's repository as a side effect of looking at it, so every invocation goes
-// through jujutsuBackend.run, which passes `--ignore-working-copy`.
+// through jujutsuBackend.run, which passes `--ignore-working-copy`. The write
+// half chooses per command: runWrite is what deliberately snapshots, and only
+// the commands that have to see the disk use it.
 
 // jujutsuFieldSeparator separates the fields of a jj template line. It is the
 // ASCII unit separator, which cannot appear in a commit id, a bookmark name or
@@ -93,9 +95,13 @@ func (b *jujutsuBackend) Path() string { return b.path }
 // reads.
 func (b *jujutsuBackend) VCSInfo() core.VCSInfo { return b.info }
 
-// Capabilities describes what this backend can do today. Writes are off: they
-// are GIT-US-0041, and until they land every one of them is refused with the jj
-// command that does the same thing safely.
+// Capabilities describes what this backend can do.
+//
+// Writes are on since GIT-US-0041: commit, fetch, integrate, push, undo and
+// resolve all go through jj (jj_writes.go, ADR-024). What stays off is what jj
+// genuinely does not do here — it runs no git hook, and this backend asks it
+// for no signature; the read-only guard of GIT-US-0038, which is what drives a
+// jj repository when no jj binary is installed, still reports Writes false.
 func (b *jujutsuBackend) Capabilities() Capabilities {
 	return Capabilities{
 		Backend:   string(KindJujutsu),
@@ -106,7 +112,16 @@ func (b *jujutsuBackend) Capabilities() Capabilities {
 		// commit command, so a commit can be scoped exactly — the contract
 		// ADR-022 states without naming git's index.
 		ScopedCommit: true,
-		Writes:       false,
+		Writes:       true,
+		// jj shells out to the user's own git for every network operation
+		// (`git.executable-path`), so the configured credential helpers, the
+		// `insteadOf` rewrites and the ssh-agent all apply exactly as they do
+		// for the system backend (docs/06 section 14.6).
+		CredentialHelpers: true,
+		// jj runs no git hook of its own, and this backend requests no
+		// signature: signing is jj's `signing.behavior`, not ours to turn on.
+		Hooks:   false,
+		Signing: false,
 	}
 }
 
@@ -239,7 +254,15 @@ func (b *jujutsuBackend) fillRemote(ctx context.Context, out *SyncStatus) error 
 	// use. The wire format is frozen (ADR-022), so the translation happens here.
 	out.Upstream = remote + "/" + out.PushTarget
 
-	local, tracking := jujutsuSymbol(out.PushTarget), jujutsuRemoteSymbol(out.PushTarget, remote)
+	// The local side is resolved to a commit id rather than named. A fetch that
+	// moves the remote bookmark while the local one has moved too makes jj
+	// report the *name* as conflicted, and every revset that mentions it then
+	// fails with "Name `main` is conflicted" — which is exactly the state the
+	// sync preflight meets, and the one in which the counters matter most.
+	local, tracking := b.lineCommit(ctx, out.PushTarget), jujutsuRemoteSymbol(out.PushTarget, remote)
+	if local == "" {
+		return nil
+	}
 	ahead, err := b.countRevisions(ctx, tracking+".."+local)
 	if err != nil {
 		return err
@@ -291,6 +314,38 @@ func (b *jujutsuBackend) line(ctx context.Context) (Line, error) {
 		}
 	}
 	return Line{Name: chosen, Kind: LineBookmark, PushTarget: chosen}, nil
+}
+
+// lineCommit resolves the commit the line of work would publish: the commit the
+// named bookmark points at among the ancestors of `@`, or `@` itself when there
+// is no bookmark.
+//
+// It is deliberately a revset over `::@` rather than a lookup of the name.
+// A bookmark jj considers conflicted has two positions, and only one of them is
+// an ancestor of the working copy — the local one, which is what everything
+// this backend reports is about.
+func (b *jujutsuBackend) lineCommit(ctx context.Context, name string) string {
+	if name != "" && name != JujutsuWorkingCopy {
+		if sha := b.commitOf(ctx, "heads(::@ & bookmarks(exact:"+jujutsuSymbol(name)+"))"); sha != "" {
+			return sha
+		}
+	}
+	return b.commitOf(ctx, "@")
+}
+
+// commitOf resolves a revset to a single commit id, or the empty string when it
+// selects nothing or cannot be parsed.
+func (b *jujutsuBackend) commitOf(ctx context.Context, revset string) string {
+	raw, err := b.run(ctx, "log", "--no-graph", "-T", `commit_id ++ "\n"`, "-r", revset)
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(raw, "\n") {
+		if id := strings.TrimSpace(line); id != "" {
+			return id
+		}
+	}
+	return ""
 }
 
 // jujutsuChange is one entry of the working-copy diff summary.
@@ -596,10 +651,40 @@ func jujutsuRemoteSymbol(name, remote string) string {
 // an entry in the operation log. A status poll or an indexer that did that
 // would rewrite the user's repository as a side effect of reading it.
 func (b *jujutsuBackend) run(ctx context.Context, args ...string) (string, error) {
-	full := append([]string{"--ignore-working-copy", "--color=never", "--no-pager"}, args...)
+	return b.exec(ctx, nil, append([]string{"--ignore-working-copy"}, args...))
+}
+
+// runWrite executes jj and lets it snapshot the working copy first.
+//
+// It is the deliberate opposite of run, and only the write half of GIT-US-0041
+// uses it: a command that has to see what is on disk — commit, rebase, squash,
+// undo — must snapshot, and one that only moves refs must not. Nothing that
+// serves a read may call it.
+func (b *jujutsuBackend) runWrite(ctx context.Context, args ...string) (string, error) {
+	return b.exec(ctx, nil, args)
+}
+
+// runWriteAs is runWrite with the commit author pinned. jj resolves the author
+// from its own configuration chain, and JJ_USER/JJ_EMAIL are how that chain is
+// overridden for one invocation, which is what CommitRequest.Author and the
+// `git.authorName`/`git.authorEmail` settings ask for.
+func (b *jujutsuBackend) runWriteAs(ctx context.Context, id Identity, args ...string) (string, error) {
+	if !id.Valid() {
+		return b.exec(ctx, nil, args)
+	}
+	return b.exec(ctx, []string{"JJ_USER=" + id.Name, "JJ_EMAIL=" + id.Email}, args)
+}
+
+// exec runs one jj command in the working copy and returns its standard output.
+func (b *jujutsuBackend) exec(ctx context.Context, env, args []string) (string, error) {
+	full := append([]string{"--color=never", "--no-pager"}, args...)
 	cmd := exec.CommandContext(ctx, b.bin, full...) //nolint:gosec // b.bin comes from LookPath, args are built here
 	cmd.Dir = b.path
-	cmd.Env = nonInteractiveEnv(os.Environ())
+	// The non-interactive environment of GIT-US-0023 applies unchanged: jj runs
+	// the user's own git for every network operation, so GIT_TERMINAL_PROMPT,
+	// the blanked askpass helpers and ssh's batch mode reach the process that
+	// would otherwise open a prompt nobody is watching.
+	cmd.Env = append(nonInteractiveEnv(os.Environ()), env...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

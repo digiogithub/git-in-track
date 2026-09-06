@@ -15,7 +15,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import type { SyncRepoStatus, SyncResult, SyncSettings, SyncState } from '@/api/provider';
-import { isJujutsu, JUJUTSU_SUMMARY } from '@/api/provider';
+import { isJujutsu, JUJUTSU_READ_ONLY, JUJUTSU_SUMMARY } from '@/api/provider';
 import { useOptionalProvider } from '@/api/provider-context';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -37,8 +37,10 @@ const STATE_LABELS: Record<
   conflicted: { label: 'Conflicts', variant: 'destructive' },
   in_progress: { label: 'Rebase in progress', variant: 'destructive' },
   detached: { label: 'Detached HEAD', variant: 'destructive' },
-  // A jj working copy is a commit, not a checkout: it is neither detached nor
-  // dirty, and nothing here is wrong (GIT-US-0038).
+  // The headline a jj repository gets only when no jj binary is installed and
+  // the read-only guard of GIT-US-0038 is driving. With jj available the state
+  // is the truthful one — ahead, behind, conflicted — and the badge below says
+  // the repository is jj-managed (GIT-US-0041).
   jujutsu: { label: 'Managed by Jujutsu', variant: 'outline' },
   no_remote: { label: 'No remote', variant: 'outline' },
   no_upstream: { label: 'No upstream branch', variant: 'outline' },
@@ -189,12 +191,14 @@ function RepoRow({
 }) {
   const status = repo.status;
   /**
-   * A Jujutsu repository is read-only to this product until the jj backend
-   * lands: every git write is refused, so the panel says so instead of
-   * offering buttons that fail (GIT-US-0038).
+   * A jj repository syncs through jj since GIT-US-0041, so what disables the
+   * write actions is the capability, not the VCS: `writes` is false only when
+   * no jj binary is installed and the read-only guard of GIT-US-0038 is
+   * driving.
    */
   const jujutsu = isJujutsu(repo.vcs) || status?.jujutsu === true;
-  const state = jujutsu ? 'jujutsu' : (status?.state ?? 'no_remote');
+  const readOnly = repo.writes === false;
+  const state = status?.state ?? 'no_remote';
   const tone = STATE_LABELS[state];
 
   return (
@@ -208,7 +212,7 @@ function RepoRow({
           <Button
             variant="outline"
             size="sm"
-            disabled={!repo.git || jujutsu || !enabled || busy !== null}
+            disabled={!repo.git || readOnly || !enabled || busy !== null}
             onClick={() => {
               onRun(repo.repo, true);
             }}
@@ -217,7 +221,7 @@ function RepoRow({
           </Button>
           <Button
             size="sm"
-            disabled={!repo.git || jujutsu || !enabled || busy !== null}
+            disabled={!repo.git || readOnly || !enabled || busy !== null}
             onClick={() => {
               onRun(repo.repo, false);
             }}
@@ -229,13 +233,17 @@ function RepoRow({
       <CardContent className="space-y-3 text-sm">
         {jujutsu ? (
           <p role="status" className="text-muted-foreground">
-            {JUJUTSU_SUMMARY}. Fetch with <code>jj git fetch</code> and publish with{' '}
-            <code>jj git push</code>; git would commit onto the parent of the working-copy commit
-            and move no bookmark.
+            {readOnly ? JUJUTSU_READ_ONLY : JUJUTSU_SUMMARY}
+            {readOnly ? null : (
+              <>
+                . A commit records the files it names and moves the bookmark, and a sync runs{' '}
+                <code>jj git fetch</code>, <code>jj rebase</code> and <code>jj git push</code>.
+              </>
+            )}
           </p>
         ) : null}
 
-        {!jujutsu && repo.git && status ? (
+        {!readOnly && repo.git && status ? (
           <dl className="grid grid-cols-2 gap-x-6 gap-y-1 sm:grid-cols-4">
             <Field label="Branch" value={status.branch} />
             <Field label="Remote" value={status.upstream ?? status.remote ?? '—'} />
@@ -247,7 +255,7 @@ function RepoRow({
           </dl>
         ) : null}
 
-        {!jujutsu && !(repo.git && status) ? (
+        {!readOnly && !(repo.git && status) ? (
           <p className="text-muted-foreground">{repo.reason}</p>
         ) : null}
 

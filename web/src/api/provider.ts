@@ -365,7 +365,15 @@ export type RepoVCS = {
 };
 
 /** The sentence every surface shows for a Jujutsu repository. */
-export const JUJUTSU_SUMMARY = 'Managed by Jujutsu — reads work, writes go through jj';
+export const JUJUTSU_SUMMARY = 'Managed by Jujutsu — reads and writes go through jj';
+
+/**
+ * The sentence shown for a jj repository the product cannot write to: the jj
+ * binary is missing, so the read-only guard of GIT-US-0038 is driving.
+ */
+export const JUJUTSU_READ_ONLY =
+  'Managed by Jujutsu, and no jj binary was found: reads work, and every write is refused ' +
+  'rather than made behind jj\u2019s back.';
 
 /** True when a repository is managed with Jujutsu, whatever its layout. */
 export function isJujutsu(vcs: RepoVCS | undefined): boolean {
@@ -378,8 +386,14 @@ export type SyncRepoStatus = {
   path: string;
   /** False when the folder is not a git working tree; `reason` says so. */
   git: boolean;
-  /** What manages the folder. A `jj` repository is read-only to this product. */
+  /** What manages the folder: git, jj, or nothing. */
   vcs?: RepoVCS;
+  /**
+   * False when the repository cannot be written to at all — today only a jj
+   * workspace with no jj binary installed. It is what a surface disables its
+   * write actions from, rather than "is it jj" (GIT-US-0041).
+   */
+  writes?: boolean;
   reason?: string;
   backend?: string;
   status?: SyncStatus;

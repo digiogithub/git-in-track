@@ -90,7 +90,7 @@ func (v VCSInfo) Summary() string {
 	case VCSJujutsu:
 		if v.Layout == LayoutInternal {
 			return "managed by Jujutsu, with no colocated git working tree — " +
-				"reads work, writes go through jj"
+				"reads and writes go through jj"
 		}
 		return JujutsuSummary
 	case VCSGit:
@@ -103,7 +103,7 @@ func (v VCSInfo) Summary() string {
 
 // JujutsuSummary is the fixed sentence every surface uses for a jj repository.
 // It is one string so the CLI, the API and the web app cannot drift.
-const JujutsuSummary = "managed by Jujutsu — reads work, writes go through jj"
+const JujutsuSummary = "managed by Jujutsu — reads and writes go through jj"
 
 // MinJujutsuVersion is the oldest jj release the product is verified against.
 // It is the version the reference repositories of GIT-EP-0010 run.

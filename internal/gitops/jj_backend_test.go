@@ -162,8 +162,8 @@ func TestJujutsuBackendIsSelected(t *testing.T) {
 				t.Fatalf("backend = %q, want %q", b.Name(), KindJujutsu)
 			}
 			caps := b.Capabilities()
-			if caps.VCS != "jj" || caps.Writes {
-				t.Errorf("capabilities = %+v, want vcs=jj and writes=false", caps)
+			if caps.VCS != "jj" || !caps.Writes || !caps.ScopedCommit {
+				t.Errorf("capabilities = %+v, want vcs=jj with scoped writes (GIT-US-0041)", caps)
 			}
 			if caps.Version == "" {
 				t.Error("the capabilities do not report the jj version")
@@ -603,15 +603,24 @@ func TestJujutsuReadsCreateNoOperation(t *testing.T) {
 	}
 }
 
-// TestJujutsuBackendRefusesEveryWrite pins the boundary of this story: the read
-// half landed, the write half is GIT-US-0041 and is still refused with the jj
-// command that does the same thing safely.
-func TestJujutsuBackendRefusesEveryWrite(t *testing.T) {
+// TestJujutsuGuardStillRefusesEveryWrite pins the one path that stays
+// read-only after GIT-US-0041: a jj repository with no jj binary installed,
+// which falls back to a git backend behind the guard of GIT-US-0038. The write
+// half goes through jj, so where jj is missing there is no safe write left.
+func TestJujutsuGuardStillRefusesEveryWrite(t *testing.T) {
 	f := newJujutsuFixture(t, true)
 	f.write("README.md", "# fixture\n")
 	f.commit("chore: seed the fixture")
 	f.bookmark("main", "@-")
-	b := f.backend()
+
+	plain, err := openSystem(f.dir, Options{})
+	if err != nil {
+		t.Skipf("this test needs the system git backend to stand in for the guard: %v", err)
+	}
+	b := guardJujutsu(plain, DetectVCS(f.dir))
+	if caps := b.Capabilities(); caps.Writes {
+		t.Fatalf("the guard reports writes as available: %+v", caps)
+	}
 	before := f.operations()
 
 	tests := []struct {

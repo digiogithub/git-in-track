@@ -526,10 +526,20 @@ func (r *syncRun) preflight(ctx context.Context) (SyncStatus, error) {
 	if err != nil {
 		return SyncStatus{}, err //nolint:wrapcheck // backend errors already carry a code and an actionable message
 	}
+	caps := r.backend.Capabilities()
+	// A Jujutsu repository is syncable since GIT-US-0041: fetch, integrate and
+	// push all go through jj. What is refused is a backend that cannot write at
+	// all, which today is the read-only guard of GIT-US-0038 — a jj repository
+	// with no jj binary installed. The rule is the capability, not the VCS.
+	jj := core.VCS(caps.VCS) == core.VCSJujutsu
 	switch {
-	case st.Jujutsu:
-		return st, refuseJujutsu("sync", r.backend.Path(),
-			core.JujutsuFetchCommand+"` and `"+core.JujutsuPushCommand)
+	case !caps.Writes:
+		if jj {
+			return st, refuseJujutsu("sync", r.backend.Path(),
+				core.JujutsuFetchCommand+"` and `"+core.JujutsuPushCommand)
+		}
+		return st, failf("sync", CodeUnsupported,
+			"%s is open read-only, so it cannot be synced", r.backend.Path())
 	case st.Unfinished:
 		return st, failf("sync", CodeInProgress,
 			"a %s is already in progress in %s: finish it or undo it before syncing "+
@@ -542,13 +552,14 @@ func (r *syncRun) preflight(ctx context.Context) (SyncStatus, error) {
 			r.backend.Path())
 	case st.Remote == "":
 		return st, failf("sync", CodeNoRemote,
-			"%s has no git remote: add one with `git remote add origin <url>`", r.backend.Path())
+			"%s has no git remote: add one with `%s`", r.backend.Path(), addRemoteHint(jj))
 	case st.Upstream == "":
-		return st, failf("sync", CodeNoUpstream,
-			"branch %s of %s tracks no remote branch: push it once with "+
-				"`git push -u %s %s`, then sync",
-			st.Name, r.backend.Path(), st.Remote, st.Name)
-	case !r.opts.DryRun && st.Tracked:
+		return st, failf("sync", CodeNoUpstream, "%s", publishHint(jj, st, r.backend.Path()))
+	// A dirty working copy never blocks a jj sync. In jj the working copy *is*
+	// a commit, so a rebase carries it along and records anything it cannot
+	// merge inside the result; there is no checkout to overwrite and nothing to
+	// stash. The refusal below is git's, and it stays git's.
+	case !r.opts.DryRun && st.Tracked && !jj:
 		return st, failf("sync", CodeDirtyTree,
 			"%s has %d uncommitted change(s) to tracked files: commit them "+
 				"(the sync panel's \"Commit changes\", or `gintrack sync --commit-all`) "+
@@ -556,6 +567,46 @@ func (r *syncRun) preflight(ctx context.Context) (SyncStatus, error) {
 			r.backend.Path(), len(st.Dirty))
 	}
 	return st, nil
+}
+
+// addRemoteHint names the command that adds a remote, in the vocabulary of the
+// VCS that is driving.
+func addRemoteHint(jj bool) string {
+	if jj {
+		return "jj git remote add origin <url>"
+	}
+	return "git remote add origin <url>"
+}
+
+// publishHint explains how to give a line of work something to sync against.
+// In git that is pushing the branch once with an upstream; in jj it is having a
+// bookmark at all and publishing it, because jj pushes bookmarks and a working
+// copy is not one.
+func publishHint(jj bool, st SyncStatus, path string) string {
+	if !jj {
+		return "branch " + st.Name + " of " + path + " tracks no remote branch: push it once " +
+			"with `git push -u " + st.Remote + " " + st.Name + "`, then sync"
+	}
+	if st.PushTarget == "" {
+		return path + " has no bookmark to publish: jj pushes bookmarks, not working copies, " +
+			"so create one with `jj bookmark create <name> -r @-` and publish it with " +
+			"`jj git push --remote " + st.Remote + " -b <name>`, then sync"
+	}
+	return "the bookmark " + st.PushTarget + " of " + path + " is not tracked on " + st.Remote +
+		": publish it once with `jj git push --remote " + st.Remote + " -b " + st.PushTarget +
+		"`, then sync"
+}
+
+// localRef names the local side of a preview: the branch or bookmark a push
+// would publish, falling back to whatever the VCS calls its head. Using the
+// push target rather than the head is what keeps the outgoing list and the
+// `ahead` counter in agreement in a VCS where the working copy is a commit of
+// its own and no bookmark points at it.
+func localRef(st SyncStatus) string {
+	if st.PushTarget != "" {
+		return st.PushTarget
+	}
+	return "HEAD"
 }
 
 // preview fills the incoming and outgoing commit lists, which is the whole
@@ -566,14 +617,14 @@ func (r *syncRun) preview(ctx context.Context, st SyncStatus) {
 	}
 	if st.Behind > 0 {
 		if in, err := r.backend.Commits(ctx, LogRequest{
-			From: "HEAD", To: st.Upstream, Limit: r.opts.PreviewLimit,
+			From: localRef(st), To: st.Upstream, Limit: r.opts.PreviewLimit,
 		}); err == nil {
 			r.result.Incoming = in
 		}
 	}
 	if st.Ahead > 0 {
 		if out, err := r.backend.Commits(ctx, LogRequest{
-			From: st.Upstream, To: "HEAD", Limit: r.opts.PreviewLimit,
+			From: st.Upstream, To: localRef(st), Limit: r.opts.PreviewLimit,
 		}); err == nil {
 			r.result.Outgoing = out
 		}

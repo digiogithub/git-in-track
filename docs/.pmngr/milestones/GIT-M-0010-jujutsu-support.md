@@ -16,12 +16,12 @@ repository, read and written through jj rather than behind its back.
 
 ## Exit criteria
 
-- [ ] A jj repository is detected, colocated or not, and never reported as a
+- [x] A jj repository is detected, colocated or not, and never reported as a
       detached-HEAD git repository.
-- [ ] Commit on save in a jj repository goes through jj and leaves no orphaned
+- [x] Commit on save in a jj repository goes through jj and leaves no orphaned
       working-copy commit; a scripted test proves the change graph stays intact.
-- [ ] Status, dirty set, bookmark and ahead/behind are read with jj and match
+- [x] Status, dirty set, bookmark and ahead/behind are read with jj and match
       what `jj st` and `jj log` report.
-- [ ] Fetch, integrate and push work through jj, and a conflict can be resolved
+- [x] Fetch, integrate and push work through jj, and a conflict can be resolved
       from the UI without a terminal.
-- [ ] The `Backend` interface carries no git-only concept that jj must fake.
+- [x] The `Backend` interface carries no git-only concept that jj must fake.
