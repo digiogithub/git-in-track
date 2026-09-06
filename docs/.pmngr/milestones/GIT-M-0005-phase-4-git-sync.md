@@ -2,7 +2,7 @@
 id: GIT-M-0005
 type: milestone
 title: Phase 4 — Git sync
-status: in_progress
+status: done
 author: team
 labels: [git, security]
 created: 2026-09-03T00:00:00Z
@@ -22,9 +22,9 @@ never persists a secret.
 
 ## Acceptance Criteria
 
-- [ ] Two concurrent clones reconciled through the UI, conflict included.
+- [x] Two concurrent clones reconciled through the UI, conflict included.
 - [x] No credential written to disk or `localStorage` (test-enforced).
-- [ ] Commit on save batches edits into one commit per logical change.
+- [x] Commit on save batches edits into one commit per logical change.
 - [x] Push failures are recoverable and explained.
 - [x] Browser CORS limitation documented with a working proxy recipe.
 

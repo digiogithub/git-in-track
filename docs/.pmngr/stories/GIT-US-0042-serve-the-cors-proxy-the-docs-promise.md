@@ -2,7 +2,7 @@
 id: GIT-US-0042
 type: story
 title: Serve the CORS proxy the docs promise
-status: in_review
+status: done
 priority: high
 parent: GIT-EP-0005
 milestone: GIT-M-0005
