@@ -2,7 +2,7 @@
 id: GIT-EP-0005
 type: epic
 title: Git sync
-status: in_progress
+status: done
 priority: critical
 milestone: GIT-M-0005
 author: team
