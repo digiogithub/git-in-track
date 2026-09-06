@@ -37,7 +37,7 @@ func newTestServer(t *testing.T, ui map[string]string) *Server {
 func do(t *testing.T, s *Server, method, target string, header map[string]string) *http.Response {
 	t.Helper()
 
-	req := httptest.NewRequest(method, target, nil)
+	req := httptest.NewRequestWithContext(t.Context(), method, target, nil)
 	for k, v := range header {
 		req.Header.Set(k, v)
 	}

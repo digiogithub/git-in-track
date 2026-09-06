@@ -106,6 +106,11 @@ because a commit list cannot express them.
   is no telemetry egress from it. cloudflared publishes no semver tags, so the dependency
   is pinned to the pseudo-version `v0.0.0-20260903222438-2253eeeb25a4`. ADR-027 records the
   trade-off in full.
+- golangci-lint is pinned to **v2.13.2** (was v2.5.0). The Go 1.26 directive forced it:
+  the linter refuses a config whose target Go is newer than the toolchain the linter
+  binary itself was built with, and the v2.5.0 release is built with Go 1.25. The newer
+  release enforces `noctx` inside tests, so the server's tests now build their requests
+  with `httptest.NewRequestWithContext`.
 - A second team repository is no longer reported as an error and ignored. What is reported
   now is two mounted repositories declaring the same team `key:`.
 - The version-control backend interface (`internal/gitops.Backend`) is expressed only in

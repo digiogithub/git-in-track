@@ -58,7 +58,7 @@ func trustUpstream(t *testing.T, s *Server, upstream *httptest.Server) {
 func proxyRequest(t *testing.T, s *Server, method, target string, header map[string]string, body io.Reader) *http.Response {
 	t.Helper()
 
-	req := httptest.NewRequest(method, target, body)
+	req := httptest.NewRequestWithContext(t.Context(), method, target, body)
 	req.Host = "127.0.0.1:7317"
 	req.Header.Set("Origin", proxyOrigin)
 	req.Header.Set(proxyTokenHeader, "test-token")

@@ -18,8 +18,12 @@ env:
   GO_VERSION: "1.26"
   NODE_VERSION: "22"
   # golangci-lint v2 reads the `version: "2"` schema in .golangci.yaml. Pinned so
-  # that CI runs the exact linter release verified locally by `make lint`.
-  GOLANGCI_LINT_VERSION: "v2.5.0"
+  # that CI runs the exact linter release verified locally by `make lint`. The
+  # release must be built with a Go at least as new as this module's directive:
+  # the action downloads a prebuilt binary, and one built with an older Go
+  # refuses the config outright ("the Go language version used to build
+  # golangci-lint is lower than the targeted Go version").
+  GOLANGCI_LINT_VERSION: "v2.13.2"
 
 jobs:
   preflight:

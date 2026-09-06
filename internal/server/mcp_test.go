@@ -101,7 +101,7 @@ func TestMCPEndpointRequiresTheToken(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{}`))
+			r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", strings.NewReader(`{}`))
 			for k, v := range tt.header {
 				r.Header.Set(k, v)
 			}
@@ -181,6 +181,10 @@ func TestMCPOverStreamableHTTP(t *testing.T) {
 		var read struct {
 			ID string `json:"id"`
 		}
+		// send builds its request from this subtest's own context, which is
+		// what an HTTP client would do; the MCP session's ctx belongs to the
+		// other surface and deliberately does not cross over.
+		//nolint:contextcheck // the request carries the subtest's context, not the session's
 		decode(t, send(t, s, request{
 			method: http.MethodGet, target: "/api/v1/items/" + created.Item.ID,
 		}), http.StatusOK, &read)

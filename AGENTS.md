@@ -114,7 +114,7 @@ make lint        # gofmt check, go vet, golangci-lint, ESLint, tsc, workflow YAM
 
 `make lint` never skips the Go linter: when the `golangci-lint` binary is
 missing it runs the pinned release with
-`go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.5.0` — slower,
+`go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2` — slower,
 but the exact version CI uses (`GOLANGCI_LINT_VERSION` in
 `.github/workflows/ci.yml`). A lint failure therefore cannot hide locally and
 surface in CI. `make help` lists every target.

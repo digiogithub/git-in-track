@@ -138,7 +138,7 @@ func newTunnelServer(t *testing.T, token string, driver *fakeTunnel) *Server {
 func tunnelRequest(t *testing.T, s *Server, method, token string) *httptest.ResponseRecorder {
 	t.Helper()
 
-	r := httptest.NewRequest(method, "/api/v1/tunnel", nil)
+	r := httptest.NewRequestWithContext(t.Context(), method, "/api/v1/tunnel", nil)
 	if token != "" {
 		r.Header.Set("Authorization", "Bearer "+token)
 	}

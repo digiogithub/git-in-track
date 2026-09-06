@@ -92,7 +92,7 @@ func send(t *testing.T, s *Server, req request) *httptest.ResponseRecorder {
 		}
 		body = bytes.NewReader(raw)
 	}
-	r := httptest.NewRequest(req.method, req.target, body)
+	r := httptest.NewRequestWithContext(t.Context(), req.method, req.target, body)
 	r.Header.Set("Authorization", "Bearer test-token")
 	if req.body != nil {
 		r.Header.Set("Content-Type", "application/json")
@@ -675,7 +675,7 @@ func TestAPIRequiresTheToken(t *testing.T) {
 	t.Parallel()
 
 	s, _ := newAPIServer(t)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/items", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/items", nil)
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, req)
 
@@ -702,7 +702,7 @@ func TestCORSPreflight(t *testing.T) {
 	}
 
 	t.Run("an allowed origin", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodOptions, "/api/v1/items", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodOptions, "/api/v1/items", nil)
 		req.Header.Set("Origin", "http://localhost:5173")
 		req.Header.Set("Access-Control-Request-Method", "PATCH")
 		req.Header.Set("Access-Control-Request-Headers", "If-Match")
@@ -724,7 +724,7 @@ func TestCORSPreflight(t *testing.T) {
 	})
 
 	t.Run("a foreign origin gets nothing", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodOptions, "/api/v1/items", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodOptions, "/api/v1/items", nil)
 		req.Header.Set("Origin", "https://evil.example")
 		req.Header.Set("Access-Control-Request-Method", "GET")
 		rec := httptest.NewRecorder()
