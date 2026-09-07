@@ -2,7 +2,7 @@
 id: GIT-US-0030
 type: story
 title: Ship the 1.0 release
-status: in_review
+status: done
 priority: high
 parent: GIT-EP-0007
 milestone: GIT-M-0007
@@ -10,7 +10,8 @@ author: team
 labels: [ci, docs]
 estimate: 3
 created: 2026-09-03T00:00:00Z
-updated: 2026-09-04T00:00:00Z
+updated: 2026-09-07T07:11:53Z
+closed: 2026-09-07T07:11:53Z
 links:
   - { kind: blocked_by, target: GIT-US-0028 }
   - { kind: blocked_by, target: GIT-US-0029 }

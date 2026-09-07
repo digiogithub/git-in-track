@@ -9,7 +9,7 @@ author: team
 labels: [core, ci, wasm]
 estimate: 21
 created: 2026-09-03T00:00:00Z
-updated: 2026-09-03T21:47:05Z
+updated: 2026-09-07T07:12:44Z
 started: 2026-09-03T20:42:39Z
 closed: 2026-09-03T21:47:05Z
 ---
@@ -27,12 +27,12 @@ and to `GOOS=js GOARCH=wasm`, so it accesses files only through the `core.FS` in
 
 ## Acceptance Criteria
 
-- [ ] The repository layout matches the architecture brief exactly.
-- [ ] `make build` produces a `gintrack` binary on Linux, macOS and Windows.
-- [ ] `make test` is green and `internal/core` coverage is at or above 85 %.
-- [ ] The parser round-trips every fixture file, verified by golden tests.
-- [ ] The same core compiles to WASM and answers a smoke query from a browser page.
-- [ ] Tagging `v0.1.0` produces six archives plus `checksums.txt` through GoReleaser.
+- [x] The repository layout matches the architecture brief exactly.
+- [x] `make build` produces a `gintrack` binary on Linux, macOS and Windows.
+- [x] `make test` is green and `internal/core` coverage is at or above 85 %.
+- [x] The parser round-trips every fixture file, verified by golden tests.
+- [x] The same core compiles to WASM and answers a smoke query from a browser page.
+- [x] Tagging `v0.1.0` produces six archives plus `checksums.txt` through GoReleaser.
 
 ## Notes
 

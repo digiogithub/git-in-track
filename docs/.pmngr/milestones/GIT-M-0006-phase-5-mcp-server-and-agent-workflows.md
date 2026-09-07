@@ -2,11 +2,13 @@
 id: GIT-M-0006
 type: milestone
 title: Phase 5 — MCP server and agent workflows
-status: in_progress
+status: done
 author: team
 labels: [mcp, docs]
 created: 2026-09-03T00:00:00Z
-updated: 2026-09-06T00:00:00Z
+updated: 2026-09-07T07:14:24Z
+started: 2026-09-07T07:14:16Z
+closed: 2026-09-07T07:14:24Z
 links:
   - { kind: relates_to, target: GIT-EP-0006 }
 custom:
@@ -22,9 +24,9 @@ rev-based optimistic locking, plus the AGENTS.md conventions for safe agent cont
 
 ## Acceptance Criteria
 
-- [ ] An agent claims a story, works it and comments, with no human file edits.
+- [x] An agent claims a story, works it and comments, with no human file edits.
 - [x] Concurrent agent writes yield one success and one `rev` conflict.
-- [ ] Tool schemas documented and versioned.
+- [x] Tool schemas documented and versioned.
 - [x] `AGENTS.md` published and referenced from the README.
 
 ## Notes

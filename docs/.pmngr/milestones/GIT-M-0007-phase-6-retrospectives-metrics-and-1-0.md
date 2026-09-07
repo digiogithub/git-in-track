@@ -2,11 +2,13 @@
 id: GIT-M-0007
 type: milestone
 title: Phase 6 — Retrospectives, metrics and 1.0
-status: in_progress
+status: done
 author: team
 labels: [web, docs, ci]
 created: 2026-09-03T00:00:00Z
-updated: 2026-09-04T00:00:00Z
+updated: 2026-09-07T07:14:24Z
+started: 2026-09-07T07:14:16Z
+closed: 2026-09-07T07:14:24Z
 links:
   - { kind: relates_to, target: GIT-EP-0007 }
 custom:

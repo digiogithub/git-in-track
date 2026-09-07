@@ -2,15 +2,16 @@
 id: GIT-US-0043
 type: story
 title: Share a running companion over a public URL
-status: in_review
+status: done
 priority: medium
 parent: GIT-EP-0003
 milestone: GIT-M-0003
 author: team
 labels: [server, cli, web, security]
 estimate: 8
-created: 2026-09-06
-updated: 2026-09-06
+created: 2026-09-06T00:00:00Z
+updated: 2026-09-07T07:11:53Z
+closed: 2026-09-07T07:11:53Z
 ---
 
 ## Description
