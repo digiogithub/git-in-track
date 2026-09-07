@@ -342,6 +342,11 @@ func (b *Board) Scope(declared []ProjectKey) []ProjectKey {
 	if len(b.Filters.Projects) > 0 {
 		scope = intersectKeys(scope, b.Filters.Projects)
 	}
+	if scope == nil {
+		// A team that declares no project still has to serialize as an empty
+		// list: the web app maps over this field, and `null` crashes it.
+		return []ProjectKey{}
+	}
 	return scope
 }
 

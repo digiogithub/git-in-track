@@ -31,6 +31,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
+import { accessLink } from '@/features/workspace/share-link';
 
 /** How often a `starting` tunnel is re-read while it comes up. */
 export const TUNNEL_POLL_INTERVAL_MS = 2000;
@@ -303,14 +304,6 @@ export function TunnelCard({
   );
 }
 
-/**
- * The share link that carries the credential. Built here, in the tab, from the
- * token the companion handed this session: the token is never asked of the API
- * and never leaves this function except into the user's clipboard.
- */
-function accessLink(url: string, token: string): string {
-  return `${url.replace(/\/+$/, '')}/?token=${encodeURIComponent(token)}`;
-}
 
 function messageOf(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);

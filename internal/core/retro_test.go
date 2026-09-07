@@ -432,3 +432,108 @@ func TestRetroStore(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) { tc.check(t, seed(t)) })
 	}
 }
+
+func TestRetroComments(t *testing.T) {
+	retro := readFixtureRetro(t)
+
+	first := retro.AddComment(RetroComment{Note: "n2", Author: "jose", Text: "  Agreed to gate it.  "})
+	second := retro.AddComment(RetroComment{Theme: "t1", Author: "marta", Text: "Do it again."})
+	if first.ID != "c1" || second.ID != "c2" {
+		t.Fatalf("ids = %q, %q, want c1, c2", first.ID, second.ID)
+	}
+	if first.Text != "Agreed to gate it." {
+		t.Fatalf("text = %q, want it trimmed", first.Text)
+	}
+	if got := retro.CommentsOn("n2"); len(got) != 1 || got[0].ID != "c1" {
+		t.Fatalf("CommentsOn(n2) = %+v, want just c1", got)
+	}
+
+	// A comment survives a round trip through the file.
+	data, err := SerializeRetro(retro)
+	if err != nil {
+		t.Fatalf("serialize: %v", err)
+	}
+	if !strings.Contains(string(data), "comments:\n  - id: c1\n    note: n2\n") {
+		t.Fatalf("serialized comments are missing:\n%s", data)
+	}
+	back, err := ParseRetro(retro.Path, data)
+	if err != nil {
+		t.Fatalf("reparse: %v", err)
+	}
+	if len(back.Comments) != 2 || back.Comments[1].Theme != "t1" || back.Comments[1].Author != "marta" {
+		t.Fatalf("comments after a round trip = %+v", back.Comments)
+	}
+
+	// Removing the note it hangs off removes the comment: a remark never
+	// dangles off a card the room deleted (R-RETRO-6).
+	if !back.RemoveNote("n2") {
+		t.Fatal("RemoveNote(n2) = false")
+	}
+	if len(back.Comments) != 1 || back.Comments[0].ID != "c2" {
+		t.Fatalf("comments after removing n2 = %+v, want just c2", back.Comments)
+	}
+	if !back.RemoveComment("c2") || back.RemoveComment("c2") {
+		t.Fatal("RemoveComment is not idempotent about what it removed")
+	}
+}
+
+func TestRetroCommentValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		comment RetroComment
+		want    Code
+	}{
+		{name: "on a note", comment: RetroComment{ID: "c1", Note: "n1", Text: "ok"}},
+		{name: "on a theme", comment: RetroComment{ID: "c1", Theme: "t1", Text: "ok"}},
+		{
+			name:    "unknown note",
+			comment: RetroComment{ID: "c1", Note: "n99", Text: "ok"},
+			want:    CodeRetroCommentTarget,
+		},
+		{
+			name:    "unknown theme",
+			comment: RetroComment{ID: "c1", Theme: "t99", Text: "ok"},
+			want:    CodeRetroCommentTarget,
+		},
+		{
+			name:    "both a note and a theme",
+			comment: RetroComment{ID: "c1", Note: "n1", Theme: "t1", Text: "ok"},
+			want:    CodeRetroCommentTarget,
+		},
+		{
+			name:    "neither",
+			comment: RetroComment{ID: "c1", Text: "ok"},
+			want:    CodeRetroCommentTarget,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			retro := readFixtureRetro(t)
+			retro.Comments = []RetroComment{tc.comment}
+			got := Code("")
+			for _, d := range retro.Validate(RetroValidateInput{}) {
+				if strings.HasPrefix(string(d.Code), "E-RETRO-COMMENT") {
+					got = d.Code
+				}
+			}
+			if got != tc.want {
+				t.Fatalf("comment diagnostic = %q, want %q", got, tc.want)
+			}
+		})
+	}
+
+	retro := readFixtureRetro(t)
+	retro.Comments = []RetroComment{
+		{ID: "c1", Note: "n1", Text: "one"},
+		{ID: "c1", Note: "n1", Text: "two"},
+	}
+	found := false
+	for _, d := range retro.Validate(RetroValidateInput{}) {
+		if d.Code == CodeRetroCommentIDDup {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("a duplicate comment id is not reported")
+	}
+}

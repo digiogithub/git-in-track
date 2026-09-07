@@ -676,6 +676,8 @@ export type RetroView = {
   /** Ranked by votes descending, then by id. */
   themes: RetroThemeView[];
   actions: RetroActionView[];
+  /** The discussion remarks, each naming the card it hangs off. */
+  comments: RetroComment[];
   /** The still-open actions of the retros before this one. */
   carried: RetroActionView[];
   /** The sprint under review, when the team repository holds it. */
@@ -683,6 +685,30 @@ export type RetroView = {
   body?: string;
   diagnostics: Diagnostic[];
 };
+
+/** One remark left on a note or a theme while the room discusses it. */
+export type RetroComment = {
+  id: string;
+  /** The sticky note this comment discusses. */
+  note?: string;
+  /** The theme this comment discusses. */
+  theme?: string;
+  author?: string;
+  text: string;
+  created?: string;
+};
+
+/** A new comment. Exactly one of `note` and `theme` is set. */
+export type RetroCommentDraft = {
+  id?: string;
+  note?: string;
+  theme?: string;
+  author?: string;
+  text: string;
+};
+
+/** One comment edited during the session; its target is never moved. */
+export type RetroCommentEdit = { id: string; text?: string };
 
 /** The answer of every retro call that writes. */
 export type RetroResult = {
@@ -744,6 +770,9 @@ export type RetroPatch = {
   removeNotes?: string[];
   themes?: RetroTheme[];
   votes?: Record<string, string[]>;
+  addComments?: RetroCommentDraft[];
+  updateComments?: RetroCommentEdit[];
+  removeComments?: string[];
   addActions?: RetroActionDraft[];
   updateActions?: RetroActionEdit[];
   removeActions?: string[];

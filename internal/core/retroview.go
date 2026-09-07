@@ -96,6 +96,9 @@ type RetroView struct {
 	Themes []RetroThemeView `json:"themes"`
 	// Actions are this retro's own improvement actions, in file order.
 	Actions []RetroActionView `json:"actions"`
+	// Comments are the discussion remarks, in file order. Each names the note
+	// or the theme it hangs off, so the UI renders it on that card.
+	Comments []RetroComment `json:"comments"`
 	// Carried are the actions of the previous retros that are still open. They
 	// are shown when a new retro starts, because the point is following
 	// through, not writing notes (docs/04 section 9.1, step 7).
@@ -158,11 +161,12 @@ type RetroInput struct {
 // as a board card does (docs/04 section 7).
 func BuildRetroView(r *Retro, in RetroInput) RetroView {
 	out := RetroView{
-		Notes:   append([]RetroNote{}, r.Notes...),
-		Themes:  []RetroThemeView{},
-		Actions: []RetroActionView{},
-		Carried: []RetroActionView{},
-		Body:    r.Body,
+		Notes:    append([]RetroNote{}, r.Notes...),
+		Themes:   []RetroThemeView{},
+		Actions:  []RetroActionView{},
+		Carried:  []RetroActionView{},
+		Comments: append([]RetroComment{}, r.Comments...),
+		Body:     r.Body,
 	}
 
 	for _, action := range r.Actions {

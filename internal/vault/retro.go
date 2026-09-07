@@ -3,6 +3,8 @@ package vault
 import (
 	"context"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/digiogithub/git-in-track/internal/core"
 )
@@ -120,6 +122,23 @@ type RetroActionEdit struct {
 	Note   *string `json:"note,omitempty"`
 }
 
+// RetroCommentDraft is one remark left on a note or a theme while the room
+// discusses it. Exactly one of Note and Theme is set.
+type RetroCommentDraft struct {
+	ID     string `json:"id,omitempty"`
+	Note   string `json:"note,omitempty"`
+	Theme  string `json:"theme,omitempty"`
+	Author string `json:"author,omitempty"`
+	Text   string `json:"text"`
+}
+
+// RetroCommentEdit changes the text of one comment. Its target is not
+// editable: a remark that moves to another card is a new remark.
+type RetroCommentEdit struct {
+	ID   string  `json:"id"`
+	Text *string `json:"text,omitempty"`
+}
+
 // RetroPatch is the set of retro fields "retro.update" may change. An absent
 // field is left alone; the note and action lists are edited entry by entry so
 // that one participant's write is one line of diff (docs/04 section 9.1).
@@ -142,6 +161,10 @@ type RetroPatch struct {
 	Themes *[]core.RetroTheme `json:"themes,omitempty"`
 	// Votes replaces the ballot wholesale, for the same reason.
 	Votes *map[string][]string `json:"votes,omitempty"`
+
+	AddComments    []RetroCommentDraft `json:"addComments,omitempty"`
+	UpdateComments []RetroCommentEdit  `json:"updateComments,omitempty"`
+	RemoveComments []string            `json:"removeComments,omitempty"`
 
 	AddActions    []RetroActionDraft `json:"addActions,omitempty"`
 	UpdateActions []RetroActionEdit  `json:"updateActions,omitempty"`
@@ -558,7 +581,11 @@ func (w *Workspace) UpdateRetro(ctx context.Context, p RetroUpdateParams) (Retro
 	if err := checkRetroRev(retro, p.Rev); err != nil {
 		return RetroResult{}, err
 	}
-	if err := applyRetroPatch(retro, p.Patch); err != nil {
+	now := time.Now
+	if clock := w.clock(); clock != nil {
+		now = clock
+	}
+	if err := applyRetroPatch(retro, p.Patch, now()); err != nil {
 		return RetroResult{}, err
 	}
 	written, writes, err := c.team.Vault.WriteRetro(ctx, retro, retro.Rev)
@@ -569,7 +596,7 @@ func (w *Workspace) UpdateRetro(ctx context.Context, p RetroUpdateParams) (Retro
 }
 
 // applyRetroPatch is the whole of "retro.update" that is not I/O.
-func applyRetroPatch(retro *core.Retro, patch RetroPatch) error {
+func applyRetroPatch(retro *core.Retro, patch RetroPatch, now time.Time) error {
 	if patch.Title != nil {
 		retro.Title = *patch.Title
 	}
@@ -632,7 +659,64 @@ func applyRetroPatch(retro *core.Retro, patch RetroPatch) error {
 			retro.Votes[theme] = append([]string(nil), voters...)
 		}
 	}
-	return applyRetroActions(retro, patch)
+	if err := applyRetroActions(retro, patch); err != nil {
+		return err
+	}
+	return applyRetroComments(retro, patch, now)
+}
+
+// applyRetroComments adds, edits and removes the discussion remarks. A comment
+// must name a card that exists: the alternative is a remark nobody can find.
+func applyRetroComments(retro *core.Retro, patch RetroPatch, now time.Time) error {
+	for _, draft := range patch.AddComments {
+		if draft.ID != "" && !core.ValidRetroLocalID(draft.ID) {
+			return failf("invalid_request",
+				"%q is not a comment id: one to sixteen of [a-z0-9-]", draft.ID)
+		}
+		if _, taken := retro.Comment(draft.ID); draft.ID != "" && taken {
+			return failf("conflict", "retro %s already has a comment %q", retro.ID, draft.ID)
+		}
+		if strings.TrimSpace(draft.Text) == "" {
+			return failf("invalid_request", "a comment needs a text")
+		}
+		switch {
+		case draft.Note != "" && draft.Theme != "":
+			return failf("invalid_request",
+				"a comment names a note or a theme, not both")
+		case draft.Note != "":
+			if _, ok := retro.Note(draft.Note); !ok {
+				return failf("not_found", "retro %s has no note %q", retro.ID, draft.Note)
+			}
+		case draft.Theme != "":
+			if _, ok := retro.Theme(draft.Theme); !ok {
+				return failf("not_found", "retro %s has no theme %q", retro.ID, draft.Theme)
+			}
+		default:
+			return failf("invalid_request", "a comment needs a note or a theme to hang off")
+		}
+		retro.AddComment(core.RetroComment{
+			ID: draft.ID, Note: draft.Note, Theme: draft.Theme,
+			Author: draft.Author, Text: draft.Text, Created: core.NewTimestamp(now),
+		})
+	}
+	for _, edit := range patch.UpdateComments {
+		comment, ok := retro.Comment(edit.ID)
+		if !ok {
+			return failf("not_found", "retro %s has no comment %q", retro.ID, edit.ID)
+		}
+		if edit.Text != nil {
+			if strings.TrimSpace(*edit.Text) == "" {
+				return failf("invalid_request", "a comment needs a text")
+			}
+			comment.Text = strings.TrimSpace(*edit.Text)
+		}
+	}
+	for _, id := range patch.RemoveComments {
+		if !retro.RemoveComment(id) {
+			return failf("not_found", "retro %s has no comment %q", retro.ID, id)
+		}
+	}
+	return nil
 }
 
 // applyRetroNotes adds, edits and removes the sticky notes of a session.

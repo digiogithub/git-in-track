@@ -1,6 +1,6 @@
 # ADR-011 — GoReleaser with unsigned release artifacts in v1
 
-- **Status:** Accepted
+- **Status:** Superseded by [ADR-029](ADR-029-signed-release-artifacts.md)
 - **Date:** 2026-09-03
 - **Phase:** 6 (polish and 1.0 releases)
 - **Related:** [ADR-005](ADR-005-companion-cli-go-embed.md)

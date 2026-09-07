@@ -1,32 +1,64 @@
 name: Release
 
+# Signed release pipeline, triggered by pushing a version tag.
+#
+#   assets   : the WASM core and the Vite bundle are built once on Linux and
+#              reused by every platform job, so the three binaries embed byte
+#              for byte the same web/dist (web/embed.go).
+#   linux    : cross-compiled on ubuntu, unsigned (no OS gatekeeper there).
+#   windows  : built on a windows runner and Authenticode-signed with Azure
+#              Trusted Signing (OIDC, no long-lived secret).
+#   macos    : built on a macOS runner, signed with the Developer ID identity
+#              and the hardened runtime, then notarized.
+#   release  : one GitHub release with every archive, checksums.txt and the
+#              changes since the previous tag.
+#
+# The macOS signing material is a single repository secret,
+# MACOS_SIGNING_BUNDLE: a base64 .tar.gz of ~/DIGIO_Software_Signing_Keys (the
+# Developer ID .p12 files plus the kvagerc env file with the passwords and the
+# notary credentials). The Windows side needs no secret: the `release`
+# environment federates into the Entra app named by vars.AZURE_CLIENT_ID.
+# See docs/09-ci-cd-and-releases.md §4.
+
 on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to (re)build and release."
+        required: true
+        type: string
+      draft:
+        description: "Publish the release as a draft."
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 env:
-  GO_VERSION: "1.26"
   NODE_VERSION: "22"
 
 jobs:
-  preflight:
-    # The Phase 0 scaffold has landed. This job no longer skips the release: it
-    # asserts the layout GoReleaser needs and fails the tag build if it is gone.
-    name: Preflight (repository layout)
+  assets:
+    name: Embedded assets
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
 
+      # The layout the pipeline depends on. Failing here costs seconds; failing
+      # half way through a signed build costs a notarization round trip.
       - name: Check the expected layout
         run: |
           missing=0
-          for path in go.mod go.sum .goreleaser.yaml Dockerfile cmd/gintrack wasm \
-                      web/package.json web/package-lock.json web/dist/.gitkeep; do
+          for path in go.mod go.sum cmd/gintrack wasm web/embed.go \
+                      web/package.json web/package-lock.json; do
             if [ ! -e "$path" ]; then
               echo "::error::missing $path"
               missing=1
@@ -34,43 +66,10 @@ jobs:
           done
           exit "$missing"
 
-  release:
-    name: Build and publish release
-    runs-on: ubuntu-latest
-    needs: [preflight]
-    permissions:
-      # contents: write publishes the GitHub Release; packages: write pushes the
-      # images to ghcr.io. The tap and the bucket live in other repositories, so
-      # GITHUB_TOKEN cannot reach them and they use their own secrets below.
-      contents: write
-      packages: write
-    steps:
-      # Fail before anything is built rather than half way through publishing.
-      # A missing token would otherwise produce a GitHub Release with no formula
-      # and no manifest, which is worse than no release at all.
-      - name: Verify the publishing credentials
-        env:
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          SCOOP_BUCKET_TOKEN: ${{ secrets.SCOOP_BUCKET_TOKEN }}
-        run: |
-          missing=0
-          for name in HOMEBREW_TAP_TOKEN SCOOP_BUCKET_TOKEN; do
-            if [ -z "${!name}" ]; then
-              echo "::error::repository secret $name is not set. Create a fine-grained personal access token with Contents:read+write on the target repository (digiogithub/homebrew-tap for HOMEBREW_TAP_TOKEN, digiogithub/scoop-bucket for SCOOP_BUCKET_TOKEN) and store it as an Actions secret. See docs/09-ci-cd-and-releases.md section 10."
-              missing=1
-            fi
-          done
-          exit "$missing"
-
-      - name: Checkout (full history for changelog)
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
           cache: true
           cache-dependency-path: go.sum
 
@@ -81,54 +80,358 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
 
-      # GoReleaser's before.hooks rebuild these too, so this is belt and braces:
-      # it lets the smoke test below run before a single binary is cross-built.
-      - name: Build WASM core
+      - name: Build the WASM core
         run: make wasm
 
       - name: WASM smoke test
         run: node scripts/wasm-smoke.mjs
 
-      - name: Build web bundle
+      - name: Build the web bundle
         working-directory: web
         run: |
           npm ci
           npm run build
 
-      - name: Verify embedded assets exist
+      - name: Verify the embedded assets exist
         run: |
           test -f web/dist/index.html
-          test -f web/dist/core.wasm || test -f web/public/core.wasm
+          test -f web/dist/core.wasm
 
-      - name: Validate the GoReleaser configuration
-        run: go run github.com/goreleaser/goreleaser/v2@latest check
-
-      # The arm64 image runs `apk add` for its own architecture, so the runner
-      # needs binfmt emulation; the amd64 image does not.
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      # GITHUB_TOKEN plus `packages: write` is enough for ghcr.io in the
-      # repository's own namespace; no separate registry secret is needed.
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+      - name: Upload the embedded assets
+        uses: actions/upload-artifact@v4
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          name: web-assets
+          path: |
+            web/dist
+            web/public/core.wasm
+            web/public/wasm_exec.js
+          include-hidden-files: true
+          if-no-files-found: error
 
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v6
+  linux:
+    name: Linux
+    needs: assets
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        goarch: [amd64, arm64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
-          distribution: goreleaser
-          version: "~> v2"
-          args: release --clean
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Download the embedded assets
+        uses: actions/download-artifact@v4
+        with:
+          name: web-assets
+          path: web
+
+      - name: Resolve the version
+        id: version
+        run: |
+          tag="${{ inputs.tag || github.ref_name }}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+          echo "date=$(git log -1 --format=%cI)" >> "$GITHUB_OUTPUT"
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        uses: digiogithub/ci-actions/go-cross-build@v1
+        with:
+          goos: linux
+          goarch: ${{ matrix.goarch }}
+          output: dist/gintrack
+          package: ./cmd/gintrack
+          cgo: "0"
+          ldflags: >-
+            -s -w
+            -X main.version=${{ steps.version.outputs.version }}
+            -X main.commit=${{ steps.version.outputs.commit }}
+            -X main.date=${{ steps.version.outputs.date }}
+            -X main.builtBy=github-actions
+          archive: none
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          cp LICENSE README.md dist/
+          tar -C dist -czf "dist/gintrack_${{ steps.version.outputs.version }}_linux_${{ matrix.goarch }}.tar.gz" \
+            gintrack LICENSE README.md
+          rm -f dist/gintrack dist/LICENSE dist/README.md
+          ls -la dist/
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-linux-${{ matrix.goarch }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  windows:
+    name: Windows (Authenticode)
+    needs: assets
+    runs-on: windows-latest
+    # The federated credential on the Entra app is scoped to
+    # repo:digiogithub/git-in-track:environment:release, so the OIDC token
+    # minted here only validates from within that environment.
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Download the embedded assets
+        uses: actions/download-artifact@v4
+        with:
+          name: web-assets
+          path: web
+
+      - name: Resolve the version
+        id: version
+        shell: bash
+        run: |
+          tag="${{ inputs.tag || github.ref_name }}"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+          echo "date=$(git log -1 --format=%cI)" >> "$GITHUB_OUTPUT"
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      # CGO_ENABLED=0, so both architectures cross-compile on the same runner;
+      # they are built here rather than on Linux because signtool and the
+      # Trusted Signing dlib have no Linux build and the binary must not travel
+      # unsigned between jobs.
+      - name: Build
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Cross-repository writes: the tap and the bucket are separate
-          # repositories that GITHUB_TOKEN has no access to.
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          SCOOP_BUCKET_TOKEN: ${{ secrets.SCOOP_BUCKET_TOKEN }}
+          CGO_ENABLED: "0"
+          GOOS: windows
+        run: |
+          set -euo pipefail
+          mkdir -p unsigned
+          for arch in amd64 arm64; do
+            GOARCH="$arch" go build -trimpath \
+              -ldflags "-s -w -X main.version=${{ steps.version.outputs.version }} -X main.commit=${{ steps.version.outputs.commit }} -X main.date=${{ steps.version.outputs.date }} -X main.builtBy=github-actions" \
+              -o "unsigned/gintrack-$arch.exe" ./cmd/gintrack
+          done
+          ls -l unsigned
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign with Azure Trusted Signing
+        # No credential inputs: the action falls back to the Azure CLI session
+        # established above, which is the federated GitHub identity.
+        uses: azure/trusted-signing-action@v0
+        with:
+          endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_SIGNING_CERT_PROFILE }}
+          files-folder: ${{ github.workspace }}\unsigned
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Verify the signature
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Get-ChildItem unsigned/*.exe | ForEach-Object {
+            $sig = Get-AuthenticodeSignature $_.FullName
+            "-- $($_.Name): $($sig.Status) / $($sig.SignerCertificate.Subject)"
+            if ($sig.Status -ne 'Valid') {
+              Write-Output "::error::Unsigned or invalid: $($_.Name) ($($sig.Status))"
+              exit 1
+            }
+          }
+
+      - name: Package
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path dist, stage | Out-Null
+          foreach ($arch in @('amd64', 'arm64')) {
+            Remove-Item stage/* -Force -ErrorAction SilentlyContinue
+            Copy-Item "unsigned/gintrack-$arch.exe" stage/gintrack.exe
+            Copy-Item LICENSE, README.md stage/
+            Compress-Archive -Path stage/* -DestinationPath "dist/gintrack_${env:VERSION}_windows_$arch.zip" -Force
+          }
+          Get-ChildItem dist
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-windows
+          path: dist/*.zip
+          if-no-files-found: error
+
+  macos:
+    name: macOS (signed + notarized)
+    needs: assets
+    runs-on: macos-latest
+    # Notarization submits both archives to Apple with --wait.
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Download the embedded assets
+        uses: actions/download-artifact@v4
+        with:
+          name: web-assets
+          path: web
+
+      - name: Resolve the version
+        id: version
+        run: |
+          tag="${{ inputs.tag || github.ref_name }}"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+          echo "date=$(git log -1 --format=%cI)" >> "$GITHUB_OUTPUT"
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      # Exports SIGNING_IDENTITY, NOTARY_PROFILE and
+      # MACOS_SIGN_KEYCHAIN_PATH/PASSWORD for the steps below.
+      - name: Set up the signing keychain
+        uses: digiogithub/ci-actions/macos-signing-keychain@v1
+        with:
+          signing-bundle: ${{ secrets.MACOS_SIGNING_BUNDLE }}
+          env-file: kvagerc
+          keychain-name: gintrack-build
+          notary-profile: gintrack-notary
+
+      - name: Build
+        env:
+          CGO_ENABLED: "0"
+          GOOS: darwin
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          for arch in arm64 amd64; do
+            GOARCH="$arch" go build -trimpath \
+              -ldflags "-s -w -X main.version=${{ steps.version.outputs.version }} -X main.commit=${{ steps.version.outputs.commit }} -X main.date=${{ steps.version.outputs.date }} -X main.builtBy=github-actions" \
+              -o "dist/gintrack-$arch" ./cmd/gintrack
+          done
+          ls -l dist
+
+      # Hardened runtime plus a secure timestamp: without both, notarization is
+      # rejected.
+      - name: Codesign
+        uses: digiogithub/ci-actions/macos-codesign@v1
+        with:
+          paths: |
+            dist/gintrack-arm64
+            dist/gintrack-amd64
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          for arch in arm64 amd64; do
+            rm -rf stage && mkdir stage
+            # ditto preserves the signature inside the archive; zip is also what
+            # notarytool accepts for a loose Mach-O.
+            cp "dist/gintrack-$arch" stage/gintrack
+            cp LICENSE README.md stage/
+            ( cd stage && zip -qr "../dist/gintrack_${{ steps.version.outputs.version }}_darwin_$arch.zip" . )
+            rm -f "dist/gintrack-$arch"
+          done
+          rm -rf stage
+          ls -la dist
+
+      # Submit-only: a bare Mach-O cannot carry a stapled ticket, so the
+      # archives pass Gatekeeper's online check. `staple: auto` therefore does
+      # not fail the job when the ticket cannot be attached.
+      - name: Notarize
+        uses: digiogithub/ci-actions/macos-notarize@v1
+        with:
+          paths: dist/*.zip
+          staple: auto
+
+      - name: Clean up the signing keychain
+        if: always()
+        uses: digiogithub/ci-actions/macos-keychain-cleanup@v1
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-macos
+          path: dist/*.zip
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: [linux, windows, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          # dist-* only: it leaves the web-assets artifact out of the release.
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum gintrack_*.tar.gz gintrack_*.zip > checksums.txt
+          cat checksums.txt
+
+      - name: Publish
+        uses: digiogithub/ci-actions/github-release@v1
+        with:
+          tag: ${{ inputs.tag || github.ref_name }}
+          files: |
+            dist/gintrack_*.tar.gz
+            dist/gintrack_*.zip
+            dist/checksums.txt
+          draft: ${{ inputs.draft || false }}
+          notes-header: |
+            Downloads: `gintrack_*_linux_*.tar.gz` for Linux,
+            `gintrack_*_darwin_*.zip` for macOS (Developer ID signed and
+            notarized) and `gintrack_*_windows_*.zip` for Windows
+            (Authenticode-signed). Verify any of them against `checksums.txt`.
+          token: ${{ github.token }}

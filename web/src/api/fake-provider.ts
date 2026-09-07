@@ -55,6 +55,7 @@ import type {
   RetroAction,
   RetroActionView,
   RetroCategory,
+  RetroComment,
   RetroDraft,
   RetroFilter,
   RetroListing,
@@ -149,6 +150,7 @@ export type FakeRetro = {
   themes: { id: string; title: string; category?: RetroCategory; notes?: string[] }[];
   votes: Record<string, string[]>;
   actions: RetroAction[];
+  comments?: RetroComment[];
   rev: string;
 };
 
@@ -1650,6 +1652,24 @@ export class FakeProvider implements DataProvider {
     if (patch.removeActions) {
       retro.actions = retro.actions.filter((a) => !patch.removeActions?.includes(a.id));
     }
+    const comments = retro.comments ?? [];
+    for (const draft of patch.addComments ?? []) {
+      comments.push({
+        id: draft.id ?? `c${comments.length + 1}`,
+        ...(draft.note === undefined ? {} : { note: draft.note }),
+        ...(draft.theme === undefined ? {} : { theme: draft.theme }),
+        ...(draft.author === undefined || retro.anonymous ? {} : { author: draft.author }),
+        text: draft.text,
+      });
+    }
+    for (const edit of patch.updateComments ?? []) {
+      const comment = comments.find((c) => c.id === edit.id);
+      if (!comment) return Promise.reject(new ProviderError('not_found', `No comment ${edit.id}`));
+      if (edit.text !== undefined) comment.text = edit.text;
+    }
+    retro.comments = patch.removeComments
+      ? comments.filter((c) => !patch.removeComments?.includes(c.id))
+      : comments;
     retro.rev = this.nextRev();
     this.emit({ kind: 'repo', repoId: 'repo-1' });
     return Promise.resolve({ retro: this.renderRetro(retro), writes: [] });
@@ -1731,6 +1751,7 @@ export class FakeProvider implements DataProvider {
       notes: structuredClone(retro.notes),
       themes,
       actions,
+      comments: structuredClone(retro.comments ?? []),
       carried: earlier.flatMap((r) => this.retroActions(r)).filter((a) => a.open),
       ...(sprintOfRetro ? { sprint: this.renderSprint(sprintOfRetro).sprint } : {}),
       diagnostics: [],

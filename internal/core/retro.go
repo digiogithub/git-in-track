@@ -202,9 +202,12 @@ type Retro struct {
 	// Votes maps a theme id to the handles that voted for it.
 	Votes   map[string][]string `yaml:"votes,omitempty" json:"votes,omitempty"`
 	Actions []RetroAction       `yaml:"actions,omitempty" json:"actions,omitempty"`
-	Created Timestamp           `yaml:"created,omitempty" json:"created,omitempty"`
-	Updated Timestamp           `yaml:"updated,omitempty" json:"updated,omitempty"`
-	Author  string              `yaml:"author,omitempty" json:"author,omitempty"`
+	// Comments are the remarks the room left on the notes and themes during
+	// the discussing stage (docs/04 section 9.1, step 5).
+	Comments []RetroComment `yaml:"comments,omitempty" json:"comments,omitempty"`
+	Created  Timestamp      `yaml:"created,omitempty" json:"created,omitempty"`
+	Updated  Timestamp      `yaml:"updated,omitempty" json:"updated,omitempty"`
+	Author   string         `yaml:"author,omitempty" json:"author,omitempty"`
 
 	// Extra preserves the front-matter keys this version does not model, so
 	// that an older binary never damages a newer file.
@@ -228,7 +231,7 @@ var retroKnownKeys = map[string]bool{
 	"id": true, "type": true, "title": true, "sprint": true, "board": true,
 	"date": true, "facilitator": true, "participants": true, "state": true,
 	"anonymous": true, "votes_per_person": true, "carried_from": true,
-	"themes": true, "votes": true, "actions": true,
+	"themes": true, "votes": true, "actions": true, "comments": true,
 	"created": true, "updated": true, "author": true,
 }
 
@@ -418,6 +421,7 @@ func SerializeRetro(r *Retro) ([]byte, error) {
 	writeRetroThemes(w, r.Themes)
 	writeRetroVotes(w, r.Votes)
 	writeRetroActions(w, r.Actions)
+	writeRetroComments(w, r.Comments)
 	w.timestamp("created", r.Created)
 	w.timestamp("updated", r.Updated)
 	w.scalar("author", r.Author)
@@ -609,6 +613,35 @@ func (r *Retro) Validate(in RetroValidateInput) []Diagnostic {
 			add(CodeRetroActionTaskDead, SeverityWarning, "actions",
 				fmt.Sprintf("the task %s of action %s does not resolve in the clone of %s",
 					a.Task, a.ID, ref.Project))
+		}
+	}
+
+	seenComment := map[string]bool{}
+	notes := map[string]bool{}
+	for _, n := range r.Notes {
+		if n.ID != "" {
+			notes[n.ID] = true
+		}
+	}
+	for _, c := range r.Comments {
+		if seenComment[c.ID] {
+			add(CodeRetroCommentIDDup, SeverityError, "comments",
+				fmt.Sprintf("duplicate comment id %q", c.ID))
+		}
+		seenComment[c.ID] = true
+		switch {
+		case c.Note != "" && c.Theme != "":
+			add(CodeRetroCommentTarget, SeverityError, "comments",
+				fmt.Sprintf("comment %s names both a note and a theme; it belongs to one card", c.ID))
+		case c.Note != "" && !notes[c.Note]:
+			add(CodeRetroCommentTarget, SeverityError, "comments",
+				fmt.Sprintf("comment %s references the unknown note %q", c.ID, c.Note))
+		case c.Theme != "" && !themes[c.Theme]:
+			add(CodeRetroCommentTarget, SeverityError, "comments",
+				fmt.Sprintf("comment %s references the unknown theme %q", c.ID, c.Theme))
+		case c.Note == "" && c.Theme == "":
+			add(CodeRetroCommentTarget, SeverityError, "comments",
+				fmt.Sprintf("comment %s is attached to no note and no theme", c.ID))
 		}
 	}
 

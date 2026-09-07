@@ -106,6 +106,8 @@ const (
 	CodeRetroState              Code = "E-RETRO-STATE"
 	CodeRetroVoteTheme          Code = "E-RETRO-VOTE-THEME"
 	CodeRetroActionIDDup        Code = "E-RETRO-ACTION-ID-DUP"
+	CodeRetroCommentIDDup       Code = "E-RETRO-COMMENT-ID-DUP"
+	CodeRetroCommentTarget      Code = "E-RETRO-COMMENT-TARGET"
 	CodeRetroVoteBudget         Code = "W-RETRO-VOTE-BUDGET"
 	CodeRetroVoteNonParticipant Code = "W-RETRO-VOTE-NONPARTICIPANT"
 	CodeRetroActionNoOwner      Code = "W-RETRO-ACTION-NO-OWNER"

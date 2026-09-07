@@ -4,7 +4,8 @@ This document defines how **git-in-track** is built, verified and released. It e
 committed GitHub Actions workflows and the GoReleaser configuration, and adds the
 versioning policy, branch strategy, release checklist and the distribution channels.
 
-> Status: implemented. `.github/workflows/ci.yml`, `.github/workflows/release.yml`,
+> Status: implemented, artifacts signed on macOS and Windows (§4).
+> `.github/workflows/ci.yml`, `.github/workflows/release.yml`,
 > `.goreleaser.yaml`, `.golangci.yaml` and the `Makefile` are committed and are the source
 > of truth. This document explains them; when the two disagree, the file wins and this
 > document is the bug.
@@ -130,98 +131,195 @@ report.
 
 **Source of truth: [`.github/workflows/release.yml`](../.github/workflows/release.yml).**
 
-Triggered by pushing a tag matching `v*`. Builds the WASM core and the frontend first,
-smoke-tests the WASM module, validates the GoReleaser configuration, then hands over to
-GoReleaser, which cross-compiles, archives, checksums, generates the changelog and
-publishes the GitHub Release.
+Triggered by pushing a tag matching `v*`, or by `workflow_dispatch` with an existing tag
+(and an optional `draft`) to re-cut a release without moving the tag. It builds the
+embedded assets once, then builds each platform on the runner that can sign it, and
+publishes one GitHub Release with every archive plus `checksums.txt`.
 
-| Job         | Steps                                                                                 |
-| ----------- | ------------------------------------------------------------------------------------- |
-| `preflight` | asserts the repository layout GoReleaser needs (including `Dockerfile`)                 |
-| `release`   | verify the publishing credentials → checkout with `fetch-depth: 0` → setup Go/Node → `make wasm` → `node scripts/wasm-smoke.mjs` → `npm ci && npm run build` → verify embedded assets → `goreleaser check` → QEMU + Buildx + `ghcr.io` login → `goreleaser release --clean` |
+```
+tag v1.2.3
+   ├── job assets (ubuntu-latest)
+   │     make wasm → node scripts/wasm-smoke.mjs → npm ci && npm run build
+   │     uploads web/dist + web/public as the artifact `web-assets`
+   │
+   ├── job linux (ubuntu-latest, matrix amd64/arm64)
+   │     ci-actions/go-cross-build → tar.gz with LICENSE + README.md
+   │
+   ├── job windows (windows-latest, environment: release)
+   │     go build amd64 + arm64 (CGO_ENABLED=0)
+   │     azure/login            ← OIDC, no secret
+   │     trusted-signing-action → Authenticode signature + RFC 3161 timestamp
+   │     Get-AuthenticodeSignature → the job fails if the status is not Valid
+   │     Compress-Archive → gintrack_<version>_windows_<arch>.zip
+   │
+   ├── job macos (macos-latest)
+   │     macos-signing-keychain ← secret MACOS_SIGNING_BUNDLE
+   │     macos-codesign         → Developer ID + hardened runtime + timestamp
+   │     zip → macos-notarize   → submitted to Apple with --wait
+   │     macos-keychain-cleanup (if: always())
+   │
+   └── job release (ubuntu-latest)
+         sha256sum → checksums.txt
+         ci-actions/github-release@v1 → the release and the notes since the
+         previous tag
+```
 
-Permissions follow least privilege: the workflow is `contents: read` at the top level and
-only the `release` job raises itself to `contents: write` (to create the GitHub Release)
-and `packages: write` (to push the images to GHCR). `fetch-depth: 0` is required for the
-generated changelog.
+The signing, notarization and release steps are composite actions from
+[`digiogithub/ci-actions`](https://github.com/digiogithub/ci-actions), pinned at `@v1` —
+the same ones the Pando pipeline uses, so both repositories share one signing setup.
 
-The first step of the `release` job checks that `HOMEBREW_TAP_TOKEN` and
-`SCOOP_BUCKET_TOKEN` are present and fails the run with the fix in the message when either
-is not, before a single binary is built — see §10 for what each one is and why
-`GITHUB_TOKEN` cannot stand in for them.
+Permissions follow least privilege: `contents: read` at the top level, `id-token: write`
+only in the `windows` job (to mint the OIDC token) and `contents: write` only in the
+`release` job. `fetch-depth: 0` in the `linux` and `release` jobs is what the generated
+notes need to find the previous tag.
 
-### Snapshot build (local, or optional for `main`)
+Two details that are deliberate and easy to undo by accident:
 
-A snapshot build catches cross-compilation breakage before a tag is cut. Locally that is
-`make release-snapshot`; as a nightly or manual workflow it is the same job with
-`args: release --snapshot --clean --skip=publish` and no `contents: write` permission.
+- **The assets are built once.** All three platform jobs download the same `web-assets`
+  artifact, so the Linux, Windows and macOS binaries embed a byte-identical `web/dist`.
+  Rebuilding them per job would make the embedded frontend runner-dependent.
+- **The Windows binaries are built on the Windows runner**, not cross-compiled on Linux
+  and shipped to be signed. `signtool` and the Trusted Signing dlib have no Linux build,
+  and this way an unsigned `.exe` never travels between jobs where a release could pick
+  it up.
+
+### Artifact matrix produced
+
+| OS      | Arch  | Archive                                | Signature                          |
+| ------- | ----- | -------------------------------------- | ---------------------------------- |
+| linux   | amd64 | `gintrack_1.0.0_linux_amd64.tar.gz`    | none (checksum only)               |
+| linux   | arm64 | `gintrack_1.0.0_linux_arm64.tar.gz`    | none (checksum only)               |
+| darwin  | amd64 | `gintrack_1.0.0_darwin_amd64.zip`      | Developer ID + notarized           |
+| darwin  | arm64 | `gintrack_1.0.0_darwin_arm64.zip`      | Developer ID + notarized           |
+| windows | amd64 | `gintrack_1.0.0_windows_amd64.zip`     | Authenticode (Azure Trusted Signing) |
+| windows | arm64 | `gintrack_1.0.0_windows_arm64.zip`     | Authenticode (Azure Trusted Signing) |
+| —       | —     | `checksums.txt`                        | —                                  |
+
+The macOS archives are `zip`, not `tar.gz`: `notarytool` accepts a zip, and the format has
+to survive the round trip to Apple. Every archive carries the binary plus `LICENSE` and
+`README.md`.
+
+### Running it
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+A tag-triggered workflow runs the version of the file **contained in the tagged commit**,
+so `.github/workflows/release.yml` must be committed and pushed before the tag is created.
+
+### Snapshot build (local)
+
+A snapshot still catches cross-compilation breakage before a tag is cut:
+`make release-snapshot` (GoReleaser, unsigned, never publishes anything — §5).
+
 ---
 
-## 4. Artifacts are unsigned
+## 4. Signing and notarization
 
-**git-in-track releases are not code-signed and not notarized.** There is no Apple
-Developer ID certificate, no Windows Authenticode certificate and no notarization step in
-the release pipeline. This is a deliberate choice for the initial releases: certificates
-cost money, require a legal entity and secrets management, and would gate the project on
-non-technical work.
+**git-in-track releases are code-signed on macOS and Windows** (superseding
+[ADR-011](adr/ADR-011-goreleaser-unsigned-artifacts.md), see
+[ADR-029](adr/ADR-029-signed-release-artifacts.md)). Linux artifacts are unsigned, as is
+normal there; `checksums.txt` covers every artifact on every platform.
 
-The consequence is that operating systems will warn users on first launch. Integrity is
-instead verified through `checksums.txt`, which is published with every release, and
-through the fact that every artifact is built by a public GitHub Actions run from a public
-tag.
+### The macOS secret
 
-### macOS (Gatekeeper)
-
-Downloaded archives carry the `com.apple.quarantine` attribute, so the first run reports
-that the binary "cannot be opened because the developer cannot be verified".
+Everything the macOS signing needs is one repository secret, `MACOS_SIGNING_BUNDLE`: a
+base64 `.tar.gz` of `~/DIGIO_Software_Signing_Keys`, i.e. the Developer ID `.p12` files
+plus the `kvagerc` env file holding their passwords and the notary credentials
+(`NOTARY_APPLE_ID`, `NOTARY_TEAM_ID`, `NOTARY_APP_PASSWORD`).
 
 ```bash
-# Option A — remove the quarantine attribute after extracting
-xattr -d com.apple.quarantine ./gintrack
-
-# Option B — approve once via System Settings
-#   Run ./gintrack, let it be blocked, then open
-#   System Settings > Privacy & Security > "Open Anyway"
-
-# Option C — install via Homebrew tap (Phase 6), which strips quarantine for you
+# from a machine that can reach the Mac holding the keys
+ssh mac-mini-de-digio 'tar czf - -C ~ DIGIO_Software_Signing_Keys | base64' \
+  | gh secret set MACOS_SIGNING_BUNDLE --repo digiogithub/git-in-track
 ```
 
-Verify the download first:
+The value never touches the shell history or a file on disk. On the runner the
+`macos-signing-keychain` action unpacks it into `RUNNER_TEMP`, masks every password it
+reads, imports the identities into an **ephemeral** keychain, stores the
+`gintrack-notary` profile in it and deletes the raw `.p12` files; `macos-keychain-cleanup`
+deletes the keychain with `if: always()`.
+
+The binaries are signed with the hardened runtime and a secure timestamp, then the zips are
+submitted to Apple. A bare Mach-O cannot carry a stapled ticket, so the archives are
+**submit-only**: they pass Gatekeeper's *online* check, which is what a user downloading
+from the Releases page gets. `staple: auto` is therefore not a failure when the ticket
+cannot be attached.
+
+### Windows signing (Azure Trusted Signing)
+
+There is no secret: the `windows` job runs in the `release` GitHub environment and mints an
+OIDC token that a federated credential on the Entra application accepts. The Azure account,
+certificate profile and role assignment are shared with Pando
+(`digio-art-sign-acc` / profile `digio`, `CN=Digio Soluciones Digitales SL`).
+
+The workflow reads all of it from **repository variables** — none is sensitive, the
+identity is the federated token, not a value stored here:
+
+| Variable | Value |
+| --- | --- |
+| `AZURE_SIGNING_ENDPOINT` | `https://weu.codesigning.azure.net/` |
+| `AZURE_SIGNING_ACCOUNT` | `digio-art-sign-acc` |
+| `AZURE_SIGNING_CERT_PROFILE` | `digio` |
+| `AZURE_TENANT_ID` | the DIGIO tenant id |
+| `AZURE_CLIENT_ID` | app id of the Entra app used for signing |
+| `AZURE_SUBSCRIPTION_ID` | subscription holding the signing account |
+
+Onboarding this repository needs only a federated credential with **this** repository's
+subject, the `release` environment and the six variables:
 
 ```bash
-shasum -a 256 -c checksums.txt --ignore-missing
+az ad app federated-credential create --id "$APP_ID" --parameters '{
+  "name": "git-in-track-release-environment",
+  "issuer": "https://token.actions.githubusercontent.com",
+  "subject": "repo:digiogithub/git-in-track:environment:release",
+  "audiences": ["api://AzureADTokenExchange"]
+}'
+
+gh api -X PUT repos/digiogithub/git-in-track/environments/release --input /dev/null
+gh variable set AZURE_CLIENT_ID -R digiogithub/git-in-track -b "$APP_ID"
+# …and the other five variables from the table above
 ```
 
-### Windows (SmartScreen)
+Certificates inside a Trusted Signing profile are short-lived (three days) and rotate
+automatically. The **identity validation** behind the profile does expire; if it lapses,
+signing fails with an authorization error and the profile must be revalidated in the
+portal. A signature also does not remove the SmartScreen prompt on day one: reputation
+still builds per publisher over downloads.
 
-Windows Defender SmartScreen shows a "Windows protected your PC" dialog for unrecognised
-publishers. Users click **More info** → **Run anyway**. Alternatively, unblock the archive
-before extracting:
-
-```powershell
-Unblock-File -Path .\gintrack_1.0.0_windows_amd64.zip
-Get-FileHash .\gintrack.exe -Algorithm SHA256
-```
-
-### Linux
-
-No signature checks apply. Users should still verify the checksum and mark the binary
-executable:
+### What users still have to do
 
 ```bash
-sha256sum -c checksums.txt --ignore-missing
+# Linux and macOS: verify, then run
+sha256sum -c checksums.txt --ignore-missing        # Linux
+shasum -a 256 -c checksums.txt --ignore-missing    # macOS
 chmod +x gintrack
 ```
 
-The release notes template repeats these instructions for every release so users never
-have to search for them.
+```powershell
+# Windows
+Get-FileHash .\gintrack.exe -Algorithm SHA256
+Get-AuthenticodeSignature .\gintrack.exe          # Status must be Valid
+```
+
+A signed and notarized macOS binary needs no `xattr -d com.apple.quarantine`; if a machine
+is offline on first run, Gatekeeper cannot reach Apple and the prompt returns — that is
+what the `.pkg`-style stapling would fix and what a bare binary cannot carry.
 
 ---
 
 ## 5. `.goreleaser.yaml`
 
 **Source of truth: [`.goreleaser.yaml`](../.goreleaser.yaml)**, validated by
-`make release-check` (`goreleaser check`) and by the release workflow before it publishes.
+`make release-check` (`goreleaser check`).
+
+> The tag pipeline no longer runs GoReleaser: signed artifacts have to be produced on the
+> runner that can sign them, and consuming pre-signed binaries is a GoReleaser Pro feature
+> (ADR-029). GoReleaser stays as the **local snapshot** builder, and the distribution
+> channels it configures — Homebrew cask, Scoop bucket, GHCR images — are paused until
+> they are re-plumbed on top of the signed archives (§10).
 
 GoReleaser v2 configuration. CGO is disabled everywhere so the binaries are fully static
 and cross-compilation needs no C toolchain. `before.hooks` rebuild the WASM core and the
@@ -441,6 +539,8 @@ by the pipeline; the rest are the maintainer's responsibility.
       touches the watcher or path handling).
 - [ ] `make wasm-smoke` passes: `core.wasm` instantiates and answers outside a browser.
 - [ ] `make release-check` validates `.goreleaser.yaml`.
+- [ ] The signing configuration is in place: secret `MACOS_SIGNING_BUNDLE`, the `release`
+      environment and the six `AZURE_*` repository variables (§4).
 - [ ] `make release-snapshot` succeeds and produces all 6 archives plus `checksums.txt`,
       `dist/homebrew/Casks/gintrack.rb`, `dist/scoop/bucket/gintrack.json` and both images.
       (It needs a Docker daemon, and binfmt emulation for the arm64 image:
@@ -493,6 +593,15 @@ Phases 0–5 configured the GitHub Release only. Phase 6 (GIT-US-0029) added the
 three package channels below; all of them are produced by the **same GoReleaser
 run** from the same tag, so there is no second workflow and no manual publishing
 step.
+
+> **Paused since the signed pipeline landed (ADR-029).** The tag workflow now
+> builds and signs each platform on its own runner and publishes only the GitHub
+> Release, so the cask, the Scoop manifest and the GHCR images are no longer cut
+> from a tag. `.goreleaser.yaml` keeps their configuration for
+> `make release-snapshot`; re-plumbing them on top of the signed archives (the
+> cask and the manifest need the signed archive's own SHA-256) is separate work.
+> Until then `HOMEBREW_TAP_TOKEN` and `SCOOP_BUCKET_TOKEN` are unused, and a
+> release publishes no image.
 
 > **Nothing is published yet.** No tag has ever been pushed, so every channel in
 > the table below is empty until a maintainer cuts `v1.0.0`. The pipeline itself
@@ -565,9 +674,9 @@ Linux users take the tarball, `go install` or the image. That trade-off, and the
 alternatives rejected, are recorded in
 [ADR-016](adr/ADR-016-homebrew-cask-instead-of-formula.md).
 
-Homebrew is still the recommended macOS route, for the reason ADR-011 gives: it
-removes the quarantine attribute an unsigned download carries. The cask makes
-that explicit instead of incidental, with a `postflight` hook:
+Homebrew was the recommended macOS route while downloads were unsigned, because it
+removes the quarantine attribute; the cask keeps that explicit with a `postflight`
+hook, which is harmless now that the binary is notarized (ADR-029):
 
 ```ruby
 postflight do

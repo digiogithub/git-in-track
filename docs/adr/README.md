@@ -44,7 +44,7 @@ Every ADR uses the same sections:
 | [ADR-008](ADR-008-id-scheme.md) | Item ID scheme `<KEY>-<TYPE>-<NNNN>` | Accepted | 0 |
 | [ADR-009](ADR-009-react-vite-typescript.md) | React 18 + Vite + TypeScript as the front-end stack | Accepted | 1 |
 | [ADR-010](ADR-010-mcp-agent-surface.md) | MCP is the integration surface for AI agents | Accepted | 5 |
-| [ADR-011](ADR-011-goreleaser-unsigned-artifacts.md) | GoReleaser with unsigned release artifacts in v1 | Accepted | 6 |
+| [ADR-011](ADR-011-goreleaser-unsigned-artifacts.md) | GoReleaser with unsigned release artifacts in v1 | Superseded by [ADR-029](ADR-029-signed-release-artifacts.md) | 6 |
 | [ADR-012](ADR-012-comments-as-separate-files.md) | Comments are separate files, not inline in the item | Accepted | 1 |
 | [ADR-013](ADR-013-board-card-ordering.md) | Card order as a plain ordered list, not a fractional index | Accepted | 3 |
 | [ADR-014](ADR-014-snapshots-stay-on-the-main-branch.md) | Index snapshots stay on the main branch, written only when their content changes | Accepted | 3 |
@@ -61,6 +61,8 @@ Every ADR uses the same sections:
 | [ADR-025](ADR-025-the-cors-proxy-security-model.md) | The companion's CORS proxy is a git proxy, not a forwarder | Accepted | 4 |
 | [ADR-026](ADR-026-the-web-app-soft-deletes-and-warns-first.md) | The web app soft-deletes an item, after showing what points at it | Accepted | 1 |
 | [ADR-027](ADR-027-cloudflared-as-a-library-for-quick-tunnels.md) | cloudflared is embedded as a library, and a quick tunnel is a sharing convenience | Accepted | 2 |
+| [ADR-028](ADR-028-retro-participants-name-themselves-and-comment-in-front-matter.md) | Retro participants name themselves in the browser, and the discussion is front matter | Accepted | 5 |
+| [ADR-029](ADR-029-signed-release-artifacts.md) | Release artifacts are signed on macOS and Windows, on their own runners | Accepted | 6 |
 
 ## Related documents
 

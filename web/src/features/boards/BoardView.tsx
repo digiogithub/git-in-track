@@ -213,7 +213,7 @@ export function BoardCanvas({ slug }: { slug: string }) {
         ) : null}
         <p className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
           <span>Projects:</span>
-          {view.projects.map((key) => (
+          {(view.projects ?? []).map((key) => (
             <Badge key={key} variant="outline" size="sm" className="font-normal">
               {key}
             </Badge>
@@ -303,7 +303,7 @@ export function BoardCanvas({ slug }: { slug: string }) {
             className="h-8 w-40 text-xs"
           >
             <option value="">All projects</option>
-            {view.projects.map((key) => (
+            {(view.projects ?? []).map((key) => (
               <option key={key} value={key}>
                 {key}
               </option>

@@ -14,6 +14,7 @@ import {
   useQueryClient,
   type UseMutationResult,
 } from '@tanstack/react-query';
+import { useEffect } from 'react';
 
 import type {
   RetroFilter,
@@ -53,6 +54,30 @@ export function useRetro(id: string | undefined) {
     queryFn: () => provider.getRetro(id ?? '', team),
     enabled: Boolean(id),
   });
+}
+
+/**
+ * Refetches a retro whenever the workspace changes underneath it.
+ *
+ * A retro is run by several people at once, each on their own browser against
+ * the same companion, so the wall has to move without anybody reloading: the
+ * companion watches the team repository and every note, vote and comment
+ * another participant writes arrives here as a change event (docs/04 §9.1).
+ */
+export function useRetroEvents(id: string | undefined): void {
+  const provider = useProvider();
+  const queryClient = useQueryClient();
+  const team = useActiveTeamKey();
+
+  useEffect(
+    () =>
+      provider.subscribe((event) => {
+        if (event.kind !== 'items' && event.kind !== 'index' && event.kind !== 'repo') return;
+        void queryClient.invalidateQueries({ queryKey: retroKeys.detail(id ?? '', team) });
+        void queryClient.invalidateQueries({ queryKey: retroKeys.list({}, team) });
+      }),
+    [provider, queryClient, id, team],
+  );
 }
 
 /** Everything a retro write invalidates: the retro, the index and the tasks. */

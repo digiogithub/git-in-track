@@ -151,9 +151,13 @@ Tasks live in `.pmngr/tasks/` with `parent` pointing at a story; comments live i
 > What is left to do, and by whom, is in
 > [docs/12-release-readiness-1-0.md](docs/12-release-readiness-1-0.md) §6.
 
-Every channel is published from the same tag by the release workflow
-([docs/09-ci-cd-and-releases.md](docs/09-ci-cd-and-releases.md) §10). Releases are
-unsigned archives with `checksums.txt`, by design ([ADR-011](docs/adr/ADR-011-goreleaser-unsigned-artifacts.md)).
+The GitHub Release is published from the tag by the release workflow
+([docs/09-ci-cd-and-releases.md](docs/09-ci-cd-and-releases.md) §3). The macOS archives are
+Developer ID signed and notarized and the Windows ones Authenticode-signed, with
+`checksums.txt` covering every artifact
+([ADR-029](docs/adr/ADR-029-signed-release-artifacts.md)). The Homebrew cask, the Scoop
+bucket and the GHCR images are paused while they are re-plumbed on top of the signed
+archives (docs/09 §10).
 
 ```bash
 # macOS — Homebrew, the recommended route: it clears the quarantine attribute

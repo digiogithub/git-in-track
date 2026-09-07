@@ -290,9 +290,13 @@ log.
   unreachable. What keeps it private is the port mapping: `-p 127.0.0.1:7317:7317`. Writing
   `-p 7317:7317` publishes your repository on every host interface, behind nothing but the
   bearer token.
-- Binaries are **unsigned and not notarized** (ADR-011). macOS Gatekeeper and Windows
-  SmartScreen will warn on first run; `docs/09` §4 documents the bypass for each. **Those
-  bypass instructions have not been re-verified on macOS or Windows for this release.**
+- Binaries are **signed on macOS (Developer ID + notarized) and Windows (Authenticode)**
+  since ADR-029; Linux is unsigned. `docs/09` §3–§4 documents the pipeline and what a user
+  still has to check. **No signed release has been cut yet**, so neither the signature nor
+  the notarization has been verified end to end on a downloaded artifact; the first tag
+  is the test.
+- The **Homebrew cask, the Scoop manifest and the GHCR images are paused** (ADR-029): they
+  were GoReleaser outputs of the tag run the pipeline no longer performs.
 - `.deb`, `.rpm`, AUR, nixpkgs, winget, Snap and Flatpak are deliberately out of scope.
 - GoReleaser's `dockers:`/`docker_manifests:` blocks are deprecated in favour of
   `dockers_v2:`. They still validate and still build; migration is mechanical and pending.

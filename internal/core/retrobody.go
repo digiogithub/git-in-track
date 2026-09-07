@@ -361,6 +361,7 @@ func (r *Retro) RemoveNote(id string) bool {
 				}
 				r.Themes[ti].Notes = kept
 			}
+			r.removeCommentsOf(id)
 			r.syncNotes()
 			return true
 		}

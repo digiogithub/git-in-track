@@ -118,7 +118,7 @@ export function BoardList() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="flex flex-wrap gap-1 text-xs">
-                {board.projects.map((key) => (
+                {(board.projects ?? []).map((key) => (
                   <Badge key={key} variant="outline" size="sm" className="font-normal">
                     {key}
                   </Badge>

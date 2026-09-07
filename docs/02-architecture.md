@@ -870,9 +870,11 @@ Repository content is untrusted input. Consequences:
 - **CI on PR.** `go vet`, `go test ./...`, `golangci-lint`, a `GOOS=js GOARCH=wasm`
   build to catch core dependencies that break WASM, web lint/typecheck/test, and the
   performance benchmarks from §9.
-- **Release.** GitHub Actions on tag `v*` runs GoReleaser: linux/darwin/windows ×
-  amd64/arm64, archives plus checksums attached to the GitHub Release, unsigned in
-  v1 ([ADR-011](adr/ADR-011-goreleaser-unsigned-artifacts.md)).
+- **Release.** GitHub Actions on tag `v*`: linux/darwin/windows × amd64/arm64, each
+  platform built on the runner that can sign it, archives plus checksums attached to the
+  GitHub Release. macOS is Developer ID signed and notarized, Windows is
+  Authenticode-signed ([ADR-029](adr/ADR-029-signed-release-artifacts.md), superseding
+  [ADR-011](adr/ADR-011-goreleaser-unsigned-artifacts.md)).
 
 ---
 

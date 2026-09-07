@@ -1,9 +1,10 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
 import { FakeProvider, sampleRetro, sampleTeam } from '@/api/fake-provider';
 import { ToastProvider } from '@/components/ui/toast';
+import { resetIdentityCache } from '@/features/workspace/identity';
 import { renderWithRouter } from '@/test/router';
 
 import { RetroCanvas } from './RetroBoard';
@@ -21,6 +22,22 @@ function renderRetro(provider = new FakeProvider({ team: sampleTeam })) {
   return provider;
 }
 
+/**
+ * Names this browser, which is what the retro asks for before it lets anybody
+ * write: there are no accounts, only the handle a participant chooses (ADR-028).
+ */
+async function identify(user: ReturnType<typeof userEvent.setup>, name = 'Ada Lovelace') {
+  await user.type(await screen.findByLabelText('Your name'), name);
+  await user.click(screen.getByRole('button', { name: 'Join the retro' }));
+  return await screen.findByText(/Writing as/);
+}
+
+/** Moves the session to a facilitation stage, the way the facilitator does. */
+async function setStage(user: ReturnType<typeof userEvent.setup>, stage: string) {
+  await user.selectOptions(await screen.findByLabelText('Stage'), stage);
+  await waitFor(() => expect(screen.getByLabelText('Stage')).toHaveValue(stage));
+}
+
 /** One of the three collection columns, by its heading. */
 async function column(label: string): Promise<HTMLElement> {
   const columns = await screen.findByTestId('retro-columns');
@@ -33,6 +50,11 @@ async function column(label: string): Promise<HTMLElement> {
 }
 
 describe('the retro board', () => {
+  beforeEach(() => {
+    globalThis.localStorage?.clear();
+    resetIdentityCache();
+  });
+
   it('renders the three collection columns from the body bullets', async () => {
     renderRetro();
 
@@ -45,6 +67,8 @@ describe('the retro board', () => {
   it('adds a note to the column it was typed into', async () => {
     const user = userEvent.setup();
     renderRetro();
+    await identify(user);
+    await setStage(user, 'collecting');
 
     const field = await screen.findByLabelText('Add a note to To improve');
     await user.type(field, 'Staging credentials expired with no warning');
@@ -58,6 +82,8 @@ describe('the retro board', () => {
   it('removes a note', async () => {
     const user = userEvent.setup();
     renderRetro();
+    await identify(user);
+    await setStage(user, 'collecting');
 
     const puzzles = await column('Puzzles');
     await user.click(within(puzzles).getByRole('button', { name: 'Remove' }));
@@ -69,17 +95,100 @@ describe('the retro board', () => {
     );
   });
 
-  it('ranks the themes by the votes they got and casts one', async () => {
+  it('votes on a note, and takes the vote back', async () => {
     const user = userEvent.setup();
     renderRetro();
+    await identify(user);
+    await setStage(user, 'voting');
 
-    const votes = await screen.findAllByRole('button', { name: /▲$/ });
-    expect(votes[0]).toHaveTextContent('2 ▲');
+    const wentWell = await column('Went well');
+    const vote = within(wentWell).getByRole('button', { name: /Vote for Pairing on the OIDC flow/ });
+    // t1 grouped this note and carries one vote already.
+    expect(vote).toHaveTextContent('1 ▲');
 
-    await user.click(votes[0] as HTMLElement);
+    await user.click(vote);
     await waitFor(async () =>
-      expect((await screen.findAllByRole('button', { name: /▲$/ }))[0]).toHaveTextContent('1 ▲'),
+      expect(
+        within(await column('Went well')).getByRole('button', { name: /Take back your vote/ }),
+      ).toHaveTextContent('2 ▲'),
     );
+
+    await user.click(
+      within(await column('Went well')).getByRole('button', { name: /Take back your vote/ }),
+    );
+    await waitFor(async () =>
+      expect(
+        within(await column('Went well')).getByRole('button', { name: /Vote for Pairing/ }),
+      ).toHaveTextContent('1 ▲'),
+    );
+  });
+
+  it('makes a note nobody grouped votable on its own', async () => {
+    const user = userEvent.setup();
+    const provider = renderRetro();
+    await identify(user);
+    await setStage(user, 'voting');
+
+    // n3 belongs to no theme, so the first vote for it writes one.
+    const puzzles = await column('Puzzles');
+    await user.click(within(puzzles).getByRole('button', { name: /Vote for .*stale snapshot badge/ }));
+
+    await waitFor(async () => {
+      const view = await provider.getRetro(sampleRetro.id);
+      const theme = view.themes.find((each) => (each.notes ?? []).includes('n3'));
+      expect(theme?.voters).toEqual(['ada-lovelace']);
+    });
+  });
+
+  it('spends a budget of votes and stops at it', async () => {
+    const user = userEvent.setup();
+    const provider = renderRetro();
+    await provider.updateRetro(sampleRetro.id, { votesPerPerson: 1 });
+    await identify(user);
+    await setStage(user, 'voting');
+
+    await user.click(
+      within(await column('Went well')).getByRole('button', { name: /Vote for Pairing/ }),
+    );
+
+    await waitFor(async () =>
+      expect(
+        within(await column('Puzzles')).getByRole('button', { name: /Vote for .*snapshot badge/ }),
+      ).toBeDisabled(),
+    );
+    // The vote already cast can still be taken back.
+    expect(
+      within(await column('Went well')).getByRole('button', { name: /Take back your vote/ }),
+    ).toBeEnabled();
+  });
+
+  it('comments on a card while the room discusses it', async () => {
+    const user = userEvent.setup();
+    renderRetro();
+    await identify(user);
+    await setStage(user, 'discussing');
+
+    const wentWell = await column('Went well');
+    const field = within(wentWell).getByLabelText(/Comment on Pairing on the OIDC flow/);
+    await user.type(field, 'Worth doing again next sprint');
+    await user.click(within(wentWell).getByRole('button', { name: 'Comment' }));
+
+    const commented = await column('Went well');
+    expect(
+      await within(commented).findByText('Worth doing again next sprint'),
+    ).toBeInTheDocument();
+    expect(within(commented).getByText('ada-lovelace:')).toBeInTheDocument();
+  });
+
+  it('lets an unidentified visitor read the wall but not write on it', async () => {
+    const user = userEvent.setup();
+    renderRetro();
+    await setStage(user, 'voting');
+
+    expect(await screen.findByLabelText('Your name')).toBeInTheDocument();
+    expect(
+      within(await column('Went well')).getByRole('button', { name: /Vote for Pairing/ }),
+    ).toBeDisabled();
   });
 
   it('shows the live status of a promoted action rather than the retro status', async () => {

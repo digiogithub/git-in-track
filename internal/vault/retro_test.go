@@ -188,6 +188,64 @@ func TestWorkspaceRetroUpdate(t *testing.T) {
 			}
 		})
 
+		t.Run("comments hang off the card the room discussed", func(t *testing.T) {
+			result := decode[RetroResult](t, wsCall(t, w, "retro.update", map[string]any{
+				"id": "DEMO-TEAM-R-0001", "rev": rev(),
+				"patch": map[string]any{
+					"addComments": []map[string]any{
+						{"note": "n2", "author": "marta", "text": "We gate it behind the flag."},
+						{"theme": "t1", "author": "jose", "text": "Worth repeating."},
+					},
+				},
+			}))
+			if len(result.Retro.Comments) != 2 {
+				t.Fatalf("comments = %+v", result.Retro.Comments)
+			}
+			first := result.Retro.Comments[0]
+			if first.ID != "c1" || first.Note != "n2" || first.Author != "marta" || first.Created.IsZero() {
+				t.Fatalf("comment = %+v", first)
+			}
+
+			edited := decode[RetroResult](t, wsCall(t, w, "retro.update", map[string]any{
+				"id": "DEMO-TEAM-R-0001", "rev": rev(),
+				"patch": map[string]any{
+					"updateComments": []map[string]any{{"id": "c1", "text": "We gate it behind a flag."}},
+				},
+			}))
+			if edited.Retro.Comments[0].Text != "We gate it behind a flag." {
+				t.Fatalf("comment = %+v", edited.Retro.Comments[0])
+			}
+
+			gone := decode[RetroResult](t, wsCall(t, w, "retro.update", map[string]any{
+				"id": "DEMO-TEAM-R-0001", "rev": rev(),
+				"patch": map[string]any{"removeComments": []string{"c1", "c2"}},
+			}))
+			if len(gone.Retro.Comments) != 0 {
+				t.Fatalf("comments = %+v", gone.Retro.Comments)
+			}
+		})
+
+		t.Run("a comment on a card that is not there is refused", func(t *testing.T) {
+			code, _ := wsFail(t, w, "retro.update", map[string]any{
+				"id": "DEMO-TEAM-R-0001", "rev": rev(),
+				"patch": map[string]any{
+					"addComments": []map[string]any{{"note": "n99", "text": "orphan"}},
+				},
+			})
+			if code != "not_found" {
+				t.Fatalf("code = %q", code)
+			}
+			code, _ = wsFail(t, w, "retro.update", map[string]any{
+				"id": "DEMO-TEAM-R-0001", "rev": rev(),
+				"patch": map[string]any{
+					"addComments": []map[string]any{{"note": "n1", "theme": "t1", "text": "both"}},
+				},
+			})
+			if code != "invalid_request" {
+				t.Fatalf("code = %q", code)
+			}
+		})
+
 		t.Run("themes and votes are replaced as one decision", func(t *testing.T) {
 			result := decode[RetroResult](t, wsCall(t, w, "retro.update", map[string]any{
 				"id": "DEMO-TEAM-R-0001", "rev": rev(),

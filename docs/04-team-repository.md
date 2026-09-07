@@ -1305,7 +1305,8 @@ text editor, or on a whiteboard and transcribed afterwards:
 |---|---|
 | Collect | Body sections `## Went well`, `## To improve`, `## Puzzles` — one bullet per note, `— handle` suffix when attributed |
 | Group | `themes` in front matter (id, title, notes[]) |
-| Vote | `votes` in front matter: theme id → list of handles |
+| Vote | `votes` in front matter: theme id → list of handles. A note nobody grouped becomes a theme of its own the first time somebody votes for it, so the room votes on the notes it wrote rather than on a grouping it has to build first |
+| Discuss | `comments` in front matter: one remark per card, attached to a note or a theme |
 | Select actions | `actions` in front matter + the `## Actions` task list in the body |
 | Promote | `actions[].task` filled with a project ref once created |
 | Review | `carried_from` + live status of previously promoted tasks |
@@ -1328,6 +1329,7 @@ text editor, or on a whiteboard and transcribed afterwards:
 | `themes` | list of theme objects | no | `{id, title, category, notes[]}` where `category` is `went_well` \| `to_improve` \| `puzzle`. |
 | `votes` | mapping theme id → list of handles | no | One handle may appear at most `votes_per_person` times in total. |
 | `actions` | list of action objects | no | See below. |
+| `comments` | list of comment objects | no | The discussion, one remark per card. See below. |
 | `carried_from` | retro ID | no | Previous retro whose actions are reviewed here. |
 | `created`, `updated`, `author` | as usual | | |
 
@@ -1344,6 +1346,28 @@ actions:
     status: promoted                        # proposed | promoted | done | dropped
     note: Fails loudly instead of at first login.
 ```
+
+Comment object:
+
+```yaml
+comments:
+  - id: c1                                  # unique within the retro: [a-z0-9-]{1,16}
+    note: n4                                # the card it hangs off: a note id...
+    # theme: t2                             # ...or a theme id; exactly one of the two
+    author: ada                             # the handle that wrote it
+    text: We agreed to assert this at boot rather than at first login.
+    created: 2026-09-12T10:31:00Z
+```
+
+- **R-RETRO-6** A comment names exactly one card, and that card must exist: a comment pointing at
+  neither, at both, or at an id the file does not hold is `E-RETRO-COMMENT-TARGET`. Removing a note
+  removes its comments, so a remark never dangles off a card the room deleted.
+- **R-RETRO-7** Comments are front matter, not body prose, for the same reason a note is one bullet:
+  one comment is one block of consecutive lines, so two participants commenting at the same time
+  touch different lines and git merges both sides. The body stays the document a human wrote.
+- **R-RETRO-8** Participants of a retro shared over a tunnel have no account: each names themselves
+  once in their own browser, and that handle is written as the `author` of their notes and comments
+  and as their entry in `votes`. It is a label, not a credential.
 
 - **R-RETRO-1** `actions[].status` is retro-local bookkeeping. Once `task` is set, the **task's**
   status in the project repo is the truth; the UI shows it live (or from the snapshot) next to the
@@ -1491,6 +1515,8 @@ the website work grows.
 | `E-RETRO-STATE` | E | `state` outside the enum. |
 | `E-RETRO-VOTE-THEME` | E | `votes` references an unknown theme id. |
 | `E-RETRO-ACTION-ID-DUP` | E | Duplicate action `id`. |
+| `E-RETRO-COMMENT-ID-DUP` | E | Duplicate comment `id`. |
+| `E-RETRO-COMMENT-TARGET` | E | A comment names no card, both a note and a theme, or an id the file does not hold. |
 | `W-RETRO-VOTE-BUDGET` | W | A participant cast more than `votes_per_person` votes. |
 | `W-RETRO-VOTE-NONPARTICIPANT` | W | A vote from a handle not in `participants`. |
 | `W-RETRO-ACTION-NO-OWNER` | W | Action without `owner`. |

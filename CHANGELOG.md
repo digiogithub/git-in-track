@@ -14,6 +14,18 @@ because a commit list cannot express them.
 
 ### Added
 
+- **A retrospective can be run by the whole room at once** (`GIT-US-0027`, ADR-028,
+  docs/04 §9.1–§9.5). Everyone who opens the retro — over the tunnel of ADR-027, with no
+  account and no login — names themselves once; the handle is kept in their own browser
+  and is written as the author of the notes, votes and comments they add. Voting is now
+  **per note**: a note nobody grouped becomes a theme of its own the first time somebody
+  votes for it, the vote button disappears once a participant has spent the budget, and a
+  vote can always be taken back. The `discussing` stage gained a **comment box on every
+  card**, stored as the new `comments` key in the retro's front matter (one remark per
+  block of lines, so two people commenting at once still merge). The wall refreshes
+  itself as other participants write, and the retro carries **Copy link / Copy link with
+  access** buttons for the tunnel while one is open.
+
 - `gintrack serve` can **publish itself through a free Cloudflare quick tunnel**
   (`*.trycloudflare.com`), from the `--tunnel` flag or from a switch in the web app's
   settings, and shows the temporary public `https` address to share (`GIT-US-0043`,
@@ -94,6 +106,23 @@ because a commit list cannot express them.
 
 ### Changed
 
+- **Release artifacts are now signed** (ADR-029, superseding ADR-011; docs/09 §3–§4). A
+  `v*` tag builds the embedded web assets once and then builds each platform on the runner
+  that can sign it: macOS binaries carry a Developer ID signature with the hardened
+  runtime and are notarized by Apple, Windows binaries are Authenticode-signed through
+  Azure Trusted Signing (OIDC, no long-lived secret), Linux stays unsigned. `checksums.txt`
+  still covers every artifact, and `workflow_dispatch` can re-cut a release for an existing
+  tag without moving it. **The macOS archives are now `.zip`** (`notarytool` takes a zip),
+  not `.tar.gz` — a scripted download URL for darwin needs updating. Setting this up in a
+  fork needs the `MACOS_SIGNING_BUNDLE` secret, the `release` environment and six `AZURE_*`
+  repository variables.
+
+  **Paused by the same change:** the Homebrew cask, the Scoop manifest and the GHCR images
+  were outputs of the GoReleaser run that the tag pipeline no longer performs (consuming
+  pre-signed binaries is a GoReleaser Pro feature). `.goreleaser.yaml` keeps them for
+  `make release-snapshot`; they have to be re-plumbed on top of the signed archives before
+  a tag publishes them again.
+
 - **Building git-in-track now requires Go 1.26** (was 1.25). `go.mod` declares `go 1.26.0`
   and CI's `GO_VERSION` moved to `1.26`. This is not a choice: cloudflared's own `go.mod`
   declares 1.26, and embedding it (`GIT-US-0043`, ADR-027) raises this module's directive
@@ -126,6 +155,10 @@ because a commit list cannot express them.
   additive.
 
 ### Fixed
+
+- The **board list no longer crashes** with `Cannot read properties of null (reading
+  'map')` when a team declares no project: a board's project scope now serializes as an
+  empty list rather than `null`.
 
 - **git no longer writes behind Jujutsu.** In a jj repository git's `HEAD` sits at the
   parent of the working-copy commit, so a `git commit` there landed on `@-`, moved no
