@@ -140,10 +140,12 @@ jobs:
         id: version
         run: |
           tag="${{ inputs.tag || github.ref_name }}"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
-          echo "date=$(git log -1 --format=%cI)" >> "$GITHUB_OUTPUT"
-          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          {
+            echo "tag=$tag"
+            echo "version=${tag#v}"
+            echo "date=$(git log -1 --format=%cI)"
+            echo "commit=$(git rev-parse HEAD)"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Build
         uses: digiogithub/ci-actions/go-cross-build@v1
@@ -212,9 +214,11 @@ jobs:
         shell: bash
         run: |
           tag="${{ inputs.tag || github.ref_name }}"
-          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
-          echo "date=$(git log -1 --format=%cI)" >> "$GITHUB_OUTPUT"
-          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          {
+            echo "version=${tag#v}"
+            echo "date=$(git log -1 --format=%cI)"
+            echo "commit=$(git rev-parse HEAD)"
+          } >> "$GITHUB_OUTPUT"
 
       # CGO_ENABLED=0, so both architectures cross-compile on the same runner;
       # they are built here rather than on Linux because signtool and the
@@ -320,9 +324,11 @@ jobs:
         id: version
         run: |
           tag="${{ inputs.tag || github.ref_name }}"
-          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
-          echo "date=$(git log -1 --format=%cI)" >> "$GITHUB_OUTPUT"
-          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          {
+            echo "version=${tag#v}"
+            echo "date=$(git log -1 --format=%cI)"
+            echo "commit=$(git rev-parse HEAD)"
+          } >> "$GITHUB_OUTPUT"
 
       # Exports SIGNING_IDENTITY, NOTARY_PROFILE and
       # MACOS_SIGN_KEYCHAIN_PATH/PASSWORD for the steps below.
