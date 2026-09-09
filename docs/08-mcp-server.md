@@ -43,7 +43,7 @@ both, so a schema cannot drift from the handler that answers it.
 ```
 gintrack mcp [flags]
 
-  --allow-write          Advertise the write tools (default: read-only)
+  --allow-write          Advertise the write tools (default: mcp.allowWrite, false)
   --agent string         Agent name recorded as the author of comments it writes
   --repo path            Serve this repository without registering it; repeatable
   --list-tools           Print the tools this server would advertise, and exit
@@ -212,8 +212,9 @@ Common conventions for all tools:
 | `add_comment`    | write | `comment.add`             | ~70 tokens          |
 | `move_on_board`  | write | `board.move`              | ~90 tokens          |
 
-Write tools are advertised only when the server was started with `--allow-write`
-(`--mcp-allow-write` on `gintrack serve`). Without it they are **absent from `tools/list`**,
+Write tools are advertised only when the server was started with writes enabled: with
+`--allow-write`, or with `mcp.allowWrite: true` in the configuration file, which
+`gintrack mcp` reads when the flag is not typed (`--mcp-allow-write` on `gintrack serve`). Without it they are **absent from `tools/list`**,
 not merely refused: an agent cannot attempt what it cannot see.
 
 ### 4.1 `list_items`
@@ -679,7 +680,8 @@ Prompts are the cheapest place to encode team policy; they are plain strings in
 
 ### 7.1 Writes are opt-in
 
-- Without `--allow-write` the server advertises **only read tools**. Write tools are absent
+- Without writes enabled — neither `--allow-write` nor `mcp.allowWrite: true` — the server
+  advertises **only read tools**. Write tools are absent
   from `tools/list`, not merely rejected — an agent cannot attempt what it cannot see.
 - A delete tool does not exist. Deleting a backlog item is a human action in the UI or CLI;
   agents may only move an item to `cancelled`.

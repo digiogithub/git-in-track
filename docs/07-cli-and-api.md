@@ -249,7 +249,8 @@ index:
 
 mcp:
   enabled: false         # mount POST /mcp on `gintrack serve` (same as --mcp-http)
-  allowWrite: false      # write tools stay off until this is true
+  allowWrite: false      # write tools stay off until this is true, for `gintrack mcp`
+                         # over stdio as well as for POST /mcp
 
 log:
   level: info            # debug | info | warn | error
@@ -877,7 +878,7 @@ spawn it as a tool server. Full specification in `08-mcp-server.md`.
 
 ```
 gintrack mcp [flags]
-  --allow-write          Advertise the write tools (default: read-only)
+  --allow-write          Advertise the write tools (default: mcp.allowWrite, false)
   --agent string         Agent name recorded as the author of comments it writes
   --repo path            Serve this repository without registering it; repeatable
   --list-tools           Print the tools this server would advertise, and exit
@@ -904,8 +905,13 @@ gintrack mcp 0.4.0: workspace work, 2 repositories, 6 tools (read-only)
 ```
 
 Nothing but JSON-RPC frames is written to stdout; the startup line and every log go to
-stderr. Without `--allow-write` the six write tools are absent from `tools/list`, not merely
+stderr. Without writes enabled the six write tools are absent from `tools/list`, not merely
 refused.
+
+Writes are enabled by `--allow-write` or by `mcp.allowWrite: true` in the configuration file
+(section 3.2). The flag wins when it is typed — `--allow-write=false` turns the write tools
+off for one run — and the configuration decides otherwise, so an agent runtime that spawns
+`gintrack mcp` with no arguments gets the posture the user chose once.
 
 The **same twelve tools** are served over streamable HTTP at `POST /mcp` by
 `gintrack serve --mcp-http` (section 4.1), which is what to use when the companion is already
@@ -2892,7 +2898,7 @@ Bridge conventions:
 
 | Platform | Mechanism           | Practical limits and mitigations                                                                                                                                              |
 | -------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Linux    | inotify             | `fs.inotify.max_user_watches` (often 8k–128k) and `max_user_instances`. One watch per directory. We watch only the docs folder subtree, skip ignores, cap at `MaxWatches` (default 8192) and degrade to polling with a clear warning plus the `sysctl fs.inotify.max_user_watches=524288` hint. |
+| Linux    | inotify             | `fs.inotify.max_user_watches` (often 8k–128k) and `max_user_instances`. One watch per directory. We watch only the documentation folders the vault indexes — plus the repository root and its first-level directories, shallowly, so a backlog appearing later is still seen — skip ignores, cap at `MaxWatches` (default 8192) and degrade to polling with a clear warning plus the `sysctl fs.inotify.max_user_watches=524288` hint. |
 | macOS    | FSEvents (via kqueue in fsnotify) | fsnotify uses kqueue, which needs an **open file descriptor per watched file/directory**; `ulimit -n` (default 256 in some shells) is hit quickly. We watch directories only, raise `RLIMIT_NOFILE` at startup where permitted, and cap watches. Coalescing latency means events can arrive in bursts. |
 | Windows  | ReadDirectoryChangesW | Recursive watching is supported natively but fsnotify registers per directory; the buffer can overflow under mass changes (e.g. a `git checkout` of a large branch), which surfaces as a lost-events error. On overflow we schedule a full re-index instead of trusting the delta. |
 

@@ -60,6 +60,48 @@ func TestMCPListTools(t *testing.T) {
 	}
 }
 
+// TestMCPTakesWritesFromTheConfiguration covers the other half of the posture:
+// an agent runtime that spawns `gintrack mcp` with no arguments still gets the
+// write tools when the user enabled them once in the configuration file, and
+// --allow-write=false still turns them off from the command line.
+func TestMCPTakesWritesFromTheConfiguration(t *testing.T) {
+	h := newHarness(t)
+	h.register()
+
+	enableWrites(t, h.Config)
+
+	listed := strings.Fields(h.mustRun("mcp", "--list-tools"))
+	for _, name := range []string{"create_task", "update_item", "add_comment"} {
+		if !contains(listed, name) {
+			t.Errorf("%s is missing from %v with mcp.allowWrite enabled", name, listed)
+		}
+	}
+
+	listed = strings.Fields(h.mustRun("mcp", "--list-tools", "--allow-write=false"))
+	if contains(listed, "create_task") {
+		t.Errorf("--allow-write=false did not override the configuration: %v", listed)
+	}
+}
+
+// enableWrites turns on mcp.allowWrite in a configuration file on disk, the way
+// a user editing it would.
+func enableWrites(t *testing.T, path string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read the configuration: %v", err)
+	}
+	text := string(data)
+	if strings.Contains(text, "allowWrite: false") {
+		text = strings.Replace(text, "allowWrite: false", "allowWrite: true", 1)
+	} else {
+		text += "\nmcp:\n    allowWrite: true\n"
+	}
+	if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+		t.Fatalf("write the configuration: %v", err)
+	}
+}
+
 func TestMCPWithoutARepository(t *testing.T) {
 	h := newHarness(t)
 	_, stderr, code := h.run("mcp", "--list-tools")

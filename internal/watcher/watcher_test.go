@@ -532,3 +532,75 @@ func TestSkipRelPath(t *testing.T) {
 		})
 	}
 }
+
+func TestAddRepoScopedWatchesOnlyTheScopes(t *testing.T) {
+	root := t.TempDir()
+	for _, dir := range []string{
+		filepath.Join("docs", ".pmngr", "tasks"),
+		filepath.Join("internal", "core", "deep"),
+		filepath.Join("apps", "api", "docs", ".pmngr"),
+	} {
+		if err := os.MkdirAll(filepath.Join(root, dir), 0o750); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+
+	w := newTestWatcher(t, Options{})
+	if err := w.AddRepoScoped("proj", root, []string{"docs", "apps/api/docs"}); err != nil {
+		t.Fatalf("AddRepoScoped: %v", err)
+	}
+	if w.Degraded() {
+		t.Fatal("watcher degraded to polling on a local temp directory")
+	}
+
+	// A source directory outside every scope costs no watch: the root, its
+	// first-level directories and the two scopes are all that is registered.
+	if got, want := w.Watched(), 9; got != want {
+		t.Errorf("Watched() = %d, want %d", got, want)
+	}
+
+	writeFile(t, filepath.Join(root, "internal", "core", "deep", "index.go"), "package core")
+	assertQuiet(t, w, 4*testDebounce, func(ev Event) bool {
+		return strings.HasPrefix(ev.Path, "internal/")
+	})
+
+	writeFile(t, filepath.Join(root, "docs", ".pmngr", "tasks", "ACME-T-0001.md"), "---\n")
+	waitForBatch(t, w, "the task file", pathAndOp("docs/.pmngr/tasks/ACME-T-0001.md", Create))
+
+	writeFile(t, filepath.Join(root, "apps", "api", "docs", ".pmngr", "project.yaml"), "key: API\n")
+	waitForBatch(t, w, "the declared deep backlog", pathIs("apps/api/docs/.pmngr/project.yaml"))
+
+	// The root stays watched, so a team.yaml appearing beside the scopes is seen.
+	writeFile(t, filepath.Join(root, "team.yaml"), "key: TEAM\n")
+	waitForBatch(t, w, "the team file", pathIs("team.yaml"))
+}
+
+func TestAddRepoScopedAdoptsNewDirectoriesInsideAScopeOnly(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o750); err != nil {
+		t.Fatalf("mkdir docs: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "src"), 0o750); err != nil {
+		t.Fatalf("mkdir src: %v", err)
+	}
+
+	w := newTestWatcher(t, Options{})
+	if err := w.AddRepoScoped("proj", root, []string{"docs"}); err != nil {
+		t.Fatalf("AddRepoScoped: %v", err)
+	}
+
+	if err := os.MkdirAll(filepath.Join(root, "src", "server"), 0o750); err != nil {
+		t.Fatalf("mkdir src/server: %v", err)
+	}
+	writeFile(t, filepath.Join(root, "src", "server", "main.go"), "package main")
+	assertQuiet(t, w, 4*testDebounce, func(ev Event) bool {
+		return ev.Path == "src/server/main.go"
+	})
+
+	if err := os.MkdirAll(filepath.Join(root, "docs", ".pmngr", "stories"), 0o750); err != nil {
+		t.Fatalf("mkdir the backlog: %v", err)
+	}
+	writeFile(t, filepath.Join(root, "docs", ".pmngr", "stories", "ACME-US-0001.md"), "---\n")
+	waitForBatch(t, w, "the story in a new directory",
+		pathIs("docs/.pmngr/stories/ACME-US-0001.md"))
+}

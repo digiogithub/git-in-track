@@ -37,9 +37,11 @@ knowledge base as typed tools: list_items, search_items, get_item, create_epic,
 create_story, create_task, create_milestone, update_item, add_comment,
 move_on_board, list_kb_pages, get_kb_page and search_kb.
 
-The server is read-only unless --allow-write is given, and the write tools are
+The server is read-only unless writes are enabled, either with --allow-write or
+with "mcp.allowWrite: true" in the configuration file, and the write tools are
 then advertised alongside the read ones. Writes go through the same validation
 the web UI goes through, and land in the working tree as ordinary file changes.
+Run with --list-tools to see which surface a client would get.
 
 Nothing but protocol frames is written to stdout; logs go to stderr.
 
@@ -53,7 +55,7 @@ already running: one index and one watcher, shared with the web UI.`,
 	}
 
 	cmd.Flags().BoolVar(&local.allowWrite, "allow-write", false,
-		"advertise the write tools; without it the server is read-only")
+		"advertise the write tools; defaults to mcp.allowWrite in the configuration")
 	cmd.Flags().StringVar(&local.agent, "agent", "",
 		"agent name recorded as the author of comments it writes")
 	cmd.Flags().StringArrayVar(&local.repos, "repo", nil,
@@ -74,6 +76,13 @@ func runMCP(cmd *cobra.Command, build buildInfo, flags *globalFlags, local *mcpF
 	if err != nil {
 		return err
 	}
+	// The flag wins when it was typed; otherwise the configuration decides, so
+	// that a user who enabled writes once does not have to teach every agent
+	// runtime to pass the flag.
+	allowWrite := local.allowWrite
+	if !cmd.Flags().Changed("allow-write") {
+		allowWrite = res.Config.MCP.AllowWrite
+	}
 
 	space, roots, err := mountWorkspace(repos, build.Version)
 	if err != nil {
@@ -83,7 +92,7 @@ func runMCP(cmd *cobra.Command, build buildInfo, flags *globalFlags, local *mcpF
 		Core:       space,
 		Version:    build.Version,
 		Agent:      local.agent,
-		AllowWrite: local.allowWrite,
+		AllowWrite: allowWrite,
 		Roots:      roots,
 		// stdio carries protocol frames on stdout and nothing else, so the
 		// logger is pinned to stderr whatever the global configuration says.
@@ -104,7 +113,7 @@ func runMCP(cmd *cobra.Command, build buildInfo, flags *globalFlags, local *mcpF
 
 	_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
 		"gintrack mcp %s: workspace %s, %d repositories, %d tools (%s)\n",
-		build.Version, res.Workspace, len(repos), len(srv.Tools()), writeMode(local.allowWrite))
+		build.Version, res.Workspace, len(repos), len(srv.Tools()), writeMode(allowWrite))
 
 	ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

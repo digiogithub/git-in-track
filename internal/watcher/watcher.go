@@ -125,6 +125,9 @@ type fileMeta struct {
 type repoWatch struct {
 	key  string
 	root string
+	// scopes are the repo-relative subtrees the watch is confined to, cleaned
+	// and slash-separated. Nil watches the whole tree.
+	scopes []string
 	// dirs are the absolute directories currently watched for this repository.
 	dirs map[string]struct{}
 	// snap is the last polling snapshot, nil while fsnotify is healthy.
@@ -267,6 +270,20 @@ func (w *Watcher) Watched() int {
 // root is watched, skipping .git, node_modules, dot-directories other than
 // .pmngr, and the ignore list.
 func (w *Watcher) AddRepo(key, root string) error {
+	return w.AddRepoScoped(key, root, nil)
+}
+
+// AddRepoScoped registers root under key but confines the watch to the given
+// repo-relative subtrees, plus the repository root and its first-level
+// directories, which stay watched shallowly so that a documentation folder or a
+// backlog appearing later is still noticed.
+//
+// It exists because a repository is usually far larger than the part of it a
+// vault indexes: a source tree of ten thousand directories costs ten thousand
+// inotify watches, exhausts the budget of DefaultMaxWatches and silently leaves
+// another repository with no live updates at all. Nil scopes keep the whole-tree
+// behaviour of AddRepo.
+func (w *Watcher) AddRepoScoped(key, root string, scopes []string) error {
 	if key == "" {
 		return errors.New("watcher: repository key must not be empty")
 	}
@@ -295,7 +312,7 @@ func (w *Watcher) AddRepo(key, root string) error {
 		return fmt.Errorf("watcher: repository %q is already registered at %s", key, existing.root)
 	}
 
-	r := &repoWatch{key: key, root: abs, dirs: make(map[string]struct{})}
+	r := &repoWatch{key: key, root: abs, scopes: cleanScopes(scopes), dirs: make(map[string]struct{})}
 	w.repos[key] = r
 
 	if w.fsw != nil {
@@ -304,7 +321,7 @@ func (w *Watcher) AddRepo(key, root string) error {
 		}
 	}
 	if w.fsw == nil {
-		snap, err := scanTree(abs, w.ignore)
+		snap, err := scanTree(abs, w.ignore, r.scopes)
 		if err != nil {
 			return fmt.Errorf("watcher: scan %s: %w", root, err)
 		}
@@ -536,16 +553,20 @@ func (w *Watcher) handleFSEvent(ev fsnotify.Event) {
 		}
 		return
 	}
+	r := w.repos[key]
 	if w.skipRel(rel, false) {
 		return
 	}
 	if op == Create || op == Write {
 		if info, err := os.Lstat(abs); err == nil && info.IsDir() {
-			if !w.skipRel(rel, true) {
-				w.adoptDirLocked(w.repos[key], abs)
+			if !w.skipRel(rel, true) && dirInScope(rel, r.scopes) {
+				w.adoptDirLocked(r, abs)
 			}
 			return
 		}
+	}
+	if !fileInScope(rel, r.scopes) {
+		return
 	}
 	w.recordLocked(key, rel, op)
 }
@@ -584,7 +605,7 @@ func (w *Watcher) adoptDirLocked(r *repoWatch, dir string) {
 		w.degradeLocked("cannot register a directory watch", err)
 		return
 	}
-	err := walkTree(dir, r.root, w.ignore, nil, func(_, rel string, _ fs.FileInfo) error {
+	err := walkTree(dir, r.root, w.ignore, r.scopes, nil, func(_, rel string, _ fs.FileInfo) error {
 		w.recordLocked(r.key, rel, Create)
 		return nil
 	})
@@ -633,7 +654,7 @@ func (w *Watcher) unwatchLocked(dir string) {
 // watchTreeLocked registers dir and every directory below it, stopping at the
 // watch budget.
 func (w *Watcher) watchTreeLocked(r *repoWatch, dir string) error {
-	return walkTree(dir, r.root, w.ignore, func(abs, _ string) error {
+	return walkTree(dir, r.root, w.ignore, r.scopes, func(abs, _ string) error {
 		err := w.addWatchLocked(r, abs)
 		if errors.Is(err, errMaxWatches) {
 			return fs.SkipAll
@@ -651,7 +672,7 @@ func (w *Watcher) addWatchLocked(r *repoWatch, dir string) error {
 		if !w.warnedMax {
 			w.warnedMax = true
 			w.log.Warn("watch limit reached, new directories are not watched",
-				"max_watches", w.maxWatches, "hint", inotifyHint)
+				"repo", r.key, "dir", dir, "max_watches", w.maxWatches, "hint", inotifyHint)
 		}
 		return errMaxWatches
 	}
@@ -685,7 +706,7 @@ func (w *Watcher) degradeLocked(reason string, cause error) {
 		if r.snap != nil {
 			continue
 		}
-		snap, err := scanTree(r.root, w.ignore)
+		snap, err := scanTree(r.root, w.ignore, r.scopes)
 		if err != nil {
 			w.log.Warn("cannot scan a repository for polling", "repo", r.key, "error", err)
 			continue
@@ -701,7 +722,7 @@ func (w *Watcher) pollOnce() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	for _, r := range w.repos {
-		snap, err := scanTree(r.root, w.ignore)
+		snap, err := scanTree(r.root, w.ignore, r.scopes)
 		if err != nil {
 			w.log.Warn("polling scan failed", "repo", r.key, "error", err)
 			continue
@@ -807,6 +828,62 @@ func skipRelPath(rel string, isDir bool, ig ignoreSet) bool {
 	return ig.match(rel)
 }
 
+// cleanScopes normalises the subtrees a scoped watch is confined to. An empty
+// list, or a scope that addresses the repository root, means the whole tree.
+func cleanScopes(scopes []string) []string {
+	out := make([]string, 0, len(scopes))
+	seen := map[string]bool{}
+	for _, raw := range scopes {
+		p := path.Clean(strings.TrimSpace(filepath.ToSlash(raw)))
+		if p == "" || p == "." || p == "/" {
+			return nil
+		}
+		p = strings.TrimPrefix(p, "./")
+		if p == ".." || strings.HasPrefix(p, "../") || path.IsAbs(p) || seen[p] {
+			continue
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// dirInScope reports whether a repo-relative directory is worth watching: the
+// root and its first-level directories always are, so that a documentation
+// folder appearing later is noticed; deeper directories only when they lie
+// inside a scope or on the way to one.
+func dirInScope(rel string, scopes []string) bool {
+	if len(scopes) == 0 || rel == "" || rel == "." || !strings.Contains(rel, "/") {
+		return true
+	}
+	for _, scope := range scopes {
+		if rel == scope ||
+			strings.HasPrefix(rel, scope+"/") ||
+			strings.HasPrefix(scope, rel+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// fileInScope reports whether a repo-relative file is worth reporting. Files
+// directly under the root stay in scope — team.yaml lives there — and every
+// other file must lie inside a scope.
+func fileInScope(rel string, scopes []string) bool {
+	if len(scopes) == 0 || rel == "" || rel == "." || !strings.Contains(rel, "/") {
+		return true
+	}
+	for _, scope := range scopes {
+		if rel == scope || strings.HasPrefix(rel, scope+"/") {
+			return true
+		}
+	}
+	return false
+}
+
 // skipDirName reports the directories a watch walk never descends into. It
 // mirrors core's vault walk: .git, node_modules and every dot-directory except
 // the backlog folder.
@@ -826,9 +903,9 @@ func skipDirName(name string) bool {
 
 // scanTree fingerprints every interesting file below root, keyed by
 // repo-relative path.
-func scanTree(root string, ig ignoreSet) (map[string]fileMeta, error) {
+func scanTree(root string, ig ignoreSet, scopes []string) (map[string]fileMeta, error) {
 	out := make(map[string]fileMeta)
-	err := walkTree(root, root, ig, nil, func(_, rel string, info fs.FileInfo) error {
+	err := walkTree(root, root, ig, scopes, nil, func(_, rel string, info fs.FileInfo) error {
 		out[rel] = fileMeta{size: info.Size(), modTime: info.ModTime()}
 		return nil
 	})
@@ -841,7 +918,7 @@ func scanTree(root string, ig ignoreSet) (map[string]fileMeta, error) {
 // walkTree walks root, reporting directories and files whose paths, relative to
 // base, survive the skip rules. Symlinks are never followed. Unreadable entries
 // are skipped rather than failing the walk.
-func walkTree(root, base string, ig ignoreSet,
+func walkTree(root, base string, ig ignoreSet, scopes []string,
 	onDir func(abs, rel string) error,
 	onFile func(abs, rel string, info fs.FileInfo) error,
 ) error {
@@ -862,7 +939,7 @@ func walkTree(root, base string, ig ignoreSet,
 		rel = filepath.ToSlash(rel)
 		switch {
 		case d.IsDir():
-			if skipRelPath(rel, true, ig) {
+			if skipRelPath(rel, true, ig) || !dirInScope(rel, scopes) {
 				return fs.SkipDir
 			}
 			if onDir == nil {
@@ -872,7 +949,7 @@ func walkTree(root, base string, ig ignoreSet,
 		case d.Type()&fs.ModeSymlink != 0:
 			return nil
 		default:
-			if onFile == nil || skipRelPath(rel, false, ig) {
+			if onFile == nil || skipRelPath(rel, false, ig) || !fileInScope(rel, scopes) {
 				return nil
 			}
 			info, infoErr := d.Info()

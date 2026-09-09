@@ -58,13 +58,15 @@ const roleProject = "project"
 // request about it with a problem, so that one broken repository never takes
 // the whole companion down.
 type mount struct {
-	id    string
-	path  string
-	role  string
-	docs  string
-	label string
-	vlt   *vault.Vault
-	err   error
+	id   string
+	path string
+	role string
+	docs string
+	// docsFolders are every documentation folder the registration declared.
+	docsFolders []string
+	label       string
+	vlt         *vault.Vault
+	err         error
 
 	// mu guards lastIndexed, which every reindex and every watcher pass writes.
 	mu          sync.Mutex
@@ -86,6 +88,7 @@ func openMount(repo Repo, now func() time.Time) *mount {
 		path:        repo.Path,
 		role:        role,
 		docs:        repo.DocsFolder,
+		docsFolders: repo.declaredDocsFolders(),
 		label:       filepath.Base(filepath.Clean(repo.Path)),
 		lastIndexed: now(),
 	}
@@ -94,7 +97,7 @@ func openMount(repo Repo, now func() time.Time) *mount {
 		m.err = fmt.Errorf("mount %s: %w", repo.Path, err)
 		return m
 	}
-	v, err := vault.OpenWithDocs(fsys, m.label, repo.declaredDocsFolders())
+	v, err := vault.OpenWithDocs(fsys, m.label, m.docsFolders)
 	if err != nil {
 		m.err = fmt.Errorf("index %s: %w", repo.Path, err)
 		return m

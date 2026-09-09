@@ -20,6 +20,7 @@ type fakeWatcher struct {
 	events chan []watcher.Event
 	errs   chan error
 	repos  []string
+	scopes [][]string
 	closed bool
 }
 
@@ -32,6 +33,12 @@ func newFakeWatcher() *fakeWatcher {
 
 func (f *fakeWatcher) AddRepo(key, _ string) error {
 	f.repos = append(f.repos, key)
+	return nil
+}
+
+func (f *fakeWatcher) AddRepoScoped(key, _ string, scopes []string) error {
+	f.repos = append(f.repos, key)
+	f.scopes = append(f.scopes, scopes)
 	return nil
 }
 
@@ -198,4 +205,52 @@ func TestWatcherObservesARealDiskWrite(t *testing.T) {
 		t.Errorf("payload = %+v, want a knowledge-base file", payload)
 	}
 	awaitFrame(ctx, t, conn, eventIndexUpdated)
+}
+
+// TestWatchScopesCoverOnlyTheIndexedFolders pins the fix for the watch budget:
+// the companion registers the documentation folders, not the whole source tree,
+// so a large repository can no longer starve the repositories after it.
+func TestWatchScopesCoverOnlyTheIndexedFolders(t *testing.T) {
+	t.Parallel()
+
+	root := copyTree(t, fixtureRoot)
+	reg := newRegistry([]Repo{{
+		ID: testRepoID, Path: root, Role: "project", DocsFolder: "docs",
+		DocsFolders: []string{"docs", "apps/api/docs"},
+	}}, time.Now)
+	m := reg.all()[0]
+	if !m.ready() {
+		t.Fatalf("the fixture did not mount: %v", m.err)
+	}
+
+	got := watchScopes(m)
+	want := map[string]bool{"docs": true, "apps/api/docs": true, ".pmngr": true}
+	for _, scope := range got {
+		if !want[scope] {
+			t.Errorf("watchScopes() = %v, %q is not an indexed folder", got, scope)
+		}
+		delete(want, scope)
+	}
+	for scope := range want {
+		t.Errorf("watchScopes() = %v, want it to cover %q", got, scope)
+	}
+}
+
+// TestStartWatchPassesTheScopes checks the scopes actually reach the watcher.
+func TestStartWatchPassesTheScopes(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeWatcher()
+	s, _, _ := watchingServer(t, func(watcher.Options) (FileWatcher, error) { return fake, nil })
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s.startWatch(ctx)
+	t.Cleanup(s.stopWatch)
+
+	if len(fake.scopes) != 1 {
+		t.Fatalf("scopes = %v, want one repository", fake.scopes)
+	}
+	if len(fake.scopes[0]) == 0 {
+		t.Errorf("scopes = %v, want the documentation folders of the fixture", fake.scopes)
+	}
 }

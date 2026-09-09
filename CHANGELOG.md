@@ -156,6 +156,25 @@ because a commit list cannot express them.
 
 ### Fixed
 
+- **A large repository no longer silently switches off live updates for the others**
+  (docs/06 §9.2, docs/07 §7.2). The companion registered one inotify watch per directory
+  of every mounted repository, whole source tree included, so a repository of ten thousand
+  directories exhausted the 8192-watch budget: the repositories registered after it got no
+  watches at all, and a task file created by an agent or by the CLI never reached the web
+  UI until the next reload. The watch is now confined to what the vault actually indexes —
+  the declared and discovered documentation folders plus the root-level `.pmngr/` of a team
+  repository — with the repository root and its first-level directories still watched
+  shallowly so a documentation folder created later is noticed. The warning that used to
+  say only that the limit was reached now names the repository and the directory it gave up
+  on.
+
+- **`gintrack mcp` honours `mcp.allowWrite`** (docs/07 §4.9, docs/08 §2.1). Writes over
+  stdio could only be enabled with `--allow-write`, so an agent runtime configured as
+  `"command": "gintrack", "args": ["mcp"]` — the shape every MCP client generates — always
+  got the read-only surface and could not create an epic, a story, a task or a milestone
+  even for a user who had set `mcp.allowWrite: true`. The flag still wins when it is typed,
+  `--allow-write=false` included; the configuration decides otherwise.
+
 - The **board list no longer crashes** with `Cannot read properties of null (reading
   'map')` when a team declares no project: a board's project scope now serializes as an
   empty list rather than `null`.

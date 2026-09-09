@@ -3,8 +3,11 @@ package server
 import (
 	"context"
 	"fmt"
+	"path/filepath"
+	"strings"
 	"sync"
 
+	"github.com/digiogithub/git-in-track/internal/core"
 	"github.com/digiogithub/git-in-track/internal/watcher"
 )
 
@@ -14,6 +17,10 @@ import (
 type FileWatcher interface {
 	// AddRepo registers a repository tree under a key.
 	AddRepo(key, root string) error
+	// AddRepoScoped registers a repository but confines the watch to the given
+	// repo-relative subtrees, which is what the companion uses: a repository is
+	// usually far larger than the folders its vault indexes.
+	AddRepoScoped(key, root string, scopes []string) error
 	// Events yields one batch per debounce window.
 	Events() <-chan []watcher.Event
 	// Errors yields non-fatal watcher problems.
@@ -75,7 +82,7 @@ func (s *Server) startWatch(ctx context.Context) {
 
 	watched := 0
 	for _, m := range mounts {
-		if err := w.AddRepo(m.id, m.path); err != nil {
+		if err := w.AddRepoScoped(m.id, m.path, watchScopes(m)); err != nil {
 			s.log.Warn("live updates are off for a repository", "repo", m.id, "error", err)
 			continue
 		}
@@ -95,6 +102,48 @@ func (s *Server) startWatch(ctx context.Context) {
 	s.watch.mu.Unlock()
 
 	go s.watchLoop(ctx, w, done)
+}
+
+// watchScopes reports the repo-relative subtrees of a mount that are worth
+// watching: the documentation folders the registration declared, the ones
+// discovery found, and the root-level backlog a team repository keeps.
+//
+// Everything else in a repository — the source tree, build output, a vendored
+// dependency — is never indexed, so watching it buys nothing and costs one
+// inotify watch per directory. A repository of ten thousand directories used to
+// exhaust the whole watch budget and leave the repositories registered after it
+// with no live updates at all.
+//
+// An empty result means "watch the whole tree", which is what a vault rooted at
+// the repository root needs.
+func watchScopes(m *mount) []string {
+	if !m.ready() {
+		return nil
+	}
+	out := make([]string, 0, len(m.docsFolders)+2)
+	seen := map[string]bool{}
+	add := func(folder string) {
+		folder = strings.Trim(strings.TrimSpace(filepath.ToSlash(folder)), "/")
+		if folder == "" || folder == "." || seen[folder] {
+			return
+		}
+		seen[folder] = true
+		out = append(out, folder)
+	}
+	for _, folder := range m.docsFolders {
+		add(folder)
+	}
+	for _, ref := range m.vlt.Projects() {
+		if ref.DocsPath == "." {
+			// A project at the repository root indexes the whole tree.
+			return nil
+		}
+		add(ref.DocsPath)
+	}
+	// A team repository keeps its boards, sprints and retrospectives in a
+	// backlog folder at the root, beside the documentation folder.
+	add(core.BacklogDirName)
+	return out
 }
 
 // stopWatch closes the watcher and waits for its loop to drain.

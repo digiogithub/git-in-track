@@ -964,6 +964,14 @@ Watcher details that matter in practice:
   which we *do* watch to detect branch switches and external commits),
   `node_modules/**`, `*.tmp`, `*.swp`, `*.swx`, `.#*`, `#*#`, `4913`,
   `.DS_Store`, plus user globs.
+- Watches are confined to what the vault indexes: the documentation folders the
+  registration declares and the ones discovery found, plus the root-level
+  `.pmngr/` of a team repository. The repository root and its first-level
+  directories stay watched shallowly, so a documentation folder or a backlog
+  created later is still noticed. A source tree of ten thousand directories
+  therefore costs no watches at all — before this, one such repository exhausted
+  the `MaxWatches` budget and every repository registered after it silently lost
+  live updates.
 - Editors write via rename (Vim, VS Code atomic save), so we treat
   `CREATE`+`RENAME` on a `.tmp`/`~` sibling as a single write of the target and
   we re-`stat` before parsing to avoid reading a half-written file.
