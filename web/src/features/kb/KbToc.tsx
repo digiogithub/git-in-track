@@ -1,5 +1,6 @@
 /** Table of contents built from the rendered page's headings. */
 
+import { tocOutline } from '@/features/kb/toc';
 import { cn } from '@/lib/cn';
 import type { Heading } from '@/markdown';
 
@@ -8,7 +9,7 @@ export type KbTocProps = {
 };
 
 export function KbToc({ headings }: KbTocProps) {
-  const outline = headings.filter((heading) => heading.depth >= 2 && heading.depth <= 4);
+  const outline = tocOutline(headings);
   if (outline.length === 0) return null;
 
   return (

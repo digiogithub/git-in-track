@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { FakeProvider } from '@/api/fake-provider';
 import { AppShell } from '@/app/layout/AppShell';
 import { useAppStore } from '@/app/store';
+import { useUiPrefs } from '@/app/ui-prefs';
 import { renderWithRouter } from '@/test/router';
 
 function Blank() {
@@ -14,6 +15,53 @@ function Blank() {
 describe('AppShell', () => {
   beforeEach(() => {
     useAppStore.getState().reset();
+    useUiPrefs.setState({ sidebarCollapsed: false, hiddenRepos: [] });
+  });
+
+  it('folds the sidebar down to a menu button and opens it again', async () => {
+    const user = userEvent.setup();
+    renderWithRouter({ index: Blank, root: AppShell, provider: new FakeProvider() });
+
+    await screen.findByText('acme-platform', undefined, { timeout: 5000 });
+    await user.click(screen.getByRole('button', { name: 'Collapse navigation' }));
+
+    expect(screen.queryByRole('navigation', { name: 'Main' })).toBeNull();
+    expect(useUiPrefs.getState().sidebarCollapsed).toBe(true);
+
+    await user.click(screen.getByRole('button', { name: 'Open navigation' }));
+    expect(screen.getByRole('navigation', { name: 'Main' })).toBeInTheDocument();
+  });
+
+  it('filters repositories by name or project key', async () => {
+    const user = userEvent.setup();
+    renderWithRouter({ index: Blank, root: AppShell, provider: new FakeProvider() });
+
+    await screen.findByText('acme-platform', undefined, { timeout: 5000 });
+    await user.type(screen.getByRole('searchbox', { name: 'Filter repositories' }), 'zzz');
+
+    expect(screen.queryByText('acme-platform')).toBeNull();
+    expect(screen.getByText(/No repository matches/)).toBeInTheDocument();
+
+    await user.clear(screen.getByRole('searchbox', { name: 'Filter repositories' }));
+    await user.type(screen.getByRole('searchbox', { name: 'Filter repositories' }), 'acme');
+    expect(screen.getByText('acme-platform')).toBeInTheDocument();
+  });
+
+  it('hides a repository until "show hidden" is on', async () => {
+    const user = userEvent.setup();
+    renderWithRouter({ index: Blank, root: AppShell, provider: new FakeProvider() });
+
+    await screen.findByText('acme-platform', undefined, { timeout: 5000 });
+    await user.click(screen.getByRole('button', { name: 'Hide acme-platform' }));
+
+    expect(screen.queryByText('acme-platform')).toBeNull();
+    expect(useUiPrefs.getState().hiddenRepos).toHaveLength(1);
+
+    await user.click(screen.getByRole('button', { name: /Show hidden \(1\)/ }));
+    await user.click(screen.getByRole('button', { name: 'Show acme-platform' }));
+
+    expect(useUiPrefs.getState().hiddenRepos).toHaveLength(0);
+    expect(screen.getByText('acme-platform')).toBeInTheDocument();
   });
 
   it('shows the repositories of the active provider in the sidebar', async () => {

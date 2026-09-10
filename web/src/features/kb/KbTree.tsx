@@ -1,13 +1,13 @@
 /**
  * The docs folder as a collapsible tree with a filter box.
  *
+ * Folders start collapsed, except the ones leading to the current page.
  * Filtering keeps the ancestors of every match so the hierarchy stays readable,
- * and auto-expands while a filter is active. Expansion is keyed by folder path;
- * persisting it per repository is `useUiStore` work in a later story.
+ * and auto-expands while a filter is active. Expansion is keyed by folder path.
  */
 
 import { ChevronDown, ChevronRight, FileText } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import type { KbNode } from '@/api/provider';
 import { Input } from '@/components/ui/input';
@@ -28,18 +28,26 @@ function matches(node: KbNode, needle: string): boolean {
   return (node.children ?? []).some((child) => matches(child, needle));
 }
 
-function defaultExpanded(nodes: KbNode[], currentPath: string): Set<string> {
-  const open = new Set<string>();
-  const parts = currentPath.split('/');
-  for (let i = 1; i < parts.length; i += 1) open.add(parts.slice(0, i).join('/'));
-  for (const node of nodes) if (node.kind === 'dir') open.add(node.path);
-  return open;
+/** The folders leading to `path`: only those start open, the rest stay folded. */
+function ancestors(path: string): string[] {
+  const parts = path.split('/');
+  const out: string[] = [];
+  for (let i = 1; i < parts.length; i += 1) out.push(parts.slice(0, i).join('/'));
+  return out;
 }
 
 export function KbTree({ project, nodes, currentPath }: KbTreeProps) {
   const [filter, setFilter] = useState('');
-  const [expanded, setExpanded] = useState<Set<string>>(() => defaultExpanded(nodes, currentPath));
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set(ancestors(currentPath)));
   const needle = filter.trim().toLowerCase();
+
+  // Navigating to a page reveals it without folding what the reader opened.
+  useEffect(() => {
+    setExpanded((previous) => {
+      const missing = ancestors(currentPath).filter((path) => !previous.has(path));
+      return missing.length === 0 ? previous : new Set([...previous, ...missing]);
+    });
+  }, [currentPath]);
 
   const visible = useMemo(() => nodes.filter((node) => matches(node, needle)), [nodes, needle]);
 

@@ -20,6 +20,12 @@
   max-width: 78ch;
 }
 
+/* Knowledge base pages are documents the reader chose to open full-width: the
+   viewer's own gutters and the optional outline set the margins instead. */
+.markdown-body.prose-kb > * {
+  max-width: none;
+}
+
 .markdown-body > * + * {
   margin-top: 1rem;
 }

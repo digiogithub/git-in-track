@@ -7,11 +7,34 @@
  */
 
 import { useParams, useRouter } from '@tanstack/react-router';
-import { FileQuestion, PanelLeft } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  FileQuestion,
+  Maximize2,
+  Minimize2,
+  PanelLeft,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
+} from 'lucide-react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+} from 'react';
 
 import type { KbScope } from '@/api/provider';
 import { useProvider } from '@/api/provider-context';
+import {
+  KB_TREE_DEFAULT_WIDTH,
+  KB_TREE_MAX_WIDTH,
+  KB_TREE_MIN_WIDTH,
+  useUiPrefs,
+} from '@/app/ui-prefs';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import {
@@ -27,6 +50,7 @@ import { KbFrontMatter } from '@/features/kb/KbFrontMatter';
 import { KbLink, RouterLink } from '@/features/kb/KbLink';
 import { KbToc } from '@/features/kb/KbToc';
 import { KbTree } from '@/features/kb/KbTree';
+import { tocOutline } from '@/features/kb/toc';
 import { useKbInvalidation, useKbPage, useKbTree } from '@/features/kb/useKbData';
 import { cn } from '@/lib/cn';
 import type { RenderOptions } from '@/markdown';
@@ -59,10 +83,33 @@ export function KbViewer() {
 
   const [rawOpen, setRawOpen] = useState(false);
   const [treeOpen, setTreeOpen] = useState(false);
+  const treeWidth = useUiPrefs((state) => state.kbTreeWidth);
+  const setTreeWidth = useUiPrefs((state) => state.setKbTreeWidth);
+  const tocOpen = useUiPrefs((state) => state.kbTocOpen);
+  const setTocOpen = useUiPrefs((state) => state.setKbTocOpen);
+  const treePinned = useUiPrefs((state) => state.kbTreeOpen);
+  const setTreePinned = useUiPrefs((state) => state.setKbTreeOpen);
+  const maximized = useUiPrefs((state) => state.kbMaximized);
+  const setMaximized = useUiPrefs((state) => state.setKbMaximized);
   useEffect(() => {
     setRawOpen(false);
     setTreeOpen(false);
   }, [path]);
+
+  // Escape leaves maximized mode, unless something else (a dialog, a search
+  // box) already handled the key.
+  useEffect(() => {
+    if (!maximized) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !event.defaultPrevented) setMaximized(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [maximized, setMaximized]);
+
+  // Desktop panels: the tree and the outline each have their own toggle, and
+  // maximized mode folds both without forgetting those choices.
+  const showTree = treePinned && !maximized;
 
   const page = pageQuery.data;
   const resolvers = useMemo(() => createKbResolvers(project, index, path), [project, index, path]);
@@ -98,10 +145,22 @@ export function KbViewer() {
   }, [router, project, path]);
 
   const crumbs = breadcrumbs(path);
+  const outline = markdown.result ? tocOutline(markdown.result.headings) : [];
+  const hasOutline = outline.length > 0 && !rawOpen;
+  const showToc = hasOutline && tocOpen && !maximized;
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[minmax(0,14rem)_minmax(0,1fr)_minmax(0,12rem)]">
-      <aside className={cn('min-w-0 lg:block lg:border-r lg:pr-4', treeOpen ? 'block' : 'hidden')}>
+    <div className="flex flex-col gap-6 lg:flex-row lg:gap-0">
+      <aside
+        className={cn(
+          'min-w-0 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:w-[var(--kb-tree-width)] lg:shrink-0 lg:self-start lg:overflow-y-auto lg:pr-3',
+          treeOpen ? 'block' : 'hidden',
+          showTree ? 'lg:block' : 'lg:hidden',
+        )}
+        data-testid="kb-tree-panel"
+        data-desktop-visible={showTree}
+        style={{ '--kb-tree-width': `${treeWidth}px` } as CSSProperties}
+      >
         {treeQuery.isPending ? (
           <TreeSkeleton />
         ) : treeQuery.isError ? (
@@ -111,7 +170,9 @@ export function KbViewer() {
         )}
       </aside>
 
-      <main className="min-w-0 space-y-4">
+      {showTree ? <TreeResizeHandle width={treeWidth} onResize={setTreeWidth} /> : null}
+
+      <main className={cn('min-w-0 flex-1 space-y-4', showTree && 'lg:pl-6')}>
         <header className="space-y-2">
           <div className="flex items-start justify-between gap-3">
             <nav aria-label="Breadcrumb" className="min-w-0">
@@ -138,6 +199,58 @@ export function KbViewer() {
               >
                 <PanelLeft className="size-4" aria-hidden="true" />
                 Pages
+              </Button>
+              {maximized ? null : (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="hidden lg:inline-flex"
+                  aria-pressed={treePinned}
+                  aria-label={treePinned ? 'Hide pages panel' : 'Show pages panel'}
+                  title={treePinned ? 'Hide pages panel' : 'Show pages panel'}
+                  onClick={() => setTreePinned(!treePinned)}
+                >
+                  {treePinned ? (
+                    <PanelLeftClose className="size-4" aria-hidden="true" />
+                  ) : (
+                    <PanelLeftOpen className="size-4" aria-hidden="true" />
+                  )}
+                  Pages
+                </Button>
+              )}
+              {hasOutline && !maximized ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="hidden lg:inline-flex"
+                  aria-pressed={tocOpen}
+                  aria-label={tocOpen ? 'Hide page outline' : 'Show page outline'}
+                  title={tocOpen ? 'Hide page outline' : 'Show page outline'}
+                  onClick={() => setTocOpen(!tocOpen)}
+                >
+                  {tocOpen ? (
+                    <PanelRightClose className="size-4" aria-hidden="true" />
+                  ) : (
+                    <PanelRightOpen className="size-4" aria-hidden="true" />
+                  )}
+                  Outline
+                </Button>
+              ) : null}
+              <Button
+                variant={maximized ? 'secondary' : 'ghost'}
+                size="sm"
+                className="hidden lg:inline-flex"
+                aria-pressed={maximized}
+                aria-label={maximized ? 'Restore panels' : 'Maximize content'}
+                title={maximized ? 'Restore panels (Esc)' : 'Maximize content'}
+                onClick={() => setMaximized(!maximized)}
+              >
+                {maximized ? (
+                  <Minimize2 className="size-4" aria-hidden="true" />
+                ) : (
+                  <Maximize2 className="size-4" aria-hidden="true" />
+                )}
+                {maximized ? 'Restore' : 'Maximize'}
               </Button>
               <Button
                 variant={rawOpen ? 'secondary' : 'ghost'}
@@ -200,9 +313,93 @@ export function KbViewer() {
         ) : null}
       </main>
 
-      <aside className="hidden min-w-0 lg:block">
-        {markdown.result ? <KbToc headings={markdown.result.headings} /> : null}
-      </aside>
+      {showToc ? (
+        // Follows the reader down the page; an outline taller than the screen
+        // scrolls on its own so every section stays reachable.
+        <aside className="hidden w-56 shrink-0 self-start lg:sticky lg:top-4 lg:block lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto lg:pl-6">
+          <KbToc headings={outline} />
+        </aside>
+      ) : null}
+    </div>
+  );
+}
+
+/** Keyboard step of the tree resize handle, in pixels. */
+const RESIZE_STEP = 16;
+
+/**
+ * The drag handle between the docs tree and the page. Pointer drags and the
+ * arrow keys both resize the tree, clamped to `KB_TREE_MIN_WIDTH`…`MAX`.
+ */
+function TreeResizeHandle({
+  width,
+  onResize,
+}: {
+  width: number;
+  onResize: (width: number) => void;
+}) {
+  const [dragging, setDragging] = useState(false);
+
+  const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = width;
+    setDragging(true);
+
+    const onMove = (move: PointerEvent) => onResize(startWidth + move.clientX - startX);
+    const onUp = () => {
+      setDragging(false);
+      document.body.style.removeProperty('cursor');
+      document.body.style.removeProperty('user-select');
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+    };
+    // The cursor and the no-select must hold while the pointer leaves the
+    // handle, which it does on the first fast move.
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+  };
+
+  const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'ArrowLeft') onResize(width - RESIZE_STEP);
+    else if (event.key === 'ArrowRight') onResize(width + RESIZE_STEP);
+    else if (event.key === 'Home') onResize(KB_TREE_MIN_WIDTH);
+    else if (event.key === 'End') onResize(KB_TREE_MAX_WIDTH);
+    else return;
+    event.preventDefault();
+  };
+
+  // A focusable separator is the WAI-ARIA window splitter pattern: an
+  // interactive widget, which jsx-a11y does not recognise.
+  return (
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize pages panel"
+      aria-valuenow={width}
+      aria-valuemin={KB_TREE_MIN_WIDTH}
+      aria-valuemax={KB_TREE_MAX_WIDTH}
+      // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+      tabIndex={0}
+      onPointerDown={onPointerDown}
+      onKeyDown={onKeyDown}
+      onDoubleClick={() => onResize(KB_TREE_DEFAULT_WIDTH)}
+      title="Drag to resize, double-click to reset"
+      className="group hidden w-2 shrink-0 cursor-col-resize touch-none justify-center self-stretch focus-visible:outline-none lg:flex"
+    >
+      <span
+        aria-hidden="true"
+        className={cn(
+          'w-px bg-border transition-colors duration-fast group-hover:w-0.5 group-hover:bg-accent group-focus-visible:w-0.5 group-focus-visible:bg-accent',
+          dragging && 'w-0.5 bg-accent',
+        )}
+      />
     </div>
   );
 }

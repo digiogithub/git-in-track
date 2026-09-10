@@ -4,20 +4,27 @@ import {
   BookOpen,
   Boxes,
   ChartLine,
+  Eye,
+  EyeOff,
   LayoutDashboard,
   ListChecks,
   Lock,
+  Menu,
   NotebookPen,
+  PanelLeftClose,
   Plug,
   RefreshCw,
   Settings,
   X,
 } from 'lucide-react';
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 
+import type { RepoInfo } from '@/api/provider';
 import { useOptionalProvider } from '@/api/provider-context';
 import { useAppStore, type AppMode } from '@/app/store';
+import { useUiPrefs } from '@/app/ui-prefs';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Logo } from '@/components/ui/logo';
 import { ThemeToggle } from '@/components/ui/theme-toggle';
 import { cn } from '@/lib/cn';
@@ -84,6 +91,8 @@ export function AppShell() {
   }, [provider, reposUpdatedAt, setCapabilities]);
 
   const rows = repos.data ?? [];
+  const collapsed = useUiPrefs((state) => state.sidebarCollapsed);
+  const setCollapsed = useUiPrefs((state) => state.setSidebarCollapsed);
 
   return (
     <div className="flex min-h-screen bg-background text-foreground">
@@ -94,99 +103,92 @@ export function AppShell() {
         Skip to content
       </a>
 
-      <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar md:flex">
-        <div className="flex flex-col gap-2 px-4 pb-4 pt-5">
-          <div className="flex items-center gap-2">
-            <Logo className="h-5 w-5 text-foreground" />
-            <span className="font-semibold tracking-tight">git-in-track</span>
-          </div>
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span
-              data-testid="mode-badge"
-              className="rounded-full bg-secondary px-2 py-0.5 text-2xs uppercase tracking-[0.08em] text-muted-foreground"
-              title={modeTooltip(mode, companionVersion, companionUrl)}
-            >
-              {mode}
-            </span>
-            {capabilities.write ? null : (
-              <span
-                className="bg-destructive/12 flex items-center gap-1 rounded-full px-2 py-0.5 text-2xs uppercase tracking-[0.08em] text-destructive"
-                title="This browser cannot save changes back to the folder"
-              >
-                <Lock aria-hidden="true" className="h-3 w-3" />
-                Read-only
-              </span>
-            )}
-          </div>
+      {collapsed ? (
+        <div className="sticky top-0 flex h-screen w-12 shrink-0 flex-col items-center border-r border-sidebar-border bg-sidebar pt-4">
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Open navigation"
+            aria-expanded={false}
+            title="Open navigation"
+            onClick={() => setCollapsed(false)}
+          >
+            <Menu aria-hidden="true" className="h-4 w-4" />
+          </Button>
         </div>
-
-        <div className="flex-1 overflow-y-auto px-3 pb-4">
-          <nav aria-label="Main">
-            <ul className="space-y-0.5">
-              {navItems.map((item) => (
-                <li key={item.to}>
-                  <Link
-                    to={item.to}
-                    activeOptions={{ exact: item.to === '/' }}
-                    className={navLinkClass}
-                    activeProps={{ className: navLinkActiveClass }}
+      ) : (
+        <>
+          {/* On a phone the open sidebar floats over the page; tapping outside folds it. */}
+          <div
+            aria-hidden="true"
+            className="fixed inset-0 z-30 bg-foreground/30 md:hidden"
+            onClick={() => setCollapsed(true)}
+          />
+          <aside className="fixed inset-y-0 left-0 z-40 flex h-screen w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar md:sticky md:top-0 md:z-auto">
+            <div className="flex flex-col gap-2 px-4 pb-4 pt-5">
+              <div className="flex items-center gap-2">
+                <Logo className="h-5 w-5 text-foreground" />
+                <span className="flex-1 font-semibold tracking-tight">git-in-track</span>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Collapse navigation"
+                  aria-expanded={true}
+                  title="Collapse navigation"
+                  onClick={() => setCollapsed(true)}
+                >
+                  <PanelLeftClose aria-hidden="true" className="h-4 w-4" />
+                </Button>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span
+                  data-testid="mode-badge"
+                  className="rounded-full bg-secondary px-2 py-0.5 text-2xs uppercase tracking-[0.08em] text-muted-foreground"
+                  title={modeTooltip(mode, companionVersion, companionUrl)}
+                >
+                  {mode}
+                </span>
+                {capabilities.write ? null : (
+                  <span
+                    className="bg-destructive/12 flex items-center gap-1 rounded-full px-2 py-0.5 text-2xs uppercase tracking-[0.08em] text-destructive"
+                    title="This browser cannot save changes back to the folder"
                   >
-                    {item.icon}
-                    {item.label}
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </nav>
+                    <Lock aria-hidden="true" className="h-3 w-3" />
+                    Read-only
+                  </span>
+                )}
+              </div>
+            </div>
 
-          {rows.length > 0 ? (
-            <nav aria-label="Repositories" className="mt-7 space-y-3">
-              <h2 className="section-label px-2.5">Repositories</h2>
-              <ul className="space-y-4">
-                {rows.map((repo) => (
-                  <li key={repo.id} className="space-y-1">
-                    <p className="truncate px-2.5 text-sm font-medium" title={repo.name}>
-                      {repo.name}
-                    </p>
-                    {repo.state === 'needs-permission' ? (
-                      <p className="px-2.5 text-xs text-destructive">Needs permission</p>
-                    ) : null}
-                    <ul className="space-y-0.5 border-l border-sidebar-border pl-2">
-                      {repo.projects.map((project) => (
-                        <li key={project} className="space-y-0.5">
-                          <Link
-                            to="/p/$project/items"
-                            params={{ project }}
-                            className={cn(navLinkClass, 'py-1 text-[0.8125rem]')}
-                            activeProps={{ className: navLinkActiveClass }}
-                          >
-                            <ListChecks aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
-                            <span className="truncate">{project} backlog</span>
-                          </Link>
-                          <Link
-                            to="/p/$project/kb/$"
-                            params={{ project, _splat: '' }}
-                            className={cn(navLinkClass, 'py-1 text-[0.8125rem]')}
-                            activeProps={{ className: navLinkActiveClass }}
-                          >
-                            <BookOpen aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
-                            <span className="truncate">{project} docs</span>
-                          </Link>
-                        </li>
-                      ))}
-                    </ul>
-                  </li>
-                ))}
-              </ul>
-            </nav>
-          ) : null}
-        </div>
+            <div className="flex-1 overflow-y-auto px-3 pb-4">
+              <nav aria-label="Main">
+                <ul className="space-y-0.5">
+                  {navItems.map((item) => (
+                    <li key={item.to}>
+                      <Link
+                        to={item.to}
+                        activeOptions={{ exact: item.to === '/' }}
+                        className={navLinkClass}
+                        activeProps={{ className: navLinkActiveClass }}
+                      >
+                        {item.icon}
+                        {item.label}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              </nav>
 
-        <div className="flex items-center justify-between gap-2 border-t border-sidebar-border px-4 py-3">
-          <span className="section-label">Theme</span>
-          <ThemeToggle />
-        </div>
-      </aside>
+              {rows.length > 0 ? <RepoNav rows={rows} /> : null}
+            </div>
+
+            <div className="flex items-center justify-between gap-2 border-t border-sidebar-border px-4 py-3">
+              <span className="section-label">Theme</span>
+              <ThemeToggle />
+            </div>
+          </aside>
+        </>
+      )}
 
       <div className="flex min-w-0 flex-1 flex-col">
         <ModeNoticeBanner />
@@ -199,6 +201,123 @@ export function AppShell() {
         </main>
       </div>
     </div>
+  );
+}
+
+/** A repository matches the filter by its name or by any of its project keys. */
+function repoMatches(repo: RepoInfo, needle: string): boolean {
+  if (needle === '') return true;
+  if (repo.name.toLowerCase().includes(needle)) return true;
+  return repo.projects.some((project) => project.toLowerCase().includes(needle));
+}
+
+/**
+ * The repositories of the workspace with their backlog and docs links, a
+ * filter box, and a per-repository "hide" for the ones not being worked on.
+ * Hidden repositories stay out of the list until "Show hidden" is on, but a
+ * filter still finds them: typing a name is an explicit ask.
+ */
+function RepoNav({ rows }: { rows: RepoInfo[] }) {
+  const hiddenRepos = useUiPrefs((state) => state.hiddenRepos);
+  const toggleRepoHidden = useUiPrefs((state) => state.toggleRepoHidden);
+  const [filter, setFilter] = useState('');
+  const [showHidden, setShowHidden] = useState(false);
+  const needle = filter.trim().toLowerCase();
+
+  const hiddenCount = rows.filter((repo) => hiddenRepos.includes(repo.id)).length;
+  const visible = rows.filter(
+    (repo) =>
+      repoMatches(repo, needle) && (showHidden || needle !== '' || !hiddenRepos.includes(repo.id)),
+  );
+
+  return (
+    <nav aria-label="Repositories" className="mt-7 space-y-3">
+      <h2 className="section-label px-2.5">Repositories</h2>
+      <Input
+        type="search"
+        value={filter}
+        onChange={(event) => setFilter(event.target.value)}
+        placeholder="Filter repositories"
+        aria-label="Filter repositories"
+        className="h-8 text-[0.8125rem]"
+      />
+      {visible.length === 0 ? (
+        <p className="px-2.5 text-xs text-muted-foreground">
+          {needle === '' ? 'Every repository is hidden.' : `No repository matches “${filter}”.`}
+        </p>
+      ) : (
+        <ul className="space-y-4">
+          {visible.map((repo) => {
+            const hidden = hiddenRepos.includes(repo.id);
+            return (
+              <li key={repo.id} className={cn('space-y-1', hidden && 'opacity-60')}>
+                <div className="group flex items-center gap-1 pr-1">
+                  <p
+                    className="min-w-0 flex-1 truncate px-2.5 text-sm font-medium"
+                    title={repo.name}
+                  >
+                    {repo.name}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => toggleRepoHidden(repo.id)}
+                    aria-label={hidden ? `Show ${repo.name}` : `Hide ${repo.name}`}
+                    title={hidden ? 'Show in the sidebar' : 'Hide from the sidebar'}
+                    className={cn(
+                      'shrink-0 rounded p-1 text-muted-foreground transition-opacity duration-fast hover:bg-secondary hover:text-foreground focus-visible:opacity-100',
+                      hidden ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
+                    )}
+                  >
+                    {hidden ? (
+                      <Eye aria-hidden="true" className="h-3.5 w-3.5" />
+                    ) : (
+                      <EyeOff aria-hidden="true" className="h-3.5 w-3.5" />
+                    )}
+                  </button>
+                </div>
+                {repo.state === 'needs-permission' ? (
+                  <p className="px-2.5 text-xs text-destructive">Needs permission</p>
+                ) : null}
+                <ul className="space-y-0.5 border-l border-sidebar-border pl-2">
+                  {repo.projects.map((project) => (
+                    <li key={project} className="space-y-0.5">
+                      <Link
+                        to="/p/$project/items"
+                        params={{ project }}
+                        className={cn(navLinkClass, 'py-1 text-[0.8125rem]')}
+                        activeProps={{ className: navLinkActiveClass }}
+                      >
+                        <ListChecks aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+                        <span className="truncate">{project} backlog</span>
+                      </Link>
+                      <Link
+                        to="/p/$project/kb/$"
+                        params={{ project, _splat: '' }}
+                        className={cn(navLinkClass, 'py-1 text-[0.8125rem]')}
+                        activeProps={{ className: navLinkActiveClass }}
+                      >
+                        <BookOpen aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+                        <span className="truncate">{project} docs</span>
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {hiddenCount > 0 ? (
+        <button
+          type="button"
+          onClick={() => setShowHidden((value) => !value)}
+          aria-pressed={showHidden}
+          className="px-2.5 text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+        >
+          {showHidden ? 'Hide hidden repositories' : `Show hidden (${hiddenCount})`}
+        </button>
+      ) : null}
+    </nav>
   );
 }
 

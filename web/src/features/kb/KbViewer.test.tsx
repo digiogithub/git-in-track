@@ -15,6 +15,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { DataProviderProvider } from '@/api/DataProviderProvider';
 import { FakeProvider, samplePages } from '@/api/fake-provider';
 import type { DataProvider, KbPage } from '@/api/provider';
+import { KB_TREE_MIN_WIDTH, useUiPrefs } from '@/app/ui-prefs';
 import { KbViewer } from '@/features/kb/KbViewer';
 import { clearMarkdownCache } from '@/markdown';
 
@@ -207,6 +208,82 @@ describe('KbViewer', () => {
     // Backlinks panel.
     const backlinks = screen.getByRole('region', { name: /backlinks/i });
     expect(within(backlinks).getByRole('link', { name: 'docs/index.md' })).toBeVisible();
+  });
+
+  it('hides and shows the page outline', async () => {
+    const user = userEvent.setup();
+    useUiPrefs.setState({ kbTocOpen: true, kbMaximized: false });
+    renderKb('/p/ACME/kb/docs/guides/handbook.md', new FakeProvider({ pages: [richPage] }));
+
+    await screen.findByRole('heading', { name: 'Getting started', level: 2 }, { timeout: 10_000 });
+    expect(screen.getByRole('navigation', { name: /on this page/i })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Hide page outline' }));
+    expect(screen.queryByRole('navigation', { name: /on this page/i })).toBeNull();
+    expect(useUiPrefs.getState().kbTocOpen).toBe(false);
+
+    await user.click(screen.getByRole('button', { name: 'Show page outline' }));
+    expect(screen.getByRole('navigation', { name: /on this page/i })).toBeInTheDocument();
+  });
+
+  it('hides and shows the pages panel on desktop', async () => {
+    const user = userEvent.setup();
+    useUiPrefs.setState({ kbTreeOpen: true, kbMaximized: false });
+    renderKb('/p/ACME/kb/docs/index.md');
+
+    await expectPageHeading('ACME Platform');
+    const panel = screen.getByTestId('kb-tree-panel');
+    expect(panel).toHaveAttribute('data-desktop-visible', 'true');
+
+    await user.click(screen.getByRole('button', { name: 'Hide pages panel' }));
+    expect(panel).toHaveAttribute('data-desktop-visible', 'false');
+    expect(screen.queryByRole('separator', { name: 'Resize pages panel' })).toBeNull();
+    expect(useUiPrefs.getState().kbTreeOpen).toBe(false);
+
+    await user.click(screen.getByRole('button', { name: 'Show pages panel' }));
+    expect(panel).toHaveAttribute('data-desktop-visible', 'true');
+  });
+
+  it('maximizes the page over every panel and restores them', async () => {
+    const user = userEvent.setup();
+    useUiPrefs.setState({
+      kbTreeOpen: true,
+      kbTocOpen: true,
+      kbMaximized: false,
+      sidebarCollapsed: false,
+      sidebarBeforeMaximize: null,
+    });
+    renderKb('/p/ACME/kb/docs/guides/handbook.md', new FakeProvider({ pages: [richPage] }));
+
+    await screen.findByRole('heading', { name: 'Getting started', level: 2 }, { timeout: 10_000 });
+
+    await user.click(screen.getByRole('button', { name: 'Maximize content' }));
+    expect(screen.getByTestId('kb-tree-panel')).toHaveAttribute('data-desktop-visible', 'false');
+    expect(screen.queryByRole('navigation', { name: /on this page/i })).toBeNull();
+    expect(useUiPrefs.getState().sidebarCollapsed).toBe(true);
+
+    // Escape restores the layout, including the main sidebar.
+    await user.keyboard('{Escape}');
+    expect(screen.getByTestId('kb-tree-panel')).toHaveAttribute('data-desktop-visible', 'true');
+    expect(screen.getByRole('navigation', { name: /on this page/i })).toBeInTheDocument();
+    expect(useUiPrefs.getState().sidebarCollapsed).toBe(false);
+    expect(screen.getByRole('button', { name: 'Maximize content' })).toBeInTheDocument();
+  });
+
+  it('resizes the pages panel with the keyboard, down to a minimum', async () => {
+    const user = userEvent.setup();
+    useUiPrefs.setState({ kbTreeWidth: 240, kbTreeOpen: true, kbMaximized: false });
+    renderKb('/p/ACME/kb/docs/index.md');
+
+    await expectPageHeading('ACME Platform');
+    const handle = screen.getByRole('separator', { name: 'Resize pages panel' });
+
+    handle.focus();
+    await user.keyboard('{ArrowRight}');
+    expect(handle).toHaveAttribute('aria-valuenow', '256');
+
+    await user.keyboard('{Home}{ArrowLeft}');
+    expect(handle).toHaveAttribute('aria-valuenow', String(KB_TREE_MIN_WIDTH));
   });
 
   it('toggles the raw Markdown source', async () => {
