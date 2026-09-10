@@ -2,7 +2,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
-import { FakeProvider } from '@/api/fake-provider';
+import { FakeProvider, sampleComments } from '@/api/fake-provider';
 import { ProviderError } from '@/api/provider';
 
 import { renderBacklog } from './test-utils';
@@ -40,8 +40,34 @@ describe('ItemDetail', () => {
 
     // Comments thread.
     const thread = within(await screen.findByRole('list', { name: 'Comment thread' }));
-    expect(thread.getByText('Northwind is the pilot tenant.')).toBeInTheDocument();
+    expect(await thread.findByText('Northwind is the pilot tenant.')).toBeInTheDocument();
     expect(thread.getByText('jose')).toBeInTheDocument();
+  });
+
+  it('renders comment bodies as Markdown', async () => {
+    const provider = new FakeProvider({
+      comments: [
+        {
+          ...sampleComments[0]!,
+          body: 'Pilot is **Northwind**.\n\n- first\n- second\n\nSee [[ACME-EP-0001]].',
+          // A fresh rev, so the render cache does not serve the sample body.
+          rev: 'sha256:00000000000000c2',
+        },
+      ],
+    });
+    renderBacklog({ path: '/p/ACME/items/ACME-US-0042', provider });
+
+    const thread = within(await screen.findByRole('list', { name: 'Comment thread' }));
+    const strong = await thread.findByText('Northwind');
+    expect(strong.tagName).toBe('STRONG');
+    expect(thread.getAllByRole('listitem').map((li) => li.textContent)).toEqual(
+      expect.arrayContaining(['first', 'second']),
+    );
+    expect(thread.getByRole('link', { name: 'ACME-EP-0001' })).toHaveAttribute(
+      'href',
+      '/p/ACME/items/ACME-EP-0001',
+    );
+    expect(thread.queryByText(/\*\*Northwind\*\*/)).not.toBeInTheDocument();
   });
 
   it('creates a task under the story on screen', async () => {

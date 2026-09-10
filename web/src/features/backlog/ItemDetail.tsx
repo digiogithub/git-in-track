@@ -192,7 +192,14 @@ function CommentsPanel({ item, projectKey }: { item: Item; projectKey: string })
                 <strong className="text-foreground">{comment.author}</strong>{' '}
                 {formatDate(comment.created)}
               </p>
-              <p className="mt-1 whitespace-pre-wrap text-sm">{comment.body}</p>
+              <div className="mt-1 text-sm">
+                <ItemBody
+                  body={comment.body}
+                  path={comment.path}
+                  project={projectKey}
+                  cacheKey={`${comment.path}@${comment.rev}`}
+                />
+              </div>
             </li>
           ))}
         </ul>
