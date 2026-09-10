@@ -12,24 +12,8 @@
       content="git-in-track — git-native, Markdown-first project management"
     />
     <title>git-in-track</title>
-    <script>
-      /*
-       * Applies the stored theme before first paint, so a dark-mode user is
-       * never flashed a bright page. The key and the three values are the
-       * contract in `src/app/theme.ts`; `system` stores nothing and lets
-       * `prefers-color-scheme` decide.
-       */
-      (function () {
-        try {
-          var stored = window.localStorage.getItem('gintrack:theme');
-          if (stored === 'dark' || stored === 'light') {
-            document.documentElement.dataset.theme = stored;
-          }
-        } catch (error) {
-          /* Storage can throw in private modes; the media query still works. */
-        }
-      })();
-    </script>
+    <!-- Applies the stored theme before first paint; see public/theme-boot.js. -->
+    <script src="/theme-boot.js"></script>
   </head>
   <body>
     <div id="root"></div>

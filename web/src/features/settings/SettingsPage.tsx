@@ -20,6 +20,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { GitSettingsCard } from '@/features/settings/GitSettingsCard';
+import { McpToolsCard } from '@/features/settings/McpToolsCard';
 import { SyncProxyCard } from '@/features/settings/SyncProxyCard';
 import { TeamProjectsCard } from '@/features/settings/TeamProjectsCard';
 import { TunnelCard } from '@/features/settings/TunnelCard';
@@ -111,6 +112,7 @@ export function SettingsPage() {
 
       <GitSettingsCard />
       <SyncProxyCard />
+      <McpToolsCard />
 
       <Card>
         <CardHeader>

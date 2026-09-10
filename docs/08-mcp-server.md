@@ -683,6 +683,13 @@ Prompts are the cheapest place to encode team policy; they are plain strings in
 - Without writes enabled — neither `--allow-write` nor `mcp.allowWrite: true` — the server
   advertises **only read tools**. Write tools are absent
   from `tools/list`, not merely rejected — an agent cannot attempt what it cannot see.
+- Enabling them is a person's deliberate act, in one of three places: the flag, the
+  configuration file, or the companion's **Settings › Agent tools (MCP)** switch, which
+  writes `mcp.allowWrite` to that file (`PATCH /api/v1/mcp/settings`, docs/07 section 5.5).
+  The switch exists because the flag is in the wrong place for the usual setup: an agent's
+  MCP entry is a bare `gintrack mcp`, often in a file the user does not own. The grant is
+  the same whichever way it is made — the write tools do what the user can do in the UI, in
+  files git tracks — and a stdio server picks it up the next time it starts.
 - A delete tool does not exist. Deleting a backlog item is a human action in the UI or CLI;
   agents may only move an item to `cancelled`.
 - **Every path argument is confined to the repositories the server mounts.** A path is

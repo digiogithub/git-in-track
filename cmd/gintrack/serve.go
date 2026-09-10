@@ -66,8 +66,9 @@ without registering it in the configuration.
 
 --tunnel publishes this server on the internet through an anonymous Cloudflare
 quick tunnel. It is refused without a token, because the token is then the only
-thing standing between the URL and write access to your repositories, and the
-URL is never printed together with it.`,
+thing standing between the URL and write access to your repositories. The
+public hostname and a ready-to-open ?token= link are both printed on this
+terminal: share the first, and the second only with whoever may write.`,
 		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runServe(cmd, build, flags)
@@ -174,7 +175,7 @@ func runServe(cmd *cobra.Command, build buildInfo, flags *serveFlags) error {
 		go openWhenReady(ctx, cmd, srv, token)
 	}
 	if opts.Tunnel.Enabled {
-		go announceTunnel(ctx, cmd, srv)
+		go announceTunnel(ctx, cmd, srv, token)
 	}
 
 	if err := srv.Start(ctx); err != nil {
@@ -343,14 +344,26 @@ func printBanner(cmd *cobra.Command, build buildInfo, srv *server.Server, token 
 	banner("press Ctrl+C to stop\n")
 }
 
+// tunnelReporter is the slice of *server.Server announceTunnel polls. It is an
+// interface so the announcement can be tested without a listener.
+type tunnelReporter interface {
+	TunnelStatus() server.TunnelInfo
+}
+
 // announceTunnel prints the public URL once the tunnel has one. The tunnel is
 // provisioned after the listener comes up, so the banner cannot carry it; this
 // polls the server until the URL exists or the run ends.
 //
-// It prints the bare URL and never a link carrying the token: the hostname is
-// public by construction, the token is not, and a share link would put the one
-// secret protecting the repositories into whatever chat window the URL lands in.
-func announceTunnel(ctx context.Context, cmd *cobra.Command, srv *server.Server) {
+// It prints the bare public hostname and, below it, the same `open:` link the
+// local banner prints: `<url>/?token=…`. The web app only takes the token from
+// `?token=` or from Settings, so without that link a browser reaching the
+// tunnel gets an empty workspace behind a "needs an access token" banner.
+//
+// The link carries the one secret protecting the repositories. It goes to this
+// terminal only — never to a log line, an event or an API response — and the
+// bare URL is printed first so that "share the tunnel" and "share write access
+// to my repositories" stay two visibly different lines to copy.
+func announceTunnel(ctx context.Context, cmd *cobra.Command, srv tunnelReporter, token string) {
 	ticker := time.NewTicker(tunnelPollInterval)
 	defer ticker.Stop()
 	for {
@@ -361,7 +374,12 @@ func announceTunnel(ctx context.Context, cmd *cobra.Command, srv *server.Server)
 		}
 		switch status := srv.TunnelStatus(); {
 		case status.URL != "":
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "tunnel:     %s   (public; the token is still required)\n", status.URL)
+			out := cmd.OutOrStdout()
+			_, _ = fmt.Fprintf(out, "tunnel:     %s   (public; the token is still required)\n", status.URL)
+			if token != "" {
+				_, _ = fmt.Fprintf(out, "open:       %s/?token=%s   (public link; anyone holding it has write access)\n",
+					status.URL, token)
+			}
 			return
 		case status.Err != "":
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: the public tunnel could not be opened: %s\n", status.Err)

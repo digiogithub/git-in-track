@@ -35,7 +35,6 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/digiogithub/git-in-track/internal/config"
-	"github.com/digiogithub/git-in-track/internal/mcp"
 )
 
 // DefaultPort is the loopback port the companion listens on.
@@ -147,9 +146,10 @@ type Server struct {
 	watch watchState
 	// git owns the commit-on-save committer and the per-repository backends.
 	git *gitState
-	// mcp is the Model Context Protocol server mounted at /mcp, nil when the
-	// endpoint is disabled.
-	mcp *mcp.Server
+	// mcp owns the Model Context Protocol surface: the server mounted at /mcp
+	// when the endpoint is on, and the write mode both it and `gintrack mcp`
+	// take from the configuration.
+	mcp *mcpState
 	// proxy is the browser-git CORS proxy mounted at /cors-proxy/
 	// (GIT-US-0042, docs/06-git-sync.md section 6.3).
 	proxy *corsProxy
@@ -215,6 +215,9 @@ func New(opts Options) (*Server, error) {
 	}
 	s.repos = newRegistry(opts.Repos, now)
 	s.hub = newHub(opts.Workspace, now)
+	for _, m := range s.repos.all() {
+		s.refreshOnRead(m)
+	}
 	s.git = newGitState(opts, s.repos, s.log, s.publishCommit)
 	// The metrics of GIT-US-0028 reconstruct their series from the git history
 	// of the item files. Only the companion can read it, so only the companion
@@ -225,7 +228,7 @@ func New(opts Options) (*Server, error) {
 			s.log.Warn("repository mounted with errors", "repo", m.id, "path", m.path, "error", m.err)
 		}
 	}
-	s.mcp = s.newMCPServer(opts)
+	s.mcp = s.newMCPState(opts)
 	s.proxy = newCORSProxy(s)
 	s.tunnel = newTunnelState(opts)
 	s.router = s.routes()
@@ -419,8 +422,8 @@ func (s *Server) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 			"gitVersion":   s.git.version,
 			"commitOnSave": s.git.enabled(),
 			"gitSync":      false,
-			"mcpHttp":      s.mcp != nil,
-			"mcpWrite":     s.opts.MCPAllowWrite && s.mcp != nil,
+			"mcpHttp":      s.mcp.current() != nil,
+			"mcpWrite":     s.mcp.writes(),
 			"mcpTools":     s.mcpTools(),
 			// The CORS proxy that makes browser-only git reach a host at all
 			// (GIT-US-0042, docs/06 section 6.3).

@@ -885,8 +885,9 @@ func fileInScope(rel string, scopes []string) bool {
 }
 
 // skipDirName reports the directories a watch walk never descends into. It
-// mirrors core's vault walk: .git, node_modules and every dot-directory except
-// the backlog folder.
+// mirrors core's vault walk: .git, node_modules, dist, vendor and every
+// dot-directory except the backlog folder. Nothing below them is ever indexed,
+// so a watch there would only spend the budget.
 //
 // docs/06 section 9.2 also wants .git/HEAD and .git/refs to be observed so that
 // branch switches are noticed; that is a separate, narrow watch registered by
@@ -895,7 +896,7 @@ func skipDirName(name string) bool {
 	switch name {
 	case pmngrDir:
 		return false
-	case ".git", "node_modules":
+	case ".git", "node_modules", "dist", "vendor":
 		return true
 	}
 	return strings.HasPrefix(name, ".")

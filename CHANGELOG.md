@@ -14,6 +14,16 @@ because a commit list cannot express them.
 
 ### Added
 
+- **The MCP write tools can be switched on from the web app** (docs/07 §5.5, docs/08 §7.1).
+  Settings gained an **Agent tools (MCP)** card whose switch writes `mcp.allowWrite` to the
+  configuration file, so agents get the write tools without anybody editing YAML or teaching
+  an agent runtime to pass `--allow-write` — which is not usually possible, since an MCP
+  entry is a bare `gintrack mcp`. `GET|PATCH /api/v1/mcp/settings` read and set it. A
+  companion serving `--mcp-http` rebuilds its endpoint in place, so the change is live there
+  at once; a stdio server reads the file the next time it starts. Turning it on is a grant —
+  every agent the user runs may then create and edit items — so it is stated as one in the
+  card and is never a default.
+
 - **A retrospective can be run by the whole room at once** (`GIT-US-0027`, ADR-028,
   docs/04 §9.1–§9.5). Everyone who opens the retro — over the tunnel of ADR-027, with no
   account and no login — names themselves once; the handle is kept in their own browser
@@ -167,6 +177,26 @@ because a commit list cannot express them.
   shallowly so a documentation folder created later is noticed. The warning that used to
   say only that the limit was reached now names the repository and the directory it gave up
   on.
+  A project whose documentation folder is the repository root no longer falls back to
+  watching the whole tree: it watches its `.pmngr/` backlog plus the folders that hold an
+  indexed page, and the watch walk now skips `dist/` and `vendor/` like the index does.
+
+- **Opening a task or a page shows the file as it is on disk now**, even when no file event
+  announced the change (a folder outside the watched scopes, an exhausted watch budget, a
+  network file system). `item.get`, `comment.list` and `kb.page` stat the files behind what
+  they return — the item file, its comments and its comment folder, or the page — and
+  re-index any whose size or modification time moved, or that appeared or vanished, before
+  answering. What that refresh changes is announced on the event stream like a watcher
+  batch, so boards and lists other people have open follow. The check is one `stat` per
+  file, so no per-file watch is needed.
+
+- **The light/dark choice survives a reload** (docs/05 §12, docs/13 §2). The theme was
+  applied before first paint by an inline script in `index.html`, and the companion serves
+  the app under `script-src 'self'` — so the browser dropped that script without an error,
+  nothing ever stamped `data-theme` on `<html>`, and every reload fell back to
+  `prefers-color-scheme`, which for most people meant dark. The bootstrap is now
+  `public/theme-boot.js`, a served file the CSP allows, and `main.tsx` applies the stored
+  preference again on mount.
 
 - **`gintrack mcp` honours `mcp.allowWrite`** (docs/07 §4.9, docs/08 §2.1). Writes over
   stdio could only be enabled with `--allow-write`, so an agent runtime configured as

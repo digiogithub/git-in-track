@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -40,5 +41,30 @@ func (s *Server) HTTPHandler() http.Handler {
 	return sdk.NewStreamableHTTPHandler(
 		func(*http.Request) *sdk.Server { return s.sdk },
 		&sdk.StreamableHTTPOptions{Logger: s.log},
+	)
+}
+
+// HTTPHandlerFor returns a streamable-HTTP handler that asks `current` which
+// server to serve on every request. A host that rebuilds its server — the write
+// tools being switched on or off while it runs — keeps one handler and one
+// mount point instead of re-registering a route.
+//
+// Swapping the server ends the sessions the previous one held: an initialized
+// client is told its session is unknown and initializes again, which is the
+// same thing it does when the companion restarts. That is why the swap belongs
+// to a deliberate settings change and to nothing else.
+func HTTPHandlerFor(current func() *Server, log *slog.Logger) http.Handler {
+	if log == nil {
+		log = slog.Default()
+	}
+	return sdk.NewStreamableHTTPHandler(
+		func(*http.Request) *sdk.Server {
+			s := current()
+			if s == nil {
+				return nil
+			}
+			return s.sdk
+		},
+		&sdk.StreamableHTTPOptions{Logger: log},
 	)
 }

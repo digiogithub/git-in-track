@@ -54,9 +54,13 @@ from the tokens as they render.
 | `dark` | `data-theme="dark"` | the person |
 
 The choice lives in `localStorage` under `gintrack:theme`
-([`web/src/app/theme.ts`](../web/src/app/theme.ts)) and is applied by an inline
-script in `index.html` **before first paint**, so a dark-mode user is never
-flashed a bright page. The control is the three-way `ThemeToggle` in the sidebar
+([`web/src/app/theme.ts`](../web/src/app/theme.ts)) and is applied by
+[`web/public/theme-boot.js`](../web/public/theme-boot.js), which `index.html`
+loads **before first paint**, so a dark-mode user is never flashed a bright page.
+That bootstrap is a served file rather than an inline script on purpose: the
+companion serves the app under `script-src 'self'`, which drops an inline one
+silently — and a dropped bootstrap means the stored choice never reaches
+`<html>` and every reload falls back to the media query. The control is the three-way `ThemeToggle` in the sidebar
 footer: a radio group rather than a cycling button, because "follow the system"
 is a state a person has to be able to *see*.
 

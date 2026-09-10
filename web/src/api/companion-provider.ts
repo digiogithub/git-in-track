@@ -93,6 +93,7 @@ import type {
   TeamProjectResult,
   TeamSummary,
   TunnelState,
+  McpSettings,
   TunnelStatus,
   Unsubscribe,
   UpdateOp,
@@ -337,6 +338,23 @@ function codeFromType(value: unknown): string | undefined {
   if (type === undefined) return undefined;
   const slug = type.split(/[/#]/).pop() ?? '';
   return /^[a-z][a-z0-9_]*$/.test(slug) ? slug : undefined;
+}
+
+/**
+ * Maps the MCP settings document defensively. Every unknown value collapses to
+ * the safe reading — unsupported, read-only — so a card can never claim the
+ * write tools are on when the answer was unparseable.
+ */
+function toMcpSettings(body: unknown): McpSettings {
+  const record = asRecord(body) ?? {};
+  return {
+    supported: record['supported'] === true,
+    allowWrite: record['allowWrite'] === true,
+    http: record['http'] === true,
+    persisted: record['persisted'] === true,
+    configPath: asString(record['configPath']) ?? '',
+    tools: asArray(record['tools']).filter((tool): tool is string => typeof tool === 'string'),
+  };
 }
 
 /** The states `GET /api/v1/tunnel` may report; anything else reads as `off`. */
@@ -1519,6 +1537,23 @@ export class CompanionProvider implements DataProvider {
     const body = await this.#json(`${API_PREFIX}/git/status${buildQuery({ repo: repoId })}`);
     const record = asRecord(body);
     return asArray(record ? record['repos'] : body) as GitRepoStatus[];
+  }
+
+  // --------------------------------------------------------- mcp write tools
+
+  /** `GET /api/v1/mcp/settings`. */
+  async getMcpSettings(): Promise<McpSettings> {
+    return toMcpSettings(await this.#json(`${API_PREFIX}/mcp/settings`));
+  }
+
+  /** `PATCH /api/v1/mcp/settings`. */
+  async setMcpWriteTools(allowWrite: boolean): Promise<McpSettings> {
+    return toMcpSettings(
+      await this.#json(`${API_PREFIX}/mcp/settings`, {
+        method: 'PATCH',
+        body: { allowWrite },
+      }),
+    );
   }
 
   // ------------------------------------------------------------------ tunnel

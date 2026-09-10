@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/digiogithub/git-in-track/internal/config"
 )
 
 // newMCPAPIServer mounts a copy of the fixture with the MCP endpoint enabled.
@@ -255,4 +258,118 @@ func mcpText(res *sdk.CallToolResult) string {
 		}
 	}
 	return out
+}
+
+// The settings surface of the write tools (PATCH /api/v1/mcp/settings): the
+// switch a person flips in the UI instead of teaching every agent runtime to
+// pass `--allow-write`.
+
+func TestMCPSettingsPersistTheWriteMode(t *testing.T) {
+	root := copyTree(t, fixtureRoot)
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := config.Save(configPath, config.Default()); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	s, err := New(Options{
+		Token:      "test-token",
+		Version:    "0.0.1-test",
+		Workspace:  "test",
+		Repos:      []Repo{{ID: testRepoID, Path: root, Role: "project", DocsFolder: "docs"}},
+		ConfigPath: configPath,
+	})
+	if err != nil {
+		t.Fatalf("New(): %v", err)
+	}
+
+	var body mcpSettingsView
+	decode(t, send(t, s, request{method: http.MethodGet, target: "/api/v1/mcp/settings"}), http.StatusOK, &body)
+	if !body.Supported || body.AllowWrite || body.HTTP {
+		t.Fatalf("initial settings = %+v, want a supported, read-only, endpoint-less server", body)
+	}
+
+	decode(t, send(t, s, request{
+		method: http.MethodPatch,
+		target: "/api/v1/mcp/settings",
+		body:   map[string]any{"allowWrite": true},
+	}), http.StatusOK, &body)
+
+	if !body.AllowWrite || !body.Persisted {
+		t.Fatalf("after the switch = %+v, want the write tools on and the file written", body)
+	}
+	saved, err := config.Load(configPath)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !saved.MCP.AllowWrite {
+		// This is the whole point: `gintrack mcp` reads this file at startup,
+		// so a bare `gintrack mcp` in an agent's configuration picks the write
+		// tools up on its next run.
+		t.Error("mcp.allowWrite was not written to the configuration file")
+	}
+}
+
+func TestMCPSettingsSwitchTheLiveEndpoint(t *testing.T) {
+	s, _ := newMCPAPIServer(t, false)
+
+	var body mcpSettingsView
+	decode(t, send(t, s, request{
+		method: http.MethodPatch,
+		target: "/api/v1/mcp/settings",
+		body:   map[string]any{"allowWrite": true},
+	}), http.StatusOK, &body)
+
+	if !body.AllowWrite || !body.HTTP {
+		t.Fatalf("settings = %+v, want the write tools on for a mounted endpoint", body)
+	}
+	if body.Persisted {
+		t.Error("a server started without a configuration file cannot have persisted anything")
+	}
+
+	// The endpoint is rebuilt in place, so a client connecting now is offered
+	// the write tools without the companion being restarted.
+	session := mcpSession(t, s, "test-token")
+	listed, err := session.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("tools/list: %v", err)
+	}
+	found := false
+	for _, tool := range listed.Tools {
+		if tool.Name == "create_task" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("create_task is missing from %d tools after the switch", len(listed.Tools))
+	}
+}
+
+func TestMCPSettingsRefuseAChangeThatWouldDoNothing(t *testing.T) {
+	// No configuration file and no endpoint: the switch would flip a boolean
+	// nothing reads, so the server says so rather than reporting success.
+	root := copyTree(t, fixtureRoot)
+	s, err := New(Options{
+		Token:     "test-token",
+		Version:   "0.0.1-test",
+		Workspace: "test",
+		Repos:     []Repo{{ID: testRepoID, Path: root, Role: "project", DocsFolder: "docs"}},
+	})
+	if err != nil {
+		t.Fatalf("New(): %v", err)
+	}
+
+	rec := send(t, s, request{
+		method: http.MethodPatch,
+		target: "/api/v1/mcp/settings",
+		body:   map[string]any{"allowWrite": true},
+	})
+	if rec.Code != http.StatusNotImplemented {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotImplemented)
+	}
+
+	var view mcpSettingsView
+	decode(t, send(t, s, request{method: http.MethodGet, target: "/api/v1/mcp/settings"}), http.StatusOK, &view)
+	if view.Supported || view.AllowWrite {
+		t.Errorf("settings = %+v, want an unsupported, read-only surface", view)
+	}
 }

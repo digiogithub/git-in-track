@@ -6,9 +6,11 @@
  * and is remembered in localStorage; `system` removes the attribute and hands
  * the decision back to `prefers-color-scheme`.
  *
- * The same key is read by the inline script in `index.html` before first paint,
- * which is what keeps a dark-mode user from being flashed a bright page on
- * every load. Change the key here and there together.
+ * The same key is read by `public/theme-boot.js`, which `index.html` loads
+ * before first paint: that is what makes the choice survive a reload without a
+ * flash. It is a file and not an inline script because the companion serves the
+ * app under `script-src 'self'`, which drops an inline one silently. Change the
+ * key here and there together.
  */
 
 import { useCallback, useSyncExternalStore } from 'react';

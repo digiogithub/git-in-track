@@ -971,7 +971,16 @@ Watcher details that matter in practice:
   created later is still noticed. A source tree of ten thousand directories
   therefore costs no watches at all — before this, one such repository exhausted
   the `MaxWatches` budget and every repository registered after it silently lost
-  live updates.
+  live updates. A project whose documentation folder is the repository root
+  watches its `.pmngr/` plus the folders holding an indexed page, never the whole
+  tree; `dist/` and `vendor/` are skipped like the index skips them.
+- The watcher is a fast path, not the only one. Opening an item or a page
+  (`item.get`, `comment.list`, `kb.page`) stats the files behind it — the item
+  file, its comments and its comment folder, or the page — and re-indexes any
+  whose size or mtime moved, or that appeared or vanished, before answering. The
+  resulting delta is broadcast as `item.changed` like a watcher batch. So a task
+  edited in a folder no watch covers, or while events were lost, is current the
+  moment someone opens it.
 - Editors write via rename (Vim, VS Code atomic save), so we treat
   `CREATE`+`RENAME` on a `.tmp`/`~` sibling as a single write of the target and
   we re-`stat` before parsing to avoid reading a half-written file.

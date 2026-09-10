@@ -114,8 +114,10 @@ func (s *Server) startWatch(ctx context.Context) {
 // exhaust the whole watch budget and leave the repositories registered after it
 // with no live updates at all.
 //
-// An empty result means "watch the whole tree", which is what a vault rooted at
-// the repository root needs.
+// A project at the repository root indexes the whole tree, but watching the
+// whole tree is exactly what exhausts the budget. Its scopes are the backlog and
+// the folders that hold a page today; an edit anywhere else is still picked up
+// when the file is opened (Vault.freshen) or by the next reindex.
 func watchScopes(m *mount) []string {
 	if !m.ready() {
 		return nil
@@ -133,17 +135,37 @@ func watchScopes(m *mount) []string {
 	for _, folder := range m.docsFolders {
 		add(folder)
 	}
+	rootProject := false
 	for _, ref := range m.vlt.Projects() {
 		if ref.DocsPath == "." {
-			// A project at the repository root indexes the whole tree.
-			return nil
+			rootProject = true
+			continue
 		}
 		add(ref.DocsPath)
 	}
 	// A team repository keeps its boards, sprints and retrospectives in a
-	// backlog folder at the root, beside the documentation folder.
+	// backlog folder at the root, beside the documentation folder; a root
+	// project keeps its whole backlog there.
 	add(core.BacklogDirName)
+	if rootProject {
+		for _, dir := range m.vlt.PageDirs() {
+			add(dir)
+		}
+	}
 	return out
+}
+
+// refreshOnRead announces what a read-time refresh folded into a mount's index
+// — a task opened in the UI after it was edited on disk with no file event to
+// say so — exactly as a watcher batch is announced.
+func (s *Server) refreshOnRead(m *mount) {
+	if !m.ready() {
+		return
+	}
+	m.vlt.OnRefresh(func(delta core.IndexDelta) {
+		m.touch(s.now())
+		s.publishDelta(m, delta)
+	})
 }
 
 // stopWatch closes the watcher and waits for its loop to drain.

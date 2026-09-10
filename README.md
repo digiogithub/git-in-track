@@ -295,3 +295,29 @@ documentation and commit messages are written in English.
 ## License
 
 MIT (placeholder — to be confirmed by the repository owner). See [LICENSE](LICENSE).
+
+## Tasks
+
+Local shortcuts for [xc](https://xcfile.dev). Run `xc` to list them and `xc <task>` to run one.
+
+### build
+
+Builds the WebAssembly core and the React app, then compiles `bin/gintrack` for the
+current OS and architecture with the web app embedded.
+
+```sh
+make web build
+```
+
+### install
+
+Builds a fresh binary and replaces `~/bin/gintrack` with it.
+
+Requires: build
+
+```sh
+mkdir -p "$HOME/bin"
+rm -f "$HOME/bin/gintrack"
+cp bin/gintrack "$HOME/bin/gintrack"
+"$HOME/bin/gintrack" version
+```

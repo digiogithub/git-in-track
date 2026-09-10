@@ -91,6 +91,7 @@ import type {
   TeamProjectResult,
   TeamProjectSummary,
   TeamSummary,
+  McpSettings,
   TunnelStatus,
   Unsubscribe,
   UpdateOp,
@@ -124,6 +125,9 @@ export type FakeData = {
    * started without a token, or a tunnel that is already up.
    */
   tunnel?: Partial<TunnelStatus>;
+  /** Overrides on the MCP write surface: a runtime with none, or one already
+   * advertising the write tools. */
+  mcp?: Partial<McpSettings>;
 };
 
 /**
@@ -711,6 +715,8 @@ export class FakeProvider implements DataProvider {
   private git: GitSettings;
   /** The public tunnel, in memory. */
   private tunnel: TunnelStatus;
+  /** The MCP write surface, in memory. */
+  private mcp: McpSettings;
   /** Reads left before a `starting` tunnel settles, so polling is testable. */
   private tunnelReadsToConnect = 0;
 
@@ -748,6 +754,15 @@ export class FakeProvider implements DataProvider {
       error: '',
       tokenConfigured: true,
       ...data.tunnel,
+    };
+    this.mcp = {
+      supported: true,
+      allowWrite: false,
+      http: false,
+      persisted: false,
+      configPath: '~/.config/gintrack/config.yaml',
+      tools: [],
+      ...data.mcp,
     };
     this.repos = data.repos ?? [
       {
@@ -2448,6 +2463,20 @@ export class FakeProvider implements DataProvider {
    * reads down so a test can watch the transition without a real tunnel, and
    * the hostname is minted afresh on every enable, exactly as Cloudflare does.
    */
+  getMcpSettings(): Promise<McpSettings> {
+    return Promise.resolve({ ...this.mcp });
+  }
+
+  setMcpWriteTools(allowWrite: boolean): Promise<McpSettings> {
+    if (!this.mcp.supported) {
+      return Promise.reject(
+        new ProviderError('read_only', 'This runtime serves no MCP endpoint.'),
+      );
+    }
+    this.mcp = { ...this.mcp, allowWrite, persisted: this.mcp.configPath !== '' };
+    return Promise.resolve({ ...this.mcp });
+  }
+
   getTunnel(): Promise<TunnelStatus> {
     if (this.tunnel.state === 'starting') {
       if (this.tunnelReadsToConnect > 0) this.tunnelReadsToConnect -= 1;

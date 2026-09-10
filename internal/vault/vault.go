@@ -62,6 +62,9 @@ type Vault struct {
 	// now supplies build timestamps and the created/updated stamps of writes.
 	// It defaults to time.Now and exists so that tests can pin them.
 	now func() time.Time
+
+	// onRefresh hears what a read-time refresh changed. Nil when nobody asked.
+	onRefresh func(core.IndexDelta)
 }
 
 // Options configures a Vault.
@@ -295,10 +298,24 @@ func (v *Vault) Call(method, params string) string {
 // be classified with AsError.
 //
 // The vault mutex is held for the whole call so that a query never observes a
-// half-applied write.
+// half-applied write. A read that shows one file to a person first re-reads it
+// when it changed on disk since it was indexed (see freshen); the refresh hook
+// hears about that once the lock is released.
 func (v *Vault) Dispatch(ctx context.Context, method string, raw []byte) (any, error) {
+	var (
+		refreshed core.IndexDelta
+		hook      func(core.IndexDelta)
+	)
+	// Deferred first, so it runs after the unlock below.
+	defer func() {
+		if hook != nil && !refreshed.Empty() {
+			hook(refreshed)
+		}
+	}()
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	refreshed = v.freshen(ctx, method, raw)
+	hook = v.onRefresh
 
 	switch method {
 	case "ping":

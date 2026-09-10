@@ -267,6 +267,31 @@ export type TunnelStatus = {
   tokenConfigured: boolean;
 };
 
+/**
+ * The write surface of the MCP server (`GET|PATCH /api/v1/mcp/settings`).
+ *
+ * The read tools are always there; the write tools — `create_task`,
+ * `update_item`, `move_on_board` and the rest — are advertised only when this
+ * is on. It is a stored setting rather than only a `--allow-write` flag because
+ * an agent's MCP entry is usually a bare `gintrack mcp`: the companion writes
+ * the choice to its configuration file, and every stdio server started
+ * afterwards reads it (docs/08-mcp-server.md section 7.1).
+ */
+export type McpSettings = {
+  /** False when the runtime can neither persist nor apply it; hide the card. */
+  supported: boolean;
+  /** Whether the write tools are advertised. */
+  allowWrite: boolean;
+  /** Whether this companion also serves the endpoint at POST /mcp. */
+  http: boolean;
+  /** Whether the configuration file took the change. */
+  persisted: boolean;
+  /** The configuration file the choice lives in, empty when there is none. */
+  configPath: string;
+  /** The tools the endpoint of this process advertises. */
+  tools: string[];
+};
+
 /** One repository's git state (`GET /api/v1/git/status`). */
 export type GitRepoStatus = {
   repo: string;
@@ -1063,6 +1088,19 @@ export interface DataProvider {
   updateGitSettings(patch: GitSettingsPatch): Promise<GitSettings>;
   /** Per-repository git state: backend, identity and dirty set. */
   getGitStatus(repoId?: string): Promise<GitRepoStatus[]>;
+
+  // MCP write tools (`GET|PATCH /api/v1/mcp/settings`)
+  /**
+   * Whether the MCP server advertises its write tools. A runtime that has no
+   * MCP surface answers `supported: false` rather than throwing.
+   */
+  getMcpSettings(): Promise<McpSettings>;
+  /**
+   * Turns the MCP write tools on or off and persists the choice. It is always
+   * an explicit user action: nothing in the app may call it on its own, since
+   * it grants every agent the user runs the right to edit the backlog.
+   */
+  setMcpWriteTools(allowWrite: boolean): Promise<McpSettings>;
 
   // public tunnel (`GET|POST|DELETE /api/v1/tunnel`)
   /**

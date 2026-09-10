@@ -79,6 +79,7 @@ import type {
   GitSettingsPatch,
   SyncOptions,
   SyncRepoStatus,
+  McpSettings,
   SyncResult,
   SyncSettings,
   SyncSettingsPatch,
@@ -125,6 +126,10 @@ import {
   writeGitSettings,
   writeSyncSettings,
 } from '@/git/settings-store';
+
+/** Why browser-only mode can never advertise MCP write tools. */
+const BROWSER_MCP_REASON =
+  'Browser-only mode runs entirely in this tab and serves no MCP endpoint. Run `gintrack serve` to let agents reach this workspace.';
 
 /** Why browser-only mode can never open a public tunnel. */
 const BROWSER_TUNNEL_REASON =
@@ -1017,6 +1022,28 @@ export class BrowserProvider implements DataProvider {
 
   commitNow(): Promise<GitCommit[]> {
     return Promise.reject(new ProviderError('read_only', BROWSER_GIT_REASON));
+  }
+
+  // --------------------------------------------------------- mcp write tools
+
+  /**
+   * Browser-only mode runs no MCP server: there is no process for an agent to
+   * speak to and no configuration file to write. `supported: false` hides the
+   * card instead of offering a switch that would do nothing.
+   */
+  getMcpSettings(): Promise<McpSettings> {
+    return Promise.resolve({
+      supported: false,
+      allowWrite: false,
+      http: false,
+      persisted: false,
+      configPath: '',
+      tools: [],
+    });
+  }
+
+  setMcpWriteTools(): Promise<McpSettings> {
+    return Promise.reject(new ProviderError('read_only', BROWSER_MCP_REASON));
   }
 
   // ------------------------------------------------------------------ tunnel

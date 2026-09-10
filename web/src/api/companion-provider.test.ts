@@ -998,6 +998,54 @@ describe('CompanionProvider git surface (story GIT-US-0020)', () => {
   });
 });
 
+// -------------------------------------------------------------- mcp settings
+
+describe('CompanionProvider MCP settings surface', () => {
+  const mcpBody = {
+    supported: true,
+    allowWrite: false,
+    http: false,
+    persisted: true,
+    configPath: '/home/dev/.config/gintrack/config.yaml',
+    tools: ['get_item', 'list_items'],
+  };
+
+  it('reads the write mode from GET /mcp/settings', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(response(mcpBody));
+    const settings = await provider(fetchImpl).getMcpSettings();
+
+    const { url, init } = lastCall(fetchImpl);
+    expect(url).toBe(`${BASE}/api/v1/mcp/settings`);
+    expect(init.method ?? 'GET').toBe('GET');
+    expect(settings).toEqual(mcpBody);
+  });
+
+  it('switches the write tools on with PATCH /mcp/settings', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(response({ ...mcpBody, allowWrite: true }));
+    const settings = await provider(fetchImpl).setMcpWriteTools(true);
+
+    const { url, init } = lastCall(fetchImpl);
+    expect(url).toBe(`${BASE}/api/v1/mcp/settings`);
+    expect(init.method).toBe('PATCH');
+    expect(bodyOf(init)).toEqual({ allowWrite: true });
+    expect(settings).toMatchObject({ allowWrite: true, persisted: true });
+  });
+
+  it('reads an unparseable answer as an unsupported, read-only surface', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(response({ allowWrite: 'yes' }));
+    const settings = await provider(fetchImpl).getMcpSettings();
+
+    expect(settings).toEqual({
+      supported: false,
+      allowWrite: false,
+      http: false,
+      persisted: false,
+      configPath: '',
+      tools: [],
+    });
+  });
+});
+
 // --------------------------------------------------------------- public tunnel
 
 describe('CompanionProvider tunnel surface', () => {

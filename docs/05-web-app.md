@@ -504,6 +504,10 @@ export interface DataProvider {
   // Creates the task in the named project and writes the ref back into the retro.
   promoteRetroAction(input: RetroPromotion): Promise<RetroResult>;
 
+  // MCP write tools (implemented)
+  getMcpSettings(): Promise<McpSettings>;
+  setMcpWriteTools(allowWrite: boolean): Promise<McpSettings>;
+
   // git — commit on save (GIT-US-0020, implemented)
   getGitSettings(): Promise<GitSettings>;
   updateGitSettings(patch: GitSettingsPatch): Promise<GitSettings>;
@@ -1253,8 +1257,13 @@ disabled with the same reason rather than being enabled and failing with a raw
   self-hosted (no external font CDN, so offline works). Prose styles are custom
   rather than `@tailwindcss/typography` defaults, to keep them token-driven.
 - The theme control is a three-way `light`/`dark`/`system` radio group in the
-  sidebar footer; the choice is stored under `gintrack:theme` and applied by an
-  inline script in `index.html` before first paint.
+  sidebar footer; the choice is stored under `gintrack:theme` and applied by
+  `public/theme-boot.js`, which `index.html` loads before first paint. It is a
+  served file and not an inline script because the companion's CSP has no
+  `'unsafe-inline'` in `script-src`: an inline bootstrap is dropped without an
+  error, and the stored choice then loses to `prefers-color-scheme` on every
+  reload. `main.tsx` applies it a second time on mount, so a page served without
+  that file still ends up on the chosen theme.
 - Status and priority colours are configurable per project in `project.yaml`;
   the UI maps unknown statuses to a neutral token instead of failing.
 

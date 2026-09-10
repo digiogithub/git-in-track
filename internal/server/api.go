@@ -89,6 +89,9 @@ func (s *Server) mountAPI(api chi.Router) {
 		p.Get("/tunnel", s.handleTunnelStatus)
 		p.Post("/tunnel", s.handleTunnelEnable)
 		p.Delete("/tunnel", s.handleTunnelDisable)
+		// The write surface of the MCP server, as a setting rather than only a
+		// CLI flag (docs/08-mcp-server.md section 7.1).
+		p.Route("/mcp", s.mountMCPSettings)
 		p.Route("/git", s.mountGit)
 		p.Route("/sync", s.mountSync)
 	})

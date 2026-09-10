@@ -250,6 +250,7 @@ index:
 mcp:
   enabled: false         # mount POST /mcp on `gintrack serve` (same as --mcp-http)
   allowWrite: false      # write tools stay off until this is true, for `gintrack mcp`
+                         # (the Settings page writes this field; section 5.5)
                          # over stdio as well as for POST /mcp
 
 log:
@@ -377,10 +378,16 @@ tunnel:     opening a public cloudflare tunnel…
 listening on http://127.0.0.1:7317
 …
 tunnel:     https://gentle-pine-mist-42.trycloudflare.com   (public; the token is still required)
+open:       https://gentle-pine-mist-42.trycloudflare.com/?token=s7Q1e...9Zk   (public link; anyone holding it has write access)
 ```
 
-The banner prints the bare URL and never a `?token=` link, for the reason §5.1.1
-gives. A tunnel that fails to open is a warning on stderr and nothing more: the
+The bare hostname comes first and the `?token=` link below it, so that "share
+the tunnel" and "share write access to my repositories" are two visibly
+different lines to copy. The link exists because the web app takes the token
+from `?token=` or from Settings and from nowhere else: a browser handed only the
+bare hostname loads the app and then sits behind a "needs an access token"
+banner with an empty workspace. The link is printed to the terminal only — never
+to a log line, an event payload or an API response (§5.1.1). A tunnel that fails to open is a warning on stderr and nothing more: the
 run degrades to loopback only rather than exiting, because a companion that
 serves locally is more useful than one that refuses to serve at all. Shutdown
 closes the tunnel, so a process that exits never leaves a published workspace
@@ -911,7 +918,10 @@ refused.
 Writes are enabled by `--allow-write` or by `mcp.allowWrite: true` in the configuration file
 (section 3.2). The flag wins when it is typed — `--allow-write=false` turns the write tools
 off for one run — and the configuration decides otherwise, so an agent runtime that spawns
-`gintrack mcp` with no arguments gets the posture the user chose once.
+`gintrack mcp` with no arguments gets the posture the user chose once. That setting is also
+what the companion's **Settings › Agent tools (MCP)** switch writes
+(`PATCH /api/v1/mcp/settings`, section 5.5), which is the way to enable writes without
+editing a file or teaching every agent runtime a flag.
 
 The **same twelve tools** are served over streamable HTTP at `POST /mcp` by
 `gintrack serve --mcp-http` (section 4.1), which is what to use when the companion is already
@@ -2037,6 +2047,54 @@ edits it.
 Read §5.1.1 before using any of this: what these three routes publish is a server
 with read and write access to every mounted repository, guarded by one token.
 
+#### The MCP write tools
+
+Two routes, behind the bearer token like the rest of the API. They read and set
+whether the MCP server advertises its write tools — the setting `gintrack mcp`
+reads from `mcp.allowWrite` (§3.2) and `gintrack serve --mcp-allow-write` sets
+for the endpoint of one process.
+
+```http
+GET   /api/v1/mcp/settings     # the current write mode
+PATCH /api/v1/mcp/settings     # {"allowWrite": true|false}
+```
+
+Both answer the same document:
+
+```json
+{"supported":true,"allowWrite":false,"http":false,"persisted":true,
+ "configPath":"/home/dev/.config/gintrack/config.yaml","tools":[]}
+```
+
+| Field | Meaning |
+|---|---|
+| `supported` | False when the change could not take effect at all — no configuration file **and** no MCP endpoint in this process. A client hides the affordance rather than offering a switch that does nothing. |
+| `allowWrite` | Whether the write tools are advertised. |
+| `http` | Whether this process also serves `POST /mcp`, in which case the change is live here too. |
+| `persisted` | Whether the configuration file took the change. False on a `serve --repo` with no configuration file, where the switch lasts for the life of the process. |
+| `configPath` | The file the choice was written to, empty when there is none. |
+| `tools` | What the endpoint of this process advertises; empty when it serves none. |
+
+Unlike the tunnel above, **this toggle is written back to the configuration
+file**, and deliberately so: the whole point of the setting is that an agent
+runtime spawns a bare `gintrack mcp`, which reads `mcp.allowWrite` at startup
+(§4.9). A switch that did not outlive the process would leave every agent
+read-only, which is the problem it exists to solve. The direction of the risk is
+also the other way around: the tunnel publishes the workspace to the internet,
+while this grants an agent the user already runs the same edits the user can make
+in the UI, in files git tracks.
+
+A `PATCH` on a process with neither a configuration file nor an endpoint is
+refused with `not_implemented` (501) rather than reporting a success that
+changes nothing. A body without `allowWrite` is `invalid_request` (400).
+
+The change reaches a **mounted `/mcp` endpoint immediately**: the server is
+rebuilt in place, so a client connecting afterwards is offered the write tools
+without the companion restarting. Sessions the previous server held end with it
+and a connected client initializes again, exactly as it does across a restart. A
+**stdio** server — the usual case — reads the file when it starts, so an agent
+picks the change up the next time its MCP server does.
+
 #### Search
 
 ```http
@@ -2907,6 +2965,9 @@ re-index is scheduled on completion, since `git checkout`/`rebase` can rewrite t
 files faster than the event pipeline can drain. Network filesystems (NFS, SMB, virtualised
 Docker/WSL mounts) frequently deliver no events at all; `gintrack doctor` detects a
 non-local filesystem and recommends `--watch=false` plus periodic `gintrack index`.
+Whatever the watcher misses, a single-file read (`item.get`, `comment.list`, `kb.page`)
+re-checks size and mtime of the files it returns and re-indexes the stale ones first
+(docs/06 §9.2), so an opened task is never older than the file on disk.
 
 ### 7.3 Line endings
 
