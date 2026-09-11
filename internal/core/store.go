@@ -1005,7 +1005,9 @@ func (s *FileStore) WritePage(ctx context.Context, project ProjectKey, p string,
 		return nil, fmt.Errorf("read page %s: %w", p, err)
 	}
 
-	data := Canonicalize(content)
+	// Feedback notes whose text is gone are dropped on every write, so a page
+	// never carries feedback about text it no longer holds (ADR-030).
+	data := Canonicalize(PruneKbFeedback(content))
 	if err := s.fs.MkdirAll(path.Dir(full)); err != nil {
 		return nil, fmt.Errorf("write page %s: %w", p, err)
 	}

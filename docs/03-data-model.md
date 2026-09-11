@@ -1013,6 +1013,8 @@ Example: `.pmngr/comments/ACME-US-0042/20260901T104512Z-jose.md`
 | `type` | `comment` | yes | |
 | `item` | item ID | yes | MUST equal the folder name |
 | `author` | handle | yes | |
+| `author_name` | string | no | the writer's git `user.name`; the handle is derived from it when no handle is given (ADR-030) |
+| `author_email` | string | no | the writer's git `user.email` (ADR-030) |
 | `created` | timestamp | yes | MUST match the filename timestamp |
 | `updated` | timestamp | no | present only if edited |
 | `in_reply_to` | comment ref | no | `<ITEM-ID>#<file-stem>` |
@@ -1022,6 +1024,11 @@ Example: `.pmngr/comments/ACME-US-0042/20260901T104512Z-jose.md`
 
 `kind: system` marks machine-written entries (e.g. an agent recording an automated check). Systems
 SHOULD write few, high-value system comments; the git log is the audit trail, not the comment stream.
+
+- **R-CMT-4** A human write that names nobody is attributed to the git identity of the repository
+  the item lives in (`user.name`, `user.email`, or the configured `git.authorName`/`authorEmail`
+  overrides): `author` becomes the handle of `user.name`, and `author_name`/`author_email` carry the
+  identity itself. Only when no identity resolves does the handle fall back to `unknown`.
 
 ### 11.3 Complete example
 
@@ -1204,6 +1211,54 @@ item body → KB page, and `links`/`parent`/`milestone` relations. This powers:
 - An ADR SHOULD link the epic or story that motivated it.
 - A story's `## Technical Notes` SHOULD link the tasks that implement it, and vice versa (the
   `parent` field already carries the hierarchy; wikilinks carry the *reading path*).
+
+### 14.4 Feedback notes on pages
+
+A reviewer can attach notes to lines of a KB page from the web app (docs/05). The notes are written
+into the page itself, as one block at the very end of the file, so a person or an agent reading the
+page reads the feedback next to the text it is about (ADR-030):
+
+````markdown
+<!-- gintrack:feedback:begin -->
+
+---
+
+## Feedback
+
+<!-- gintrack:feedback:note id="fb-1c0e5b2a" anchor="sha256:4e1b9c0d7a3f2e61" lines="3-4" author="Jose F. Rives Lirola" email="jose@digio.es" created="2026-09-11T10:00:00Z" -->
+### Jose F. Rives Lirola feedback: fb-1c0e5b2a
+
+> Lines 3–4:
+>
+> Run the migration first.
+> Then restart the workers.
+
+Selected: “the migration”
+
+Which migration? There are two in this release.
+
+<!-- gintrack:feedback:end -->
+````
+
+- **R-FB-1** `lines` are 1-based lines of the page **body** — the Markdown after the front matter,
+  with the blank lines around it trimmed, exactly as the `body` of a KB page read returns it.
+- **R-FB-2** `anchor` is `sha256:` plus the first 16 hex digits of the SHA-256 of the referenced
+  lines, each trimmed, joined with `\n`, the whole trimmed. `id` is `fb-` plus 8 hex digits, unique
+  within the page.
+- **R-FB-3** A note is anchored to the page content only — never to the block itself — and a note
+  with no text, or one that refers only to blank lines, is refused.
+- **R-FB-4** Every write of a page through the core prunes the block: a note whose anchor matches no
+  run of the same number of lines anywhere in the content is removed, a note whose text moved has its
+  `lines` rewritten to the matching run closest to where it was, and the block is removed when no
+  note is left. A page without a block is never touched. Feedback therefore never outlives the text
+  it was about.
+- **R-FB-5** The block is recognised only when its begin marker is outside a code fence and its end
+  marker is the last non-blank line of the file; the markers are HTML comments, so a renderer shows
+  only the `## Feedback` section. Free text in a note cannot open or close an HTML comment (`<!--`
+  and `-->` are escaped), so a note cannot forge a marker.
+
+Feedback on a backlog item is not written into the item: it is posted as an ordinary comment
+(§11), with the quoted text and the note in its body.
 
 ---
 

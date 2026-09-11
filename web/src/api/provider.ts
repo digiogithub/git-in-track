@@ -34,6 +34,8 @@ import type {
   ItemReference,
   ItemReferencesResult,
   ItemType,
+  KbFeedbackNoteDraft,
+  KbFeedbackNoteRef,
   KbNode,
   KbPage,
   Priority,
@@ -95,6 +97,8 @@ import type {
 } from '@/core-bridge/api';
 
 export type {
+  KbFeedbackNoteDraft,
+  KbFeedbackNoteRef,
   BoardCard,
   BoardColumnPatch,
   BoardColumnView,
@@ -962,8 +966,25 @@ export interface DataProvider {
    * `hard` removes the file instead.
    */
   deleteItem(id: string, rev: string, opts?: { hard?: boolean }): Promise<void>;
+  /**
+   * Appends a comment to an item. With no `author` the comment is attributed to
+   * the git identity (`user.name`, `user.email`) of the repository the item
+   * lives in; a handle is derived from the name for the file name.
+   */
   addComment(id: string, body: string, author?: string): Promise<Comment>;
   writePage(scope: KbScope, path: string, content: string, rev?: string): Promise<KbPage>;
+  /**
+   * Appends feedback notes to the feedback block at the end of a page, as the
+   * git identity of the page's repository. Each note is anchored to the body
+   * lines it quotes, and any later write through the core that changes those
+   * lines drops the note (ADR-030). `rev` is checked like a page write.
+   */
+  addPageFeedback(
+    scope: KbScope,
+    path: string,
+    notes: KbFeedbackNoteDraft[],
+    rev?: string,
+  ): Promise<KbPage>;
 
   // boards (docs/04-team-repository.md §5)
   /** Every board of the team repository; empty when none is open. */

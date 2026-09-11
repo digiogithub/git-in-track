@@ -63,6 +63,7 @@ Every ADR uses the same sections:
 | [ADR-027](ADR-027-cloudflared-as-a-library-for-quick-tunnels.md) | cloudflared is embedded as a library, and a quick tunnel is a sharing convenience | Accepted | 2 |
 | [ADR-028](ADR-028-retro-participants-name-themselves-and-comment-in-front-matter.md) | Retro participants name themselves in the browser, and the discussion is front matter | Accepted | 5 |
 | [ADR-029](ADR-029-signed-release-artifacts.md) | Release artifacts are signed on macOS and Windows, on their own runners | Accepted | 6 |
+| [ADR-030](ADR-030-feedback-notes-on-items-and-kb-pages.md) | Feedback notes: a comment on an item, an anchored block inside a KB page | Accepted | 5 |
 
 ## Related documents
 

@@ -6,10 +6,16 @@
  * the tree (a write can add or rename a file).
  */
 
-import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type UseMutationResult,
+  type UseQueryResult,
+} from '@tanstack/react-query';
 import { useEffect } from 'react';
 
-import type { KbNode, KbPage, KbScope } from '@/api/provider';
+import type { KbFeedbackNoteDraft, KbNode, KbPage, KbScope } from '@/api/provider';
 import { useProvider } from '@/api/provider-context';
 
 export function kbTreeKey(project: string) {
@@ -41,6 +47,34 @@ export function useKbPage(
     enabled: project !== '' && path !== '',
     // A missing page is a 404 screen, not something to retry.
     retry: false,
+  });
+}
+
+export type AddPageFeedbackVariables = {
+  /** The page path as the provider returned it. */
+  path: string;
+  /** The path the page query is keyed by (the route's). */
+  viewPath: string;
+  notes: KbFeedbackNoteDraft[];
+  rev?: string;
+};
+
+/** Saves feedback notes into the feedback block of a page. */
+export function useAddPageFeedback(
+  project: string,
+  scope: KbScope,
+): UseMutationResult<KbPage, Error, AddPageFeedbackVariables> {
+  const provider = useProvider();
+  const queryClient = useQueryClient();
+  return useMutation<KbPage, Error, AddPageFeedbackVariables>({
+    mutationFn: ({ path, notes, rev }) => provider.addPageFeedback(scope, path, notes, rev),
+    onSuccess: (page, { viewPath }) => {
+      queryClient.setQueryData(kbPageKey(project, viewPath), page);
+    },
+    onError: (_error, { viewPath }) => {
+      // A stale revision means the page moved on: show what it holds now.
+      void queryClient.invalidateQueries({ queryKey: kbPageKey(project, viewPath) });
+    },
   });
 }
 

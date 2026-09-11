@@ -180,3 +180,46 @@ func TestCommentRefHelper(t *testing.T) {
 		t.Errorf("CommentRef = %q", got)
 	}
 }
+
+func TestAddCommentRecordsTheGitIdentity(t *testing.T) {
+	t.Parallel()
+
+	store, fsys, _ := newTestStore(t)
+	ctx := context.Background()
+	it, err := store.Create(ctx, ItemDraft{Type: TypeStory, Title: "Login with SSO", Author: "jose"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	c, err := store.AddComment(ctx, it.ID, CommentDraft{
+		AuthorName: " José F. Rives ", AuthorEmail: "jose@digio.es ", Body: "Reviewed.",
+	})
+	if err != nil {
+		t.Fatalf("AddComment: %v", err)
+	}
+	if c.Author != "jose-f-rives" || c.AuthorName != "José F. Rives" || c.AuthorEmail != "jose@digio.es" {
+		t.Errorf("comment = %+v", c)
+	}
+	data, err := fsys.ReadFile(c.Path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	for _, want := range []string{"author: jose-f-rives\nauthor_name: José F. Rives\nauthor_email: jose@digio.es\n"} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("the file is missing %q:\n%s", want, data)
+		}
+	}
+	parsed, err := ParseComment(c.Path, data)
+	if err != nil {
+		t.Fatalf("ParseComment: %v", err)
+	}
+	if parsed.AuthorName != "José F. Rives" || parsed.AuthorEmail != "jose@digio.es" || parsed.Extra != nil {
+		t.Errorf("parsed = %+v", parsed)
+	}
+	again, err := SerializeComment(parsed)
+	if err != nil {
+		t.Fatalf("SerializeComment: %v", err)
+	}
+	if string(again) != string(data) {
+		t.Errorf("the round trip changed the file:\n%s\n---\n%s", data, again)
+	}
+}

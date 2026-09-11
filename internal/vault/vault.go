@@ -390,6 +390,8 @@ func (v *Vault) Dispatch(ctx context.Context, method string, raw []byte) (any, e
 		return v.kbPage(raw)
 	case "kb.write":
 		return v.kbWrite(ctx, raw)
+	case "kb.feedback.add":
+		return v.kbFeedbackAdd(ctx, raw)
 
 	case "conflict.merge":
 		return v.conflictMerge(raw)
@@ -1182,11 +1184,13 @@ func (v *Vault) commentList(raw []byte) (any, error) {
 // commentAdd appends one comment file to an item's thread.
 func (v *Vault) commentAdd(ctx context.Context, raw []byte) (any, error) {
 	p, err := decodeParams[struct {
-		ID        string `json:"id"`
-		Author    string `json:"author"`
-		Body      string `json:"body"`
-		InReplyTo string `json:"inReplyTo,omitempty"`
-		Rev       string `json:"rev,omitempty"`
+		ID          string `json:"id"`
+		Author      string `json:"author"`
+		AuthorName  string `json:"authorName,omitempty"`
+		AuthorEmail string `json:"authorEmail,omitempty"`
+		Body        string `json:"body"`
+		InReplyTo   string `json:"inReplyTo,omitempty"`
+		Rev         string `json:"rev,omitempty"`
 	}](raw)
 	if err != nil {
 		return nil, err
@@ -1203,7 +1207,8 @@ func (v *Vault) commentAdd(ctx context.Context, raw []byte) (any, error) {
 		rev = ""
 	}
 	draft := core.CommentDraft{
-		Author: p.Author, Body: p.Body, InReplyTo: p.InReplyTo, ItemRev: core.Rev(rev),
+		Author: p.Author, AuthorName: p.AuthorName, AuthorEmail: p.AuthorEmail,
+		Body: p.Body, InReplyTo: p.InReplyTo, ItemRev: core.Rev(rev),
 	}
 	comment, err := store.AddComment(ctx, core.ItemID(p.ID), draft)
 	if err != nil {
@@ -1378,6 +1383,77 @@ func (v *Vault) kbWrite(ctx context.Context, raw []byte) (any, error) {
 		indexed.Body = page.Body
 	}
 	return map[string]any{"page": v.pageResult(indexed), "writes": writes}, nil
+}
+
+// kbFeedbackAdd attaches feedback notes to a page: it appends them to the
+// page's feedback block and writes the page through the store, which also drops
+// the notes whose text has changed since they were written (ADR-030).
+func (v *Vault) kbFeedbackAdd(ctx context.Context, raw []byte) (any, error) {
+	p, err := decodeParams[struct {
+		Path        string `json:"path"`
+		Rev         string `json:"rev,omitempty"`
+		Author      string `json:"author,omitempty"`
+		AuthorName  string `json:"authorName,omitempty"`
+		AuthorEmail string `json:"authorEmail,omitempty"`
+		Notes       []struct {
+			StartLine int    `json:"startLine"`
+			EndLine   int    `json:"endLine"`
+			Quote     string `json:"quote,omitempty"`
+			Note      string `json:"note"`
+		} `json:"notes"`
+	}](raw)
+	if err != nil {
+		return nil, err
+	}
+	if len(p.Notes) == 0 {
+		return nil, failf("invalid_request", "kb.feedback.add needs at least one note")
+	}
+	ref, store, err := v.projectOfPath(p.Path)
+	if err != nil {
+		return nil, err
+	}
+	target := path.Clean(p.Path)
+	current, err := v.fs.ReadFile(target)
+	if err != nil {
+		return nil, fmt.Errorf("read page %s: %w", p.Path, err)
+	}
+	// The write is guarded by the revision the caller read, or by the one read
+	// just now, so a concurrent edit is never overwritten by the feedback.
+	expected := core.ComputeRev(current)
+	if p.Rev != "" && p.Rev != "*" {
+		if core.Rev(p.Rev) != expected {
+			return nil, &core.StaleRevisionError{Path: target, Expected: core.Rev(p.Rev), Current: expected}
+		}
+	}
+	drafts := make([]core.KbFeedbackDraft, 0, len(p.Notes))
+	for _, n := range p.Notes {
+		drafts = append(drafts, core.KbFeedbackDraft{
+			StartLine: n.StartLine, EndLine: n.EndLine, Quote: n.Quote, Note: n.Note,
+			Author: p.Author, AuthorName: p.AuthorName, AuthorEmail: p.AuthorEmail,
+		})
+	}
+	updated, notes, err := core.AddKbFeedback(current, drafts, core.NewTimestamp(v.now()))
+	if err != nil {
+		return nil, fmt.Errorf("feedback on %s: %w", p.Path, err)
+	}
+
+	rel := relativeToDocs(ref.DocsPath, target)
+	v.fs.begin()
+	page, err := store.WritePage(ctx, ref.Key, rel, updated, expected)
+	if err != nil {
+		return nil, fmt.Errorf("write page %s: %w", p.Path, err)
+	}
+	writes, err := v.commit(ctx)
+	if err != nil {
+		return nil, err
+	}
+	indexed, ok := v.index.Page(page.Path)
+	if !ok {
+		indexed = page
+	} else {
+		indexed.Body = page.Body
+	}
+	return map[string]any{"page": v.pageResult(indexed), "writes": writes, "notes": notes}, nil
 }
 
 // relativeToDocs turns a vault-relative page path into the documentation-folder
@@ -1624,5 +1700,7 @@ func classify(err error, out *Error) {
 		out.Code = core.StaleRevisionCode
 	case errors.Is(err, core.ErrInvalidFrontMatter):
 		out.Code = "invalid_front_matter"
+	case errors.Is(err, core.ErrInvalidFeedback):
+		out.Code = "invalid_request"
 	}
 }

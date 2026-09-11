@@ -26,6 +26,7 @@ import type {
   CardMove,
   ChangeEvent,
   Comment,
+  KbFeedbackNoteDraft,
   ConflictAnalysis,
   ConflictMerge,
   ConflictResolution,
@@ -113,7 +114,7 @@ import {
   type VaultFS,
 } from '@/fs';
 import type { DirectoryHandleLike } from '@/fs/types';
-import { readSyncStatus, runSync, type BrowserConflict } from '@/git/browser-sync';
+import { readGitIdentity, readSyncStatus, runSync, type BrowserConflict } from '@/git/browser-sync';
 import {
   createAuthCallback,
   createAuthFailureCallback,
@@ -651,17 +652,58 @@ export class BrowserProvider implements DataProvider {
 
   async deleteItem(id: string, rev: string, opts: { hard?: boolean } = {}): Promise<void> {
     const mount = this.#mountForItem(id, await this.#ensureWritable());
-    const { writes } = await this.#call('item.delete', { id, rev, ...(opts.hard ? { hard: true } : {}) });
+    const { writes } = await this.#call('item.delete', {
+      id,
+      rev,
+      ...(opts.hard ? { hard: true } : {}),
+    });
     await this.#persist(mount, writes);
     this.#emit({ kind: 'items', repoId: mount.id, ids: [id] });
   }
 
-  async addComment(id: string, body: string, author = 'me'): Promise<Comment> {
+  async addComment(id: string, body: string, author?: string): Promise<Comment> {
     const mount = this.#mountForItem(id, await this.#ensureWritable());
-    const { comment, writes } = await this.#call('comment.add', { id, author, body });
+    const who = author ? { author } : await this.#identityOf(mount);
+    const { comment, writes } = await this.#call('comment.add', { id, body, ...who });
     await this.#persist(mount, writes);
     this.#emit({ kind: 'items', repoId: mount.id, ids: [id] });
     return comment;
+  }
+
+  async addPageFeedback(
+    scope: KbScope,
+    path: string,
+    notes: KbFeedbackNoteDraft[],
+    rev?: string,
+  ): Promise<KbPage> {
+    const active = await this.#ensureWritable();
+    const mount = (await this.#mountForScope(scope)) ?? active;
+    const { page, writes } = await this.#call('kb.feedback.add', {
+      path,
+      notes,
+      vaultId: mount.id,
+      ...(rev === undefined ? {} : { rev }),
+      ...(await this.#identityOf(mount)),
+    });
+    await this.#persist(mount, writes);
+    this.#emit({ kind: 'kb', repoId: mount.id, paths: [page.path] });
+    return page;
+  }
+
+  /**
+   * Who a comment or a feedback note is written as: the `user.name` and
+   * `user.email` of the repository's own git configuration, then the author
+   * configured in Settings → Sync. The global git configuration is out of a
+   * browser's reach, so a repository without a local identity and no setting
+   * ends up with the core's `unknown` handle.
+   */
+  async #identityOf(mount: MountedRepo): Promise<{ authorName?: string; authorEmail?: string }> {
+    const handle = handleOf(mount.vault);
+    const repo = handle ? await readGitIdentity(handle) : undefined;
+    const settings = repo ? undefined : await this.getGitSettings();
+    const name = repo?.name || settings?.authorName;
+    const email = repo?.email || settings?.authorEmail;
+    return { ...(name ? { authorName: name } : {}), ...(email ? { authorEmail: email } : {}) };
   }
 
   async writePage(scope: KbScope, path: string, content: string, rev?: string): Promise<KbPage> {

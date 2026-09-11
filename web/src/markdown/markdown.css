@@ -285,3 +285,15 @@
   font-size: 0.875rem;
   color: hsl(var(--muted-foreground));
 }
+
+/* Feedback mode (docs/05-web-app.md §8.5): the blocks a note already covers
+   carry an accent rule in the margin, so the reader sees what is annotated. */
+.markdown-body .feedback-marked {
+  background: hsl(var(--accent-subtle) / 0.45);
+  box-shadow: -0.1875rem 0 0 hsl(var(--accent));
+  border-radius: 0.125rem;
+}
+
+[data-feedback-active='true'] .markdown-body ::selection {
+  background: hsl(var(--accent) / 0.25);
+}

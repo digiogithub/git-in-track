@@ -400,9 +400,11 @@ func (s *Server) handleCommentList(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleCommentAdd(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	var body struct {
-		Body      string `json:"body"`
-		Author    string `json:"author"`
-		InReplyTo string `json:"inReplyTo,omitempty"`
+		Body        string `json:"body"`
+		Author      string `json:"author"`
+		AuthorName  string `json:"authorName,omitempty"`
+		AuthorEmail string `json:"authorEmail,omitempty"`
+		InReplyTo   string `json:"inReplyTo,omitempty"`
 	}
 	if !decodeBody(w, r, &body) {
 		return
@@ -415,6 +417,9 @@ func (s *Server) handleCommentAdd(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	who := s.writerIdentity(r, m, writer{
+		Author: body.Author, AuthorName: body.AuthorName, AuthorEmail: body.AuthorEmail,
+	})
 	// A comment is a new file and can overwrite nothing, so If-Match is not
 	// required here as it is on a write against an existing file. It is honored
 	// when it is sent: a client that quotes the rev of the item it read is told
@@ -424,8 +429,8 @@ func (s *Server) handleCommentAdd(w http.ResponseWriter, r *http.Request) {
 		rev = ""
 	}
 	result, ok := s.call(w, r, m, "comment.add", map[string]any{
-		"id": id, "body": body.Body, "author": body.Author, "inReplyTo": body.InReplyTo,
-		"rev": rev,
+		"id": id, "body": body.Body, "author": who.Author, "inReplyTo": body.InReplyTo,
+		"authorName": who.AuthorName, "authorEmail": who.AuthorEmail, "rev": rev,
 	})
 	if !ok {
 		return
@@ -562,4 +567,36 @@ func totalOf(page any) (int, bool) {
 		return 0, false
 	}
 	return int(field.Int()), true
+}
+
+// writer is who a human write through the API is attributed to.
+type writer struct {
+	Author      string
+	AuthorName  string
+	AuthorEmail string
+}
+
+// legacyWebAuthor is the placeholder handle earlier web builds sent for every
+// comment. It names nobody, so it is treated as "no author given".
+const legacyWebAuthor = "me"
+
+// writerIdentity fills in the author of a comment or a feedback note from the
+// git identity of the repository written to — user.name and user.email from the
+// repository and global configuration, or the configured overrides — when the
+// caller named nobody. A caller that did name somebody is taken at its word,
+// and a repository with no identity leaves the request as it was.
+func (s *Server) writerIdentity(r *http.Request, m *mount, w writer) writer {
+	author := strings.TrimSpace(w.Author)
+	if strings.TrimSpace(w.AuthorName) != "" || (author != "" && author != legacyWebAuthor) {
+		return w
+	}
+	backend, ok := s.git.backendFor(m.id)
+	if !ok {
+		return w
+	}
+	id, err := backend.Identity(r.Context())
+	if err != nil || !id.Valid() {
+		return w
+	}
+	return writer{AuthorName: id.Name, AuthorEmail: id.Email}
 }

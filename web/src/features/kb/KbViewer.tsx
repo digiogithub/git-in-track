@@ -10,6 +10,7 @@ import { useParams, useRouter } from '@tanstack/react-router';
 import {
   FileQuestion,
   Maximize2,
+  MessageSquarePlus,
   Minimize2,
   PanelLeft,
   PanelLeftClose,
@@ -27,7 +28,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 
-import type { KbScope } from '@/api/provider';
+import { ProviderError, type KbFeedbackNoteDraft, type KbScope } from '@/api/provider';
 import { useProvider } from '@/api/provider-context';
 import {
   KB_TREE_DEFAULT_WIDTH,
@@ -37,6 +38,9 @@ import {
 } from '@/app/ui-prefs';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { useFeedbackDraft } from '@/features/feedback/feedback-store';
+import { FeedbackPanel } from '@/features/feedback/FeedbackPanel';
+import { FeedbackSelection } from '@/features/feedback/FeedbackSelection';
 import {
   breadcrumbs,
   buildKbIndex,
@@ -51,7 +55,12 @@ import { KbLink, RouterLink } from '@/features/kb/KbLink';
 import { KbToc } from '@/features/kb/KbToc';
 import { KbTree } from '@/features/kb/KbTree';
 import { tocOutline } from '@/features/kb/toc';
-import { useKbInvalidation, useKbPage, useKbTree } from '@/features/kb/useKbData';
+import {
+  useAddPageFeedback,
+  useKbInvalidation,
+  useKbPage,
+  useKbTree,
+} from '@/features/kb/useKbData';
 import { cn } from '@/lib/cn';
 import type { RenderOptions } from '@/markdown';
 import { MarkdownContent, useAssetResolver, useMarkdown } from '@/markdown';
@@ -80,6 +89,11 @@ export function KbViewer() {
 
   const pageQuery = useKbPage(project, scope, path);
   useKbInvalidation(project);
+
+  const feedback = useFeedbackDraft({ kind: 'kb', project, ref: path });
+  const addFeedback = useAddPageFeedback(project, scope);
+  const [feedbackError, setFeedbackError] = useState<string | null>(null);
+  const feedbackCount = feedback.draft.notes.length;
 
   const [rawOpen, setRawOpen] = useState(false);
   const [treeOpen, setTreeOpen] = useState(false);
@@ -118,6 +132,7 @@ export function KbViewer() {
       basePath: path,
       resolveLink: resolvers.resolveLink,
       resolveHref: resolvers.resolveHref,
+      sourceLines: true,
       ...(page ? { cacheKey: `${path}@${page.rev}` } : {}),
     }),
     [path, resolvers, page],
@@ -143,6 +158,40 @@ export function KbViewer() {
     const ids = Object.keys(router.routesById);
     return ids.some((id) => id.endsWith('/kb/$/edit')) ? `${kbHref(project, path)}/edit` : null;
   }, [router, project, path]);
+
+  const saveFeedback = () => {
+    if (!page) return;
+    const notes: KbFeedbackNoteDraft[] = [];
+    for (const entry of feedback.draft.notes) {
+      if (entry.startLine === undefined) continue;
+      notes.push({
+        startLine: entry.startLine,
+        endLine: entry.endLine ?? entry.startLine,
+        quote: entry.quote,
+        note: entry.note.trim(),
+      });
+    }
+    if (notes.length !== feedback.draft.notes.length) {
+      setFeedbackError(
+        'Some notes could not be located in the page source. Remove them and select the text again.',
+      );
+      return;
+    }
+    setFeedbackError(null);
+    addFeedback.mutate(
+      { path: page.path, viewPath: path, notes, rev: page.rev },
+      {
+        onSuccess: () => feedback.clear(),
+        onError: (error) => {
+          setFeedbackError(
+            error instanceof ProviderError && error.code === 'stale_revision'
+              ? 'The page changed since it was loaded and has been reloaded. Check that your notes still apply, then save again.'
+              : `The feedback was not saved: ${error.message}`,
+          );
+        },
+      },
+    );
+  };
 
   const crumbs = breadcrumbs(path);
   const outline = markdown.result ? tocOutline(markdown.result.headings) : [];
@@ -252,6 +301,18 @@ export function KbViewer() {
                 )}
                 {maximized ? 'Restore' : 'Maximize'}
               </Button>
+              {page ? (
+                <Button
+                  variant={feedback.draft.active ? 'secondary' : 'ghost'}
+                  size="sm"
+                  aria-pressed={feedback.draft.active}
+                  title="Select text in the page to attach feedback notes"
+                  onClick={() => feedback.setActive(!feedback.draft.active)}
+                >
+                  <MessageSquarePlus className="size-4" aria-hidden="true" />
+                  Feedback{feedbackCount > 0 ? ` (${feedbackCount})` : ''}
+                </Button>
+              ) : null}
               <Button
                 variant={rawOpen ? 'secondary' : 'ghost'}
                 size="sm"
@@ -298,15 +359,35 @@ export function KbViewer() {
                 This page could not be rendered: {markdown.error?.message}
               </p>
             ) : markdown.result ? (
-              <MarkdownContent
-                result={markdown.result}
-                resolveAsset={resolveAsset}
-                renderLink={KbLink}
-                className="prose-kb"
-              />
+              <FeedbackSelection
+                source={page.body}
+                active={feedback.draft.active}
+                notes={feedback.draft.notes}
+                contentKey={`${path}@${page.rev}`}
+                onEnable={() => feedback.setActive(true)}
+                onAddNote={feedback.addNote}
+              >
+                <MarkdownContent
+                  result={markdown.result}
+                  resolveAsset={resolveAsset}
+                  renderLink={KbLink}
+                  className="prose-kb"
+                />
+              </FeedbackSelection>
             ) : (
               <PageSkeleton />
             )}
+
+            {feedback.draft.active || feedbackCount > 0 ? (
+              <FeedbackPanel
+                feedback={feedback}
+                destination="page"
+                canWrite={provider.capabilities.write}
+                saving={addFeedback.isPending}
+                error={feedbackError}
+                onSave={saveFeedback}
+              />
+            ) : null}
 
             <KbBacklinks project={project} backlinks={page.backlinks} />
           </>

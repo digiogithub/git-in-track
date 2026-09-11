@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
 	"github.com/spf13/cobra"
 
+	"github.com/digiogithub/git-in-track/internal/config"
 	"github.com/digiogithub/git-in-track/internal/core"
+	"github.com/digiogithub/git-in-track/internal/gitops"
 )
 
 // itemCommentFlags mirrors the flags of docs/07 section 4.5.
@@ -64,11 +67,15 @@ func runItemComment(cmd *cobra.Command, flags *globalFlags, local *itemCommentFl
 	if err != nil {
 		return err
 	}
-	comment, err := store.AddComment(cmd.Context(), id, core.CommentDraft{
+	draft := core.CommentDraft{
 		Author: commentAuthor(local.author, flags.config()),
 		Body:   body,
 		Kind:   core.CommentKindComment,
-	})
+	}
+	if draft.Author == "" {
+		draft.AuthorName, draft.AuthorEmail = repoIdentity(cmd.Context(), project.Repo.Path, flags.config().Git)
+	}
+	comment, err := store.AddComment(cmd.Context(), id, draft)
 	if err != nil {
 		return fmt.Errorf("comment: %w", err)
 	}
@@ -83,4 +90,29 @@ func runItemComment(cmd *cobra.Command, flags *globalFlags, local *itemCommentFl
 	}
 	p.Printf("commented on %s  %s\n", id, displayPath(comment.Path))
 	return nil
+}
+
+// repoIdentity reads the git identity of the repository an item lives in —
+// user.name and user.email, or the configured overrides — so a comment written
+// with no --author is attributed to the person git would attribute a commit
+// to. A folder that is not a repository, or one with no identity, yields
+// nothing and the comment falls back to the "unknown" handle.
+func repoIdentity(ctx context.Context, repoPath string, git config.Git) (name, email string) {
+	if repoPath == "" {
+		return "", ""
+	}
+	//nolint:contextcheck // Open probes the folder locally and takes no context; Identity below does.
+	backend, err := gitops.Open(repoPath, gitops.Options{
+		Backend:     gitops.Kind(git.Backend),
+		AuthorName:  git.AuthorName,
+		AuthorEmail: git.AuthorEmail,
+	})
+	if err != nil {
+		return "", ""
+	}
+	id, err := backend.Identity(ctx)
+	if err != nil || !id.Valid() {
+		return "", ""
+	}
+	return id.Name, id.Email
 }

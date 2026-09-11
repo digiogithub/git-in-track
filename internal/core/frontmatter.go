@@ -318,6 +318,8 @@ func ParseComment(path string, data []byte) (*Comment, error) {
 		p.fail("item", CodeCommentMismatch, fmt.Sprintf("folder %q does not match item %q", folder, c.Item))
 	}
 	c.Author = p.str("author")
+	c.AuthorName = p.str("author_name")
+	c.AuthorEmail = p.str("author_email")
 	c.Created = p.timestamp("created")
 	c.Updated = p.timestamp("updated")
 	c.InReplyTo = p.str("in_reply_to")
@@ -328,6 +330,12 @@ func ParseComment(path string, data []byte) (*Comment, error) {
 	c.Reactions = p.reactions("reactions")
 	c.Attachments = p.strList("attachments")
 	c.Extra = p.extra()
+	// The identity keys are comment-only; they are read above, not preserved.
+	delete(c.Extra, "author_name")
+	delete(c.Extra, "author_email")
+	if len(c.Extra) == 0 {
+		c.Extra = nil
+	}
 
 	if err := p.err(); err != nil {
 		return nil, err
@@ -401,6 +409,8 @@ func SerializeComment(c *Comment) ([]byte, error) {
 	w.scalar("type", string(TypeComment))
 	w.scalar("item", string(c.Item))
 	w.scalar("author", c.Author)
+	w.scalar("author_name", c.AuthorName)
+	w.scalar("author_email", c.AuthorEmail)
 	w.timestamp("created", c.Created)
 	w.timestamp("updated", c.Updated)
 	w.scalar("in_reply_to", c.InReplyTo)

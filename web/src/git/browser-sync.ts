@@ -489,6 +489,25 @@ async function readRemote(fs: GitFs): Promise<{ remote: string; url: string } | 
   return chosen ? { remote: chosen.remote, url: chosen.url } : undefined;
 }
 
+/**
+ * The `user.name` and `user.email` of a repository's own git configuration, or
+ * `undefined` when no name is set there or the folder is not a git repository.
+ * Comments and feedback notes are attributed to it (ADR-030).
+ */
+export async function readGitIdentity(
+  root: DirectoryHandleLike,
+): Promise<{ name: string; email: string } | undefined> {
+  try {
+    const fs = createGitFs(root);
+    const name: unknown = await git.getConfig({ fs, dir: ROOT, path: 'user.name' });
+    const email: unknown = await git.getConfig({ fs, dir: ROOT, path: 'user.email' });
+    if (typeof name !== 'string' || name.trim() === '') return undefined;
+    return { name: name.trim(), email: typeof email === 'string' ? email.trim() : '' };
+  } catch {
+    return undefined;
+  }
+}
+
 /** Reads the identity a merge commit is attributed to. */
 async function readAuthor(fs: GitFs): Promise<{ name: string; email: string }> {
   const name: unknown = await git.getConfig({ fs, dir: ROOT, path: 'user.name' });

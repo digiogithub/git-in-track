@@ -1558,6 +1558,7 @@ PATCH /api/v1/projects/{key}            # If-Match required; writes project.yaml
 GET /api/v1/projects/{key}/kb/tree      ?depth=3
 GET /api/v1/projects/{key}/kb/page?path=architecture/overview.md&format=raw|html|both
 PUT /api/v1/projects/{key}/kb/page      If-Match; body {"path":…,"content":"…"}
+POST /api/v1/projects/{key}/kb/feedback If-Match optional; body {"path":…,"notes":[…]}
 GET /api/v1/teams/{key}/kb/tree         # team knowledge/ folder, same shape, {key} is the team key
 GET /api/v1/kb/tree                     ?project=ACME    # flat form, vault-relative
 GET /api/v1/kb/page?path=docs/index.md  ?project=ACME
@@ -1567,6 +1568,16 @@ PUT /api/v1/kb/page                     If-Match; body {"path":…,"content":"�
 The flat `/api/v1/kb/…` form addresses a page by its vault-relative path and needs
 `?project=` only when the repository holds more than one project. Writing a page that does
 not exist yet needs no `If-Match`; overwriting one does.
+
+`POST …/kb/feedback` (every scope form: `/projects/{key}/kb`, `/teams/{key}/kb`, `/kb`) attaches
+feedback notes to lines of a page and appends them to the page's feedback block (docs/03 §14.4,
+ADR-030). Each note is `{"startLine":3,"endLine":4,"quote":"the migration","note":"Which one?"}`,
+lines being 1-based lines of the page `body`. `author`, `authorName` and `authorEmail` are optional:
+when none is sent the notes are attributed to the git identity of the repository. `If-Match` is
+honored when sent (`412` on a stale revision); without it the notes are written against the page as
+it is now. A note with no text or with lines outside the page content is `400 invalid_request`. The
+answer is the page, with its new `ETag`. Every page write — this one and `PUT …/kb/page` — drops
+the notes whose text has changed since they were written.
 
 ```json
 GET /api/v1/projects/ACME/kb/page?path=architecture/overview.md&format=both
@@ -1674,6 +1685,14 @@ PATCH semantics: only supplied keys change. `addLabels`/`removeLabels` and
 each other's lists. `body` replaces the whole body; `bodyAppend` appends; `bodySections`
 lets a client replace a single `##` section by name (used by agents to update
 `## Acceptance Criteria` without touching `## Description`).
+
+A comment body may name its writer with `author` (a handle) and/or `authorName`/`authorEmail`.
+When it names nobody — or sends the placeholder handle `me` older web builds used — the comment is
+attributed to the git identity of the repository the item lives in: `user.name` and `user.email`,
+or the `git.authorName`/`authorEmail` overrides. The handle is then derived from the name
+(`Marta Alonso` → `marta-alonso`), and `author_name`/`author_email` are recorded in the comment's
+front matter (docs/03 §11.2). `gintrack item comment` does the same when neither `--author` nor
+`git.authorName` is set.
 
 ```json
 POST /api/v1/items/ACME-T-0311/comments

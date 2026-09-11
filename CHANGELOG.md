@@ -14,6 +14,20 @@ because a commit list cannot express them.
 
 ### Added
 
+- **Feedback mode on items and knowledge-base pages** (ADR-030, docs/05 §8.5, docs/03 §14.4).
+  A **Feedback** button on the item view and the page viewer — or simply selecting text in
+  the description or the page — turns it on. Each selection opens an overlay for a comment
+  or clarification, and the notes collect in a Feedback panel. They are kept in the browser's
+  `localStorage` per item and per page until they are saved, so unsaved feedback on several
+  items survives a reload. Saving on an item writes **one comment** that quotes every
+  selection with its description lines. Saving on a page appends the notes to a
+  **feedback block at the end of the file**, `### <author> feedback: <id>` followed by the
+  quoted source lines and the note, each anchored to a hash of the lines it refers to. Every
+  page write through the core then drops the notes whose text has changed, so an agent
+  reading the page is never told about text that no longer exists. New: `kb.feedback.add`
+  in the core, `POST …/kb/feedback` in the companion, and `author_name` / `author_email` in
+  comment front matter.
+
 - **The MCP write tools can be switched on from the web app** (docs/07 §5.5, docs/08 §7.1).
   Settings gained an **Agent tools (MCP)** card whose switch writes `mcp.allowWrite` to the
   configuration file, so agents get the write tools without anybody editing YAML or teaching
@@ -165,6 +179,15 @@ because a commit list cannot express them.
   additive.
 
 ### Fixed
+
+- **Comments written from the web app are attributed to the git user of the repository**
+  (docs/07, ADR-030). Both providers sent the literal author `me`, so every comment posted
+  from the UI was named `…-me.md` and signed `me`. No author is sent now: the companion
+  takes `user.name` and `user.email` from the repository's git configuration chain, the
+  browser reads the repository's `.git/config` and then the author in Settings → Sync, and
+  `gintrack item comment` does the same when neither `--author` nor `git.authorName` is set.
+  The handle in the file name is derived from the name, and the name and email are stored
+  as `author_name` / `author_email`.
 
 - **A large repository no longer silently switches off live updates for the others**
   (docs/06 §9.2, docs/07 §7.2). The companion registered one inotify watch per directory

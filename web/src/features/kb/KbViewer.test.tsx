@@ -8,7 +8,7 @@ import {
   RouterProvider,
   useParams,
 } from '@tanstack/react-router';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -16,6 +16,7 @@ import { DataProviderProvider } from '@/api/DataProviderProvider';
 import { FakeProvider, samplePages } from '@/api/fake-provider';
 import type { DataProvider, KbPage } from '@/api/provider';
 import { KB_TREE_MIN_WIDTH, useUiPrefs } from '@/app/ui-prefs';
+import { resetFeedbackCache } from '@/features/feedback/feedback-store';
 import { KbViewer } from '@/features/kb/KbViewer';
 import { clearMarkdownCache } from '@/markdown';
 
@@ -325,5 +326,39 @@ describe('KbViewer', () => {
     renderKb('/p/ACME/kb/docs/index.md');
     await expectPageHeading('ACME Platform');
     expect(screen.queryByRole('link', { name: 'Edit' })).toBeNull();
+  });
+
+  it('saves feedback notes into the page, anchored to the lines they quote', async () => {
+    localStorage.clear();
+    resetFeedbackCache();
+    const user = userEvent.setup();
+    const provider = new FakeProvider({ pages: samplePages });
+    renderKb('/p/ACME/kb/docs/index.md', provider);
+    await expectPageHeading('ACME Platform');
+
+    await user.click(screen.getByRole('button', { name: 'Feedback' }));
+    const paragraph = document.querySelector<HTMLElement>('.markdown-body p[data-line-start]');
+    if (!paragraph) throw new Error('the page renders no addressable paragraph');
+    const range = document.createRange();
+    range.selectNodeContents(paragraph);
+    document.getSelection()?.removeAllRanges();
+    document.getSelection()?.addRange(range);
+    fireEvent.mouseUp(paragraph);
+
+    const overlay = await screen.findByRole('dialog', { name: 'Add a feedback note' });
+    await user.type(within(overlay).getByRole('textbox', { name: 'Feedback note' }), 'Outdated');
+    await user.click(within(overlay).getByRole('button', { name: 'Add note' }));
+    await user.click(screen.getByRole('button', { name: 'Save feedback' }));
+
+    await waitFor(() => expect(provider.pageFeedback).toHaveLength(1));
+    const line = Number(paragraph.dataset['lineStart']);
+    expect(provider.pageFeedback[0]).toMatchObject({
+      path: 'docs/index.md',
+      notes: [{ startLine: line, note: 'Outdated' }],
+    });
+    // The page now ends with the feedback block (the outline lists it too).
+    expect((await screen.findAllByText(/Fake Author feedback/)).length).toBeGreaterThan(0);
+    expect(screen.queryByRole('region', { name: 'Feedback notes' })).toBeNull();
+    document.getSelection()?.removeAllRanges();
   });
 });

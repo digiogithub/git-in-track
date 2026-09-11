@@ -39,6 +39,7 @@ import type {
   ItemPatch,
   ItemReference,
   ItemReferencesResult,
+  KbFeedbackNoteDraft,
   KbNode,
   KbPage,
   KbScope,
@@ -1266,13 +1267,15 @@ export class FakeProvider implements DataProvider {
     if (!item) return Promise.reject(new ProviderError('not_found', `Item ${id} not found`));
     const lines = (item.body ?? '').split('\n');
     const source = lines[line - 1];
-    const marker = source === undefined ? null : /^([ \t]*(?:[-*+]|\d+[.)])[ \t]+\[)([ xX])(\])/.exec(source);
+    const marker =
+      source === undefined ? null : /^([ \t]*(?:[-*+]|\d+[.)])[ \t]+\[)([ xX])(\])/.exec(source);
     if (!marker) {
       return Promise.reject(
         new ProviderError('validation_failed', `Line ${line} of ${id} is not a task-list item`),
       );
     }
-    lines[line - 1] = `${marker[1]}${checked ? 'x' : ' '}${marker[3]}${source?.slice(marker[0].length) ?? ''}`;
+    lines[line - 1] =
+      `${marker[1]}${checked ? 'x' : ' '}${marker[3]}${source?.slice(marker[0].length) ?? ''}`;
     return this.updateItem(id, { body: lines.join('\n') }, rev);
   }
 
@@ -1281,7 +1284,13 @@ export class FakeProvider implements DataProvider {
     const references: ItemReference[] = [];
     for (const item of this.items.values()) {
       if (item.id === id) continue;
-      const base = { kind: 'item', id: item.id, path: item.path, title: item.title, type: item.type };
+      const base = {
+        kind: 'item',
+        id: item.id,
+        path: item.path,
+        title: item.title,
+        type: item.type,
+      };
       if (item.parent === id) references.push({ ...base, field: 'parent', ref: id });
       if (item.milestone === id) references.push({ ...base, field: 'milestone', ref: id });
       for (const link of item.links ?? []) {
@@ -2422,6 +2431,48 @@ export class FakeProvider implements DataProvider {
     return Promise.resolve(structuredClone(page));
   }
 
+  /** Every `addPageFeedback` call, oldest first, for tests to assert on. */
+  readonly pageFeedback: { path: string; notes: KbFeedbackNoteDraft[]; rev?: string }[] = [];
+
+  /**
+   * Appends a simplified feedback block. The real format, the anchors and the
+   * pruning live in the Go core (`core.AddKbFeedback`); the fake only has to
+   * show the page changed.
+   */
+  addPageFeedback(
+    _scope: KbScope,
+    path: string,
+    notes: KbFeedbackNoteDraft[],
+    rev?: string,
+  ): Promise<KbPage> {
+    this.assertWritable();
+    const existing = this.pages.get(path);
+    if (!existing) {
+      return Promise.reject(new ProviderError('not_found', `Page ${path} not found`, path));
+    }
+    if (rev !== undefined && existing.rev !== rev) {
+      return Promise.reject(
+        new ProviderError('stale_revision', `Page ${path} changed on disk`, path),
+      );
+    }
+    this.pageFeedback.push({
+      path,
+      notes: structuredClone(notes),
+      ...(rev === undefined ? {} : { rev }),
+    });
+    const entries = notes
+      .map((n) => `### Fake Author feedback\n\n> Lines ${n.startLine}–${n.endLine}\n\n${n.note}`)
+      .join('\n\n');
+    const page: KbPage = {
+      ...existing,
+      body: `${existing.body.trimEnd()}\n\n---\n\n## Feedback\n\n${entries}\n`,
+      rev: this.nextRev(),
+    };
+    this.pages.set(path, page);
+    this.emit({ kind: 'kb', repoId: 'repo-1', paths: [path] });
+    return Promise.resolve(structuredClone(page));
+  }
+
   // ---------------------------------------------------------------------- git
 
   /**
@@ -2469,9 +2520,7 @@ export class FakeProvider implements DataProvider {
 
   setMcpWriteTools(allowWrite: boolean): Promise<McpSettings> {
     if (!this.mcp.supported) {
-      return Promise.reject(
-        new ProviderError('read_only', 'This runtime serves no MCP endpoint.'),
-      );
+      return Promise.reject(new ProviderError('read_only', 'This runtime serves no MCP endpoint.'));
     }
     this.mcp = { ...this.mcp, allowWrite, persisted: this.mcp.configPath !== '' };
     return Promise.resolve({ ...this.mcp });

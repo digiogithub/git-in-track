@@ -22,7 +22,11 @@ const commentAuthorFallback = "unknown"
 // created timestamp are derived by the store; a caller may pin Created to
 // reproduce a fixture.
 type CommentDraft struct {
-	Author      string              `json:"author"`
+	Author string `json:"author"`
+	// AuthorName and AuthorEmail are the git identity of the writer. The handle
+	// is derived from AuthorName when Author is empty.
+	AuthorName  string              `json:"authorName,omitempty"`
+	AuthorEmail string              `json:"authorEmail,omitempty"`
 	Body        string              `json:"body"`
 	InReplyTo   string              `json:"inReplyTo,omitempty"`
 	Kind        CommentKind         `json:"kind,omitempty"`
@@ -73,7 +77,11 @@ func (s *FileStore) AddComment(ctx context.Context, id ItemID, c CommentDraft) (
 	if created.IsZero() {
 		created = s.now()
 	}
-	author := SanitizeHandle(c.Author)
+	handleSource := c.Author
+	if strings.TrimSpace(handleSource) == "" {
+		handleSource = c.AuthorName
+	}
+	author := SanitizeHandle(handleSource)
 	kind := c.Kind
 	if kind == "" {
 		kind = CommentKindComment
@@ -90,6 +98,8 @@ func (s *FileStore) AddComment(ctx context.Context, id ItemID, c CommentDraft) (
 	comment := &Comment{
 		Item:        item.ID,
 		Author:      author,
+		AuthorName:  strings.TrimSpace(c.AuthorName),
+		AuthorEmail: strings.TrimSpace(c.AuthorEmail),
 		Created:     created,
 		InReplyTo:   c.InReplyTo,
 		Kind:        kind,

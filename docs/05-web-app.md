@@ -1059,6 +1059,43 @@ to a dangling id. That is why the reference list is a warning and not a refusal.
 A hard delete stays a deliberate act at the CLI and the API
 (`DELETE /items/{id}?hard=true`), where the user is asking for the file to go.
 
+### 8.5 Feedback mode (as built, ADR-030)
+
+The item detail view and the knowledge-base viewer both carry a **Feedback**
+button. In feedback mode the reader selects text in the rendered description or
+page and an overlay opens under the selection: the quote, the source lines it
+came from, and a box for the comment or clarification. Selecting text while the
+mode is off asks whether to turn it on first. Each note joins the **Feedback**
+panel, where it can be edited or removed before it is saved.
+
+- **Lines.** Both screens render with `sourceLines: true`, which runs
+  `rehype-source-lines` (§7): every paragraph, heading, list item, quote, code
+  block and table row carries `data-line-start` / `data-line-end`, the 1-based
+  lines of the body (front matter excluded). A selection resolves to the
+  innermost stamped blocks at both of its ends; when neither end is stamped (a
+  highlighted code block), the quote is searched for in the source.
+- **Drafts.** Notes live in `localStorage` under
+  `gintrack:feedback:<item|kb>:<project>:<id-or-path>`, together with whether
+  the mode is on, so unsaved feedback on any number of items and pages survives
+  a reload and is restored when the screen opens again. Saving, or discarding,
+  removes the key. Nothing is written to the repository before **Save
+  feedback**.
+- **On an item** the notes are saved as **one comment**
+  (`provider.addComment`): each note quotes its text, names the description
+  lines it sits on, and carries the note below the quote.
+- **On a page** the notes are saved through `provider.addPageFeedback` →
+  `kb.feedback.add` → `core.AddKbFeedback`, which appends them to the feedback
+  block at the end of the file (docs/03 §14.4): a `### <author> feedback: <id>`
+  entry per note, the referenced source lines as a quote, then the note. Each
+  entry is anchored to a hash of those lines, and every page write through the
+  core drops the entries whose lines no longer exist, so an AI reading the page
+  never sees feedback about text that has changed. The write is rev-guarded; a
+  stale page is reloaded and the notes are kept.
+- **Author.** Neither screen sends an author. The companion attributes the write
+  to the git identity (`user.name`, `user.email`) of the repository it lands in;
+  browser-only mode reads the repository's own `.git/config`, then the author of
+  Settings → Sync. Comments show the name, with the email as its tooltip.
+
 ---
 
 ## 9. Boards UX

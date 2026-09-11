@@ -375,8 +375,13 @@ type Item struct {
 // Comment is one entry under .pmngr/comments/<ITEM-ID>/. Comments have no id of
 // their own: they are addressed as "<ITEM-ID>#<file-stem>" (R-ID-4).
 type Comment struct {
-	Item        ItemID              `json:"item" yaml:"item"`
-	Author      string              `json:"author" yaml:"author"`
+	Item   ItemID `json:"item" yaml:"item"`
+	Author string `json:"author" yaml:"author"`
+	// AuthorName and AuthorEmail are the git identity of the person who wrote
+	// the comment (user.name and user.email of the repository), when the writer
+	// knew it. Author stays the handle the file name uses.
+	AuthorName  string              `json:"authorName,omitempty" yaml:"author_name,omitempty"`
+	AuthorEmail string              `json:"authorEmail,omitempty" yaml:"author_email,omitempty"`
 	Created     Timestamp           `json:"created,omitempty" yaml:"created,omitempty"`
 	Updated     Timestamp           `json:"updated,omitempty" yaml:"updated,omitempty"`
 	InReplyTo   string              `json:"inReplyTo,omitempty" yaml:"in_reply_to,omitempty"`

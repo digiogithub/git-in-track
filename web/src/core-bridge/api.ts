@@ -58,7 +58,12 @@ export type Item = {
 
 export type Comment = {
   item: string;
+  /** The handle of the file name, `[a-z0-9-]+`. */
   author: string;
+  /** The git `user.name` the comment was written as, when it was known. */
+  authorName?: string;
+  /** The git `user.email` the comment was written as, when it was known. */
+  authorEmail?: string;
   created?: string;
   updated?: string;
   inReplyTo?: string;
@@ -183,6 +188,26 @@ export type KbPage = {
   rev: string;
   outgoing: string[];
   backlinks: string[];
+};
+
+/**
+ * One feedback note on a knowledge-base page. Lines are 1-based lines of
+ * `KbPage.body`, the text after the front matter.
+ */
+export type KbFeedbackNoteDraft = {
+  startLine: number;
+  endLine: number;
+  /** The text the reader selected, as rendered. */
+  quote?: string;
+  note: string;
+};
+
+/** What the core recorded for one note: its id and the anchor it checks. */
+export type KbFeedbackNoteRef = {
+  id: string;
+  anchor: string;
+  startLine: number;
+  endLine: number;
 };
 
 export type SearchHit = {
@@ -1496,7 +1521,14 @@ export type CoreApi = {
 
   'comment.list': { params: { id: string }; result: Comment[] };
   'comment.add': {
-    params: { id: string; author: string; body: string; inReplyTo?: string };
+    params: {
+      id: string;
+      author?: string;
+      authorName?: string;
+      authorEmail?: string;
+      body: string;
+      inReplyTo?: string;
+    };
     result: { comment: Comment; writes: WriteSet };
   };
 
@@ -1505,6 +1537,23 @@ export type CoreApi = {
   'kb.write': {
     params: { path: string; text: string; rev?: string; vaultId?: string };
     result: { page: KbPage; writes: WriteSet };
+  };
+  /**
+   * Appends feedback notes to the feedback block at the end of a page. Each
+   * note is anchored to a hash of the body lines it quotes; a later write that
+   * changes those lines drops the note (docs/03-data-model.md, ADR-030).
+   */
+  'kb.feedback.add': {
+    params: {
+      path: string;
+      notes: KbFeedbackNoteDraft[];
+      rev?: string;
+      vaultId?: string;
+      author?: string;
+      authorName?: string;
+      authorEmail?: string;
+    };
+    result: { page: KbPage; writes: WriteSet; notes: KbFeedbackNoteRef[] };
   };
 
   search: { params: { q: string; limit?: number; project?: string }; result: SearchHit[] };

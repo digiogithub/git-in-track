@@ -27,6 +27,8 @@ export type ItemBodyProps = {
   onToggleTask?: ToggleTask;
   /** Disables the checkboxes while a toggle is in flight. */
   taskBusy?: boolean;
+  /** Stamps source lines on blocks, for feedback notes. */
+  sourceLines?: boolean;
 };
 
 /**
@@ -41,11 +43,13 @@ export function ItemBody({
   cacheKey,
   onToggleTask,
   taskBusy,
+  sourceLines,
 }: ItemBodyProps) {
   const options = useMemo<RenderOptions>(
     () => ({
       basePath: path,
       ...(cacheKey ? { cacheKey } : {}),
+      ...(sourceLines ? { sourceLines } : {}),
       resolveLink: (target: WikiTarget): LinkResolution => {
         const key = target.projectKey ?? project;
         return target.kind === 'item'
@@ -57,7 +61,7 @@ export function ItemBody({
         kind: 'page',
       }),
     }),
-    [path, project, cacheKey],
+    [path, project, cacheKey, sourceLines],
   );
 
   const markdown = useMarkdown(body, options);

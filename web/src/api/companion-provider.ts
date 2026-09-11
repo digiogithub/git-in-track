@@ -37,6 +37,7 @@ import type {
   CreateTeamInput,
   ChangeEvent,
   Comment,
+  KbFeedbackNoteDraft,
   ConflictAnalysis,
   ConflictResolution,
   ConflictResolveResult,
@@ -490,6 +491,8 @@ export function toComment(
     path: asString(record['path']) ?? '',
     rev: asString(record['rev']) ?? '',
   };
+  put(comment, 'authorName', asString(record['authorName']));
+  put(comment, 'authorEmail', asString(record['authorEmail']));
   put(comment, 'created', asString(record['created']));
   put(comment, 'updated', asString(record['updated']));
   put(comment, 'inReplyTo', asString(record['inReplyTo']));
@@ -1489,12 +1492,29 @@ export class CompanionProvider implements DataProvider {
     });
   }
 
-  async addComment(id: string, body: string, author = 'me'): Promise<Comment> {
+  async addComment(id: string, body: string, author?: string): Promise<Comment> {
+    // No author: the companion attributes the comment to the git identity of
+    // the item's repository.
     const answer = await this.#json(`${API_PREFIX}/items/${encodeURIComponent(id)}/comments`, {
       method: 'POST',
-      body: { body, author },
+      body: author ? { body, author } : { body },
     });
-    return toComment(answer, { item: id, author, body });
+    return toComment(answer, { item: id, author: author ?? '', body });
+  }
+
+  async addPageFeedback(
+    scope: KbScope,
+    path: string,
+    notes: KbFeedbackNoteDraft[],
+    rev?: string,
+  ): Promise<KbPage> {
+    const answer = await this.#json(`${kbBase(scope)}/feedback`, {
+      method: 'POST',
+      ...(rev === undefined ? {} : { rev }),
+      body: { path, notes },
+    });
+    const page = toKbPage(answer, path);
+    return page.rev === '' || page.body === '' ? this.getPage(scope, path) : page;
   }
 
   async writePage(scope: KbScope, path: string, content: string, rev?: string): Promise<KbPage> {

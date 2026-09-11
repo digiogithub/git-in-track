@@ -1,4 +1,5 @@
 import { Link, useNavigate, useParams } from '@tanstack/react-router';
+import { MessageSquarePlus } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 
 import type { Item, ProjectSummary } from '@/api/provider';
@@ -43,6 +44,10 @@ import {
   useProject,
   useToggleTask,
 } from '@/features/backlog/queries';
+import { useFeedbackDraft } from '@/features/feedback/feedback-store';
+import { FeedbackPanel } from '@/features/feedback/FeedbackPanel';
+import { FeedbackSelection } from '@/features/feedback/FeedbackSelection';
+import { formatFeedbackComment } from '@/features/feedback/format';
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -189,7 +194,12 @@ function CommentsPanel({ item, projectKey }: { item: Item; projectKey: string })
           {(comments.data ?? []).map((comment) => (
             <li key={comment.path} className="rounded-md border border-border p-3">
               <p className="text-xs text-muted-foreground">
-                <strong className="text-foreground">{comment.author}</strong>{' '}
+                <strong
+                  className="text-foreground"
+                  {...(comment.authorEmail ? { title: comment.authorEmail } : {})}
+                >
+                  {comment.authorName || comment.author}
+                </strong>{' '}
                 {formatDate(comment.created)}
               </p>
               <div className="mt-1 text-sm">
@@ -279,6 +289,9 @@ function ItemDetailView() {
   const grandParentQuery = useItem(projectKey, parentQuery.data?.parent ?? '');
   const toggleTask = useToggleTask(projectKey);
   const deleteItem = useDeleteItem(projectKey);
+  const feedback = useFeedbackDraft({ kind: 'item', project: projectKey, ref: id });
+  const saveFeedback = useAddComment(projectKey);
+  const [feedbackError, setFeedbackError] = useState<string | null>(null);
 
   if (itemQuery.isPending) {
     return <p className="py-8 text-center text-sm text-muted-foreground">Loading {id}…</p>;
@@ -316,6 +329,8 @@ function ItemDetailView() {
   const childType =
     item.type === 'epic' ? 'story' : item.type === 'story' ? ('task' as const) : undefined;
   const custom = Object.entries(item.custom ?? {});
+  const feedbackCount = feedback.draft.notes.length;
+  const showFeedback = feedback.draft.active || feedbackCount > 0;
 
   return (
     <div className="space-y-6">
@@ -364,6 +379,15 @@ function ItemDetailView() {
           <h1 className="page-title">{item.title}</h1>
           <div className="flex items-center gap-2">
             <StatusPicker item={item} project={project} projectKey={projectKey} />
+            <Button
+              variant={feedback.draft.active ? 'secondary' : 'outline'}
+              aria-pressed={feedback.draft.active}
+              title="Select text in the description to attach feedback notes"
+              onClick={() => feedback.setActive(!feedback.draft.active)}
+            >
+              <MessageSquarePlus className="size-4" aria-hidden="true" />
+              Feedback{feedbackCount > 0 ? ` (${feedbackCount})` : ''}
+            </Button>
             <FeatureLink
               to="/p/$project/items/$id/edit"
               params={{ project: projectKey, id: item.id }}
@@ -478,37 +502,72 @@ function ItemDetailView() {
           <CardTitle>Description</CardTitle>
         </CardHeader>
         <CardContent>
-          <ItemBody
-            body={item.body}
-            path={item.path}
-            project={projectKey}
-            cacheKey={`${item.path}@${item.rev}`}
-            taskBusy={toggleTask.isPending}
-            {...(provider.capabilities.write
-              ? {
-                  onToggleTask: (line: number, checked: boolean) => {
-                    toggleTask.mutate(
-                      { id: item.id, line, checked, rev: item.rev },
-                      {
-                        onError: (error) => {
-                          const stale =
-                            error instanceof ProviderError && error.code === 'stale_revision';
-                          toast({
-                            variant: 'destructive',
-                            title: stale ? 'Changed on disk' : 'The checkbox was not saved',
-                            description: stale
-                              ? `${item.id} was modified elsewhere. It has been reloaded — try again.`
-                              : error.message,
-                          });
+          <FeedbackSelection
+            source={item.body}
+            active={feedback.draft.active}
+            notes={feedback.draft.notes}
+            contentKey={`${item.path}@${item.rev}`}
+            onEnable={() => feedback.setActive(true)}
+            onAddNote={feedback.addNote}
+          >
+            <ItemBody
+              body={item.body}
+              path={item.path}
+              project={projectKey}
+              cacheKey={`${item.path}@${item.rev}`}
+              sourceLines
+              taskBusy={toggleTask.isPending}
+              {...(provider.capabilities.write
+                ? {
+                    onToggleTask: (line: number, checked: boolean) => {
+                      toggleTask.mutate(
+                        { id: item.id, line, checked, rev: item.rev },
+                        {
+                          onError: (error) => {
+                            const stale =
+                              error instanceof ProviderError && error.code === 'stale_revision';
+                            toast({
+                              variant: 'destructive',
+                              title: stale ? 'Changed on disk' : 'The checkbox was not saved',
+                              description: stale
+                                ? `${item.id} was modified elsewhere. It has been reloaded — try again.`
+                                : error.message,
+                            });
+                          },
                         },
-                      },
-                    );
-                  },
-                }
-              : {})}
-          />
+                      );
+                    },
+                  }
+                : {})}
+            />
+          </FeedbackSelection>
         </CardContent>
       </Card>
+
+      {showFeedback ? (
+        <FeedbackPanel
+          feedback={feedback}
+          destination="comment"
+          canWrite={provider.capabilities.write}
+          saving={saveFeedback.isPending}
+          error={feedbackError}
+          onSave={() => {
+            setFeedbackError(null);
+            saveFeedback.mutate(
+              { id: item.id, body: formatFeedbackComment(feedback.draft.notes) },
+              {
+                onSuccess: () => {
+                  feedback.clear();
+                  toast({ title: 'Feedback saved as a comment' });
+                },
+                onError: (error) => {
+                  setFeedbackError(`The feedback was not saved: ${error.message}`);
+                },
+              },
+            );
+          }}
+        />
+      ) : null}
 
       <Card>
         <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0">

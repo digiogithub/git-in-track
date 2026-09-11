@@ -42,8 +42,19 @@ function inherit(name: string): AttributeValues {
   return values.filter((value) => !(Array.isArray(value) && value[0] === 'className'));
 }
 
+/** The source range `rehype-source-lines` stamps on block elements. */
+const LINES = ['dataLineStart', 'dataLineEnd'];
+
 const attributes: Attributes = {
   ...defaultSchema.attributes,
+  p: [...inherit('p'), ...LINES],
+  blockquote: [...inherit('blockquote'), ...LINES],
+  table: [...inherit('table'), ...LINES],
+  tr: [...inherit('tr'), ...LINES],
+  td: [...inherit('td'), ...LINES],
+  th: [...inherit('th'), ...LINES],
+  dt: [...inherit('dt'), ...LINES],
+  dd: [...inherit('dd'), ...LINES],
   a: [
     ...inherit('a'),
     'rel',
@@ -73,6 +84,7 @@ const attributes: Attributes = {
     'style',
     'tabIndex',
     'dataMermaid',
+    ...LINES,
   ],
   span: [['className', SHIKI_CLASS, 'line', 'callout-icon', 'math-inline'], 'style'],
   div: [
@@ -93,7 +105,7 @@ const attributes: Attributes = {
   section: [...inherit('section'), 'dataFootnotes', ['className', 'footnotes']],
   ul: [...inherit('ul'), ['className', 'contains-task-list']],
   ol: [...inherit('ol'), ['className', 'contains-task-list']],
-  li: [...inherit('li'), 'id', ['className', 'task-list-item']],
+  li: [...inherit('li'), 'id', ...LINES, ['className', 'task-list-item']],
   // Task-list checkboxes: `checked` is not in the GitHub schema but is exactly
   // what makes `- [x]` render as ticked. `data-task-line` is the source line
   // the renderer stamps on it, and the address a toggle sends back.
@@ -110,12 +122,12 @@ const attributes: Attributes = {
     'dataBlockedImage',
     ['className', 'wikilink-embed'],
   ],
-  h1: [['className', 'heading', 'sr-only']],
-  h2: [['className', 'heading', 'sr-only']],
-  h3: [['className', 'heading', 'sr-only']],
-  h4: [['className', 'heading', 'sr-only']],
-  h5: [['className', 'heading', 'sr-only']],
-  h6: [['className', 'heading', 'sr-only']],
+  h1: [...LINES, ['className', 'heading', 'sr-only']],
+  h2: [...LINES, ['className', 'heading', 'sr-only']],
+  h3: [...LINES, ['className', 'heading', 'sr-only']],
+  h4: [...LINES, ['className', 'heading', 'sr-only']],
+  h5: [...LINES, ['className', 'heading', 'sr-only']],
+  h6: [...LINES, ['className', 'heading', 'sr-only']],
 };
 
 /** The hardened schema used for every KB page, item body and editor preview. */

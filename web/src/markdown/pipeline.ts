@@ -12,6 +12,7 @@
  *     → rehype-slug + heading anchors
  *     → rehype-mermaid-placeholder            pre.mermaid, rendered client-side
  *     → rehype-task-list                      source line of every checkbox
+ *     → rehype-source-lines                   opt-in: line range of every block
  *     → rehype-resolve-assets                 repo-relative images and links
  *     → shiki (lazy, code-split)
  *     → rehype-sanitize(kbSanitizeSchema)     always last
@@ -37,6 +38,7 @@ import { hasHighlightableCode } from '@/markdown/code';
 import { collectHeadings, rehypeHeadingAnchors } from '@/markdown/headings';
 import { rehypeMermaid } from '@/markdown/mermaid';
 import { kbSanitizeSchema } from '@/markdown/sanitize';
+import { rehypeSourceLines } from '@/markdown/source-lines';
 import { rehypeTaskList } from '@/markdown/tasklist';
 import type { RenderOptions, RenderResult, WikiTarget } from '@/markdown/types';
 import { remarkWikilink } from '@/markdown/wikilink';
@@ -85,6 +87,7 @@ function optionsKey(options: RenderOptions): string {
     options.math ? 'm1' : 'm0',
     options.highlight === false ? 'h0' : 'h1',
     options.externalImages === false ? 'x0' : 'x1',
+    options.sourceLines ? 'l1' : 'l0',
   ].join('|');
 }
 
@@ -126,6 +129,7 @@ export async function renderMarkdown(
     .use(rehypeHeadingAnchors)
     .use(rehypeMermaid, mermaid)
     .use(rehypeTaskList)
+    .use(options.sourceLines ? [rehypeSourceLines] : [])
     .use(rehypeResolveAssets, {
       ...(options.basePath ? { basePath: options.basePath } : {}),
       ...(options.resolveHref ? { resolveHref: options.resolveHref } : {}),

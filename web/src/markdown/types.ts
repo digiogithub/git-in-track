@@ -89,6 +89,11 @@ export type RenderOptions = {
   externalImages?: boolean;
   /** When set, the result is memoised under this key (use `path@rev`). */
   cacheKey?: string;
+  /**
+   * Stamps `data-line-start` / `data-line-end` on block elements, so a text
+   * selection maps back to source lines (feedback notes). Default false.
+   */
+  sourceLines?: boolean;
 };
 
 export type RenderResult = {

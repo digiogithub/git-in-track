@@ -19,6 +19,7 @@ func (s *Server) mountKB(r chi.Router) {
 	r.Get("/tree", s.handleKBTree)
 	r.Get("/page", s.handleKBPage)
 	r.Put("/page", s.handleKBWrite)
+	r.Post("/feedback", s.handleKBFeedback)
 	r.Get("/asset", s.notImplemented("Serving knowledge-base assets arrives with Phase 3."))
 }
 
@@ -176,6 +177,60 @@ func (s *Server) handleKBWrite(w http.ResponseWriter, r *http.Request) {
 
 	result, ok := s.call(w, r, m, "kb.write", map[string]any{
 		"path": target, "text": content, "rev": rev,
+	})
+	if !ok {
+		return
+	}
+	page := field(result, "page")
+	s.publishPageWrite(r, m, result)
+	writeEntity(w, r, http.StatusOK, page, stringField(page, "Rev"))
+}
+
+// handleKBFeedback serves POST …/kb/feedback: feedback notes attached to lines
+// of a page, appended to the page's feedback block (ADR-030). If-Match is
+// honored when it is sent; without it the note is written against the page as
+// it is now, since adding feedback never rewrites the text it is about.
+func (s *Server) handleKBFeedback(w http.ResponseWriter, r *http.Request) {
+	m, project, ok := s.kbScope(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Path        string `json:"path"`
+		Author      string `json:"author,omitempty"`
+		AuthorName  string `json:"authorName,omitempty"`
+		AuthorEmail string `json:"authorEmail,omitempty"`
+		Notes       []struct {
+			StartLine int    `json:"startLine"`
+			EndLine   int    `json:"endLine"`
+			Quote     string `json:"quote,omitempty"`
+			Note      string `json:"note"`
+		} `json:"notes"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	if body.Path == "" {
+		body.Path = r.URL.Query().Get("path")
+	}
+	if body.Path == "" {
+		failProblem(w, r, codeInvalidRequest, "A feedback request needs the path of the page.")
+		return
+	}
+	if len(body.Notes) == 0 {
+		failProblem(w, r, codeInvalidRequest, "A feedback request needs at least one note.")
+		return
+	}
+	rev, _, wildcard := ifMatch(r)
+	if wildcard {
+		rev = ""
+	}
+	who := s.writerIdentity(r, m, writer{
+		Author: body.Author, AuthorName: body.AuthorName, AuthorEmail: body.AuthorEmail,
+	})
+	result, ok := s.call(w, r, m, "kb.feedback.add", map[string]any{
+		"path": s.docsRelative(m, project, body.Path), "rev": rev, "notes": body.Notes,
+		"author": who.Author, "authorName": who.AuthorName, "authorEmail": who.AuthorEmail,
 	})
 	if !ok {
 		return
