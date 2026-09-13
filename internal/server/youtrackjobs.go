@@ -230,6 +230,10 @@ func (y *youtrackState) jobClientFor(project string) (youtrackJobClient, vault.Y
 // wrote `manual` into anything a file left out, and inventing a default in a
 // second place is how the two would drift.
 //
+// LandInInbox crosses for the same reason: it is the whole of R-INT-7, and the
+// import reads it back through this provider to decide whether an issue it
+// creates arrives in the project's triage queue or in its backlog.
+//
 // The field map crosses as the whole block, value maps included: an import runs
 // through this provider, and a flat field-name projection would have left every
 // value translation the project configured on this side of the seam.
@@ -239,6 +243,7 @@ func youtrackLinkOf(client *youtrack.Client, link *config.YouTrackLink) vault.Yo
 		out.Project = link.Project
 		out.FieldMap = youtrackFieldSpecs(link)
 		out.PushComments = string(link.PushComments)
+		out.LandInInbox = link.LandInInbox
 	}
 	return out
 }

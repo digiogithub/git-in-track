@@ -2,7 +2,7 @@
 id: GIT-US-0047
 type: story
 title: Vault operations youtrack.import.preview and youtrack.import.run
-status: in_review
+status: done
 priority: high
 parent: GIT-EP-0012
 milestone: GIT-M-0011
@@ -10,8 +10,9 @@ author: mcp
 labels: [core, server]
 estimate: 8
 created: 2026-09-13T13:11:28Z
-updated: 2026-09-13T15:09:56Z
+updated: 2026-09-13T17:24:50Z
 started: 2026-09-13T15:09:40Z
+closed: 2026-09-13T17:24:50Z
 ---
 
 ## Description

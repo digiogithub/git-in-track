@@ -28,7 +28,14 @@ import {
 } from '@tanstack/react-query';
 import { useEffect } from 'react';
 
-import type { InboxFilter, InboxPage, InboxTriageInput, InboxTriageResult } from '@/api/provider';
+import type {
+  InboxDraft,
+  InboxFilter,
+  InboxPage,
+  InboxTriageInput,
+  InboxTriageResult,
+  Item,
+} from '@/api/provider';
 import { useProvider } from '@/api/provider-context';
 import { backlogKeys } from '@/features/backlog/queries';
 
@@ -184,4 +191,28 @@ export function useInboxEvents(project: string): void {
       }),
     [provider, queryClient, project],
   );
+}
+
+/**
+ * Files one submission into the queue.
+ *
+ * The badge is not moved optimistically: the write allocates an id and a file,
+ * and a capture form that claimed the queue had grown before the host agreed
+ * would be lying about the one thing the person wants to know. The answer
+ * refreshes the queue instead, and the `inbox.changed` event the host raises
+ * corrects the badge in both runtimes.
+ */
+export function useCreateInboxItem(
+  project: string,
+): UseMutationResult<Item, Error, InboxDraft, unknown> {
+  const provider = useProvider();
+  const queryClient = useQueryClient();
+
+  return useMutation<Item, Error, InboxDraft>({
+    mutationFn: (draft) => provider.createInboxItem(draft),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: inboxKeys.project(project) });
+      void queryClient.invalidateQueries({ queryKey: backlogKeys.lists(project) });
+    },
+  });
 }

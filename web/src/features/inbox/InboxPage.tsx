@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/toast';
 import { useProject } from '@/features/backlog/queries';
 import { ConflictDialog } from '@/features/editor/ConflictDialog';
+import { AddToInboxButton } from '@/features/inbox/AddToInboxButton';
 import { InboxActions, type InboxDialog } from '@/features/inbox/InboxActions';
 import { InboxDetail } from '@/features/inbox/InboxDetail';
 import { InboxList } from '@/features/inbox/InboxList';
@@ -65,7 +66,10 @@ export function InboxPage() {
   const gated = projectQuery.isSuccess && !hasTriageStatus(project);
 
   const filterName = inboxFilterName(search);
-  const filter = useMemo(() => toInboxFilter(search, { project: projectKey }), [search, projectKey]);
+  const filter = useMemo(
+    () => toInboxFilter(search, { project: projectKey }),
+    [search, projectKey],
+  );
   const queue = useInbox(filter, projectQuery.isSuccess && !gated);
   const triage = useTriageInboxItem(projectKey, filter);
   useInboxEvents(projectKey);
@@ -179,9 +183,9 @@ export function InboxPage() {
       <div className="space-y-3">
         <h1 className="page-title">Inbox</h1>
         <p className="empty-state">
-          {projectKey} declares no status in the <code className="font-mono">triage</code>{' '}
-          category, so it has no inbox. Add one to <code className="font-mono">project.yaml</code>{' '}
-          to start collecting submissions.
+          {projectKey} declares no status in the <code className="font-mono">triage</code> category,
+          so it has no inbox. Add one to <code className="font-mono">project.yaml</code> to start
+          collecting submissions.
         </p>
       </div>
     );
@@ -196,24 +200,27 @@ export function InboxPage() {
             {counts.pending ?? 0} waiting · {counts.snoozed ?? 0} snoozed · {total} in this view
           </p>
         </div>
-        <nav aria-label="Triage filter" className="flex gap-1">
-          {inboxFilters.map((name) => (
-            <Button
-              key={name}
-              size="sm"
-              variant={name === filterName ? 'secondary' : 'ghost'}
-              aria-pressed={name === filterName}
-              onClick={() => {
-                // Changing the slice drops the selection: the row that was open
-                // may not be in the new one, and the first row of the new slice
-                // is where a pass continues.
-                setSearch({ filter: name === 'pending' ? undefined : name, selected: undefined });
-              }}
-            >
-              {filterLabel[name]}
-            </Button>
-          ))}
-        </nav>
+        <div className="flex flex-wrap items-center gap-2">
+          <AddToInboxButton project={projectKey} variant="bar" />
+          <nav aria-label="Triage filter" className="flex gap-1">
+            {inboxFilters.map((name) => (
+              <Button
+                key={name}
+                size="sm"
+                variant={name === filterName ? 'secondary' : 'ghost'}
+                aria-pressed={name === filterName}
+                onClick={() => {
+                  // Changing the slice drops the selection: the row that was open
+                  // may not be in the new one, and the first row of the new slice
+                  // is where a pass continues.
+                  setSearch({ filter: name === 'pending' ? undefined : name, selected: undefined });
+                }}
+              >
+                {filterLabel[name]}
+              </Button>
+            ))}
+          </nav>
+        </div>
       </header>
 
       <div className="grid gap-5 lg:grid-cols-[minmax(16rem,22rem)_minmax(0,1fr)]">
@@ -340,7 +347,13 @@ type KeyboardTriageOptions = {
  * Keys are ignored while the focus is in a field or a dialog: someone typing a
  * snooze date into the picker is not asking to reject the row behind it.
  */
-function useKeyboardTriage({ enabled, onMove, onAccept, onReject, onSnooze }: KeyboardTriageOptions) {
+function useKeyboardTriage({
+  enabled,
+  onMove,
+  onAccept,
+  onReject,
+  onSnooze,
+}: KeyboardTriageOptions) {
   const handlers = useRef({ onMove, onAccept, onReject, onSnooze });
   handlers.current = { onMove, onAccept, onReject, onSnooze };
 

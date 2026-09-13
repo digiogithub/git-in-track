@@ -28,6 +28,27 @@ because a commit list cannot express them.
   the `1` of a failed job — so a CI step fails on a divergence instead of reporting success
   over it. A local comment delete still never deletes remotely.
 
+- **Anyone can put something in the inbox from the UI** (`GIT-US-0066`, docs/05 §3.1). An
+  *Add to inbox* control sits in the items page header beside *New item*, and in the Inbox
+  header itself. It opens the only create form in the app that asks **no type, no parent and
+  no status question**: a title, optionally what happened, and nothing else. A report is not a
+  plan, so nothing places it — the item is filed with the project's triage status and
+  `inbox.source: web`, and the dialog then names the id it was given and links to the queue.
+  Like the sidebar entry, it renders nothing at all for a project that declares no triage
+  status. Until now the inbox could be filled from the CLI (`gintrack inbox add`) and from an
+  agent (`create_inbox_item`) but not from the application.
+
+- **`integrations.youtrack.land_in_inbox`** (`GIT-US-0066`, ADR-033, docs/03 §6 R-INT-7). A
+  per-project option that makes imported issues arrive in the triage queue instead of the
+  backlog, so a large import is reviewed before it becomes a commitment. It defaults to
+  `false`, which is what every import did before the key existed. The landing decision is one
+  helper, `core.InboxLandingStatus`, shared by every entry point that files work, and it
+  **refuses** rather than guesses: a project that declares no triage status and turns the
+  option on is a configuration error, because quietly landing a thousand issues in the backlog
+  is the one outcome the option exists to prevent. The key is read and never written, so a
+  connection saved from the settings screen cannot drop it. **The importer does not consume it
+  yet** — wiring it into the import write path is GIT-EP-0012.
+
 - **`gintrack sprint` and `gintrack inbox`** (`GIT-US-0066`, `GIT-US-0092`, docs/07 §4.16,
   §4.17). `sprint list|show|start|close|transfer` drives the cadence from a terminal, listing
   by the status derived from the dates rather than a stored one, and reporting per-item
@@ -170,7 +191,9 @@ because a commit list cannot express them.
   declares no `triage` status has an empty inbox, and filing something into it is refused
   with `no_triage_status` (409). Every triage, and every create that files an item straight
   into the queue, publishes `inbox.changed` with the pending count, so a badge never needs a
-  second call.
+  second call. **A project created before this change has no triage status and therefore no
+  inbox** until one is added to its workflow — there is no migration, and nothing to undo for
+  a team that does not want a queue.
 
 - **Moving a sprint's unfinished work is a route of its own, and every close can preview
   itself** (GIT-US-0085, docs/07 §5.5). `POST /api/v1/sprints/{id}/transfer` moves the
@@ -238,11 +261,17 @@ because a commit list cannot express them.
   history could be read is marked approximate rather than passed off as a reconstruction. Two
   prices are worth stating: "today" is a day in the **team timezone**, so clients that
   disagree about it disagree about a sprint's status for a few hours around midnight, and a
-  closed sprint file grows by one burndown row per sprint day. **How much of this is wired:**
-  the derived status travels on every sprint payload today. Dateless sprints are accepted by
-  the model but still refused by `sprint.create` and `sprint.update`; the `snapshot` block
-  parses, round-trips and reaches the API, but `sprint.close` does not write one yet and the
-  metrics do not read one back yet. docs/04 §8.2 marks each half.
+  closed sprint file grows by one burndown row per sprint day. **All of it is wired end to
+  end**: the derived status travels on every sprint payload, `sprint.create` and
+  `sprint.update` accept and park a dateless sprint, `sprint.close` freezes the snapshot
+  before a single carry decision rewrites an item out of the scope, and a closed sprint's
+  metrics are answered from the frozen block without touching git at all. `gintrack sprint`
+  and the cycles screens read the same derived status (docs/07 §4.16, docs/05 §8.6), and
+  `close_sprint` and `transfer_sprint_items` expose the close and the standalone transfer to
+  agents (docs/08 §4.14–§4.15). **Existing sprint files are unaffected**: they parse
+  unchanged, keep whatever dates they have, and gain a `snapshot` block only when they are
+  next closed — a sprint closed before this change simply has none, and its metrics keep
+  being reconstructed from git the way they always were.
 
 - **`internal/youtrack`, a typed client for the YouTrack REST API** (`GIT-US-0046`, docs/02
   §6): issues with their links, comments and attachments, projects, the authenticated user,
@@ -266,10 +295,15 @@ because a commit list cannot express them.
   generic — it schedules, batches, rate-limits, retries and journals, and knows nothing about
   any tracker — and its one contract on callers is that **handlers must be idempotent**,
   because a job is replayed after a retryable error, after a crash mid-run, and when somebody
-  retries it from the dead-letter list. The journal holds bookkeeping only: ids, kinds, keys,
-  attempt counts, states and redacted errors, never item content and never a credential, so
-  deleting it loses queued work and no user data, and a corrupt journal is moved aside rather
-  than being fatal. It now runs the four YouTrack job kinds behind
+  retries it from the dead-letter list. The journal is one file, `jobs.json`, inside the
+  configured `index.cacheDir`, written atomically and coalesced behind a 500 ms timer; it holds
+  bookkeeping — ids, kinds, coalescing keys, states, attempt counts, redacted errors — plus the
+  parameters the request carried, because replaying a job means running it with its own
+  arguments, and **never item content and never a credential**. A finished job is forgotten
+  after `sync.engine.retention` (a week by default). It is derived data and safe to delete at
+  any time — the only thing lost is queued work, never user data — and a corrupt or
+  unknown-version journal is moved aside rather than being fatal. docs/07 §4.1 documents the
+  location, the shape, the retention and the idempotence contract replay implies. It now runs the four YouTrack job kinds behind
   `/api/v1/sync/jobs`, and `gintrack youtrack push-comments` and `kb push|pull` drive the
   same engine in a companion that never binds a port.
 

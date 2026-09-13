@@ -147,6 +147,20 @@ type YouTrackLink struct {
 	// is a team decision about how this project signs what it publishes, and a
 	// clone must sign the same way.
 	CommentTemplate string `json:"commentTemplate,omitempty" yaml:"comment_template,omitempty"`
+	// LandInInbox makes imported issues arrive in the project's triage queue
+	// instead of its backlog, so that a large import is reviewed before it
+	// becomes a commitment (ADR-033, GIT-US-0066). It defaults to false, which
+	// is the behavior every import had before the key existed.
+	//
+	// The importer does not read this field directly: it hands it to
+	// core.InboxLandingStatus together with the project configuration, which is
+	// what decides the status an imported item is written with and what refuses
+	// the combination "land in the inbox" plus "this project has no inbox".
+	//
+	// It is read and never written. SaveYouTrackLink edits only the keys the
+	// settings screen owns, and a key it does not name survives untouched, so a
+	// team that set this by hand does not lose it to a connection save.
+	LandInInbox bool `json:"landInInbox,omitempty" yaml:"land_in_inbox,omitempty"`
 }
 
 // Normalized returns the link with its defaults filled in and its values

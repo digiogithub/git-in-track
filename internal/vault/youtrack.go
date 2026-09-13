@@ -98,6 +98,15 @@ type YouTrackLink struct {
 	// not set it leaves) queues nothing and leaves the manual action as the
 	// only trigger.
 	PushComments string
+	// LandInInbox is the project's `integrations.youtrack.land_in_inbox`
+	// setting: an issue the import creates arrives in the project's triage
+	// queue, stamped as a pending submission, instead of in its backlog, so a
+	// large import can be reviewed before it becomes commitments (R-INT-7).
+	//
+	// It decides arrival only. An issue that is being updated keeps the status
+	// it has: landing is a decision about where work appears the first time,
+	// not about every later sync.
+	LandInInbox bool
 }
 
 // The two values of `integrations.youtrack.push_comments`.
@@ -343,6 +352,9 @@ func (v *Vault) YouTrackImportPreview(
 
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	if plan.landing, err = v.youtrackLanding(plan); err != nil {
+		return YouTrackImportPreview{}, err
+	}
 	targets := v.resolveTargets(plan)
 	for _, entry := range plan.issues {
 		decision := v.youtrackDecide(entry, plan, targets)
@@ -378,6 +390,12 @@ func (v *Vault) YouTrackImportRun(
 
 	store, err := v.storeFor(core.ProjectKey(plan.project))
 	if err != nil {
+		return YouTrackImportResult{}, err
+	}
+	// Where arriving work lands is decided before the first write: a project
+	// that asked for the inbox and has none fails the whole import rather than
+	// landing half a batch in the backlog.
+	if plan.landing, err = v.youtrackLanding(plan); err != nil {
 		return YouTrackImportResult{}, err
 	}
 	out := YouTrackImportResult{
@@ -493,6 +511,11 @@ type youtrackPlan struct {
 	// unreachable issue must not cost the whole batch.
 	unreadable []youtrackUnreadable
 	warnings   []mapping.Warning
+	// landing is the status an issue this import creates arrives with when the
+	// link asks for the inbox. It is empty when it does not, and the mapped
+	// status stands. It is resolved once per import, under the vault lock,
+	// because it is a property of the project rather than of an issue.
+	landing core.Status
 }
 
 // youtrackUnreadable is one issue the tracker refused or does not have.
@@ -786,6 +809,37 @@ func (v *Vault) resolveTargets(plan youtrackPlan) youtrackTargets {
 	return out
 }
 
+// youtrackLanding resolves where the issues this import creates arrive, from
+// the project's workflow and the link's `land_in_inbox` setting. It is asked
+// once per import, before anything is written, and the caller holds the vault
+// lock.
+//
+// A project that asks for the inbox and declares no triage status fails the
+// whole import here rather than at the first write. That is the point of the
+// refusal core.InboxLandingStatus makes: "put these somewhere for review" and
+// "this project has no place to review them" is a configuration mistake, and
+// quietly landing a thousand imported issues in the backlog is precisely the
+// outcome the option exists to prevent. The message names the project and what
+// is missing, so the fix is a line of project.yaml rather than a guess.
+func (v *Vault) youtrackLanding(plan youtrackPlan) (core.Status, error) {
+	if !plan.link.LandInInbox {
+		return "", nil
+	}
+	key, cfg, err := v.projectConfig(core.ProjectKey(plan.project))
+	if err != nil {
+		return "", err
+	}
+	status, err := core.InboxLandingStatus(cfg, plan.link.LandInInbox)
+	if err != nil {
+		return "", failf(NoTriageStatusCode,
+			"project %s asks imported issues to land in the inbox "+
+				"(integrations.youtrack.land_in_inbox), but declares no status in the "+
+				"triage category: add one to %s, or turn the option off",
+			key, core.ProjectFileName)
+	}
+	return status, nil
+}
+
 // youtrackDecide maps one issue and resolves everything the mapping package
 // deliberately left as a YouTrack identifier. The caller holds the vault lock.
 func (v *Vault) youtrackDecide(
@@ -822,7 +876,20 @@ func (v *Vault) youtrackDecide(
 	} else {
 		draft, rel, warnings := mapping.IssueToDraft(entry.issue, opts)
 		decision.draft, relations, decision.warnings = draft, rel, warnings
-		decision.itemType, decision.title, decision.status = draft.Type, draft.Title, draft.Status
+		// A project that asked for triage receives arriving work in its inbox
+		// instead of its backlog. The status is forced rather than defaulted,
+		// as it is for every other submission: an item in the inbox is one
+		// whose status is triage, and nothing else makes it one.
+		if plan.link.LandInInbox {
+			decision.draft.Status = plan.landing
+			decision.draft.Inbox = &core.ItemInbox{
+				Status:   core.InboxPending,
+				Source:   mapping.System,
+				Received: core.NewTimestamp(v.now()),
+			}
+		}
+		decision.itemType = decision.draft.Type
+		decision.title, decision.status = decision.draft.Title, decision.draft.Status
 	}
 
 	decision.warnings = append(decision.warnings, v.youtrackResolveRelations(

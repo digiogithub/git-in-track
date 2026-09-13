@@ -2,7 +2,7 @@
 id: GIT-US-0060
 type: story
 title: "Inbox web route: two-pane triage queue with accept, reject, snooze and duplicate"
-status: in_review
+status: done
 priority: medium
 parent: GIT-EP-0016
 milestone: GIT-M-0012
@@ -11,8 +11,9 @@ author: mcp
 labels: [web]
 estimate: 8
 created: 2026-09-13T13:12:43Z
-updated: 2026-09-13T16:41:04Z
+updated: 2026-09-13T17:08:54Z
 started: 2026-09-13T16:27:29Z
+closed: 2026-09-13T17:08:54Z
 ---
 
 ## Description

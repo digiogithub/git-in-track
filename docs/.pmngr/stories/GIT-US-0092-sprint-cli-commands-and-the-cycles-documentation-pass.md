@@ -2,7 +2,7 @@
 id: GIT-US-0092
 type: story
 title: Sprint CLI commands and the cycles documentation pass
-status: backlog
+status: done
 priority: medium
 parent: GIT-EP-0017
 milestone: GIT-M-0012
@@ -10,7 +10,9 @@ author: mcp
 labels: [cli, docs]
 estimate: 5
 created: 2026-09-13T13:15:18Z
-updated: 2026-09-13T13:15:18Z
+updated: 2026-09-13T17:26:52Z
+started: 2026-09-13T17:26:29Z
+closed: 2026-09-13T17:26:52Z
 ---
 
 ## Description
@@ -23,14 +25,14 @@ The documentation half finishes the epic: `docs/04-team-repository.md` §8 gains
 
 ## Acceptance Criteria
 
-- [ ] `gintrack sprint list|show|start|close|transfer` exists, is registered in `root.go`, and uses the shared exit codes and arg validators.
-- [ ] `sprint list` groups by derived status and supports `--status`, `--board` and `--json`; JSON output carries the derived status and the snapshot when present.
-- [ ] `sprint close --dry-run` and `sprint transfer --dry-run` print the report and write nothing; without the flag they apply and print what changed.
-- [ ] Per-item refusals (`repo_not_cloned` and friends) are printed on their own lines and set a non-zero exit code only when nothing could be applied.
-- [ ] `docs/07-cli-and-api.md` §4.6 and §5.5 document the commands and the endpoints, replacing the stale specification.
-- [ ] `docs/04-team-repository.md` §8 documents optional dates, the derived-status table, the draft overlap exemption and the `snapshot` block.
-- [ ] `docs/08-mcp-server.md` §4 lists the two new tools and `CHANGELOG.md` records the whole epic under Unreleased.
-- [ ] `go test -race ./cmd/gintrack/...` covers each subcommand including the dry runs; `make lint` passes.
+- [x] `gintrack sprint list|show|start|close|transfer` exists, is registered in `root.go`, and uses the shared exit codes and arg validators.
+- [x] `sprint list` groups by derived status and supports `--status`, `--board` and `--json`; JSON output carries the derived status and the snapshot when present.
+- [x] `sprint close --dry-run` and `sprint transfer --dry-run` print the report and write nothing; without the flag they apply and print what changed.
+- [x] Per-item refusals (`repo_not_cloned` and friends) are printed on their own lines and set a non-zero exit code only when nothing could be applied.
+- [x] `docs/07-cli-and-api.md` §4.6 and §5.5 document the commands and the endpoints, replacing the stale specification.
+- [x] `docs/04-team-repository.md` §8 documents optional dates, the derived-status table, the draft overlap exemption and the `snapshot` block.
+- [x] `docs/08-mcp-server.md` §4 lists the two new tools and `CHANGELOG.md` records the whole epic under Unreleased.
+- [x] `go test -race ./cmd/gintrack/...` covers each subcommand including the dry runs; `make lint` passes.
 
 ## Notes
 
@@ -39,3 +41,7 @@ Existing code: `cmd/gintrack/root.go:50-100`, `cmd/gintrack/item.go:21-41` (the 
 Conventional commit scopes are one per commit: split this story's work into a `feat(cli): …` commit and a `docs: …` commit rather than one mixed change.
 
 Do NOT put business logic in the command files (`cmd/gintrack/main.go:5-7`) — they resolve config, open the vault, call `Dispatch` and print. Do NOT add a `retro` or `board` command here; this story is scoped to sprints.
+
+### One numbering deviation
+
+The fifth criterion says the command tree lands in §4.6. It landed in **§4.16** instead, because §4.6 is where the `board` and `retro` commands were specified and those commands still do not exist — turning that section into the sprint tree would have deleted the only record that they are unbuilt. §4.6 now names itself "not implemented", says so in its first sentence, keeps the planned board/retro tree clearly labelled as planned, and points at §4.16 for the sprint commands that are real. The stale specification the criterion cares about is gone either way.

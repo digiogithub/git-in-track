@@ -472,9 +472,73 @@ minute apart are two things a person asked for.
 period (5 s) to finish what is in flight, on a context detached from the
 shutdown itself so that a job halfway through a call to a tracker is not
 cancelled by the very stop that is waiting for it. Whatever has not finished by
-then is written to the journal and picked up on the next start. A handler is
-therefore required to be idempotent; `internal/syncengine`'s package
-documentation states the contract.
+then is written to the journal and picked up on the next start.
+
+##### The journal (GIT-US-0070)
+
+The journal is what makes "queued" mean something across a restart: without it a
+job accepted by an HTTP request and not yet run would be lost the moment the
+companion stopped.
+
+**Where it is.** One file, `jobs.json`, directly inside the configured
+`index.cacheDir`. With no cache directory the queue lives in memory only, the
+journal is never opened, and a restart starts empty — which is exactly what a
+test or a `serve --repo` run wants. It is written atomically (a temporary file
+in the same directory, renamed over the target, the discipline `internal/core`
+uses for items) and **rarely**: state transitions are coalesced behind a 500 ms
+timer, so a thousand jobs finishing in a second produce one write and no worker
+ever blocks on disk.
+
+**What is in it.** A single JSON object:
+
+```json
+{
+  "version": 1,
+  "updatedAt": "2026-09-13T09:12:04Z",
+  "jobs": [
+    {"id":"job_000021","kind":"youtrack.import","key":"ACME","state":"queued",
+     "payload":{"repo":"acme-api","project":"ACME","params":{"query":"project: ACME #Unresolved"}},
+     "attempts":1,"createdAt":"2026-09-13T09:11:58Z","updatedAt":"2026-09-13T09:12:04Z",
+     "nextAttempt":"2026-09-13T09:12:20Z",
+     "lastError":{"attempt":1,"class":"retryable","message":"502 from the instance",
+                  "at":"2026-09-13T09:12:04Z","retryAfter":"16s"}}
+  ],
+  "deadLetter": ["job_000018"]
+}
+```
+
+`jobs` is the queue in enqueue order and `deadLetter` names, oldest first, the
+ids inside it that gave up. `version` is bumped whenever the on-disk shape
+changes; a file carrying an unknown version is treated exactly like a corrupt
+one — **moved aside**, logged, and the engine starts empty. A damaged journal is
+never fatal to `serve`.
+
+A job entry carries its bookkeeping — id, kind, coalescing key, state, attempt
+count, timestamps, the next attempt time and the last error with its class — and
+the **payload the request carried**, because replaying a job means running it
+with the arguments it was given. That payload is the request's own parameters: a
+repository id, a project key, a YouTrack query, a comment path. **No item
+content and no credential is ever written here.** A token lives in the `0600`
+companion configuration and is read at dispatch time from there (ADR-032), and
+error messages are redacted before they are recorded, so the journal cannot leak
+one either.
+
+**Retention and deletion.** A finished job is remembered for `sync.engine.retention`
+(default 168h, one week) and dropped on the way back in when it is older than
+that, which is what keeps the file from growing without bound in a companion
+that runs for months. The whole file is **derived data and safe to delete at any
+time**, with the companion running or stopped: the Markdown files remain the
+source of truth, and the only thing lost is work that was queued and had not
+run — no user data, no history, nothing that cannot be asked for again.
+
+**What replay demands of a handler.** A job that was running when the process
+died is re-queued with its attempt count intact, because the engine cannot know
+whether the handler finished. **Every handler must therefore be idempotent**:
+running it twice with the same payload must produce the same result as running
+it once. It is the same contract a retry and a dead-letter retry impose, stated
+in `internal/syncengine`'s package documentation, and it is why the four
+YouTrack handlers match on the `external` block rather than creating blindly
+(doc 03 §6.5).
 
 `--tunnel` opens a free Cloudflare **quick tunnel** (`*.trycloudflare.com`,
 ADR-027): no Cloudflare account, no DNS record and no inbound port. The same
@@ -852,9 +916,21 @@ as specified in the data model, so the CLI and the web app never disagree about 
 inverse relation is written on the counterpart item when both live in the same workspace;
 `--inverse=false` writes only the side that was named.
 
-### 4.6 `gintrack board …`
+### 4.6 `gintrack board …` and `gintrack retro …` — **not implemented**
 
-Team-repository boards (Phase 3).
+**Neither command exists.** `gintrack --help` lists no `board` and no `retro`
+subcommand, and typing one is an unknown-command error. This section is the
+planned shape, kept here so the design is not re-invented, and marked so that
+nobody writes a script against it. The sprint commands, which were once
+specified alongside these, **are** built and have a section of their own
+(§4.16).
+
+Boards and retrospectives are fully reachable today by the other two routes:
+over REST at `/api/v1/boards` and `/api/v1/retros` (§5.5), which is what the web
+app uses, and as Markdown files in the team repository (doc 04 §5 and §9). What
+is missing is only the terminal surface.
+
+The planned tree, when it is written:
 
 ```
 gintrack board list                       List boards in the team repo
@@ -866,31 +942,14 @@ gintrack board new <slug> --kind kanban|scrum
 gintrack retro list | get <id> | new --sprint <id>
 ```
 
-*As built.* Only the board subcommands above are planned for this section; the
-sprint commands landed and have a section of their own (§4.16), and the retro
-commands are not written.
-
-```
-$ gintrack board get platform-kanban
-Board: Platform Kanban (kanban) — team repo ~/code/acme-team
-  Backlog (wip: —)      18 cards
-  Todo (wip: 10)         7 cards
-  In progress (wip: 5)   4 cards   ← at 4/5
-  In review (wip: 3)     3 cards   ← WIP LIMIT REACHED
-  Done                  62 cards
-remote references: 5 cards from AWEB (repo not cloned locally)
-
-$ gintrack board move ACME/ACME-T-0311 "In review" --position 0
-moved ACME-T-0311 -> In review (status: in_review), position 0
-warning: column "In review" is at its WIP limit (3/3)
-```
-
-Cards are `ref: <projectKey>/<itemId>` references, never copies. When the referenced
-project repo is not registered locally, the card is resolved from
-`.pmngr/index/<projectKey>.json` and marked `remote: true`, carrying `source: "snapshot"`,
-`snapshotAt`, `stale` and `remoteUrl`; `board move` on a remote card updates the board
-order but refuses to change the item status (exit 4 with a problem detail explaining the
-repo is not cloned). Refresh those snapshots with `gintrack snapshot` (§4.13).
+The behaviour it has to reproduce is the one the REST layer already implements.
+Cards are `ref: <projectKey>/<itemId>` references, never copies. When the
+referenced project repo is not registered locally, the card is resolved from
+`.pmngr/index/<projectKey>.json` and marked `remote: true`, carrying
+`source: "snapshot"`, `snapshotAt`, `stale` and `remoteUrl`; a move of a remote
+card updates the board order but refuses to change the item status, because the
+file holding that status is not on this machine. Refresh those snapshots with
+`gintrack snapshot` (§4.13), which **is** built.
 
 ### 4.7 `gintrack sync [--dry-run]`
 
@@ -1518,8 +1577,14 @@ pending, source cli
 ```
 
 The inbox REST surface is `GET /api/v1/inbox` and `POST /api/v1/items/{id}/triage`
-(§5.5), and `integrations.youtrack.land_in_inbox` makes an import arrive here
-instead of in the backlog.
+(§5.5). `integrations.youtrack.land_in_inbox` (doc 03 §6, R-INT-7) is the fourth
+entry point, and the importer honours it: an issue the import **creates** is
+written with the status `core.InboxLandingStatus` decides plus an `inbox:` block
+of `status: pending`, `source: youtrack`, while an issue it **updates** keeps
+the status it has — landing is a decision about arrival, not about every later
+sync. A project that sets the option and declares no triage status has no inbox,
+so the whole import is refused with `no_triage_status` before anything is
+written, preview included.
 
 ---
 
@@ -2672,6 +2737,30 @@ files — the entry and the item it points at — in one write set.
 
 Every triage, and every create that files an item straight into the queue,
 publishes `inbox.changed` (§5.6).
+
+**What the exclusion covers, and what it does not.** A triage item is invisible
+to every *planning* surface: `GET /api/v1/items` excludes it by default, and
+board views, sprint views, sprint candidates and sprint metrics exclude it
+**unconditionally** — a hand-edited sprint file naming a triage item reports it
+as unresolved, never as work, so a busy inbox moves no burndown point and a
+board column that names the `triage` status still renders empty (ADR-033,
+`internal/core/triageexclusion_test.go`).
+
+**Search is deliberately not one of those surfaces.** `GET /api/v1/search` and
+the MCP `search_items` tool still find a triage item by text. The exclusion is a
+property of a `Filter`, and search takes none: excluding there would make a
+submission unfindable from every surface at once — the quick switcher included —
+which contradicts the rule that an item is real from the moment it is submitted
+and still readable by id. A search hit carries no estimate, no status category
+and no column, so nothing reaches a planning number through it.
+`TestSearchStillFindsATriageItem` pins that behaviour, and changing it means
+changing ADR-033 first.
+
+A project created before the inbox existed declares no `triage` status and
+therefore has no inbox at all: the listing is empty, the sidebar entry and the
+capture form render nothing, and filing into it is `no_triage_status` (409).
+There is no migration — adding a status in the `triage` category to
+`project.yaml` is the whole opt-in.
 
 #### Sync and git
 

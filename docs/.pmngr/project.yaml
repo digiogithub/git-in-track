@@ -37,7 +37,7 @@ id_allocation:
   counters: # hints only, NOT authoritative (the index scan wins)
     epic: 19
     story: 94
-    task: 225
+    task: 226
     milestone: 13
 priorities: [critical, high, medium, low]
 estimation:

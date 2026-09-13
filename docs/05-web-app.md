@@ -276,6 +276,18 @@ the picker is not asking to reject the row behind it. After a decision the pane 
 row, computed *before* the write: afterwards the row is gone from the list and there is nothing left
 to compute a neighbour from.
 
+**Add to inbox (`AddToInboxButton`, as built, story GIT-US-0066)** — the capture form, in the items
+page header beside *New item* and in the Inbox header itself. It is the only create surface in the
+app that asks **no type, no parent and no status question**: a title, optionally what happened, and
+nothing else. That restraint is the point. Everything else that creates an item asks a person to
+place the work in the plan before it exists, and a report is not a plan — it arrives, it is real
+from that moment, and a triager decides the rest. The item is filed with the project's triage
+status and `inbox.source: web`, and the dialog then swaps to a confirmation naming the id that was
+allocated and linking to the queue, because "somebody will look at this" is the only thing the
+person submitting wants confirmed. Like the sidebar entry, the control renders **nothing at all**
+for a project that declares no triage status: a button leading to an explanation of why a
+submission cannot be made is worse than no button.
+
 The submission's comment thread is rendered **read-only** here. A triage pane answers one question —
 does this belong in the backlog — and accepting opens the item itself, which is where the
 conversation about it belongs; the composer is deliberately not lifted into the pane, where it would

@@ -2,7 +2,7 @@
 id: GIT-US-0070
 type: story
 title: JSON job journal in the cache directory with replay and pruning
-status: in_review
+status: done
 priority: medium
 parent: GIT-EP-0015
 milestone: GIT-M-0011
@@ -10,8 +10,9 @@ author: mcp
 labels: [server, docs]
 estimate: 5
 created: 2026-09-13T13:13:25Z
-updated: 2026-09-13T14:17:01Z
+updated: 2026-09-13T17:25:11Z
 started: 2026-09-13T14:16:57Z
+closed: 2026-09-13T17:25:11Z
 ---
 
 ## Description
@@ -30,7 +31,7 @@ This is the one place the engine touches the filesystem, and the "no state outsi
 - [x] A corrupt, truncated or unreadable journal is moved aside and logged, and the engine starts with an empty queue rather than failing to start.
 - [x] Journal writes are coalesced so a burst of state transitions does not produce one write per transition.
 - [x] The journal never contains a credential, and payloads are checked for that in a test.
-- [ ] `docs/07-cli-and-api.md` documents the journal location, its format and its retention, and states that it is derived data safe to delete.
+- [x] `docs/07-cli-and-api.md` documents the journal location, its format and its retention, and states that it is derived data safe to delete.
 - [x] `go test -race ./internal/syncengine/...` covers write, replay, prune and the corrupt-file path over a temporary directory.
 
 ## Notes
@@ -43,4 +44,4 @@ Do NOT introduce an embedded database — explicitly ruled out for this phase an
 
 The engine takes the directory as `Options.CacheDir` (a plain string) rather than importing `internal/config`; the caller passes `cfg.CacheDir(configPath)`. An empty value disables persistence, which is what the scheduler's own unit tests use.
 
-The documentation criterion is left unticked on purpose: this wave owned `internal/syncengine/` only, and `docs/07-cli-and-api.md` plus `CHANGELOG.md` were being edited by another agent at the same time. GIT-T-0125 stays `todo` and carries a comment with everything the docs pass needs, written from the implementation that landed.
+The documentation criterion was left unticked while `docs/07-cli-and-api.md` belonged to another agent. It is now satisfied: `docs/07-cli-and-api.md` §4.1 carries a `##### The journal (GIT-US-0070)` subsection with the location, the atomic write and the coalescing window, a worked example of the whole JSON document, the version and corruption behaviour, the retention window, the delete-safety statement and the idempotence contract replay implies.

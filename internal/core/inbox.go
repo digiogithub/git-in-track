@@ -1,6 +1,7 @@
 package core
 
 import (
+	"errors"
 	"sort"
 	"strings"
 )
@@ -250,4 +251,41 @@ func inboxStatusNames() string {
 	}
 	sort.Strings(names)
 	return strings.Join(names, ", ")
+}
+
+// ErrNoTriageStatus is returned when something asks for the inbox of a project
+// that declares no status in the reserved triage category. Such a project
+// simply has no inbox (ADR-033, negative consequence 2); the fix is a status in
+// project.yaml, never a retry.
+var ErrNoTriageStatus = errors.New("the project declares no status in the triage category")
+
+// InboxLandingStatus returns the status a newly created item is written with,
+// given whether the caller wants it to land in the triage queue.
+//
+// It is the one decision an importer makes about where work arrives, and it is
+// here rather than in the importer so that every entry point — the YouTrack
+// import of GIT-EP-0012, an agent's create_inbox_item, a web submission —
+// answers it the same way:
+//
+//   - landInInbox false: the workflow's initial status, which is where work has
+//     always arrived.
+//   - landInInbox true: the project's first triage status, or ErrNoTriageStatus
+//     when it declares none.
+//
+// The error matters. "Put a thousand imported issues somewhere for review" and
+// "this project has no place to review them" is a configuration mistake, and
+// silently landing them in the backlog instead would be the one outcome the
+// option exists to prevent.
+func InboxLandingStatus(cfg *ProjectConfig, landInInbox bool) (Status, error) {
+	if cfg == nil {
+		return "", ErrNoTriageStatus
+	}
+	if !landInInbox {
+		return cfg.InitialStatus(), nil
+	}
+	triage := cfg.Workflow.TriageStatus()
+	if triage == "" {
+		return "", ErrNoTriageStatus
+	}
+	return triage, nil
 }

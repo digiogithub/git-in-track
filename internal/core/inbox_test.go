@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -779,5 +780,79 @@ func TestSprintMetricsIgnoreATriageObservation(t *testing.T) {
 	}
 	if bandOf(CategoryTriage) != FlowUnknown {
 		t.Errorf("bandOf(triage) = %q, want the unknown band", bandOf(CategoryTriage))
+	}
+}
+
+// TestInboxLandingStatus covers both settings of the YouTrack land_in_inbox
+// option: off lands work where it has always landed, on lands it in triage, and
+// on without a triage status is a refusal rather than a silent fallback.
+func TestInboxLandingStatus(t *testing.T) {
+	t.Parallel()
+
+	withTriage := &ProjectConfig{Workflow: Workflow{
+		Initial: "backlog",
+		Statuses: []StatusDef{
+			{ID: "triage", Category: CategoryTriage},
+			{ID: "backlog", Category: CategoryTodo},
+			{ID: "done", Category: CategoryDone},
+		},
+	}}
+	withoutTriage := &ProjectConfig{Workflow: Workflow{
+		Initial: "backlog",
+		Statuses: []StatusDef{
+			{ID: "backlog", Category: CategoryTodo},
+			{ID: "done", Category: CategoryDone},
+		},
+	}}
+
+	tests := []struct {
+		name        string
+		cfg         *ProjectConfig
+		landInInbox bool
+		want        Status
+		wantErr     bool
+	}{
+		{
+			name: "off lands in the workflow initial status",
+			cfg:  withTriage,
+			want: "backlog",
+		},
+		{
+			name: "off does not need a triage status at all",
+			cfg:  withoutTriage,
+			want: "backlog",
+		},
+		{
+			name:        "on lands in the project's triage status",
+			cfg:         withTriage,
+			landInInbox: true,
+			want:        "triage",
+		},
+		{
+			name:        "on without an inbox is refused, never quietly re-routed",
+			cfg:         withoutTriage,
+			landInInbox: true,
+			wantErr:     true,
+		},
+		{
+			name:        "no configuration at all is refused",
+			cfg:         nil,
+			landInInbox: true,
+			wantErr:     true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := InboxLandingStatus(tt.cfg, tt.landInInbox)
+			switch {
+			case tt.wantErr && !errors.Is(err, ErrNoTriageStatus):
+				t.Fatalf("error = %v, want ErrNoTriageStatus", err)
+			case !tt.wantErr && err != nil:
+				t.Fatalf("unexpected error: %v", err)
+			case got != tt.want:
+				t.Errorf("status = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

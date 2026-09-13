@@ -2,7 +2,7 @@
 id: GIT-US-0068
 type: story
 title: External references on comments and the comment push job kind
-status: in_review
+status: done
 priority: medium
 parent: GIT-EP-0013
 milestone: GIT-M-0011
@@ -11,8 +11,9 @@ author: mcp
 labels: [core, server, docs]
 estimate: 8
 created: 2026-09-13T13:13:20Z
-updated: 2026-09-13T16:00:48Z
+updated: 2026-09-13T17:08:51Z
 started: 2026-09-13T16:00:29Z
+closed: 2026-09-13T17:08:51Z
 ---
 
 ## Description

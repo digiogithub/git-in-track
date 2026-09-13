@@ -1152,12 +1152,17 @@ bb-dc   https://git.acme.example/projects/ACME/repos/legacy/browse/docs/.pmngr/s
 **Status: implemented (GIT-US-0018).** `internal/core/sprint.go` parses, validates, allocates and
 emits a sprint file; `internal/core/sprintview.go` renders one — the header, the planning view and
 the closing report. `internal/vault/sprint.go` answers `sprint.list`, `sprint.get`,
-`sprint.create`, `sprint.update`, `sprint.start` and `sprint.close` for a workspace, and
-`internal/server/sprints.go` serves them over HTTP ([doc 07 §5.5](./07-cli-and-api.md)).
+`sprint.create`, `sprint.update`, `sprint.start`, `sprint.close` and `sprint.transfer` for a
+workspace, and `internal/server/sprints.go` serves them over HTTP ([doc 07 §5.5](./07-cli-and-api.md)).
 Burndown and cumulative flow are [§12](#12-metrics-burndown-cumulative-flow-and-flow-times) (GIT-US-0028, done).
-Optional dates, the derived status and the `snapshot` block landed in the core in GIT-US-0075 and
-GIT-US-0080 ([ADR-034](./adr/ADR-034-sprint-status-is-derived-from-dates.md)); §8.2 says which
-halves of them the vault and the API drive today and which are still model-only.
+Optional dates, the derived status and the `snapshot` block landed in GIT-US-0075, GIT-US-0080 and
+GIT-US-0092 ([ADR-034](./adr/ADR-034-sprint-status-is-derived-from-dates.md)) and are wired end to
+end: `sprint.create` and `sprint.update` accept and park a dateless sprint, every sprint payload
+carries the derived status, `sprint.close` freezes the `snapshot` block once, and a closed sprint's
+metrics are read back from it. `sprint.transfer` moves unfinished work without closing anything
+(GIT-US-0085). Existing sprint files are unaffected and gain a snapshot only when they are next
+closed. The CLI is [doc 07 §4.16](./07-cli-and-api.md), the REST surface doc 07 §5.5, and the MCP
+tools `close_sprint` and `transfer_sprint_items` [doc 08 §4.14–§4.15](./08-mcp-server.md).
 
 ### 8.1 Identity
 

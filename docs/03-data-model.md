@@ -746,6 +746,7 @@ integrations:
     kb_sync: manual                        # manual | on_write
     kb_sync_direction: push                # push | pull | both
     comment_template: "\n\n---\n_{{.Author}} · git-in-track {{.ItemID}}_"
+    land_in_inbox: false                   # imported issues arrive in triage, not the backlog
 ```
 
 | Key | Type | Req. | Default | Notes |
@@ -757,6 +758,7 @@ integrations:
 | `kb_sync` | `manual` \| `on_write` | no | `manual` | When a knowledge-base page is synchronized with a YouTrack article. |
 | `kb_sync_direction` | `push` \| `pull` \| `both` | no | `push` | Which way that synchronization flows. |
 | `comment_template` | `text/template` | no | see R-INT-6 | The attribution line appended to a comment pushed upstream. |
+| `land_in_inbox` | boolean | no | `false` | Imported issues arrive in the project's triage queue instead of its backlog (R-INT-7, [§6.4](#64-the-triage-category-and-the-inbox), GIT-EP-0012). |
 
 `field_map` answers two different questions, and an entry says which one it is answering. Written as
 a plain string it renames a field: `status: State` tells the importer which custom field to read a
@@ -818,6 +820,20 @@ due date nor a sprint is read from one.
   machine-local file because a clone must sign what it publishes the same way the original does. The
   item id is emitted bare on purpose: YouTrack auto-links anything shaped like one of *its* issue
   ids, a git-in-track id is not one, and a Markdown link around it would be a dead link.
+- **R-INT-7 `land_in_inbox` decides where an import lands, and refuses rather than guesses.** With
+  it `false` — the default, and what every import did before the key existed — an imported issue is
+  written with the workflow's initial status. With it `true`, the issue is written with the
+  project's first `triage` status and an `inbox:` block of `status: pending`, `source: youtrack`,
+  so a large import is a queue to review rather than a backlog somebody has to un-commit. It
+  decides arrival only: an issue a later import *updates* keeps the status it has, because landing
+  is a decision about where work appears the first time and not about every sync ([§6.4](#64-the-triage-category-and-the-inbox), ADR-033). A project that
+  declares no triage status and sets the option to `true` is a configuration mistake and is
+  **refused**: landing a thousand issues in the backlog instead would be exactly the outcome the
+  option exists to prevent. The decision is one helper — `core.InboxLandingStatus` — which every
+  entry point that can file work shares, so an import, an agent's `create_inbox_item` and a web
+  submission cannot disagree about where a submission belongs. The key is read and never written:
+  a connection saved from the settings screen edits only the keys that screen owns (R-INT-2), so a
+  team that set this by hand keeps it.
 
 
 ## 7. Epics

@@ -43,6 +43,14 @@ update_item, add_comment, move_on_board, triage_inbox_item, close_sprint,
 transfer_sprint_items, import_youtrack_issues, push_comment_to_youtrack,
 publish_kb_page_to_youtrack and sync_kb_page_from_youtrack.
 
+Three of them are the inbox: list_inbox reads a project's triage queue,
+create_inbox_item files something into it and triage_inbox_item decides one
+entry. Reach for create_inbox_item rather than create_story whenever the work
+has not been agreed with a human: a report, a request, anything an agent noticed
+on its own. It files the item as pending and leaves the type, the parent and the
+status to whoever triages it. create_story is for work somebody already decided
+to do.
+
 The server is read-only unless writes are enabled, either with --allow-write or
 with "mcp.allowWrite: true" in the configuration file, and the write tools are
 then advertised alongside the read ones. Writes go through the same validation

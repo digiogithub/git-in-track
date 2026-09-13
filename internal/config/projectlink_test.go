@@ -290,3 +290,52 @@ func TestSaveYouTrackLinkRefusesAConflictingKey(t *testing.T) {
 		t.Fatalf("err = %v, want a refusal naming the conflicting key", err)
 	}
 }
+
+// TestLoadYouTrackLinkLandInInbox proves the option decodes, defaults to false,
+// and survives a connection save — SaveYouTrackLink writes only the keys the
+// settings screen owns, so a key a team set by hand is not lost to a save that
+// never knew about it.
+func TestLoadYouTrackLinkLandInInbox(t *testing.T) {
+	t.Parallel()
+
+	base := "key: ACME\nintegrations:\n  youtrack:\n    url: https://yt.example.com\n    project: ACME\n"
+
+	t.Run("absent defaults to false", func(t *testing.T) {
+		t.Parallel()
+		link, err := LoadYouTrackLink(writeProject(t, base))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if link == nil || link.LandInInbox {
+			t.Fatalf("LandInInbox = %+v, want false", link)
+		}
+	})
+
+	t.Run("true decodes", func(t *testing.T) {
+		t.Parallel()
+		link, err := LoadYouTrackLink(writeProject(t, base+"    land_in_inbox: true\n"))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if link == nil || !link.LandInInbox {
+			t.Fatalf("LandInInbox = %+v, want true", link)
+		}
+	})
+
+	t.Run("a connection save leaves it alone", func(t *testing.T) {
+		t.Parallel()
+		path := writeProject(t, base+"    land_in_inbox: true\n")
+		if _, err := SaveYouTrackLink(path, YouTrackLink{
+			URL: "https://yt.example.com/youtrack", Project: "OTHER",
+		}); err != nil {
+			t.Fatalf("save: %v", err)
+		}
+		link, err := LoadYouTrackLink(path)
+		if err != nil {
+			t.Fatalf("reload: %v", err)
+		}
+		if link == nil || !link.LandInInbox || link.Project != "OTHER" {
+			t.Fatalf("reloaded = %+v, want land_in_inbox kept and project OTHER", link)
+		}
+	})
+}

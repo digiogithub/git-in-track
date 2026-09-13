@@ -2,7 +2,7 @@
 id: GIT-US-0089
 type: story
 title: Active cycle view, close dialog and status-grouped sprint list in the web app
-status: in_review
+status: done
 priority: medium
 parent: GIT-EP-0017
 milestone: GIT-M-0012
@@ -11,8 +11,9 @@ author: mcp
 labels: [web]
 estimate: 8
 created: 2026-09-13T13:14:59Z
-updated: 2026-09-13T16:41:23Z
+updated: 2026-09-13T17:08:55Z
 started: 2026-09-13T16:27:30Z
+closed: 2026-09-13T17:08:55Z
 ---
 
 ## Description

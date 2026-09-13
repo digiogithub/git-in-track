@@ -42,6 +42,7 @@ import { useBacklogEvents, useItems, useProject } from '@/features/backlog/queri
 import { QuickViews } from '@/features/backlog/QuickViews';
 import { isEmptySearch, toItemFilter, type SortField } from '@/features/backlog/search';
 import { useItemSearch, useSetItemSearch } from '@/features/backlog/use-search';
+import { AddToInboxButton } from '@/features/inbox/AddToInboxButton';
 import { ImportFromYouTrackButton } from '@/features/youtrack/ImportButton';
 
 const features = tableFeatures({
@@ -318,6 +319,9 @@ function ItemTableView() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <ImportFromYouTrackButton projectKey={projectKey} />
+          {/* The capture form beside the planning form: it renders nothing for a
+              project that declares no triage status (ADR-033). */}
+          <AddToInboxButton project={projectKey} variant="bar" />
           <NewItemLink project={projectKey} type="story" label="New item" variant="bar" />
         </div>
       </header>
