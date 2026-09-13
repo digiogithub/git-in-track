@@ -29,6 +29,7 @@ model described in [03-data-model.md](./03-data-model.md).
 | 12 | [1.0 release readiness](./12-release-readiness-1-0.md) | Evidence for every milestone exit criterion and vision goal; the known gaps shipped in 1.0; what the maintainer must still do |
 | 13 | [Design system](./13-design-system.md) | Tokens, themes, the component rules the UI is built from, and the contrast checks that keep them honest |
 | — | [ADRs](./adr/README.md) | Architecture decision records |
+| — | [Research notes](./research/README.md) | Dated code reviews of YouTrack, Plane and Pando behind the phase 7–9 plan (roadmap §7) |
 | — | [CHANGELOG](../CHANGELOG.md) | Release notes, compatibility promise, known limitations, operational notes |
 
 ## Conventions

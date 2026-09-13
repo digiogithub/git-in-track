@@ -40,10 +40,10 @@ id_allocation:
   strategy: scan
   write_counters: true
   counters:               # hints only, NOT authoritative (the index scan wins)
-    epic: 7
-    story: 30
-    task: 0
-    milestone: 7
+    epic: 19
+    story: 94
+    task: 223
+    milestone: 13
 
 priorities: [critical, high, medium, low]
 
