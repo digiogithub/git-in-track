@@ -182,7 +182,11 @@ describe('YouTrackCard', () => {
     await user.clear(picker);
     await user.type(picker, 'web');
 
-    const option = await screen.findByRole('option', { name: /Acme Web/ });
+    // Re-query the option immediately before the click. The list is backed by a
+    // query whose key is the debounced search text, so holding a node across an
+    // await is holding a node the next answer may already have replaced.
+    await screen.findByRole('option', { name: /Acme Web/ });
+    const option = screen.getByRole('option', { name: /Acme Web/ });
     await user.click(within(option).getByRole('button'));
 
     expect(picker).toHaveValue('WEB');

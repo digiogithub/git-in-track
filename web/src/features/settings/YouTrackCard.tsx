@@ -23,7 +23,7 @@
  * YouTrack refusing a token for its own session expiring.
  */
 
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { TriangleAlert } from 'lucide-react';
 import { useCallback, useEffect, useId, useState } from 'react';
 
@@ -145,6 +145,12 @@ function YouTrackConnection() {
     queryKey: ['youtrack', 'projects', search],
     queryFn: () => provider?.listYouTrackProjects(search) ?? Promise.resolve([]),
     enabled: pickerOpen && canQuery,
+    // Every keystroke settles into a new search, and therefore a new query key.
+    // Without this the list empties while the next answer is in flight, so a
+    // suggestion the reader is already reaching for unmounts under the pointer
+    // and the click lands on nothing. Keeping the previous answer visible until
+    // the new one arrives is what makes the list clickable while typing.
+    placeholderData: keepPreviousData,
   });
 
   if (!provider) return null;
