@@ -1,0 +1,28 @@
+=== summary ===
+Release handbook
+=== content ===
+How we ship, in order. See [architecture/overview](https://yt.example.com/youtrack/article/ACME-A-3) and
+[the architecture overview](https://yt.example.com/youtrack/article/ACME-A-3) for the shape of the system,
+and [operations/runbook#Rollback](https://yt.example.com/youtrack/article/ACME-A-4#Rollback) for what to do when it goes wrong.
+
+The planning/backlog-grooming page is not published yet, and GIT-US-0042
+is a backlog item rather than a page.
+
+![The release train](train.png)
+
+The signed checklist is [in the release pack](release-pack.pdf).
+
+Bare issue ids such as ACME-42 are left alone: YouTrack auto-links them itself.
+
+```md
+This fenced sample documents the syntax: [[architecture/overview]] and
+![alt](./images/train.png) must both survive untouched.
+```
+
+So must an inline `[[architecture/overview]]` code span.
+=== attachments ===
+release-pack.pdf <- docs/assets/release-pack.pdf
+train.png <- docs/handbook/images/train.png
+=== warnings ===
+links: GIT-US-0042: the wikilink target is not a page published as a YouTrack article, so the link was replaced by its text
+links: planning/backlog-grooming: the wikilink target is not a page published as a YouTrack article, so the link was replaced by its text

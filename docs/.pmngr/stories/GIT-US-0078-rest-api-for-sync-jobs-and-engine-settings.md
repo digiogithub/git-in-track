@@ -2,7 +2,7 @@
 id: GIT-US-0078
 type: story
 title: REST API for sync jobs and engine settings
-status: backlog
+status: done
 priority: medium
 parent: GIT-EP-0015
 milestone: GIT-M-0011
@@ -10,7 +10,9 @@ author: mcp
 labels: [server, docs]
 estimate: 5
 created: 2026-09-13T13:14:00Z
-updated: 2026-09-13T13:14:00Z
+updated: 2026-09-13T15:14:15Z
+started: 2026-09-13T15:13:17Z
+closed: 2026-09-13T15:14:15Z
 ---
 
 ## Description
@@ -23,17 +25,22 @@ Errors are RFC 7807 problem+json (`internal/server/problem.go`) and need new cod
 
 ## Acceptance Criteria
 
-- [ ] `GET /api/v1/sync/jobs` supports filtering by state and kind and returns a bounded page with a cursor, consistent with the other list endpoints.
-- [ ] `GET /api/v1/sync/jobs/{id}` returns the job with its attempt count, next attempt time and redacted last error.
-- [ ] `POST .../retry` re-queues only a failed or cancelled job and returns a problem document otherwise; `POST .../cancel` works on queued and running jobs.
-- [ ] `GET|PATCH /api/v1/sync/settings` exposes workers, batch size, rate limit and retry policy, validates ranges, and reports `persisted`.
-- [ ] A PATCH to workers or rate limit changes the behaviour of the running engine without a restart, proved by a test.
-- [ ] New problem codes are registered in `internal/server/problem.go` and no response leaks a credential.
-- [ ] `docs/07-cli-and-api.md` documents all six endpoints with examples, next to the existing sync endpoints.
-- [ ] `go test -race ./internal/server/...` covers listing, filtering, retry, cancel, validation failures and the `persisted` flag.
+- [x] `GET /api/v1/sync/jobs` supports filtering by state and kind and returns a bounded page with a cursor, consistent with the other list endpoints.
+- [x] `GET /api/v1/sync/jobs/{id}` returns the job with its attempt count, next attempt time and redacted last error.
+- [x] `POST .../retry` re-queues only a failed or cancelled job and returns a problem document otherwise; `POST .../cancel` works on queued and running jobs.
+- [x] `GET|PATCH /api/v1/sync/settings` exposes workers, batch size, rate limit and retry policy, validates ranges, and reports `persisted`.
+- [x] A PATCH to workers or rate limit changes the behaviour of the running engine without a restart, proved by a test.
+- [x] New problem codes are registered in `internal/server/problem.go` and no response leaks a credential.
+- [x] `docs/07-cli-and-api.md` documents all six endpoints with examples, next to the existing sync endpoints.
+- [x] `go test -race ./internal/server/...` covers listing, filtering, retry, cancel, validation failures and the `persisted` flag.
 
 ## Notes
 
 Contract precedents: `handleSyncRun` (`internal/server/sync.go:145`) for the existing sync shape, `handleGitSettingsPatch` (`internal/server/git.go:374-393`) for the settings-plus-`persisted` contract, and `maxItemsPerPage = 500` (`internal/server/items.go:16`) for paging bounds. `Options.ConfigPath` (`internal/server/server.go:112`) being empty is what makes `persisted` false.
 
 Do NOT expose an endpoint that enqueues arbitrary job kinds with an arbitrary payload: jobs are created by the feature that owns them (import, comment push, KB publish), and a generic enqueue endpoint would be an unauthenticated-by-shape way to drive the companion's outbound HTTP. Do NOT change the semantics of the existing `POST /api/v1/sync/run` in this story.
+
+**One caveat on `persisted`.** It is reported, and it is always `false` for a
+change touching the engine, because `internal/config` has no `sync.engine`
+section to write to (see GIT-T-0175). The reload-mutate-save seam is in place in
+`syncState.persist`.

@@ -14,6 +14,54 @@ because a commit list cannot express them.
 
 ### Added
 
+- **The companion runs a background job engine, and it is inspectable over REST and
+  live on the WebSocket** (GIT-US-0074, GIT-US-0078, GIT-US-0084, docs/07 §4.1, §5.5, §5.6).
+  `internal/syncengine` now starts with `gintrack serve`, beside the watcher, the committer
+  and the tunnel, and stops on the same path: shutdown drains the queue for a bounded grace
+  period on a context **detached** from the shutdown itself — so a job halfway through a call
+  to a tracker is not cancelled by the very stop that is waiting for it — and journals
+  whatever is left for the next run. With no integration configured it starts **idle**: an
+  empty queue, nothing published, nothing measurable at start-up. Four flags configure it,
+  `--sync-workers`, `--sync-batch`, `--sync-rate` and `--sync-max-attempts`, with the
+  matching `GINTRACK_SYNC_*` environment variables and the shipped defaults of 2 workers,
+  batch 20, 5 req/s and 5 attempts; an out-of-range value fails the command **before the
+  listener opens**. Six endpoints make the queue visible and controllable without a restart:
+  `GET /api/v1/sync/jobs` (filter by state and kind, bounded page, cursor),
+  `GET /api/v1/sync/jobs/{id}`, `POST .../retry`, `POST .../cancel` and
+  `GET|PATCH /api/v1/sync/settings`, where a change to the worker count, the batch size or
+  the rate limit reaches the **running** engine at once. Five topics narrate it —
+  `sync.job.queued`, `.started`, `.progress`, `.done`, `.failed` — published by a thin
+  observer in `internal/server`, so the engine keeps no dependency on the transport. Progress
+  is coalesced to at most one frame every 500 ms per coalescing group and a terminal event is
+  never throttled; even so the hub drops a client that cannot keep up, so a client reconciles
+  from `GET /api/v1/sync/jobs` after a gap rather than trusting the stream. No response, log
+  line or event payload carries a job payload or a credential. **No job handler ships with
+  this change**: the import, the comment push and the knowledge-base publish are later
+  stories, and each adds one `Server.RegisterSyncHandler` call.
+
+- **The inbox is served: `GET /api/v1/inbox` and `POST /api/v1/items/{id}/triage`**
+  (GIT-US-0056, ADR-033, docs/07 §5.5). The queue the previous release modelled is now
+  reachable: a paginated listing whose `counts` and `pending` are computed over the whole
+  queue rather than the page — an expired snooze already counted as pending — and one
+  decision per row (`accept`, `reject`, `snooze`, `duplicate`) behind the ordinary `If-Match`
+  precondition, with a stale revision answering `412` and the current rev. A project that
+  declares no `triage` status has an empty inbox, and filing something into it is refused
+  with `no_triage_status` (409). Every triage, and every create that files an item straight
+  into the queue, publishes `inbox.changed` with the pending count, so a badge never needs a
+  second call.
+
+- **Moving a sprint's unfinished work is a route of its own, and every close can preview
+  itself** (GIT-US-0085, docs/07 §5.5). `POST /api/v1/sprints/{id}/transfer` moves the
+  incomplete references of one sprint into another sprint or back to their project backlogs
+  without closing anything — `items` and `committed` come back untouched — and
+  `POST /api/v1/sprints/{id}/close` now accepts the same bulk `transfer` decision, which an
+  explicit per-item `carry` entry still overrides. Both accept `dryRun`, and **a dry run
+  writes nothing and publishes nothing**: no `sprint.changed`, no `item.changed`, no
+  commit-on-save, with `"dryRun": true` on the answer so a preview can never be mistaken for
+  a commitment. A per-item failure is still a `200` with an `error` on its own `carried`
+  line; a transfer aimed at a sprint that is already over is refused outright with
+  `sprint_target_completed` (409).
+
 - **A file can say where it came from: `external`** (ADR-031, docs/03 §12.5). Items, comments
   and knowledge-base pages carry a list of `{system, id, url?, key?, synced_at?}`, and the
   pair (`system`, `id`) is the identity of an entry — the idempotency key an importer matches

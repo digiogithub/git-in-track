@@ -65,6 +65,11 @@ type Vault struct {
 
 	// onRefresh hears what a read-time refresh changed. Nil when nobody asked.
 	onRefresh func(core.IndexDelta)
+
+	// youtrack hands the YouTrack import its client and the project's link
+	// configuration. Nil where no host installed one, which is every
+	// browser-only session (see SetYouTrackProvider).
+	youtrack YouTrackProvider
 }
 
 // Options configures a Vault.
@@ -312,6 +317,15 @@ func (v *Vault) Dispatch(ctx context.Context, method string, raw []byte) (any, e
 			hook(refreshed)
 		}
 	}()
+	switch method {
+	case "youtrack.import.preview", "youtrack.import.run":
+		// The import resolves its issues over the network. It takes the vault
+		// mutex itself, for the index reads and the writes only, so that a
+		// remote call never blocks every other reader of this repository
+		// (GIT-US-0047).
+		return v.youtrackDispatch(ctx, method, raw)
+	}
+
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	refreshed = v.freshen(ctx, method, raw)

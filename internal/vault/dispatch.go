@@ -104,6 +104,23 @@ func (w *Workspace) Dispatch(ctx context.Context, method string, raw []byte) (an
 			return nil, err
 		}
 		return w.ResolveRef(ref), nil
+	case "youtrack.import.preview", "youtrack.import.run":
+		// The import writes into one project repository, named by "project" and
+		// routed like any other project call, but it is answered here so that
+		// its parameters are decoded once and both methods share one entry
+		// point (GIT-US-0047).
+		p, err := decodeParams[YouTrackImportParams](raw)
+		if err != nil {
+			return nil, err
+		}
+		target, err := w.route(method, raw)
+		if err != nil {
+			return nil, err
+		}
+		if method == "youtrack.import.preview" {
+			return target.Vault.YouTrackImportPreview(ctx, p)
+		}
+		return target.Vault.YouTrackImportRun(ctx, p)
 	case "item.references":
 		p, err := decodeParams[ItemReferencesParams](raw)
 		if err != nil {

@@ -6,6 +6,7 @@ import {
   companionCapabilities,
   POLL_INTERVAL_MS,
   RECONNECT_BASE_MS,
+  toCapabilities,
   type WebSocketLike,
 } from '@/api/companion-provider';
 import { ProviderError, type ChangeEvent } from '@/api/provider';
@@ -300,6 +301,8 @@ describe('CompanionProvider reads', () => {
       mcp: false,
       openInEditor: true,
       maxBatchWrite: 200,
+      youtrackSupported: true,
+      youtrack: false,
     });
     expect(client.version).toBe('0.4.0');
   });
@@ -1262,5 +1265,129 @@ describe('CompanionProvider team projects', () => {
         'ACME-TEAM',
       ),
     ).rejects.toMatchObject({ code: 'team_project_exists' });
+  });
+});
+
+describe('CompanionProvider YouTrack surface (story GIT-US-0055)', () => {
+  const settings = {
+    projectKey: 'GIT',
+    configured: true,
+    url: 'https://yt.example.com/youtrack',
+    project: 'ACME',
+    fieldMap: { status: 'State', priority: 'Priority' },
+    pushComments: 'manual',
+    kbSync: 'manual',
+    kbSyncDirection: 'push',
+    hasToken: true,
+    tokenSource: 'file',
+    persisted: true,
+    projectPath: 'docs/.pmngr/project.yaml',
+    repo: 'repo-1',
+  };
+
+  it('reads the connection and never invents a token field', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(response(settings));
+
+    const read = await provider(fetchImpl).getYouTrackSettings();
+
+    expect(fetchImpl.mock.calls[0]?.[0]).toBe(`${BASE}/api/v1/youtrack/settings`);
+    expect(read).toMatchObject({ hasToken: true, tokenSource: 'file', project: 'ACME' });
+    expect(Object.keys(read)).not.toContain('token');
+  });
+
+  it('names the project when the companion serves several', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(response(settings));
+
+    await provider(fetchImpl).getYouTrackSettings({ projectKey: 'WEB' });
+
+    expect(fetchImpl.mock.calls[0]?.[0]).toBe(`${BASE}/api/v1/youtrack/settings?key=WEB`);
+  });
+
+  it('patches sparsely, so an empty string clears rather than reads as absent', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(response({ ...settings, hasToken: false }));
+
+    await provider(fetchImpl).updateYouTrackSettings({ token: '', project: 'ACME' });
+
+    const [, init] = fetchImpl.mock.calls[0] ?? [];
+    expect((init as RequestInit).method).toBe('PATCH');
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({
+      token: '',
+      project: 'ACME',
+    });
+  });
+
+  it('tests a connection that has not been saved yet', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      response({
+        ok: true,
+        baseUrl: 'https://yt.example.com/youtrack',
+        login: 'jdoe',
+        fullName: 'Jane Doe',
+      }),
+    );
+
+    const result = await provider(fetchImpl).testYouTrackConnection({
+      url: 'https://yt.example.com/youtrack',
+      token: 'perm:secret',
+    });
+
+    const [url, init] = fetchImpl.mock.calls[0] ?? [];
+    expect(url).toBe(`${BASE}/api/v1/youtrack/test`);
+    expect((init as RequestInit).method).toBe('POST');
+    expect(result).toMatchObject({ ok: true, login: 'jdoe', fullName: 'Jane Doe', email: '' });
+  });
+
+  it('searches projects and reads the fields of one', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        response({
+          projects: [{ id: '0-1', shortName: 'ACME', name: 'Acme', archived: false }],
+          total: 1,
+          limit: 100,
+        }),
+      )
+      .mockResolvedValueOnce(
+        response({
+          project: 'ACME',
+          fields: [{ id: 'f-1', name: 'State', type: 'state[1]', canBeEmpty: false }],
+          total: 1,
+          gintrackFields: ['status', 'priority'],
+        }),
+      );
+    const companion = provider(fetchImpl);
+
+    const projects = await companion.listYouTrackProjects('ac');
+    const fields = await companion.listYouTrackFields('ACME');
+
+    expect(fetchImpl.mock.calls[0]?.[0]).toBe(`${BASE}/api/v1/youtrack/projects?q=ac`);
+    expect(projects).toEqual([{ id: '0-1', shortName: 'ACME', name: 'Acme', archived: false }]);
+    expect(fetchImpl.mock.calls[1]?.[0]).toBe(`${BASE}/api/v1/youtrack/fields?project=ACME`);
+    expect(fields.fields[0]).toMatchObject({ name: 'State', bundleId: '' });
+    expect(fields.gintrackFields).toEqual(['status', 'priority']);
+  });
+
+  it.each([
+    ['youtrack_not_configured', 409],
+    ['youtrack_unauthorized', 502],
+    ['youtrack_forbidden', 502],
+    ['youtrack_not_found', 502],
+    ['youtrack_unreachable', 502],
+  ])('carries %s through as its own code', async (code, status) => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(response({ code, detail: 'nope' }, { status, statusText: 'Bad Gateway' }));
+
+    await expect(provider(fetchImpl).testYouTrackConnection()).rejects.toMatchObject({ code });
+  });
+
+  it('reads the two YouTrack features out of the capabilities document', () => {
+    const caps = toCapabilities({
+      features: { youtrackSupported: true, youtrack: true },
+      limits: {},
+    });
+
+    expect(caps.youtrackSupported).toBe(true);
+    expect(caps.youtrack).toBe(true);
   });
 });

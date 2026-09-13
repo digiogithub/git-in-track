@@ -96,6 +96,13 @@ import type {
   TunnelStatus,
   Unsubscribe,
   UpdateOp,
+  ProviderErrorCode,
+  YouTrackField,
+  YouTrackFieldList,
+  YouTrackProject,
+  YouTrackSettings,
+  YouTrackSettingsPatch,
+  YouTrackTestResult,
 } from '@/api/provider';
 import { ProviderError, readOnlyCapabilities } from '@/api/provider';
 import { DEFAULT_COMMIT_TEMPLATE, validateCommitTemplate } from '@/git/message';
@@ -129,6 +136,32 @@ export type FakeData = {
   /** Overrides on the MCP write surface: a runtime with none, or one already
    * advertising the write tools. */
   mcp?: Partial<McpSettings>;
+  /**
+   * The YouTrack connection, in memory. Absent — the default — makes this fake
+   * a runtime that cannot reach YouTrack at all: the capability is false and
+   * every call fails with "not available in this mode", which is what the
+   * browser does. Supplying it opts a test into the companion behaviour.
+   */
+  youtrack?: FakeYouTrack;
+};
+
+/**
+ * A YouTrack instance and connection the fake reproduces (story GIT-US-0055):
+ * the saved settings, the projects the autosuggest offers, the custom fields
+ * the field map maps onto, and the one thing a card must handle well — a probe
+ * that fails, with the problem code the companion would have sent.
+ */
+export type FakeYouTrack = {
+  settings?: Partial<YouTrackSettings>;
+  projects?: YouTrackProject[];
+  fields?: YouTrackField[];
+  gintrackFields?: string[];
+  /** What a successful probe reports. */
+  test?: Partial<YouTrackTestResult>;
+  /** When set, every probe fails with this code and message instead. */
+  testError?: { code: ProviderErrorCode; message: string };
+  /** Whether a patch reaches the configuration file; true by default. */
+  persisted?: boolean;
 };
 
 /**
@@ -393,6 +426,60 @@ function isDone(card: BoardCard): boolean {
   const category = card.category ?? categoryOf(card.status);
   return category === 'done' || category === 'cancelled';
 }
+
+/** Why a fake with no YouTrack block behaves like browser-only mode. */
+const NO_YOUTRACK_REASON =
+  'YouTrack is not available in this mode. Run `gintrack serve` to connect a project.';
+
+/** The projects the autosuggest offers unless a test supplies its own. */
+const sampleYouTrackProjects: YouTrackProject[] = [
+  { id: '0-1', shortName: 'ACME', name: 'Acme Platform', archived: false },
+  { id: '0-2', shortName: 'WEB', name: 'Acme Web', archived: false },
+  { id: '0-3', shortName: 'OLD', name: 'Acme Legacy', archived: true },
+];
+
+/** The custom fields of that instance, as the field map sees them. */
+const sampleYouTrackFields: YouTrackField[] = [
+  {
+    id: 'f-1',
+    name: 'State',
+    type: 'state[1]',
+    bundleId: 'b-1',
+    bundleType: 'StateBundle',
+    canBeEmpty: false,
+  },
+  {
+    id: 'f-2',
+    name: 'Priority',
+    type: 'enum[1]',
+    bundleId: 'b-2',
+    bundleType: 'EnumBundle',
+    canBeEmpty: true,
+  },
+  {
+    id: 'f-3',
+    name: 'Type',
+    type: 'enum[1]',
+    bundleId: 'b-3',
+    bundleType: 'EnumBundle',
+    canBeEmpty: true,
+  },
+  { id: 'f-4', name: 'Assignee', type: 'user[1]', bundleId: '', bundleType: '', canBeEmpty: true },
+  { id: 'f-5', name: 'Estimation', type: 'period', bundleId: '', bundleType: '', canBeEmpty: true },
+];
+
+/** The git-in-track half of a mapping, as the companion declares it. */
+const sampleGintrackFields = [
+  'status',
+  'priority',
+  'type',
+  'assignee',
+  'labels',
+  'estimate',
+  'milestone',
+  'due',
+  'sprint',
+];
 
 const writableCapabilities: Capabilities = {
   ...readOnlyCapabilities,
@@ -720,9 +807,42 @@ export class FakeProvider implements DataProvider {
   private mcp: McpSettings;
   /** Reads left before a `starting` tunnel settles, so polling is testable. */
   private tunnelReadsToConnect = 0;
+  /** The YouTrack connection, in memory; null on a runtime that has none. */
+  private youtrack: FakeYouTrack | null;
+  private youtrackSettings: YouTrackSettings;
+  /**
+   * Whether a credential also arrives from the environment. It is what makes
+   * clearing the stored one fall back rather than disconnect, which is the case
+   * the settings card has to explain.
+   */
+  private youtrackEnvToken: boolean;
 
   constructor(data: FakeData = {}, opts: { readOnly?: boolean } = {}) {
-    this.capabilities = opts.readOnly ? readOnlyCapabilities : writableCapabilities;
+    const base = opts.readOnly ? readOnlyCapabilities : writableCapabilities;
+    this.youtrack = data.youtrack ?? null;
+    const seeded = data.youtrack?.settings ?? {};
+    this.youtrackSettings = {
+      projectKey: 'GIT',
+      configured: false,
+      url: '',
+      project: '',
+      fieldMap: {},
+      pushComments: 'manual',
+      kbSync: 'manual',
+      kbSyncDirection: 'push',
+      hasToken: false,
+      tokenSource: '',
+      persisted: false,
+      projectPath: 'docs/.pmngr/project.yaml',
+      repo: 'repo-1',
+      ...seeded,
+    };
+    this.youtrackEnvToken = this.youtrackSettings.tokenSource === 'env';
+    this.capabilities = {
+      ...base,
+      youtrackSupported: this.youtrack !== null,
+      youtrack: this.youtrack !== null && this.youtrackSettings.configured,
+    };
     this.projects = data.projects ?? [sampleProject];
     this.items = new Map((data.items ?? sampleItems).map((i) => [i.id, structuredClone(i)]));
     this.comments = structuredClone(data.comments ?? sampleComments);
@@ -2563,6 +2683,124 @@ export class FakeProvider implements DataProvider {
       error: '',
     };
     return Promise.resolve({ ...this.tunnel });
+  }
+
+  // ---------------------------------------------------------------- youtrack
+
+  /** Rejects on a runtime that has no YouTrack surface, as the browser does. */
+  private youtrackOrFail(): FakeYouTrack | null {
+    return this.youtrack;
+  }
+
+  getYouTrackSettings(): Promise<YouTrackSettings> {
+    if (!this.youtrackOrFail()) {
+      return Promise.reject(new ProviderError('read_only', NO_YOUTRACK_REASON));
+    }
+    return Promise.resolve({
+      ...this.youtrackSettings,
+      fieldMap: { ...this.youtrackSettings.fieldMap },
+    });
+  }
+
+  /**
+   * Applies a sparse patch the way the companion does: a key that is present is
+   * applied as given, so `''` clears it, and the token half never becomes
+   * readable — only `hasToken` and `tokenSource` move.
+   */
+  updateYouTrackSettings(patch: YouTrackSettingsPatch): Promise<YouTrackSettings> {
+    const youtrack = this.youtrackOrFail();
+    if (!youtrack) {
+      return Promise.reject(new ProviderError('read_only', NO_YOUTRACK_REASON));
+    }
+    const next: YouTrackSettings = { ...this.youtrackSettings };
+    if (patch.url !== undefined) next.url = patch.url.trim().replace(/\/+$/, '');
+    if (patch.project !== undefined) next.project = patch.project.trim();
+    if (patch.fieldMap !== undefined) next.fieldMap = { ...patch.fieldMap };
+    if (patch.pushComments !== undefined) next.pushComments = patch.pushComments;
+    if (patch.kbSync !== undefined) next.kbSync = patch.kbSync;
+    if (patch.kbSyncDirection !== undefined) next.kbSyncDirection = patch.kbSyncDirection;
+    if (patch.token !== undefined) {
+      if (patch.token === '') {
+        // Forgetting the stored token falls back to the environment when one is
+        // there, which is why the card must never promise a clean disconnect.
+        next.hasToken = this.youtrackEnvToken;
+        next.tokenSource = this.youtrackEnvToken ? 'env' : '';
+      } else {
+        next.hasToken = true;
+        next.tokenSource = 'file';
+      }
+    }
+    next.configured = next.url !== '' && next.project !== '';
+    next.persisted = youtrack.persisted ?? true;
+    this.youtrackSettings = next;
+    return Promise.resolve({ ...next, fieldMap: { ...next.fieldMap } });
+  }
+
+  testYouTrackConnection(
+    probe: { url?: string; token?: string } = {},
+  ): Promise<YouTrackTestResult> {
+    const youtrack = this.youtrackOrFail();
+    if (!youtrack) {
+      return Promise.reject(new ProviderError('read_only', NO_YOUTRACK_REASON));
+    }
+    if (youtrack.testError) {
+      return Promise.reject(new ProviderError(youtrack.testError.code, youtrack.testError.message));
+    }
+    const url = probe.url ?? this.youtrackSettings.url;
+    if (url === '') {
+      return Promise.reject(
+        new ProviderError(
+          'youtrack_not_configured',
+          'This project is not connected to YouTrack yet.',
+        ),
+      );
+    }
+    return Promise.resolve({
+      ok: true,
+      baseUrl: url,
+      login: 'jdoe',
+      fullName: 'Jane Doe',
+      email: 'jane@example.com',
+      project: this.youtrackSettings.project,
+      ...youtrack.test,
+    });
+  }
+
+  listYouTrackProjects(q?: string): Promise<YouTrackProject[]> {
+    const youtrack = this.youtrackOrFail();
+    if (!youtrack) {
+      return Promise.reject(new ProviderError('read_only', NO_YOUTRACK_REASON));
+    }
+    const needle = (q ?? '').trim().toLowerCase();
+    const projects = youtrack.projects ?? sampleYouTrackProjects;
+    return Promise.resolve(
+      projects.filter(
+        (project) =>
+          needle === '' ||
+          project.shortName.toLowerCase().includes(needle) ||
+          project.name.toLowerCase().includes(needle),
+      ),
+    );
+  }
+
+  listYouTrackFields(project?: string): Promise<YouTrackFieldList> {
+    const youtrack = this.youtrackOrFail();
+    if (!youtrack) {
+      return Promise.reject(new ProviderError('read_only', NO_YOUTRACK_REASON));
+    }
+    const named = project ?? this.youtrackSettings.project;
+    if (named === '') {
+      return Promise.reject(
+        new ProviderError('validation_failed', 'Name the YouTrack project to read fields from.'),
+      );
+    }
+    const fields = youtrack.fields ?? sampleYouTrackFields;
+    return Promise.resolve({
+      project: named,
+      fields: fields.map((field) => ({ ...field })),
+      total: fields.length,
+      gintrackFields: youtrack.gintrackFields ?? sampleGintrackFields,
+    });
   }
 
   getGitStatus(repoId?: string): Promise<GitRepoStatus[]> {

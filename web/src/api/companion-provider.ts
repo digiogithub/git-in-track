@@ -98,6 +98,17 @@ import type {
   TunnelStatus,
   Unsubscribe,
   UpdateOp,
+  YouTrackField,
+  YouTrackFieldList,
+  YouTrackKbSync,
+  YouTrackKbSyncDirection,
+  YouTrackProject,
+  YouTrackPushComments,
+  YouTrackScope,
+  YouTrackSettings,
+  YouTrackSettingsPatch,
+  YouTrackTestResult,
+  YouTrackTokenSource,
 } from '@/api/provider';
 import { ProviderError } from '@/api/provider';
 import { authorizationHeader, clearToken, hasToken, withTokenQuery } from '@/api/token';
@@ -138,6 +149,8 @@ export const companionCapabilities: Capabilities = {
   mcp: false,
   openInEditor: true,
   maxBatchWrite: 50,
+  youtrackSupported: true,
+  youtrack: false,
 };
 
 /** State of the event socket, surfaced in Settings. */
@@ -231,6 +244,14 @@ const PROBLEM_CODES: Record<string, ProviderErrorCode> = {
   // Opening a tunnel over a companion started without authentication is
   // refused, not failed: the UI explains it instead of offering a retry.
   tunnel_requires_token: 'tunnel_requires_token',
+  // The YouTrack side. The companion answers 502 for every remote failure so a
+  // browser never mistakes the instance refusing a token for its own session
+  // expiring; the code is what tells the card which message to render.
+  youtrack_not_configured: 'youtrack_not_configured',
+  youtrack_unauthorized: 'youtrack_unauthorized',
+  youtrack_forbidden: 'youtrack_forbidden',
+  youtrack_not_found: 'youtrack_not_found',
+  youtrack_unreachable: 'youtrack_unreachable',
   index_unavailable: 'internal',
   rate_limited: 'internal',
   internal: 'internal',
@@ -762,6 +783,86 @@ export function toCapabilities(value: unknown): Capabilities {
     mcp: asBoolean(features['mcpHttp']) ?? false,
     openInEditor: asBoolean(features['openInEditor']) ?? companionCapabilities.openInEditor,
     maxBatchWrite: asNumber(limits['maxBatchWrite']) ?? companionCapabilities.maxBatchWrite,
+    // `youtrackSupported` says the build can speak to YouTrack at all and is
+    // what gates the settings card; `youtrack` says a project is already
+    // connected, which is a fact about the workspace, not a permission.
+    youtrackSupported:
+      asBoolean(features['youtrackSupported']) ?? companionCapabilities.youtrackSupported,
+    youtrack: asBoolean(features['youtrack']) ?? companionCapabilities.youtrack,
+  };
+}
+
+// ---------------------------------------------------------------- youtrack
+
+/** `GET|PATCH /youtrack/settings` → the connection the settings card shows. */
+export function toYouTrackSettings(value: unknown): YouTrackSettings {
+  const record = asRecord(value) ?? {};
+  const fieldMap: Record<string, string> = {};
+  for (const [key, entry] of Object.entries(asRecord(record['fieldMap']) ?? {})) {
+    const name = asString(entry);
+    if (name !== undefined) fieldMap[key] = name;
+  }
+  return {
+    projectKey: asString(record['projectKey']) ?? '',
+    configured: asBoolean(record['configured']) ?? false,
+    url: asString(record['url']) ?? '',
+    project: asString(record['project']) ?? '',
+    fieldMap,
+    pushComments: (asString(record['pushComments']) ?? '') as YouTrackPushComments,
+    kbSync: (asString(record['kbSync']) ?? '') as YouTrackKbSync,
+    kbSyncDirection: (asString(record['kbSyncDirection']) ?? '') as YouTrackKbSyncDirection,
+    hasToken: asBoolean(record['hasToken']) ?? false,
+    tokenSource: (asString(record['tokenSource']) ?? '') as YouTrackTokenSource,
+    persisted: asBoolean(record['persisted']) ?? false,
+    projectPath: asString(record['projectPath']) ?? '',
+    repo: asString(record['repo']) ?? '',
+  };
+}
+
+/** `POST /youtrack/test` → who the credential authenticates as. */
+export function toYouTrackTestResult(value: unknown): YouTrackTestResult {
+  const record = asRecord(value) ?? {};
+  return {
+    ok: asBoolean(record['ok']) ?? false,
+    baseUrl: asString(record['baseUrl']) ?? '',
+    login: asString(record['login']) ?? '',
+    fullName: asString(record['fullName']) ?? '',
+    email: asString(record['email']) ?? '',
+    project: asString(record['project']) ?? '',
+  };
+}
+
+function toYouTrackProject(value: unknown): YouTrackProject {
+  const record = asRecord(value) ?? {};
+  return {
+    id: asString(record['id']) ?? '',
+    shortName: asString(record['shortName']) ?? '',
+    name: asString(record['name']) ?? '',
+    archived: asBoolean(record['archived']) ?? false,
+  };
+}
+
+function toYouTrackField(value: unknown): YouTrackField {
+  const record = asRecord(value) ?? {};
+  return {
+    id: asString(record['id']) ?? '',
+    name: asString(record['name']) ?? '',
+    type: asString(record['type']) ?? '',
+    bundleId: asString(record['bundleId']) ?? '',
+    bundleType: asString(record['bundleType']) ?? '',
+    canBeEmpty: asBoolean(record['canBeEmpty']) ?? false,
+  };
+}
+
+/** `GET /youtrack/fields` → both halves of the mapping vocabulary. */
+export function toYouTrackFieldList(value: unknown): YouTrackFieldList {
+  const record = asRecord(value) ?? {};
+  const fields = asArray(record['fields']).map(toYouTrackField);
+  return {
+    project: asString(record['project']) ?? '',
+    fields,
+    total: asNumber(record['total']) ?? fields.length,
+    gintrackFields: asStringArray(record['gintrackFields']) ?? [],
   };
 }
 
@@ -776,6 +877,15 @@ type QueryValue = string | number | boolean | string[] | undefined;
  */
 function teamQuery(team?: string): string {
   return team === undefined || team === '' ? '' : `?team=${encodeURIComponent(team)}`;
+}
+
+/**
+ * `?key=` for a YouTrack route. It is omitted when the caller names no project,
+ * which the companion reads as "the only one you serve" — and refuses with
+ * `invalid_request` when it serves several.
+ */
+function youtrackQuery(scope: YouTrackScope): string {
+  return buildQuery({ key: scope.projectKey });
 }
 
 function buildQuery(params: Record<string, QueryValue>): string {
@@ -1592,6 +1702,73 @@ export class CompanionProvider implements DataProvider {
     return toTunnelStatus(
       await this.#json(`${API_PREFIX}/tunnel`, { method: enabled ? 'POST' : 'DELETE' }),
     );
+  }
+
+  // ---------------------------------------------------------------- youtrack
+
+  /** `GET /api/v1/youtrack/settings`. */
+  async getYouTrackSettings(scope: YouTrackScope = {}): Promise<YouTrackSettings> {
+    return toYouTrackSettings(
+      await this.#json(`${API_PREFIX}/youtrack/settings${youtrackQuery(scope)}`),
+    );
+  }
+
+  /**
+   * `PATCH /api/v1/youtrack/settings`. The body is passed through as given:
+   * a key the caller omitted is left alone and one set to `''` is cleared, so
+   * forgetting a token is `{token: ''}` and disconnecting a project is
+   * `{url: '', project: ''}`.
+   */
+  async updateYouTrackSettings(
+    patch: YouTrackSettingsPatch,
+    scope: YouTrackScope = {},
+  ): Promise<YouTrackSettings> {
+    return toYouTrackSettings(
+      await this.#json(`${API_PREFIX}/youtrack/settings${youtrackQuery(scope)}`, {
+        method: 'PATCH',
+        body: patch,
+      }),
+    );
+  }
+
+  /**
+   * `POST /api/v1/youtrack/test`. An empty probe tests the saved connection;
+   * a probe carrying a URL and a token tests one that has not been saved, which
+   * is what lets the card refuse to write a credential that does not work.
+   */
+  async testYouTrackConnection(
+    probe: { url?: string; token?: string } = {},
+    scope: YouTrackScope = {},
+  ): Promise<YouTrackTestResult> {
+    return toYouTrackTestResult(
+      await this.#json(`${API_PREFIX}/youtrack/test${youtrackQuery(scope)}`, {
+        method: 'POST',
+        body: {
+          ...(probe.url === undefined ? {} : { url: probe.url }),
+          ...(probe.token === undefined ? {} : { token: probe.token }),
+        },
+      }),
+    );
+  }
+
+  /** `GET /api/v1/youtrack/projects?q=`. */
+  async listYouTrackProjects(q?: string, scope: YouTrackScope = {}): Promise<YouTrackProject[]> {
+    const query = buildQuery({ key: scope.projectKey, q: q === '' ? undefined : q });
+    const body = await this.#json(`${API_PREFIX}/youtrack/projects${query}`);
+    const record = asRecord(body);
+    return asArray(record ? record['projects'] : body).map(toYouTrackProject);
+  }
+
+  /** `GET /api/v1/youtrack/fields?project=`. */
+  async listYouTrackFields(
+    project?: string,
+    scope: YouTrackScope = {},
+  ): Promise<YouTrackFieldList> {
+    const query = buildQuery({
+      key: scope.projectKey,
+      project: project === '' ? undefined : project,
+    });
+    return toYouTrackFieldList(await this.#json(`${API_PREFIX}/youtrack/fields${query}`));
   }
 
   /** `POST /api/v1/git/commit`; with no paths it flushes the batched edits. */

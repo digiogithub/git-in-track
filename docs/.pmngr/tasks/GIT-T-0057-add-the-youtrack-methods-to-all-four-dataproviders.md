@@ -2,7 +2,7 @@
 id: GIT-T-0057
 type: task
 title: Add the YouTrack methods to all four DataProviders
-status: todo
+status: done
 priority: medium
 parent: GIT-US-0055
 milestone: GIT-M-0011
@@ -10,7 +10,9 @@ author: mcp
 labels: [web, agent-ok]
 estimate: 3
 created: 2026-09-13T13:16:44Z
-updated: 2026-09-13T13:16:44Z
+updated: 2026-09-13T14:58:44Z
+started: 2026-09-13T14:54:52Z
+closed: 2026-09-13T14:58:44Z
 ---
 
 ## Description
@@ -19,6 +21,10 @@ Add `getYouTrackSettings`, `updateYouTrackSettings`, `testYouTrackConnection`, `
 
 ## Acceptance Criteria
 
-- [ ] All five methods exist on the interface and in the companion, browser and fake providers.
-- [ ] `Capabilities` carries `youtrack` and the browser provider reports it false.
-- [ ] `tsc` and ESLint pass; Vitest covers the companion provider's request shapes against a mocked fetch.
+- [x] All five methods exist on the interface and in the companion, browser and fake providers.
+- [x] `Capabilities` carries `youtrack` and the browser provider reports it false.
+- [x] `tsc` and ESLint pass; Vitest covers the companion provider's request shapes against a mocked fetch.
+
+## Notes
+
+`Capabilities` carries two flags rather than one: `youtrackSupported` (companion mode, what gates the card) and `youtrack` (a project already declares a link). The fake provider is unavailable by default — like the browser — and a test opts into the companion behaviour with `new FakeProvider({ youtrack: {...} })`.

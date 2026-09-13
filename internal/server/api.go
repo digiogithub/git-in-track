@@ -71,6 +71,10 @@ func (s *Server) mountAPI(api chi.Router) {
 
 		// Items.
 		p.Route("/items", s.mountItems)
+		// The triage queue of a project (GIT-US-0056). The decision that
+		// empties a row from it is POST /items/{id}/triage, which lives with
+		// the other item writes.
+		p.Get("/inbox", s.handleInboxList)
 
 		p.Get("/search", s.handleSearch)
 		p.Post("/validate", s.handleValidate)

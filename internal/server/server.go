@@ -128,6 +128,12 @@ type Options struct {
 	// means the default the MCP package picks.
 	MCPAgent string
 
+	// SyncEngine configures the background job engine: the worker pool, the
+	// batch size, the shared outbound rate limit, the retry budget and the
+	// grace period a shutdown drains for (GIT-US-0084). The zero value is the
+	// documented default and starts an idle engine that costs nothing.
+	SyncEngine SyncEngine
+
 	// Tunnel is the `server.tunnel` section: the provider and whether a tunnel
 	// is opened as soon as the listener has an address. Enabling it publishes
 	// this server on the internet, so New refuses it without a token.
@@ -162,6 +168,10 @@ type Server struct {
 	proxy *corsProxy
 	// tunnel owns the public tunnel toggled at /api/v1/tunnel.
 	tunnel *tunnelState
+	// sync owns the background job engine and the observer that publishes its
+	// `sync.job.*` events (GIT-US-0074, GIT-US-0084). It exists from New so
+	// that a handler can be registered before Start replays the journal.
+	sync *syncState
 	// youtrack owns the YouTrack connection of every mounted project: the
 	// committed link in project.yaml, the machine-local token and the clients
 	// built from the two (GIT-US-0052).
@@ -241,6 +251,14 @@ func New(opts Options) (*Server, error) {
 		}
 	}
 	s.mcp = s.newMCPState(opts)
+	// The job engine is built here and started in Start: a handler has to be
+	// registered before the journal is replayed, and New is the only moment a
+	// caller holds the server and nothing is running yet.
+	jobs, err := newSyncState(opts, newSyncObserver(s.hub, now))
+	if err != nil {
+		return nil, fmt.Errorf("sync engine: %w", err)
+	}
+	s.sync = jobs
 	s.proxy = newCORSProxy(s)
 	s.tunnel = newTunnelState(opts)
 	s.router = s.routes()
@@ -315,6 +333,12 @@ func (s *Server) Start(ctx context.Context) error {
 	// published workspace outlives the server.
 	s.startTunnel(ctx)
 	defer s.stopTunnel(context.WithoutCancel(ctx))
+	// The background job engine. Its context is detached on the way out for the
+	// same reason the committer's is: a job that is halfway through a call to a
+	// tracker must be allowed to finish, and the very shutdown that is waiting
+	// for it must not be what cancels it.
+	s.startSyncEngine(ctx)
+	defer s.stopSyncEngine(context.WithoutCancel(ctx))
 	// A shutdown must not drop an edit that was still inside the debounce
 	// window, so the committer is flushed before the listener closes.
 	defer s.git.close(context.WithoutCancel(ctx))

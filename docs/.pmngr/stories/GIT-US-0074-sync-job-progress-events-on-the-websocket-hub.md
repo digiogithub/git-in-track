@@ -2,7 +2,7 @@
 id: GIT-US-0074
 type: story
 title: Sync job progress events on the WebSocket hub
-status: backlog
+status: in_review
 priority: high
 parent: GIT-EP-0015
 milestone: GIT-M-0011
@@ -10,7 +10,8 @@ author: mcp
 labels: [server, web, docs]
 estimate: 5
 created: 2026-09-13T13:13:43Z
-updated: 2026-09-13T13:13:43Z
+updated: 2026-09-13T15:15:28Z
+started: 2026-09-13T15:15:12Z
 ---
 
 ## Description
@@ -23,11 +24,11 @@ On the frontend, bridge the new topics into TanStack Query the way `useBacklogEv
 
 ## Acceptance Criteria
 
-- [ ] The five `sync.job.*` topics are published from the server-side observer, and `internal/syncengine` does not import `internal/server`.
-- [ ] Progress events are coalesced (at most a few per second per job) so a large batch cannot overflow a client's 256-event buffer.
-- [ ] Event payloads never contain a credential and carry the redacted error on failure.
-- [ ] Clients resuming with `since` receive the events they missed from the replay ring, consistent with the existing contract.
-- [ ] `docs/07-cli-and-api.md` §5.6 documents each topic and its payload alongside the existing `sync.progress` and `git.commit` entries.
+- [x] The five `sync.job.*` topics are published from the server-side observer, and `internal/syncengine` does not import `internal/server`.
+- [x] Progress events are coalesced (at most a few per second per job) so a large batch cannot overflow a client's 256-event buffer.
+- [x] Event payloads never contain a credential and carry the redacted error on failure.
+- [x] Clients resuming with `since` receive the events they missed from the replay ring, consistent with the existing contract.
+- [x] `docs/07-cli-and-api.md` §5.6 documents each topic and its payload alongside the existing `sync.progress` and `git.commit` entries.
 - [ ] A `useSyncJobEvents` hook subscribes to the topics and invalidates the jobs query; it unsubscribes cleanly on unmount.
 - [ ] `go test -race ./internal/server/...` covers publication for each state, and Vitest covers the hook's subscribe, invalidate and cleanup behaviour.
 
@@ -36,3 +37,8 @@ On the frontend, bridge the new topics into TanStack Query the way `useBacklogEv
 The WebSocket endpoint is `GET /api/v1/events` (`internal/server/events.go:44`) with `subscribe`/`unsubscribe`/`resume`/`ping` client frames (`clientFrame` `:34`); the wire contract is documented at `docs/07-cli-and-api.md:2353-2452`. Existing publishers are collected in `internal/server/events.go` (`publishWrite` `:256`, `publishDelta` `:372`) and are the style to follow.
 
 Do NOT emit an event per imported item: the hub drops on overflow by design, and a dropped frame is worse than a coarser one. Do NOT make the engine publish directly — keeping the transport out of the package is what allows the fake-handler unit tests to exist.
+
+**Server half complete; frontend half not started.** GIT-T-0137 (`useSyncJobEvents`)
+is a `web/` change and was left `todo`: `web/` belongs to another agent this
+wave. The Go half of the last criterion is covered
+(`internal/server/syncjobevents_test.go`); the Vitest half waits on that task.

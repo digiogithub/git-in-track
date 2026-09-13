@@ -2,7 +2,7 @@
 id: GIT-US-0056
 type: story
 title: "Inbox operations: create, list and triage over the vault, REST and MCP"
-status: in_progress
+status: done
 priority: high
 parent: GIT-EP-0016
 milestone: GIT-M-0012
@@ -10,8 +10,9 @@ author: mcp
 labels: [core, server, mcp]
 estimate: 8
 created: 2026-09-13T13:12:15Z
-updated: 2026-09-13T14:42:12Z
+updated: 2026-09-13T15:18:04Z
 started: 2026-09-13T14:42:12Z
+closed: 2026-09-13T15:18:04Z
 ---
 
 ## Description

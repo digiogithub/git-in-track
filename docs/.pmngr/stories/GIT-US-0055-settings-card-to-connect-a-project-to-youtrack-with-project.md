@@ -2,7 +2,7 @@
 id: GIT-US-0055
 type: story
 title: Settings card to connect a project to YouTrack, with project autosuggest
-status: backlog
+status: done
 priority: medium
 parent: GIT-EP-0011
 milestone: GIT-M-0011
@@ -10,7 +10,9 @@ author: mcp
 labels: [web]
 estimate: 8
 created: 2026-09-13T13:12:14Z
-updated: 2026-09-13T13:12:14Z
+updated: 2026-09-13T15:05:45Z
+started: 2026-09-13T15:05:24Z
+closed: 2026-09-13T15:05:45Z
 ---
 
 ## Description
@@ -25,14 +27,14 @@ The project picker needs a combobox, and the repository has exactly one: the han
 
 ## Acceptance Criteria
 
-- [ ] A generic `Combobox` lives in `web/src/components/ui/` and `ItemPicker.tsx` is refactored onto it with no change in its existing behaviour or ARIA attributes.
-- [ ] `YouTrackCard` renders in `SettingsPage` only when the `youtrack` capability is true, and is absent in browser-only mode.
-- [ ] The token input never displays a stored token; it shows whether one is stored and where it came from (`env` or config file).
-- [ ] "Test connection" shows the YouTrack login and full name on success, and a distinct, actionable message for a bad token, a missing permission and a wrong base URL.
-- [ ] The project combobox debounces at 200 ms, is keyboard navigable (arrows, Enter, Escape) and is backed by TanStack Query.
-- [ ] The five new methods exist on the `DataProvider` interface and in the companion, browser and fake providers; browser and fake fail with a clear "not available in this mode" error.
-- [ ] Saving shows a toast that says whether the change was persisted to disk or only applied to the running process.
-- [ ] Vitest covers the card (load, test, save, capability gating) and the extracted `Combobox`, testing behaviour rather than implementation.
+- [x] A generic `Combobox` lives in `web/src/components/ui/` and `ItemPicker.tsx` is refactored onto it with no change in its existing behaviour or ARIA attributes.
+- [x] `YouTrackCard` renders in `SettingsPage` only when the `youtrack` capability is true, and is absent in browser-only mode.
+- [x] The token input never displays a stored token; it shows whether one is stored and where it came from (`env` or config file).
+- [x] "Test connection" shows the YouTrack login and full name on success, and a distinct, actionable message for a bad token, a missing permission and a wrong base URL.
+- [x] The project combobox debounces at 200 ms, is keyboard navigable (arrows, Enter, Escape) and is backed by TanStack Query.
+- [x] The five new methods exist on the `DataProvider` interface and in the companion, browser and fake providers; browser and fake fail with a clear "not available in this mode" error.
+- [x] Saving shows a toast that says whether the change was persisted to disk or only applied to the running process.
+- [x] Vitest covers the card (load, test, save, capability gating) and the extracted `Combobox`, testing behaviour rather than implementation.
 
 ## Notes
 

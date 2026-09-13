@@ -378,7 +378,46 @@ gintrack serve [flags]
   --tunnel            Publish this server through a Cloudflare quick tunnel and print
                       the temporary public https URL (off by default; refused with
                       --token none). See the warning below before using it.
+  --sync-workers int  Background job workers (default 2)
+  --sync-batch int    Jobs handed to one handler call (default 20)
+  --sync-rate float   Shared outbound limit for background jobs, req/s (default 5)
+  --sync-max-attempts int
+                      Attempts a background job takes before it is dead-lettered
+                      (default 5)
 ```
+
+#### The background job engine
+
+The last four flags configure the companion's background job engine
+(`internal/syncengine`): the queue that an import, a comment push or a
+knowledge-base publish runs on, off the request that asked for it. It starts
+with the server and stops with it, and with no integration configured it starts
+**idle** — an empty queue, no goroutine doing anything, no event published.
+
+| Flag | Environment variable | Default | Range |
+| --- | --- | --- | --- |
+| `--sync-workers` | `GINTRACK_SYNC_WORKERS` | `2` | 1–64 |
+| `--sync-batch` | `GINTRACK_SYNC_BATCH` | `20` | 1–500 |
+| `--sync-rate` | `GINTRACK_SYNC_RATE` | `5` | > 0, at most 1000; a negative value removes the limit |
+| `--sync-max-attempts` | `GINTRACK_SYNC_MAX_ATTEMPTS` | `5` | 1–20 |
+
+Precedence is the chain of §3.3 — flag, then environment variable, then the
+default. A value outside its range fails the command **before the listener is
+opened**, naming the setting. The journal is written under the configured
+`index.cacheDir`; with no cache directory the queue lives in memory only and a
+restart starts empty.
+
+> The configuration file has no `sync.engine` section yet, so these four
+> settings are not read from `config.yaml` and a change made through
+> `PATCH /api/v1/sync/settings` reports `persisted: false`.
+
+**Shutdown** is a bounded drain: `SIGINT`/`SIGTERM` gives the queue a grace
+period (5 s) to finish what is in flight, on a context detached from the
+shutdown itself so that a job halfway through a call to a tracker is not
+cancelled by the very stop that is waiting for it. Whatever has not finished by
+then is written to the journal and picked up on the next start. A handler is
+therefore required to be idempotent; `internal/syncengine`'s package
+documentation states the contract.
 
 `--tunnel` opens a free Cloudflare **quick tunnel** (`*.trycloudflare.com`,
 ADR-027): no Cloudflare account, no DNS record and no inbound port. The same
@@ -1717,6 +1756,8 @@ DELETE /api/v1/items/{id}               If-Match: <rev>   ?hard=true removes the
 GET    /api/v1/items/{id}/references                      what still points at the item
 POST   /api/v1/items/{id}/tasks         If-Match: <rev>   {"line":34,"checked":true}
 POST   /api/v1/items/{id}/move          If-Match: <rev>   {"status":"in_review"}
+POST   /api/v1/items/{id}/triage        If-Match: <rev>   {"action":"accept|reject|snooze|duplicate", …}
+GET    /api/v1/inbox                                      the triage queue of a project
 GET    /api/v1/items/{id}/comments
 POST   /api/v1/items/{id}/comments   If-Match: <item rev> optional, honored when sent
 GET    /api/v1/items/{id}/links
@@ -1875,7 +1916,8 @@ GET  /api/v1/sprints/{id}                   scope, candidates and metrics; ETag:
 POST /api/v1/sprints                        create a sprint; the core allocates the id
 PATCH /api/v1/sprints/{id}                  If-Match (goal, dates, addItems, removeItems)
 POST /api/v1/sprints/{id}/start             If-Match; {force?} to run two at once
-POST /api/v1/sprints/{id}/close             If-Match; {carry:[{ref,action,sprint?,status?}]}
+POST /api/v1/sprints/{id}/close             If-Match; {carry:[…], transfer:{mode,target?}, dryRun?}
+POST /api/v1/sprints/{id}/transfer          If-Match; {mode,target?,carry:[…],dryRun?}
 GET  /api/v1/sprints/{id}/burndown          burndown, cumulative flow, flow times, provenance
 GET  /api/v1/retros                         ?sprint=&board=&state=; carries the open actions
 GET  /api/v1/retros/{id}                    notes, themes by votes, actions; ETag: <retro rev>
@@ -2084,6 +2126,42 @@ Notes on sprints:
   planned one when `sprint` is absent), and `backlog` writes the first `todo` status of that
   project's workflow into the item's own repository. A decision that could not be applied comes
   back with `error` on its `carried` entry, and the closing still goes through.
+- `POST /sprints/{id}/close` also accepts a **bulk** decision and a preview
+  (GIT-US-0085): `{"transfer":{"mode":"next|backlog|none","target":"TEAM-S-0009"}}`
+  expands into a carry decision for every unfinished reference the report grades,
+  and an explicit entry in `carry` always wins over it for the reference it names.
+  `mode` absent, or `none`, is exactly the behaviour above, so an existing caller
+  is unaffected. `{"dryRun":true}` computes the whole report and **writes
+  nothing**: the answer carries `"dryRun": true`, an empty `writes`, and no event
+  is published at all — no `sprint.changed`, no `item.changed`, no commit-on-save.
+- `POST /sprints/{id}/transfer` moves the unfinished references of one sprint
+  without closing anything: `{"mode":"next|backlog|none","target":"…","carry":[…],"dryRun":false}`,
+  `mode` defaulting to `next`. It never edits the source sprint — `items` and
+  `committed` come back untouched — which is what distinguishes it from a close.
+  It requires `If-Match` on the sprint, and a stale revision is `412` carrying
+  the current one.
+
+```json
+POST /api/v1/sprints/TEAM-S-0008/transfer   If-Match: sha256:a1b2…
+{"mode":"next","target":"TEAM-S-0009","carry":[{"ref":"ACME/ACME-US-0042","action":"backlog"}]}
+200
+{ "sprint":{ "sprint":{"id":"TEAM-S-0008","state":"active","items":["…"]} },
+  "report":{"incomplete":[{"ref":"ACME/ACME-US-0042"}],
+            "carried":[{"ref":"ACME/ACME-US-0042","action":"backlog","status":"todo"},
+                       {"ref":"AWEB/AWEB-T-0110","action":"next","sprint":"TEAM-S-0009"},
+                       {"ref":"OPS/OPS-T-0004","action":"backlog","error":"repo_not_cloned"}]},
+  "writes":[{"vaultId":"TEAM","written":[…]},{"vaultId":"ACME","written":[…]}],
+  "dryRun":false }
+```
+
+  A **per-item** failure is not an error: it comes back on its own
+  `report.carried[].error` line with a `200`, and `repo_not_cloned` — a project
+  this machine has not cloned — is the common one (doc 04 R-SPR-8). `writes` is
+  merged to one entry per repository, so a bulk transfer of ten items into one
+  sprint arrives as one entry for the team repository plus one per project clone.
+  A transfer aimed at a sprint whose derived status is `completed` is refused
+  outright with `sprint_target_completed` (409): moving work into a sprint that
+  is over would make its numbers lie.
 
 #### The public tunnel (GIT-US-0043, ADR-027)
 
@@ -2243,6 +2321,58 @@ knowledge-base page) plus the `vaultId` of the repository that answered, so a wo
 returns a row whose source is ambiguous (GIT-US-0016). With `?project=<KEY>`, only the repository
 exposing that key is searched, and an unknown key is a `404`.
 
+
+#### The inbox (GIT-US-0056, ADR-033)
+
+A project whose workflow declares a status in the reserved `triage` category has
+an inbox: a queue of submissions waiting for a decision. A project that declares
+none simply has no inbox — listing it answers an empty queue, and filing
+something into it is refused with `no_triage_status` (409), which the user fixes
+in `project.yaml` rather than by retrying.
+
+```json
+GET /api/v1/inbox?project=ACME&status=pending&limit=50
+200
+X-Total-Count: 12
+{
+  "items":[{"id":"ACME-US-0101","type":"story","title":"Checkout times out",
+            "status":"triage","inbox":{"status":"pending","source":"web",
+                                       "received":"2026-09-13T09:12:00Z"}, "rev":"sha256:…"}],
+  "nextCursor":"","total":12,
+  "counts":{"pending":9,"accepted":1,"rejected":1,"snoozed":1,"duplicate":0},
+  "pending":9
+}
+```
+
+Query parameters: `project`, `status` (repeatable), `type`, `label`, `assignee`,
+`q`/`text`, `sort`, `order`, `limit` (capped at 500), `cursor`, `fields`.
+`status` is the **triage** state — `pending`, `accepted`, `rejected`, `snoozed`,
+`duplicate` — and never a workflow status; anything else is `invalid_request`.
+`counts` and `pending` are computed over the **whole queue**, not the page, and a
+snoozed item whose date has arrived is counted as pending again, because that is
+what a reader sees.
+
+One decision empties one row:
+
+```json
+POST /api/v1/items/ACME-US-0101/triage    If-Match: sha256:…
+{"action":"accept","status":"backlog","parent":"ACME-EP-0007"}
+200
+ETag: "sha256:…"
+{"item":{"id":"ACME-US-0101","status":"backlog", …},"action":"accept",
+ "pending":8,"writes":{"written":[…]}}
+```
+
+`action` is `accept`, `reject`, `snooze` (with `snoozedUntil`, `YYYY-MM-DD`) or
+`duplicate` (with `duplicateOf`). The route requires `If-Match` on the item:
+without it, `precondition_required` (428); with a revision that is no longer
+current, `412` carrying `currentRev` and the conflicting fields. `If-Match: *`
+overwrites unconditionally, as everywhere else. A `duplicate` decision writes two
+files — the entry and the item it points at — in one write set.
+
+Every triage, and every create that files an item straight into the queue,
+publishes `inbox.changed` (§5.6).
+
 #### Sync and git
 
 ```http
@@ -2262,8 +2392,126 @@ POST /api/v1/sync/conflicts/resolve         {"repo":"TEAM","path":"…",
                                              "content":"…","fields":{…},"hunks":{…},
                                              "hunkText":{…},"continue":true}
 POST /api/v1/sync/abort
+GET  /api/v1/sync/jobs                      ?state=&kind=&limit=&cursor=
+GET  /api/v1/sync/jobs/{id}                 one job, with its attempts and redacted error
+POST /api/v1/sync/jobs/{id}/retry           re-queue a failed or cancelled job
+POST /api/v1/sync/jobs/{id}/cancel          withdraw a queued or running job
+GET  /api/v1/sync/settings                  the git half and the engine half together
+PATCH /api/v1/sync/settings                 {"pullStrategy":"rebase","workers":4,"rate":10}
 GET  /api/v1/git/log?item=ACME-T-0311&limit=20
 ```
+
+
+#### Background jobs and the engine settings (GIT-US-0078)
+
+Six endpoints over the companion's job engine, inside the `/sync` subtree
+because it is the same feature area. All of them sit behind the bearer token.
+There is deliberately **no** endpoint that enqueues an arbitrary job: kinds are
+created by the feature that owns them (import, comment push, knowledge-base
+publish), and a generic enqueue would be an unauthenticated-by-shape way to
+drive this companion's outbound HTTP.
+
+```http
+GET /api/v1/sync/jobs?state=queued&kind=youtrack.import&limit=100&cursor=job_000021
+200
+{
+  "jobs":[
+    {"id":"job_000021","kind":"youtrack.import","key":"ACME","state":"queued",
+     "attempts":0,"createdAt":"2026-09-13T11:00:00Z","updatedAt":"2026-09-13T11:00:00Z"},
+    {"id":"job_000022","kind":"youtrack.import","key":"ACME","state":"failed",
+     "attempts":5,"createdAt":"2026-09-13T10:58:00Z","updatedAt":"2026-09-13T10:59:12Z",
+     "nextAttempt":"2026-09-13T11:01:00Z","deadLetter":true,
+     "lastError":{"attempt":5,"class":"terminal","message":"403 Forbidden",
+                  "at":"2026-09-13T10:59:12Z"}}
+  ],
+  "nextCursor":"job_000031","total":42,
+  "counts":{"queued":12,"running":2,"done":26,"failed":2,"cancelled":0},
+  "running":2,"deadLetter":2,"engine":true
+}
+```
+
+| Parameter | Meaning |
+| --- | --- |
+| `state` | Repeatable: `queued`, `running`, `done`, `failed`, `cancelled`. Any other value is `invalid_request`. |
+| `kind` | Repeatable; matches the job kind exactly. |
+| `limit` | Page size, default 100, capped at `maxItemsPerPage` (500). |
+| `cursor` | The `nextCursor` of the previous page — the id the next page starts at. |
+
+`counts` is the whole queue, not the page, and `X-Total-Count` carries the
+number of jobs that matched the filter. **A job's payload is never rendered**:
+it is the one field of a job this layer cannot vouch for, and nothing in the UI
+reads it. `lastError.message` is the message the engine recorded, with every
+credential it recognized already redacted.
+
+`GET /api/v1/sync/jobs/{id}` answers the same object for one job, or
+`sync_job_not_found` (404) — which is also what a job pruned after the retention
+window answers.
+
+**Retry and cancel** are the only two transitions a caller may ask for, and each
+is refused from a state it cannot be made from, with a problem document naming
+that state:
+
+| Endpoint | Allowed from | Refused with |
+| --- | --- | --- |
+| `POST /api/v1/sync/jobs/{id}/retry` | `failed`, `cancelled` | `sync_job_not_retryable` (409) |
+| `POST /api/v1/sync/jobs/{id}/cancel` | `queued`, `running` | `sync_job_not_retryable` (409) |
+
+A **failed** job is re-queued in place: it keeps its id, its history and its
+last error, and gets a fresh attempt budget. A **cancelled** job cannot be — the
+engine's state machine has no edge out of `cancelled`, by design — so it is
+re-queued as a *new* job with the same kind, key and payload, and the answer
+carries the new id. Both publish the matching `sync.job.*` event (§5.6).
+
+```http
+POST /api/v1/sync/jobs/job_000022/retry
+200
+{"id":"job_000022","kind":"youtrack.import","key":"ACME","state":"queued","attempts":0, …}
+
+POST /api/v1/sync/jobs/job_000021/cancel
+200
+{"id":"job_000021","kind":"youtrack.import","state":"cancelled","attempts":0, …}
+
+POST /api/v1/sync/jobs/job_000030/cancel
+409
+{"type":"https://git-in-track.dev/problems/sync-job-not-retryable",
+ "title":"Sync job not retryable","status":409,"code":"sync_job_not_retryable",
+ "detail":"Job job_000030 is done: only a queued or running job can be cancelled."}
+```
+
+**Settings.** `GET /api/v1/sync/settings` answers both halves of the sync
+configuration in one document — the git half of GIT-US-0021 and the engine half
+of GIT-US-0084 — and `PATCH` changes either:
+
+```http
+GET /api/v1/sync/settings
+200
+{ "pullStrategy":"rebase","pushOnSync":true,"maxPushRetries":3,"supported":true,
+  "engine":{"workers":2,"batchSize":20,"rate":5,"maxAttempts":5,
+            "retentionHours":168,"drainSeconds":5,"running":true},
+  "persisted":false }
+
+PATCH /api/v1/sync/settings   {"workers":4,"rate":10}
+200
+{ …, "engine":{"workers":4,"batchSize":20,"rate":10, …}, "persisted":false }
+```
+
+The four engine knobs may be sent flat, as above, or nested under `"engine"`;
+the nested form wins when both are present. `workers`, `batchSize` and `rate`
+**take effect on the running engine at once** — the pool is resized and the
+shared limiter re-rated without a restart. `maxAttempts` is fixed when the
+engine is built, so it is recorded and applies from the next start.
+
+Out-of-range values are refused with `invalid_request` (400) naming the field;
+the ranges are the table in §4.1. `persisted` follows the same contract as
+`PATCH /api/v1/git/settings`: it is `true` only when the change reached the
+configuration file. It is **`false` for any change touching the engine today**,
+because the configuration file has no `sync.engine` section yet.
+
+| Code | Status | Meaning |
+| --- | --- | --- |
+| `sync_job_not_found` | 404 | No job of this queue has that id. |
+| `sync_job_not_retryable` | 409 | The job exists and is in a state the transition cannot be made from. |
+| `sync_engine_not_running` | 503 | The engine has been closed, or was never started. |
 
 #### YouTrack (GIT-US-0052, GIT-EP-0011, ADR-032)
 
@@ -2655,6 +2903,43 @@ Event types and `data` schemas:
   "data": { "repo":"TEAM", "path":".pmngr/boards/platform-kanban.md",
             "resolution":"merged", "continued":true, "remaining":0 } }
 
+// inbox.changed — one triage decision, or one submission filed straight into
+// the queue. `pendingCount` is the whole queue, so a sidebar badge never needs
+// a second call (§5.5, ADR-033).
+{ "type":"inbox.changed",
+  "data": { "repo":"acme-api", "project":"ACME", "id":"ACME-US-0101",
+            "action":"created|accept|reject|snooze|duplicate",
+            "pendingCount":8, "origin":"api", "requestId":"…" } }
+
+// sprint.changed — a sprint whose scope moved: a close, or a transfer of its
+// unfinished work. One `item.changed` is published per reference that actually
+// moved, so a backlog view refreshes the items and not only the board. A dry
+// run publishes neither (§5.5, GIT-US-0085).
+{ "type":"sprint.changed",
+  "data": { "sprint":"TEAM-S-0008", "board":"platform-scrum", "state":"active",
+            "carried":3, "failed":1, "origin":"api", "requestId":"…" } }
+
+// sync.job.* — the companion's background job engine (GIT-US-0074). Five
+// topics share one payload shape:
+//
+//   sync.job.queued     a job entered the queue for the first time
+//   sync.job.started    a worker picked it up
+//   sync.job.progress   a coalesced count of how far a batch has got
+//   sync.job.done       it succeeded, or was cancelled (`state` says which)
+//   sync.job.failed     it exhausted its attempts or hit a terminal error
+{ "type":"sync.job.queued",
+  "data": { "id":"job_000021", "kind":"youtrack.import", "key":"ACME",
+            "state":"queued", "attempt":0, "processed":0, "total":20 } }
+
+{ "type":"sync.job.progress",
+  "data": { "id":"job_000021", "kind":"youtrack.import", "key":"ACME",
+            "state":"done", "attempt":1, "processed":7, "total":20 } }
+
+{ "type":"sync.job.failed",
+  "data": { "id":"job_000022", "kind":"youtrack.import", "key":"ACME",
+            "state":"failed", "attempt":5, "processed":8, "total":20,
+            "error":"403 Forbidden", "errorClass":"terminal" } }
+
 // tunnel.changed — the public tunnel moved between states. `data` is exactly
 // the document GET /api/v1/tunnel returns, so a tab that was not the one to
 // open the tunnel stops showing this workspace as private.
@@ -2664,6 +2949,29 @@ Event types and `data` schemas:
             "connections":4, "since":"2026-09-06T09:12:49Z",
             "error":"", "tokenConfigured":true } }
 ```
+
+**`sync.job.*` payloads carry bookkeeping only** — ids, kinds, counts, a
+message the engine already redacted — and never the job's payload, for the same
+reason the queue journal does not: everything here reaches every connected
+browser. `processed` and `total` count the *coalescing group* the job belongs to
+(its kind and its key), which is the unit the engine hands to a handler as one
+batch and the unit a progress bar renders.
+
+`sync.job.progress` is **coalesced**: at most one every 500 ms per coalescing
+group, carrying the running counts rather than one frame per item. A terminal
+event — `done` or `failed` — is never throttled, so the last thing a client
+hears about a job is always the truth about it. `sync.job.started` is part of
+the contract and is published when the engine reports the queued → running
+transition.
+
+Even so, a client **may miss frames**. The hub's back-pressure policy is the one
+in §6.2: a client that lets its 256-event buffer fill up is sent
+`stream.overflow` and disconnected, and a long import can outrun a slow tab.
+The stream is therefore a live hint, never the source of truth: after a
+reconnect, or after any `stream.overflow` or `resume.gap`, a client
+**reconciles from `GET /api/v1/sync/jobs`**, which answers the engine's own
+consistent snapshot. A reconnect with `resume` is served the missed events from
+the replay ring when they are still in it, exactly as for every other topic.
 
 Client→server frames: `subscribe`, `unsubscribe`, `resume`, `ping`. The server sends a
 protocol-level ping every 30 s and closes idle connections after two missed pongs.

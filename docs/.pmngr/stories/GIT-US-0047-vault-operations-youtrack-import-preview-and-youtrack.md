@@ -2,7 +2,7 @@
 id: GIT-US-0047
 type: story
 title: Vault operations youtrack.import.preview and youtrack.import.run
-status: backlog
+status: in_review
 priority: high
 parent: GIT-EP-0012
 milestone: GIT-M-0011
@@ -10,7 +10,8 @@ author: mcp
 labels: [core, server]
 estimate: 8
 created: 2026-09-13T13:11:28Z
-updated: 2026-09-13T13:11:28Z
+updated: 2026-09-13T15:09:56Z
+started: 2026-09-13T15:09:40Z
 ---
 
 ## Description
@@ -23,14 +24,14 @@ Idempotency is the pair `(external.system, external.id)`: before writing, look t
 
 ## Acceptance Criteria
 
-- [ ] `youtrack.import.preview` and `youtrack.import.run` are cases in the vault dispatch table and are reachable from the workspace layer.
-- [ ] Params accept `{project, query|ids[], depth, includeLinks, includeComments, includeAttachments}` and are validated with field-level errors.
-- [ ] Lookup by `(external.system, external.id)` decides create vs update; an update keeps the existing gintrack id and does not duplicate.
-- [ ] Subtask recursion honours `depth`, is cycle-safe and records out-of-set parents and link targets as warnings.
-- [ ] Comments are written per ADR-012 with original author and timestamp; already-imported comment ids are skipped.
-- [ ] Writes go through `FileStore.Create`/`Update` and one `WriteSet` commit, producing `item.changed` and `index.updated` events like any other write.
-- [ ] `run` returns a per-issue result list and does not abort the whole batch on a single failure.
-- [ ] `go test -race ./internal/vault/...` covers create, re-import update, depth recursion and a failing issue, using a fake YouTrack client.
+- [x] `youtrack.import.preview` and `youtrack.import.run` are cases in the vault dispatch table and are reachable from the workspace layer.
+- [x] Params accept `{project, query|ids[], depth, includeLinks, includeComments, includeAttachments}` and are validated with field-level errors.
+- [x] Lookup by `(external.system, external.id)` decides create vs update; an update keeps the existing gintrack id and does not duplicate.
+- [x] Subtask recursion honours `depth`, is cycle-safe and records out-of-set parents and link targets as warnings.
+- [x] Comments are written per ADR-012 with original author and timestamp; already-imported comment ids are skipped.
+- [x] Writes go through `FileStore.Create`/`Update` and one `WriteSet` commit, producing `item.changed` and `index.updated` events like any other write.
+- [x] `run` returns a per-issue result list and does not abort the whole batch on a single failure.
+- [x] `go test -race ./internal/vault/...` covers create, re-import update, depth recursion and a failing issue, using a fake YouTrack client.
 
 ## Notes
 

@@ -296,6 +296,121 @@ export type McpSettings = {
   tools: string[];
 };
 
+/**
+ * Where the YouTrack credential of a project came from (`tokenSource`).
+ *
+ * It decides what the settings card may offer: a token that arrived in the
+ * environment or on the command line is owned by whoever started the
+ * companion, so this screen can report it but must not pretend to clear it.
+ * `''` and `none` both mean there is none.
+ */
+export type YouTrackTokenSource = '' | 'none' | 'file' | 'config' | 'env' | 'flag';
+
+/** When a comment reaches the linked issue. */
+export type YouTrackPushComments = '' | 'manual' | 'auto';
+
+/** When a knowledge-base page is synchronized, and which way. */
+export type YouTrackKbSync = '' | 'manual' | 'on_write';
+export type YouTrackKbSyncDirection = '' | 'push' | 'pull' | 'both';
+
+/**
+ * One project's YouTrack connection (`GET /api/v1/youtrack/settings`).
+ *
+ * It deliberately carries no token: the credential is write-only, and this
+ * shape reports only that one resolves (`hasToken`) and where it came from.
+ * Anything that renders a stored token, placeholder included, is a leak the
+ * user could save back as a literal value.
+ */
+export type YouTrackSettings = {
+  /** The git-in-track project this connection belongs to. */
+  projectKey: string;
+  /** Whether `project.yaml` holds an `integrations.youtrack` block at all. */
+  configured: boolean;
+  /** The instance URL, context path included. */
+  url: string;
+  /** The YouTrack project short name, the "ACME" of ACME-42. */
+  project: string;
+  /** git-in-track field → the YouTrack custom field carrying it. */
+  fieldMap: Record<string, string>;
+  pushComments: YouTrackPushComments;
+  kbSync: YouTrackKbSync;
+  kbSyncDirection: YouTrackKbSyncDirection;
+  /** Whether a credential resolves for this project. Never the credential. */
+  hasToken: boolean;
+  tokenSource: YouTrackTokenSource;
+  /** Whether the last change reached the configuration file. */
+  persisted: boolean;
+  /** The `project.yaml` the committed half lives in, relative to the repository. */
+  projectPath: string;
+  /** The mounted repository holding that file. */
+  repo: string;
+};
+
+/**
+ * A sparse change to the connection. An absent key is left alone and a present
+ * one is applied, so an empty string clears a value rather than being
+ * indistinguishable from "not mentioned" — which is what makes disconnecting a
+ * project, or forgetting a token, expressible at all.
+ */
+export type YouTrackSettingsPatch = {
+  url?: string;
+  project?: string;
+  fieldMap?: Record<string, string>;
+  pushComments?: YouTrackPushComments;
+  kbSync?: YouTrackKbSync;
+  kbSyncDirection?: YouTrackKbSyncDirection;
+  /** Write-only: it is never read back, and `''` forgets the stored one. */
+  token?: string;
+};
+
+/** What a successful probe reports (`POST /api/v1/youtrack/test`). */
+export type YouTrackTestResult = {
+  ok: boolean;
+  baseUrl: string;
+  login: string;
+  fullName: string;
+  email: string;
+  /** The linked YouTrack project, when one is configured and readable. */
+  project: string;
+};
+
+/** One row of `GET /api/v1/youtrack/projects`. */
+export type YouTrackProject = {
+  id: string;
+  shortName: string;
+  name: string;
+  archived: boolean;
+};
+
+/** One custom field of the remote project (`GET /api/v1/youtrack/fields`). */
+export type YouTrackField = {
+  id: string;
+  name: string;
+  type: string;
+  bundleId: string;
+  bundleType: string;
+  canBeEmpty: boolean;
+};
+
+/**
+ * The field-mapping vocabulary: the YouTrack half discovered from the instance
+ * and the git-in-track half the companion declares, so the UI offers both sides
+ * from one call instead of hard-coding a list that would drift.
+ */
+export type YouTrackFieldList = {
+  project: string;
+  fields: YouTrackField[];
+  total: number;
+  gintrackFields: string[];
+};
+
+/**
+ * Which YouTrack connection a call addresses. The key is optional because a
+ * companion serving exactly one project defaults to it; one serving several
+ * refuses an unnamed call rather than guessing.
+ */
+export type YouTrackScope = { projectKey?: string };
+
 /** One repository's git state (`GET /api/v1/git/status`). */
 export type GitRepoStatus = {
   repo: string;
@@ -690,6 +805,15 @@ export type Capabilities = {
   mcp: boolean;
   openInEditor: boolean;
   maxBatchWrite: number;
+  /**
+   * This runtime can talk to YouTrack at all — companion mode. It is what
+   * decides whether the settings card is rendered, because a card that only
+   * appears once a project is already connected can never connect the first
+   * one.
+   */
+  youtrackSupported: boolean;
+  /** At least one mounted project declares an `integrations.youtrack` block. */
+  youtrack: boolean;
 };
 
 export type RepoKind = 'project' | 'team';
@@ -848,6 +972,17 @@ export type ProviderErrorCode =
    * explain, not an error to retry.
    */
   | 'tunnel_requires_token'
+  /**
+   * The YouTrack side, kept apart from the companion's own failures. In
+   * particular, an instance that refuses the credential is reported as
+   * `youtrack_unauthorized` over a `502` and never as a `401`, which a browser
+   * would read as its own session expiring (GIT-EP-0011).
+   */
+  | 'youtrack_not_configured'
+  | 'youtrack_unauthorized'
+  | 'youtrack_forbidden'
+  | 'youtrack_not_found'
+  | 'youtrack_unreachable'
   | 'internal';
 
 export type ChangeEvent =
@@ -1136,6 +1271,39 @@ export interface DataProvider {
    * nothing in the app may call this on its own.
    */
   setTunnel(enabled: boolean): Promise<TunnelStatus>;
+
+  // YouTrack (`/api/v1/youtrack/*`, story GIT-US-0055)
+  /**
+   * One project's connection. It never carries the token: `hasToken` and
+   * `tokenSource` are all a surface is told, by design.
+   */
+  getYouTrackSettings(scope?: YouTrackScope): Promise<YouTrackSettings>;
+  /**
+   * Changes it. The patch is sparse and every value is applied as given, so
+   * `''` clears — including `token: ''`, which forgets the stored credential.
+   * The answer's `persisted` says whether the change reached the configuration
+   * file or only the running process.
+   */
+  updateYouTrackSettings(
+    patch: YouTrackSettingsPatch,
+    scope?: YouTrackScope,
+  ): Promise<YouTrackSettings>;
+  /**
+   * Probes the instance and reports who the credential authenticates as. With
+   * `url` and `token` it tests a connection the user has typed but not saved,
+   * so a wrong token is caught before it is written anywhere.
+   */
+  testYouTrackConnection(
+    probe?: { url?: string; token?: string },
+    scope?: YouTrackScope,
+  ): Promise<YouTrackTestResult>;
+  /** Project autosuggest; `q` filters by name and short name. */
+  listYouTrackProjects(q?: string, scope?: YouTrackScope): Promise<YouTrackProject[]>;
+  /**
+   * The custom fields of a YouTrack project, so the field map offers real names
+   * instead of free text. `project` defaults to the linked one.
+   */
+  listYouTrackFields(project?: string, scope?: YouTrackScope): Promise<YouTrackFieldList>;
   /**
    * Commits now. With no `paths` it flushes what commit-on-save has batched,
    * which is the "Commit N changes" action of the sync panel.
@@ -1301,4 +1469,6 @@ export const readOnlyCapabilities: Capabilities = {
   mcp: false,
   openInEditor: false,
   maxBatchWrite: 0,
+  youtrackSupported: false,
+  youtrack: false,
 };

@@ -86,6 +86,10 @@ import type {
   SyncSettingsPatch,
   SyncStatus,
   TunnelStatus,
+  YouTrackFieldList,
+  YouTrackProject,
+  YouTrackSettings,
+  YouTrackTestResult,
 } from '@/api/provider';
 import { ProviderError, teamScope } from '@/api/provider';
 import { hydrateOrBuild } from '@/cache/index-cache';
@@ -135,6 +139,15 @@ const BROWSER_MCP_REASON =
 /** Why browser-only mode can never open a public tunnel. */
 const BROWSER_TUNNEL_REASON =
   'Browser-only mode runs entirely in this tab, so there is no server to publish. Run `gintrack serve` to share a workspace over a tunnel.';
+
+/**
+ * Why browser-only mode can never reach YouTrack. A tab cannot hold the
+ * credential — it would have to live in storage a script can read — and it
+ * cannot reach a YouTrack instance without a CORS proxy that sees that
+ * credential in every request. The companion keeps both on the user's machine.
+ */
+const BROWSER_YOUTRACK_REASON =
+  'YouTrack is not available in browser-only mode: there is no process to hold the credential and no way to reach the instance from a tab. Run `gintrack serve` to connect a project.';
 
 /** One conflicted path browser mode is holding for the resolver. */
 type PendingConflict = BrowserConflict & { resolved?: string };
@@ -254,6 +267,8 @@ export class BrowserProvider implements DataProvider {
       mcp: false,
       openInEditor: false,
       maxBatchWrite: write ? 50 : 0,
+      youtrackSupported: false,
+      youtrack: false,
     };
     return this.#capabilities;
   }
@@ -1110,6 +1125,33 @@ export class BrowserProvider implements DataProvider {
 
   setTunnel(): Promise<TunnelStatus> {
     return Promise.reject(new ProviderError('read_only', BROWSER_TUNNEL_REASON));
+  }
+
+  // ---------------------------------------------------------------- youtrack
+
+  /**
+   * Every YouTrack call fails the same way in this mode, loudly rather than
+   * silently: the card is gated on the `youtrackSupported` capability, so a
+   * call arriving here is a bug in the caller and says so.
+   */
+  getYouTrackSettings(): Promise<YouTrackSettings> {
+    return Promise.reject(new ProviderError('read_only', BROWSER_YOUTRACK_REASON));
+  }
+
+  updateYouTrackSettings(): Promise<YouTrackSettings> {
+    return Promise.reject(new ProviderError('read_only', BROWSER_YOUTRACK_REASON));
+  }
+
+  testYouTrackConnection(): Promise<YouTrackTestResult> {
+    return Promise.reject(new ProviderError('read_only', BROWSER_YOUTRACK_REASON));
+  }
+
+  listYouTrackProjects(): Promise<YouTrackProject[]> {
+    return Promise.reject(new ProviderError('read_only', BROWSER_YOUTRACK_REASON));
+  }
+
+  listYouTrackFields(): Promise<YouTrackFieldList> {
+    return Promise.reject(new ProviderError('read_only', BROWSER_YOUTRACK_REASON));
   }
 
   // --------------------------------------------------------------- git sync

@@ -27,13 +27,17 @@ const SprintOverlapCode = "sprint_overlap"
 // already running one.
 const SprintActiveCode = "sprint_already_active"
 
-// SprintListParams is the input of "sprint.list": both filters are optional and
-// ANDed, and an absent one imposes no constraint.
+// SprintListParams is the input of "sprint.list": every filter is optional and
+// they are ANDed, and an absent one imposes no constraint.
 type SprintListParams struct {
 	// TeamScope names the team repository this call acts on.
 	TeamScope
 	Board string `json:"board,omitempty"`
 	State string `json:"state,omitempty"`
+	// Status filters on the status derived from the dates and the current day
+	// — `current`, `upcoming`, `draft`, `completed` — which is what a sprint
+	// picker filters on. It is not the stored `state` (ADR-034, R-SPR-10).
+	Status []core.SprintStatus `json:"status,omitempty"`
 }
 
 // SprintListResult is the answer of "sprint.list". The summaries carry the
@@ -51,15 +55,18 @@ type SprintParams struct {
 	ID string `json:"id"`
 }
 
-// SprintCreateParams is the input of "sprint.create". Dates are required; the
-// id is allocated from the team key and the sprints already on disk.
+// SprintCreateParams is the input of "sprint.create". The dates are given
+// together or left out together — a sprint with neither is a draft (R-SPR-9) —
+// and the id is allocated from the team key and the sprints already on disk.
 type SprintCreateParams struct {
 	// TeamScope names the team repository this call acts on.
 	TeamScope
-	Board          string   `json:"board"`
-	Title          string   `json:"title,omitempty"`
-	Start          string   `json:"start"`
-	End            string   `json:"end"`
+	Board string `json:"board"`
+	Title string `json:"title,omitempty"`
+	// Start and End are optional: both empty creates a draft, and exactly one
+	// of them is refused.
+	Start          string   `json:"start,omitempty"`
+	End            string   `json:"end,omitempty"`
 	Goal           string   `json:"goal,omitempty"`
 	State          string   `json:"state,omitempty"`
 	Items          []string `json:"items,omitempty"`
@@ -71,7 +78,9 @@ type SprintCreateParams struct {
 
 // SprintPatch is the set of sprint fields "sprint.update" may change. An absent
 // field is left alone; `addItems` and `removeItems` edit the scope without
-// resending it, which is what keeps a planning drag a one-line diff.
+// resending it, which is what keeps a planning drag a one-line diff. Sending
+// `start` and `end` as empty strings removes both dates and turns the sprint
+// back into a draft (R-SPR-9).
 type SprintPatch struct {
 	Title          *string   `json:"title,omitempty"`
 	Goal           *string   `json:"goal,omitempty"`
@@ -380,8 +389,10 @@ func (c sprintContext) view(ctx context.Context, s *core.Sprint) core.SprintView
 	return view
 }
 
-// Sprints lists the sprints of the team repository, filtered by board and by
-// state, newest first — the order a sprint picker reads in.
+// Sprints lists the sprints of the team repository, filtered by board, by
+// stored state and by derived status, in the order a sprint picker reads in:
+// what is running now, then what is coming, then what is still being planned,
+// then what is over, ties broken by start date and then by id (R-SPR-10).
 func (w *Workspace) Sprints(ctx context.Context, p SprintListParams) (SprintListResult, error) {
 	c, err := w.sprintContext(ctx, p.Team)
 	if err != nil {
@@ -391,10 +402,15 @@ func (w *Workspace) Sprints(ctx context.Context, p SprintListParams) (SprintList
 		return SprintListResult{}, failf("invalid_request",
 			"%q is not a sprint state: planned, active or closed", p.State)
 	}
+	statuses, err := parseSprintStatuses(p.Status)
+	if err != nil {
+		return SprintListResult{}, err
+	}
 	out := SprintListResult{Sprints: []core.SprintSummary{}, Diagnostics: []core.Diagnostic{}}
 	out.Diagnostics = append(out.Diagnostics, c.diags...)
 	out.Diagnostics = append(out.Diagnostics, core.ValidateSprintSet(c.sprints)...)
-	in := c.input(ctx)
+
+	selected := make([]*core.Sprint, 0, len(c.sprints))
 	for _, s := range c.sprints {
 		if p.Board != "" && s.Board != p.Board {
 			continue
@@ -402,8 +418,35 @@ func (w *Workspace) Sprints(ctx context.Context, p SprintListParams) (SprintList
 		if p.State != "" && string(s.State) != p.State {
 			continue
 		}
+		selected = append(selected, s)
+	}
+	// The derived status needs the clock the team repository reads, and the
+	// core reads none of its own (ADR-034).
+	now := c.team.Vault.Now()
+	selected = core.FilterSprintsByStatus(selected, now, statuses)
+	core.SortSprintsForListing(selected, now)
+
+	in := c.input(ctx)
+	for _, s := range selected {
 		board := c.board(ctx, s.Board)
 		out.Sprints = append(out.Sprints, core.BuildSprintView(s, board, in).Sprint)
+	}
+	return out, nil
+}
+
+// parseSprintStatuses validates a derived-status filter, normalising case and
+// dropping the empty entries a "?status=current," query string produces.
+func parseSprintStatuses(raw []core.SprintStatus) ([]core.SprintStatus, error) {
+	out := make([]core.SprintStatus, 0, len(raw))
+	for _, entry := range raw {
+		if strings.TrimSpace(string(entry)) == "" {
+			continue
+		}
+		status, err := core.ParseSprintStatus(string(entry))
+		if err != nil {
+			return nil, failf("invalid_request", "%v", err)
+		}
+		out = append(out, status)
 	}
 	return out, nil
 }
@@ -648,6 +691,25 @@ func (w *Workspace) CloseSprint(ctx context.Context, p SprintCloseParams) (Sprin
 	view := c.view(ctx, sprint)
 	report := core.SummarizeClose(sprint, view)
 
+	// The snapshot freezes the sprint as it stands right now, before a single
+	// carry decision rewrites an item out of the scope: once that has happened
+	// the numbers are not recomputable from the current state at all
+	// (R-SPR-11, docs/04 §8.2). A sprint that already carries one keeps it —
+	// closing again never recomputes — and a dry run computes nothing, because
+	// it writes nothing.
+	var snapshot *core.SprintSnapshot
+	if sprint.Snapshot == nil && !p.DryRun {
+		history, provenance := w.reconstruct(ctx, c, view.Cards)
+		metrics := core.BuildSprintMetrics(sprint, core.MetricsInput{
+			Cards: view.Cards, History: history, Provenance: provenance, Now: c.now,
+		})
+		// With no history source installed — browser-only mode — the metrics
+		// carry the `updated` approximation, and the snapshot records that in
+		// its provenance rather than pretending to a measurement.
+		frozen := core.BuildSprintSnapshot(sprint, view, metrics, c.now)
+		snapshot = &frozen
+	}
+
 	decisions, err := c.plan(sprint, report, p.Carry, p.Transfer)
 	if err != nil {
 		return SprintResult{}, err
@@ -665,6 +727,9 @@ func (w *Workspace) CloseSprint(ctx context.Context, p SprintCloseParams) (Sprin
 		return result, nil
 	}
 
+	if snapshot != nil {
+		sprint.Snapshot = snapshot
+	}
 	sprint.State = core.SprintClosed
 	written, writes, err := c.team.Vault.WriteSprint(ctx, sprint, sprint.Rev)
 	if err != nil {
@@ -967,14 +1032,16 @@ func teamWrites(vaultID string, writes WriteSet) RepoWriteSet {
 	return RepoWriteSet{VaultID: vaultID, Written: writes.Written, Removed: writes.Removed}
 }
 
-// parseSprintDate decodes a required `YYYY-MM-DD` field.
+// parseSprintDate decodes an optional `YYYY-MM-DD` field. An empty value is the
+// zero date, which is how a draft is written: checkSprintDates is what enforces
+// that the two dates are given together or not at all (R-SPR-9).
 func parseSprintDate(field, value string) (core.Date, error) {
-	if value == "" {
-		return core.Date{}, failf("invalid_request", "a sprint needs a %s date", field)
+	if strings.TrimSpace(value) == "" {
+		return core.Date{}, nil
 	}
 	date, err := core.ParseDate(value)
 	if err != nil {
-		return core.Date{}, failf("invalid_request", "%v", err)
+		return core.Date{}, failf("invalid_request", "%s: %v", field, err)
 	}
 	return date, nil
 }
@@ -1003,20 +1070,26 @@ func checkSprintRev(s *core.Sprint, rev string) error {
 	}
 }
 
-// checkSprintDates refuses a date range that overlaps another sprint of the
-// same board. The file-level validation reports the same condition as a warning
-// for files that are already on disk; a write is where it can still be stopped.
+// checkSprintDates enforces the two date rules of a write. The dates are given
+// together or not at all, and a dated range may not overlap another sprint of
+// the same board; a dateless sprint is a draft and is exempt, because removing
+// the dates is the documented way out of a collision (R-SPR-9, R-SPR-6). The
+// file-level validation reports the overlap as a warning for files that are
+// already on disk; a write is where it can still be stopped.
 func checkSprintDates(s *core.Sprint, others []*core.Sprint) error {
-	if s.Start.IsZero() || s.End.IsZero() {
-		return failf("invalid_request", "a sprint needs a start and an end date")
+	if s.Start.IsZero() != s.End.IsZero() {
+		return failf("invalid_request",
+			"a sprint carries a start and an end date together or neither: "+
+				"give both, or remove both to keep %s a draft", s.ID)
+	}
+	if s.IsDraft() {
+		return nil
 	}
 	if s.End.Before(s.Start.Time) {
 		return failf("invalid_request", "the end date %s is before the start date %s", s.End, s.Start)
 	}
 	if other := core.OverlappingSprint(s, others); other != nil {
-		return failf(SprintOverlapCode,
-			"%s to %s overlaps sprint %s (%s to %s) on board %s; sprints on one board cannot share a day",
-			s.Start, s.End, other.ID, other.Start, other.End, s.Board)
+		return failf(SprintOverlapCode, "%s", core.SprintOverlapMessage(s, other))
 	}
 	return nil
 }

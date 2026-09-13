@@ -98,7 +98,12 @@ func (s *Server) mountSync(r chi.Router) {
 	r.Get("/conflicts", s.handleSyncConflicts)
 	r.Get("/conflicts/file", s.handleSyncConflictFile)
 	r.Post("/conflicts/resolve", s.handleSyncConflictResolve)
+	r.Get("/settings", s.handleSyncSettings)
 	r.Patch("/settings", s.handleSyncSettingsPatch)
+	// The background job engine of GIT-US-0078 lives in this subtree rather
+	// than in one of its own: it is the same feature area, and a client that
+	// knows /sync already knows where to look.
+	s.mountSyncJobs(r)
 }
 
 // handleSyncStatus serves GET /api/v1/sync/status.
@@ -117,7 +122,7 @@ func (s *Server) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, r, http.StatusOK, map[string]any{
 		"repos":    out,
-		"settings": s.git.syncView(),
+		"settings": s.syncSettingsView(),
 	})
 }
 
@@ -365,6 +370,13 @@ type syncSettings struct {
 	// browser provider's flag so the UI branches on one field in both modes.
 	Supported bool   `json:"supported"`
 	Reason    string `json:"reason,omitempty"`
+	// Engine is the background job engine's half of the same settings
+	// document: the worker pool, the batch size, the rate limit and the retry
+	// budget (GIT-US-0078).
+	Engine syncEngineView `json:"engine"`
+	// Persisted reports whether a change reached the configuration file or only
+	// the running process, the same contract the git settings answer with.
+	Persisted bool `json:"persisted"`
 }
 
 // syncSettingsPatch is the body of PATCH /api/v1/sync/settings. Every field is
@@ -373,6 +385,32 @@ type syncSettingsPatch struct {
 	PullStrategy   *string `json:"pullStrategy,omitempty"`
 	PushOnSync     *bool   `json:"pushOnSync,omitempty"`
 	MaxPushRetries *int    `json:"maxPushRetries,omitempty"`
+	// The engine knobs are flat in the body as well as nested under `engine`,
+	// so that a script can PATCH one number without knowing the shape of the
+	// rest of the document.
+	syncEnginePatch
+	Engine *syncEnginePatch `json:"engine,omitempty"`
+}
+
+// engine folds the flat and the nested form into one patch. The nested form
+// wins, because a caller that spelled the section out meant it.
+func (p syncSettingsPatch) engine() syncEnginePatch {
+	if p.Engine != nil {
+		return *p.Engine
+	}
+	return p.syncEnginePatch
+}
+
+// syncSettingsView renders both halves of the sync settings.
+func (s *Server) syncSettingsView() syncSettings {
+	view := s.git.syncView()
+	view.Engine = s.engineView()
+	return view
+}
+
+// handleSyncSettings serves GET /api/v1/sync/settings.
+func (s *Server) handleSyncSettings(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, r, http.StatusOK, s.syncSettingsView())
 }
 
 // handleSyncSettingsPatch serves PATCH /api/v1/sync/settings.
@@ -385,12 +423,32 @@ func (s *Server) handleSyncSettingsPatch(w http.ResponseWriter, r *http.Request)
 		failProblem(w, r, codeInvalidRequest, err.Error())
 		return
 	}
-	if _, err := s.git.persist(); err != nil {
+	if engine := patch.engine(); engine.touched() {
+		// Applied to the running engine, not only recorded: a pool that only
+		// resizes on the next restart is a setting nobody can trust.
+		//nolint:contextcheck // resizing the pool starts workers on the engine's
+		// own detached base context, which is the whole point of a background
+		// engine: they outlive this request by design.
+		if err := s.sync.applyPatch(engine); err != nil {
+			failProblem(w, r, codeInvalidRequest, err.Error())
+			return
+		}
+	}
+	persisted, err := s.git.persist()
+	if err != nil {
 		// The running process already honors the change; only the file did not
 		// take it, and the user has to know which of the two happened.
 		s.log.Warn("could not persist the sync settings", "error", err)
 	}
-	writeJSON(w, r, http.StatusOK, s.git.syncView())
+	enginePersisted, err := s.sync.persist()
+	if err != nil {
+		s.log.Warn("could not persist the sync engine settings", "error", err)
+	}
+	view := s.syncSettingsView()
+	// Both halves have to have reached the file for the answer to claim the
+	// change survives a restart.
+	view.Persisted = persisted && enginePersisted
+	writeJSON(w, r, http.StatusOK, view)
 }
 
 // applySync validates and swaps the sync half of the git settings.

@@ -536,6 +536,12 @@ func (e *Engine) runBatch(b *batch) {
 		// Every job in the batch was cancelled or superseded while it waited.
 		return
 	}
+	// Announce the queued-to-running transition off the lock, as every other
+	// state change is announced. Without this an observer sees a job queued and
+	// then finished, and a progress display has nothing to open a row on.
+	for _, job := range jobs {
+		e.emit(job)
+	}
 
 	err := e.limiter.Wait(ctx)
 	if err == nil {

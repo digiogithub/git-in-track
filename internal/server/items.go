@@ -30,6 +30,9 @@ func (s *Server) mountItems(r chi.Router) {
 	r.Post("/{id}/move", s.handleItemMove)
 	r.Get("/{id}/references", s.handleItemReferences)
 	r.Post("/{id}/tasks", s.handleItemTaskSet)
+	// Triage: accept, reject, snooze or mark a submission as a duplicate
+	// (GIT-US-0056). It requires If-Match on the item, like every other write.
+	r.Post("/{id}/triage", s.handleItemTriage)
 	r.Get("/{id}/comments", s.handleCommentList)
 	r.Post("/{id}/comments", s.handleCommentAdd)
 	s.deferRoute(r, "/{id}/links", "Typed links are edited through PATCH /items/{id} until Phase 3.")
@@ -200,6 +203,13 @@ func (s *Server) handleItemCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	item := field(result, "item")
 	s.publishWrite(r, m, result, itemIDOf(item), "created")
+	if inboxDraft(draft) {
+		// A submission filed straight into the queue moves the badge exactly as
+		// a triage decision does, so it is announced on the same topic.
+		if id := itemIDOf(item); id != "" {
+			s.publishInboxChanged(r, m, id, "created", s.inboxPendingCount(r, m, project))
+		}
+	}
 	if id := itemIDOf(item); id != "" {
 		w.Header().Set("Location", apiPrefix+"/items/"+id)
 	}

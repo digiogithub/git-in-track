@@ -1,0 +1,8 @@
+=== summary ===
+Scratch notes
+=== content ===
+No front matter, no feedback block, and one link to a page nobody published:
+grooming.
+=== attachments (empty) ===
+=== warnings ===
+links: planning/backlog-grooming|grooming: the wikilink target is not a page published as a YouTrack article, so the link was replaced by its text

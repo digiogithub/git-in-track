@@ -24,6 +24,7 @@ import { McpToolsCard } from '@/features/settings/McpToolsCard';
 import { SyncProxyCard } from '@/features/settings/SyncProxyCard';
 import { TeamProjectsCard } from '@/features/settings/TeamProjectsCard';
 import { TunnelCard } from '@/features/settings/TunnelCard';
+import { YouTrackCard } from '@/features/settings/YouTrackCard';
 
 /** Where the companion binary is published (docs/09-ci-cd-and-releases.md). */
 const COMPANION_DOWNLOAD_URL = 'https://github.com/digiogithub/git-in-track/releases';
@@ -113,6 +114,7 @@ export function SettingsPage() {
       <GitSettingsCard />
       <SyncProxyCard />
       <McpToolsCard />
+      <YouTrackCard />
 
       <Card>
         <CardHeader>
@@ -128,6 +130,7 @@ export function SettingsPage() {
             <CapabilityRow label="MCP" value={capabilities.mcp} />
             <CapabilityRow label="Open in editor" value={capabilities.openInEditor} />
             <CapabilityRow label="Max batch write" value={capabilities.maxBatchWrite} />
+            <CapabilityRow label="YouTrack" value={capabilities.youtrackSupported} />
           </dl>
         </CardContent>
       </Card>

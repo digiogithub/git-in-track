@@ -75,6 +75,10 @@ func (w *Workspace) historySource() HistorySource {
 // It never fails because history is missing. A host that cannot read git gets
 // the `updated` approximation, and a reference no history covers is reported as
 // unknown on every day rather than counted as work that was never done.
+//
+// A sprint whose file carries a `snapshot` block is the one exception: its
+// numbers were frozen by the close and are returned as they were written, with
+// a provenance that says so (R-MET-12).
 func (w *Workspace) SprintMetrics(ctx context.Context, team, id string) (core.SprintMetricsView, error) {
 	c, err := w.sprintContext(ctx, team)
 	if err != nil {
@@ -85,6 +89,14 @@ func (w *Workspace) SprintMetrics(ctx context.Context, team, id string) (core.Sp
 		return core.SprintMetricsView{}, err
 	}
 	view := c.view(ctx, sprint)
+	// A closed sprint that carries a snapshot answers from it and walks no
+	// history at all: after the close the items have left the scope and the
+	// series is not recomputable, so the frozen block is the only truthful
+	// answer (R-MET-12, docs/04 §12.1, ADR-034). The check comes before the
+	// history is gathered, so nothing touches git for a frozen sprint.
+	if frozen, ok := core.SprintMetricsFromSnapshot(sprint, view.Sprint); ok {
+		return frozen, nil
+	}
 	history, provenance := w.reconstruct(ctx, c, view.Cards)
 	out := core.BuildSprintMetrics(sprint, core.MetricsInput{
 		Cards: view.Cards, History: history, Provenance: provenance, Now: c.now,

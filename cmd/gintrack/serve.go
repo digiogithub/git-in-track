@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"os/signal"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -35,6 +37,12 @@ type serveFlags struct {
 	// tunnel opens a public tunnel to this server as soon as it is listening
 	// (`server.tunnel` in the configuration).
 	tunnel bool
+	// The background job engine of GIT-US-0084: the worker pool, the batch
+	// size, the shared outbound rate limit and the retry budget.
+	syncWorkers     int
+	syncBatch       int
+	syncRate        float64
+	syncMaxAttempts int
 }
 
 // tunnelPollInterval is how often the banner asks the server whether the tunnel
@@ -92,6 +100,14 @@ terminal: share the first, and the second only with whoever may write.`,
 		"agent name recorded as the author of comments written through /mcp")
 	cmd.Flags().BoolVar(&flags.tunnel, "tunnel", false,
 		"publish this server on the internet through a Cloudflare quick tunnel; requires a token")
+	cmd.Flags().IntVar(&flags.syncWorkers, "sync-workers", server.DefaultSyncWorkers,
+		"background job workers")
+	cmd.Flags().IntVar(&flags.syncBatch, "sync-batch", server.DefaultSyncBatchSize,
+		"how many background jobs one handler call receives")
+	cmd.Flags().Float64Var(&flags.syncRate, "sync-rate", server.DefaultSyncRate,
+		"shared outbound rate limit for background jobs, in requests per second")
+	cmd.Flags().IntVar(&flags.syncMaxAttempts, "sync-max-attempts", server.DefaultSyncMaxAttempts,
+		"how many attempts a background job takes before it is dead-lettered")
 	return cmd
 }
 
@@ -132,6 +148,14 @@ func runServe(cmd *cobra.Command, build buildInfo, flags *serveFlags) error {
 		return fmt.Errorf("open the embedded web bundle: %w", err)
 	}
 
+	// Resolved and validated before anything binds a port: an operator who
+	// typed `--sync-workers 0` must learn it from the exit code, not from a
+	// server that came up and then refused every job.
+	engine, err := syncEngineSettings(cmd, flags, cfg, config.Env())
+	if err != nil {
+		return err
+	}
+
 	opts := server.Options{
 		Bind:        pick(cmd, "bind", flags.bind, cfg.Server.Bind),
 		Port:        pickInt(cmd, "port", flags.port, cfg.Server.Port),
@@ -164,6 +188,10 @@ func runServe(cmd *cobra.Command, build buildInfo, flags *serveFlags) error {
 		// The public tunnel. Only the startup path may turn it on implicitly;
 		// a toggle made in the web UI is never written back to the file.
 		Tunnel: config.Tunnel{Enabled: tunnelOn, Provider: cfg.Server.Tunnel.Provider},
+		// The background job engine (GIT-US-0084). It starts with the server,
+		// idle when nothing has registered a job handler, and drains on the way
+		// out.
+		SyncEngine: engine,
 	}
 	srv, err := server.New(opts)
 	if err != nil {
@@ -441,4 +469,81 @@ func pickDuration(cmd *cobra.Command, name string, flag, configured time.Duratio
 		return flag
 	}
 	return configured
+}
+
+// The environment variables of the background job engine. They sit between the
+// command line and the defaults in the precedence chain of docs/07 section 3.3.
+const (
+	envSyncWorkers     = "GINTRACK_SYNC_WORKERS"
+	envSyncBatch       = "GINTRACK_SYNC_BATCH"
+	envSyncRate        = "GINTRACK_SYNC_RATE"
+	envSyncMaxAttempts = "GINTRACK_SYNC_MAX_ATTEMPTS"
+)
+
+// syncEngineSettings resolves the engine configuration: the flag when it was
+// given, then the environment variable, then the shipped default. The result is
+// validated here so that an impossible value fails the command instead of
+// reaching a running server.
+//
+// The file layer of the chain is missing on purpose: the configuration file has
+// no `sync.engine` section yet, and adding one belongs to internal/config
+// (GIT-T-0175). The cache directory it does declare is used, so a companion
+// with a cache keeps its queue across restarts.
+func syncEngineSettings(cmd *cobra.Command, flags *serveFlags, cfg *config.Config, env config.Reader) (server.SyncEngine, error) {
+	out := server.SyncEngine{CacheDir: cfg.Index.CacheDir}
+
+	workers, err := pickEnvInt(cmd, "sync-workers", flags.syncWorkers, envSyncWorkers, env)
+	if err != nil {
+		return server.SyncEngine{}, err
+	}
+	batch, err := pickEnvInt(cmd, "sync-batch", flags.syncBatch, envSyncBatch, env)
+	if err != nil {
+		return server.SyncEngine{}, err
+	}
+	attempts, err := pickEnvInt(cmd, "sync-max-attempts", flags.syncMaxAttempts, envSyncMaxAttempts, env)
+	if err != nil {
+		return server.SyncEngine{}, err
+	}
+	rate, err := pickEnvFloat(cmd, "sync-rate", flags.syncRate, envSyncRate, env)
+	if err != nil {
+		return server.SyncEngine{}, err
+	}
+	out.Workers, out.BatchSize, out.MaxAttempts, out.Rate = workers, batch, attempts, rate
+
+	if err := out.Validate(); err != nil {
+		return server.SyncEngine{}, fmt.Errorf("sync engine: %w", err)
+	}
+	return out, nil
+}
+
+// pickEnvInt is the flag > environment > default chain for a whole number.
+func pickEnvInt(cmd *cobra.Command, name string, flag int, key string, env config.Reader) (int, error) {
+	if cmd.Flags().Changed(name) {
+		return flag, nil
+	}
+	raw := strings.TrimSpace(env(key))
+	if raw == "" {
+		return flag, nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %q is not a whole number", key, raw)
+	}
+	return value, nil
+}
+
+// pickEnvFloat is the same chain for a rate.
+func pickEnvFloat(cmd *cobra.Command, name string, flag float64, key string, env config.Reader) (float64, error) {
+	if cmd.Flags().Changed(name) {
+		return flag, nil
+	}
+	raw := strings.TrimSpace(env(key))
+	if raw == "" {
+		return flag, nil
+	}
+	value, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %q is not a number", key, raw)
+	}
+	return value, nil
 }

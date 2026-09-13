@@ -2,7 +2,7 @@
 id: GIT-US-0085
 type: story
 title: Transfer incomplete items to another sprint or the backlog in one operation
-status: in_progress
+status: done
 priority: high
 parent: GIT-EP-0017
 milestone: GIT-M-0012
@@ -10,8 +10,9 @@ author: mcp
 labels: [core, server, mcp]
 estimate: 8
 created: 2026-09-13T13:14:37Z
-updated: 2026-09-13T14:42:31Z
+updated: 2026-09-13T15:18:06Z
 started: 2026-09-13T14:42:31Z
+closed: 2026-09-13T15:18:06Z
 ---
 
 ## Description

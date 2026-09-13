@@ -1250,16 +1250,12 @@ the instant and passes it in: `(*Sprint).DerivedStatus(now)` is pure. The value 
   `end` before the `start`, is still `E-SPRINT-DATES`. A sprint with neither is a **draft**: a
   valid, listable sprint that has a goal and a scope and no place on the calendar yet, so a team
   can plan five sprints ahead and give them dates when the dates are known instead of inventing
-  ranges that do not collide. *As built:* the model, the parser and the validator accept a
-  dateless sprint (`(*Sprint).IsDraft`), but `sprint.create` and `sprint.update` still refuse one
-  with `a sprint needs a start and an end date`. A draft is therefore legal on disk before it is
-  reachable from the product.
+  ranges that do not collide.
 - **R-SPR-10** A listing orders sprints by their derived status — `current`, `upcoming`, `draft`,
   `completed` — ties broken by start date and then by id, and may filter on it
   (`core.SortSprintsForListing`, `core.FilterSprintsByStatus`). The order is a product judgement
   rather than a derivation: what is running comes first, then what is coming, then what is being
-  planned, then what is over. *As built:* both helpers live in `internal/core` and no surface
-  calls them yet, so `sprint.list` still answers in its previous order.
+  planned, then what is over.
 - **R-SPR-11** The `snapshot` block is written **exactly once**, by the close, and never for an
   open sprint. Closing a sprint that already carries one leaves it alone; it is never recomputed,
   never repaired and never refreshed on a later read. It is a record of a moment, not a cache
@@ -1314,11 +1310,6 @@ snapshot:
     covered: 2
     note: Reconstructed from the git history of the item files.
 ```
-
-*As built:* `core.BuildSprintSnapshot` computes the block, `ParseSprint` and `SerializeSprint`
-round-trip it, and it travels on the sprint summary as `snapshot`. `sprint.close` does not call it
-yet, so no close writes one today: a block already on disk is parsed, preserved across a rewrite
-and reported, and nothing in the product produces one.
 
 ### 8.3 Complete example
 
@@ -1779,8 +1770,7 @@ draws it at `/metrics/<SPRINT-ID>` ([doc 05 §12](./05-web-app.md)).
   match what a git walk says today, and it cannot be corrected — the provenance explains it, the
   reader is told the numbers were frozen at the close (`core.SnapshotProvenance` reports `source:
   snapshot`), and the only remedy for a close run against a half-synced workspace is to say so in
-  the retro. *As built:* the block parses, round-trips and reaches the API on the sprint summary,
-  and neither the close nor the metrics read path uses it yet (§8.2).
+  the retro.
 
 ### 12.2 Provenance — every metric says where it came from
 

@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/digiogithub/git-in-track/internal/config"
 	"github.com/digiogithub/git-in-track/internal/server"
 )
 
@@ -163,5 +164,115 @@ func TestAnnounceTunnelReportsAFailureOnStderr(t *testing.T) {
 	}
 	if stdout.Len() != 0 {
 		t.Errorf("a failed tunnel printed to stdout:\n%s", stdout.String())
+	}
+}
+
+// TestServeSyncEngineFlagsAreDeclared pins the four engine flags and their
+// defaults, which are the ones documented in docs/07 section 4.1.
+func TestServeSyncEngineFlagsAreDeclared(t *testing.T) {
+	t.Parallel()
+
+	root := newRootCommand(buildInfo{Version: "test"})
+	serve, _, err := root.Find([]string{"serve"})
+	if err != nil {
+		t.Fatalf("find serve: %v", err)
+	}
+	for name, want := range map[string]string{
+		"sync-workers":      "2",
+		"sync-batch":        "20",
+		"sync-rate":         "5",
+		"sync-max-attempts": "5",
+	} {
+		flag := serve.Flags().Lookup(name)
+		if flag == nil {
+			t.Fatalf("serve has no --%s flag", name)
+		}
+		if flag.DefValue != want {
+			t.Errorf("--%s default = %q, want %q", name, flag.DefValue, want)
+		}
+	}
+}
+
+// TestSyncEngineSettingsPrecedence covers the documented chain: the flag beats
+// the environment, which beats the default.
+func TestSyncEngineSettingsPrecedence(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		args        []string
+		env         map[string]string
+		wantWorkers int
+		wantRate    float64
+		wantErr     string
+	}{
+		{name: "defaults", wantWorkers: server.DefaultSyncWorkers, wantRate: server.DefaultSyncRate},
+		{
+			name:        "the environment beats the default",
+			env:         map[string]string{envSyncWorkers: "6", envSyncRate: "12.5"},
+			wantWorkers: 6, wantRate: 12.5,
+		},
+		{
+			name:        "the flag beats the environment",
+			args:        []string{"--sync-workers", "3"},
+			env:         map[string]string{envSyncWorkers: "6"},
+			wantWorkers: 3, wantRate: server.DefaultSyncRate,
+		},
+		{
+			name:    "an impossible value fails the command",
+			args:    []string{"--sync-workers", "0"},
+			wantErr: "workers",
+		},
+		{
+			name:    "an unparsable environment value fails the command",
+			env:     map[string]string{envSyncBatch: "many"},
+			wantErr: envSyncBatch,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			flags := &serveFlags{}
+			cmd := newServeCommand(buildInfo{Version: "test"})
+			// The flags are parsed but the command is never run: this asserts
+			// the resolution, not the listener.
+			cmd.RunE = func(*cobra.Command, []string) error { return nil }
+			if err := cmd.Flags().Parse(tt.args); err != nil {
+				t.Fatalf("parse %v: %v", tt.args, err)
+			}
+			for name, target := range map[string]any{
+				"sync-workers": &flags.syncWorkers, "sync-batch": &flags.syncBatch,
+				"sync-max-attempts": &flags.syncMaxAttempts,
+			} {
+				value, err := cmd.Flags().GetInt(name)
+				if err != nil {
+					t.Fatalf("read --%s: %v", name, err)
+				}
+				*(target.(*int)) = value
+			}
+			rate, err := cmd.Flags().GetFloat64("sync-rate")
+			if err != nil {
+				t.Fatalf("read --sync-rate: %v", err)
+			}
+			flags.syncRate = rate
+
+			got, err := syncEngineSettings(cmd, flags, &config.Config{}, func(key string) string {
+				return tt.env[key]
+			})
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("error = %v, want one naming %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("syncEngineSettings(): %v", err)
+			}
+			if got.Workers != tt.wantWorkers || got.Rate != tt.wantRate {
+				t.Fatalf("settings = %+v, want %d workers at %g req/s", got, tt.wantWorkers, tt.wantRate)
+			}
+		})
 	}
 }

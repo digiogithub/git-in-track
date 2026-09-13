@@ -2,7 +2,7 @@
 id: GIT-US-0075
 type: story
 title: Sprint dates become optional and status becomes derived from them
-status: in_progress
+status: done
 priority: high
 parent: GIT-EP-0017
 milestone: GIT-M-0012
@@ -10,8 +10,9 @@ author: mcp
 labels: [core, docs]
 estimate: 8
 created: 2026-09-13T13:13:49Z
-updated: 2026-09-13T14:02:24Z
+updated: 2026-09-13T14:58:11Z
 started: 2026-09-13T14:02:24Z
+closed: 2026-09-13T14:58:11Z
 ---
 
 ## Description
