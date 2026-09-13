@@ -2,11 +2,13 @@
 id: GIT-M-0011
 type: milestone
 title: Phase 7 — YouTrack integration
-status: backlog
+status: done
 author: mcp
 labels: [server, web, core, docs]
 created: 2026-09-13T13:06:45Z
-updated: 2026-09-13T13:06:45Z
+updated: 2026-09-13T19:53:29Z
+started: 2026-09-13T19:53:19Z
+closed: 2026-09-13T19:53:29Z
 due: 2026-11-15
 ---
 

@@ -12,6 +12,10 @@ because a commit list cannot express them.
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [1.4.0] — 2026-09-13
+
 ### Added
 
 - **The command line reaches the whole YouTrack integration** (`GIT-US-0062`, `GIT-US-0079`,
@@ -808,5 +812,6 @@ each, `Contents: read and write`. GHCR needs no secret. The release workflow ver
 tokens before it builds anything and fails with the fix in the message when either is
 missing. Full procedure: [docs/09](docs/09-ci-cd-and-releases.md) §9 and §10.
 
-[Unreleased]: https://github.com/digiogithub/git-in-track/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/digiogithub/git-in-track/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/digiogithub/git-in-track/compare/v1.3.0...v1.4.0
 [1.0.0]: https://github.com/digiogithub/git-in-track/releases/tag/v1.0.0
