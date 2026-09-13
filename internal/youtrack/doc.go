@@ -13,7 +13,11 @@
 //     writes add "Content-Type: application/json". The "perm:" prefix is part
 //     of the token string the user pastes, not something this package adds.
 //     The token is never included in an error, in a String method or in any
-//     other rendering of the client.
+//     other rendering of the client. The one exception to the content type is
+//     an attachment upload: it is multipart/form-data with its own boundary,
+//     and YouTrack rejects it when the JSON content type is set alongside, so
+//     UploadArticleAttachment and UploadIssueAttachment build their request
+//     outside the JSON path.
 //
 //  2. The base URL may carry a context path, as in
 //     https://yt.example.com/youtrack. Request URLs are therefore built by

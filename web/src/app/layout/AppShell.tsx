@@ -27,6 +27,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Logo } from '@/components/ui/logo';
 import { ThemeToggle } from '@/components/ui/theme-toggle';
+import { ToastProvider } from '@/components/ui/toast';
+import { SyncJobToasts } from '@/features/sync/SyncJobToasts';
 import { cn } from '@/lib/cn';
 
 type NavItem = {
@@ -95,112 +97,117 @@ export function AppShell() {
   const setCollapsed = useUiPrefs((state) => state.setSidebarCollapsed);
 
   return (
-    <div className="flex min-h-screen bg-background text-foreground">
-      <a
-        href="#main"
-        className="sr-only rounded-md bg-primary px-3 py-2 text-primary-foreground focus:not-sr-only focus:absolute focus:left-3 focus:top-3 focus:z-50"
-      >
-        Skip to content
-      </a>
+    <ToastProvider>
+      {/* Background jobs announce themselves from any route, so the host and
+          the subscription live in the shell rather than in one feature. */}
+      <SyncJobToasts />
+      <div className="flex min-h-screen bg-background text-foreground">
+        <a
+          href="#main"
+          className="sr-only rounded-md bg-primary px-3 py-2 text-primary-foreground focus:not-sr-only focus:absolute focus:left-3 focus:top-3 focus:z-50"
+        >
+          Skip to content
+        </a>
 
-      {collapsed ? (
-        <div className="sticky top-0 flex h-screen w-12 shrink-0 flex-col items-center border-r border-sidebar-border bg-sidebar pt-4">
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label="Open navigation"
-            aria-expanded={false}
-            title="Open navigation"
-            onClick={() => setCollapsed(false)}
-          >
-            <Menu aria-hidden="true" className="h-4 w-4" />
-          </Button>
-        </div>
-      ) : (
-        <>
-          {/* On a phone the open sidebar floats over the page; tapping outside folds it. */}
-          <div
-            aria-hidden="true"
-            className="fixed inset-0 z-30 bg-foreground/30 md:hidden"
-            onClick={() => setCollapsed(true)}
-          />
-          <aside className="fixed inset-y-0 left-0 z-40 flex h-screen w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar md:sticky md:top-0 md:z-auto">
-            <div className="flex flex-col gap-2 px-4 pb-4 pt-5">
-              <div className="flex items-center gap-2">
-                <Logo className="h-5 w-5 text-foreground" />
-                <span className="flex-1 font-semibold tracking-tight">git-in-track</span>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label="Collapse navigation"
-                  aria-expanded={true}
-                  title="Collapse navigation"
-                  onClick={() => setCollapsed(true)}
-                >
-                  <PanelLeftClose aria-hidden="true" className="h-4 w-4" />
-                </Button>
-              </div>
-              <div className="flex flex-wrap items-center gap-1.5">
-                <span
-                  data-testid="mode-badge"
-                  className="rounded-full bg-secondary px-2 py-0.5 text-2xs uppercase tracking-[0.08em] text-muted-foreground"
-                  title={modeTooltip(mode, companionVersion, companionUrl)}
-                >
-                  {mode}
-                </span>
-                {capabilities.write ? null : (
-                  <span
-                    className="bg-destructive/12 flex items-center gap-1 rounded-full px-2 py-0.5 text-2xs uppercase tracking-[0.08em] text-destructive"
-                    title="This browser cannot save changes back to the folder"
-                  >
-                    <Lock aria-hidden="true" className="h-3 w-3" />
-                    Read-only
-                  </span>
-                )}
-              </div>
-            </div>
-
-            <div className="flex-1 overflow-y-auto px-3 pb-4">
-              <nav aria-label="Main">
-                <ul className="space-y-0.5">
-                  {navItems.map((item) => (
-                    <li key={item.to}>
-                      <Link
-                        to={item.to}
-                        activeOptions={{ exact: item.to === '/' }}
-                        className={navLinkClass}
-                        activeProps={{ className: navLinkActiveClass }}
-                      >
-                        {item.icon}
-                        {item.label}
-                      </Link>
-                    </li>
-                  ))}
-                </ul>
-              </nav>
-
-              {rows.length > 0 ? <RepoNav rows={rows} /> : null}
-            </div>
-
-            <div className="flex items-center justify-between gap-2 border-t border-sidebar-border px-4 py-3">
-              <span className="section-label">Theme</span>
-              <ThemeToggle />
-            </div>
-          </aside>
-        </>
-      )}
-
-      <div className="flex min-w-0 flex-1 flex-col">
-        <ModeNoticeBanner />
-        <TokenRequiredBanner />
-        <ReadOnlyBanner />
-        <main id="main" className="flex-1 px-6 py-6 lg:px-8">
-          <div className="mx-auto w-full max-w-[100rem]">
-            <Outlet />
+        {collapsed ? (
+          <div className="sticky top-0 flex h-screen w-12 shrink-0 flex-col items-center border-r border-sidebar-border bg-sidebar pt-4">
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Open navigation"
+              aria-expanded={false}
+              title="Open navigation"
+              onClick={() => setCollapsed(false)}
+            >
+              <Menu aria-hidden="true" className="h-4 w-4" />
+            </Button>
           </div>
-        </main>
+        ) : (
+          <>
+            {/* On a phone the open sidebar floats over the page; tapping outside folds it. */}
+            <div
+              aria-hidden="true"
+              className="fixed inset-0 z-30 bg-foreground/30 md:hidden"
+              onClick={() => setCollapsed(true)}
+            />
+            <aside className="fixed inset-y-0 left-0 z-40 flex h-screen w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar md:sticky md:top-0 md:z-auto">
+              <div className="flex flex-col gap-2 px-4 pb-4 pt-5">
+                <div className="flex items-center gap-2">
+                  <Logo className="h-5 w-5 text-foreground" />
+                  <span className="flex-1 font-semibold tracking-tight">git-in-track</span>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label="Collapse navigation"
+                    aria-expanded={true}
+                    title="Collapse navigation"
+                    onClick={() => setCollapsed(true)}
+                  >
+                    <PanelLeftClose aria-hidden="true" className="h-4 w-4" />
+                  </Button>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span
+                    data-testid="mode-badge"
+                    className="rounded-full bg-secondary px-2 py-0.5 text-2xs uppercase tracking-[0.08em] text-muted-foreground"
+                    title={modeTooltip(mode, companionVersion, companionUrl)}
+                  >
+                    {mode}
+                  </span>
+                  {capabilities.write ? null : (
+                    <span
+                      className="bg-destructive/12 flex items-center gap-1 rounded-full px-2 py-0.5 text-2xs uppercase tracking-[0.08em] text-destructive"
+                      title="This browser cannot save changes back to the folder"
+                    >
+                      <Lock aria-hidden="true" className="h-3 w-3" />
+                      Read-only
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto px-3 pb-4">
+                <nav aria-label="Main">
+                  <ul className="space-y-0.5">
+                    {navItems.map((item) => (
+                      <li key={item.to}>
+                        <Link
+                          to={item.to}
+                          activeOptions={{ exact: item.to === '/' }}
+                          className={navLinkClass}
+                          activeProps={{ className: navLinkActiveClass }}
+                        >
+                          {item.icon}
+                          {item.label}
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                </nav>
+
+                {rows.length > 0 ? <RepoNav rows={rows} /> : null}
+              </div>
+
+              <div className="flex items-center justify-between gap-2 border-t border-sidebar-border px-4 py-3">
+                <span className="section-label">Theme</span>
+                <ThemeToggle />
+              </div>
+            </aside>
+          </>
+        )}
+
+        <div className="flex min-w-0 flex-1 flex-col">
+          <ModeNoticeBanner />
+          <TokenRequiredBanner />
+          <ReadOnlyBanner />
+          <main id="main" className="flex-1 px-6 py-6 lg:px-8">
+            <div className="mx-auto w-full max-w-[100rem]">
+              <Outlet />
+            </div>
+          </main>
+        </div>
       </div>
-    </div>
+    </ToastProvider>
   );
 }
 

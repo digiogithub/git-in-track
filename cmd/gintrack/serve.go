@@ -474,10 +474,10 @@ func pickDuration(cmd *cobra.Command, name string, flag, configured time.Duratio
 // The environment variables of the background job engine. They sit between the
 // command line and the defaults in the precedence chain of docs/07 section 3.3.
 const (
-	envSyncWorkers     = "GINTRACK_SYNC_WORKERS"
-	envSyncBatch       = "GINTRACK_SYNC_BATCH"
-	envSyncRate        = "GINTRACK_SYNC_RATE"
-	envSyncMaxAttempts = "GINTRACK_SYNC_MAX_ATTEMPTS"
+	envSyncWorkers     = config.EnvSyncWorkers
+	envSyncBatch       = config.EnvSyncBatch
+	envSyncRate        = config.EnvSyncRate
+	envSyncMaxAttempts = config.EnvSyncMaxAttempts
 )
 
 // syncEngineSettings resolves the engine configuration: the flag when it was
@@ -485,26 +485,31 @@ const (
 // validated here so that an impossible value fails the command instead of
 // reaching a running server.
 //
-// The file layer of the chain is missing on purpose: the configuration file has
-// no `sync.engine` section yet, and adding one belongs to internal/config
-// (GIT-T-0175). The cache directory it does declare is used, so a companion
-// with a cache keeps its queue across restarts.
+// The whole chain is here rather than split across packages: cfg already
+// carries the file layer with the environment folded on top of it
+// (config.applySyncEnv), so a flag the user actually typed is the only thing
+// left to layer, and the environment is still read directly so that this
+// function is correct on its own and testable without a file.
+//
+// The journal directory comes from `index.cacheDir`, which the configuration
+// file does declare: the queue is derived state that lives next to the index.
 func syncEngineSettings(cmd *cobra.Command, flags *serveFlags, cfg *config.Config, env config.Reader) (server.SyncEngine, error) {
-	out := server.SyncEngine{CacheDir: cfg.Index.CacheDir}
+	file := server.SyncEngineFrom(cfg.Sync.Engine)
+	out := server.SyncEngine{CacheDir: cfg.Index.CacheDir, Retention: file.Retention}
 
-	workers, err := pickEnvInt(cmd, "sync-workers", flags.syncWorkers, envSyncWorkers, env)
+	workers, err := pickEnvInt(cmd, "sync-workers", flags.syncWorkers, envSyncWorkers, env, file.Workers)
 	if err != nil {
 		return server.SyncEngine{}, err
 	}
-	batch, err := pickEnvInt(cmd, "sync-batch", flags.syncBatch, envSyncBatch, env)
+	batch, err := pickEnvInt(cmd, "sync-batch", flags.syncBatch, envSyncBatch, env, file.BatchSize)
 	if err != nil {
 		return server.SyncEngine{}, err
 	}
-	attempts, err := pickEnvInt(cmd, "sync-max-attempts", flags.syncMaxAttempts, envSyncMaxAttempts, env)
+	attempts, err := pickEnvInt(cmd, "sync-max-attempts", flags.syncMaxAttempts, envSyncMaxAttempts, env, file.MaxAttempts)
 	if err != nil {
 		return server.SyncEngine{}, err
 	}
-	rate, err := pickEnvFloat(cmd, "sync-rate", flags.syncRate, envSyncRate, env)
+	rate, err := pickEnvFloat(cmd, "sync-rate", flags.syncRate, envSyncRate, env, file.Rate)
 	if err != nil {
 		return server.SyncEngine{}, err
 	}
@@ -516,34 +521,42 @@ func syncEngineSettings(cmd *cobra.Command, flags *serveFlags, cfg *config.Confi
 	return out, nil
 }
 
-// pickEnvInt is the flag > environment > default chain for a whole number.
-func pickEnvInt(cmd *cobra.Command, name string, flag int, key string, env config.Reader) (int, error) {
+// pickEnvInt is the flag > environment > file > default chain for a whole
+// number. file is the value the configuration section holds, zero when it
+// declares none, in which case the flag's own default — the shipped one — wins.
+func pickEnvInt(cmd *cobra.Command, name string, flag int, key string, env config.Reader, file int) (int, error) {
 	if cmd.Flags().Changed(name) {
 		return flag, nil
 	}
 	raw := strings.TrimSpace(env(key))
-	if raw == "" {
-		return flag, nil
+	if raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil {
+			return 0, fmt.Errorf("%s: %q is not a whole number", key, raw)
+		}
+		return value, nil
 	}
-	value, err := strconv.Atoi(raw)
-	if err != nil {
-		return 0, fmt.Errorf("%s: %q is not a whole number", key, raw)
+	if file != 0 {
+		return file, nil
 	}
-	return value, nil
+	return flag, nil
 }
 
 // pickEnvFloat is the same chain for a rate.
-func pickEnvFloat(cmd *cobra.Command, name string, flag float64, key string, env config.Reader) (float64, error) {
+func pickEnvFloat(cmd *cobra.Command, name string, flag float64, key string, env config.Reader, file float64) (float64, error) {
 	if cmd.Flags().Changed(name) {
 		return flag, nil
 	}
 	raw := strings.TrimSpace(env(key))
-	if raw == "" {
-		return flag, nil
+	if raw != "" {
+		value, err := strconv.ParseFloat(raw, 64)
+		if err != nil {
+			return 0, fmt.Errorf("%s: %q is not a number", key, raw)
+		}
+		return value, nil
 	}
-	value, err := strconv.ParseFloat(raw, 64)
-	if err != nil {
-		return 0, fmt.Errorf("%s: %q is not a number", key, raw)
+	if file != 0 {
+		return file, nil
 	}
-	return value, nil
+	return flag, nil
 }

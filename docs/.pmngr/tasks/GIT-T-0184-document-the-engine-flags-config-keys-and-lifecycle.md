@@ -10,7 +10,7 @@ author: mcp
 labels: [docs]
 estimate: 1
 created: 2026-09-13T13:19:42Z
-updated: 2026-09-13T15:16:46Z
+updated: 2026-09-13T16:03:03Z
 started: 2026-09-13T15:16:09Z
 ---
 
@@ -26,16 +26,19 @@ Document the four `gintrack serve` flags and the matching config keys in `docs/0
 
 ## Notes
 
-`docs/07-cli-and-api.md` §4.1 gained the four flags in the usage block and a
-"The background job engine" subsection: a table of flag, environment variable,
-default and range, the precedence statement, where the journal is written, the
-bounded-drain shutdown contract and the handler idempotence requirement. The
-configuration-file keys are documented as **absent**, because they are: see
-GIT-T-0175.
+`docs/07-cli-and-api.md` is complete now: §3.2 carries the `sync.engine` block
+of the configuration file, §3.3 the four `GINTRACK_SYNC_*` variables, and §4.1
+the flag table, the **full** flag > environment > file > default statement, the
+`retention` key, the four registered job kinds with their coalescing keys, and
+the bounded-drain shutdown contract. §5.5 now states that
+`PATCH /api/v1/sync/settings` answers `persisted: true` when the companion has a
+configuration file. `CHANGELOG.md` has the entry.
 
-`docs/02-architecture.md` was **not touched** — every file under `docs/` except
-`07-cli-and-api.md` belongs to another agent this wave — so that criterion is
-left unticked. The paragraph it needs is the shutdown contract above: the engine
-is a background component beside the watcher, the committer and the tunnel, it
-drains for a bounded grace period on a context detached from the shutdown, and
-it journals whatever is left.
+`docs/02-architecture.md` is **still not touched** — every file under `docs/`
+except `07-cli-and-api.md` belongs to another agent this wave — so that
+criterion stays unticked and this task stays in review. The paragraph it needs
+is one sentence long: the engine is a background component beside the watcher,
+the committer and the tunnel; it is started in `Server.Start` and closed on the
+same path with `context.WithoutCancel`; shutdown drains for a bounded grace
+period and journals whatever is left; with no integration configured it starts
+idle.

@@ -820,6 +820,9 @@ describe('CompanionProvider event stream', () => {
     expect(events).toEqual([
       { kind: 'repo', repoId: '' },
       { kind: 'kb', repoId: '', paths: [] },
+      // A full refresh reconciles the job queue too: the live counts are only
+      // ever a hint, and a lost position invalidates them with everything else.
+      { kind: 'syncJob', job: expect.objectContaining({ phase: 'resync' }) as unknown },
     ]);
     client.dispose();
   });
@@ -876,6 +879,9 @@ describe('CompanionProvider event stream', () => {
     expect(events).toEqual([
       { kind: 'repo', repoId: '' },
       { kind: 'kb', repoId: '', paths: [] },
+      // A full refresh reconciles the job queue too: the live counts are only
+      // ever a hint, and a lost position invalidates them with everything else.
+      { kind: 'syncJob', job: expect.objectContaining({ phase: 'resync' }) as unknown },
     ]);
 
     // Polling keeps trying to upgrade back to the socket.
@@ -899,7 +905,7 @@ describe('CompanionProvider event stream', () => {
 
     expect(client.connectionState).toBe('polling');
     vi.advanceTimersByTime(POLL_INTERVAL_MS);
-    expect(events).toHaveLength(2);
+    expect(events).toHaveLength(3);
 
     client.dispose();
     expect(client.connectionState).toBe('closed');
@@ -1389,5 +1395,295 @@ describe('CompanionProvider YouTrack surface (story GIT-US-0055)', () => {
 
     expect(caps.youtrackSupported).toBe(true);
     expect(caps.youtrack).toBe(true);
+  });
+});
+
+describe('CompanionProvider background jobs (story GIT-US-0078)', () => {
+  const job = {
+    id: 'job_000022',
+    kind: 'youtrack.import',
+    key: 'ACME',
+    state: 'failed',
+    attempts: 5,
+    createdAt: '2026-09-13T10:58:00Z',
+    updatedAt: '2026-09-13T10:59:12Z',
+    nextAttempt: '2026-09-13T11:01:00Z',
+    deadLetter: true,
+    lastError: {
+      attempt: 5,
+      class: 'terminal',
+      message: '403 Forbidden',
+      at: '2026-09-13T10:59:12Z',
+    },
+  };
+
+  it('sends the state and kind filters as repeatable parameters', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      response({
+        jobs: [job],
+        nextCursor: 'job_000031',
+        total: 42,
+        counts: { queued: 12, running: 2, done: 26, failed: 2, cancelled: 0 },
+        running: 2,
+        deadLetter: 2,
+        engine: true,
+      }),
+    );
+
+    const page = await provider(fetchImpl).listSyncJobs({
+      state: ['queued', 'failed'],
+      kind: ['youtrack.import'],
+      limit: 100,
+    });
+
+    expect(lastCall(fetchImpl).url).toBe(
+      `${BASE}/api/v1/sync/jobs?state=queued&state=failed&kind=youtrack.import&limit=100`,
+    );
+    expect(page.total).toBe(42);
+    expect(page.counts.queued).toBe(12);
+    expect(page.nextCursor).toBe('job_000031');
+    expect(page.jobs[0]).toMatchObject({
+      id: 'job_000022',
+      deadLetter: true,
+      lastError: { class: 'terminal', message: '403 Forbidden' },
+    });
+  });
+
+  it('reads one job, and maps a missing one to sync_job_not_found', async () => {
+    const found = vi.fn().mockResolvedValue(response(job));
+    await expect(provider(found).getSyncJob('job_000022')).resolves.toMatchObject({
+      id: 'job_000022',
+    });
+    expect(lastCall(found).url).toBe(`${BASE}/api/v1/sync/jobs/job_000022`);
+
+    const missing = vi
+      .fn()
+      .mockResolvedValue(response({ code: 'sync_job_not_found', detail: 'gone' }, { status: 404 }));
+    await expect(provider(missing).getSyncJob('job_999')).rejects.toMatchObject({
+      code: 'sync_job_not_found',
+    });
+  });
+
+  it('posts retry and cancel, and carries a refused transition through', async () => {
+    const retry = vi.fn().mockResolvedValue(response({ ...job, state: 'queued', attempts: 0 }));
+    await provider(retry).retrySyncJob('job_000022');
+    expect(lastCall(retry).url).toBe(`${BASE}/api/v1/sync/jobs/job_000022/retry`);
+    expect(lastCall(retry).init.method).toBe('POST');
+
+    const cancel = vi.fn().mockResolvedValue(response({ ...job, state: 'cancelled' }));
+    await provider(cancel).cancelSyncJob('job_000021');
+    expect(lastCall(cancel).url).toBe(`${BASE}/api/v1/sync/jobs/job_000021/cancel`);
+
+    // 409 is a stale revision everywhere else in this API; the job engine's own
+    // code has to survive that default.
+    const refused = vi
+      .fn()
+      .mockResolvedValue(
+        response({ code: 'sync_job_not_retryable', detail: 'it is done' }, { status: 409 }),
+      );
+    await expect(provider(refused).cancelSyncJob('job_000030')).rejects.toMatchObject({
+      code: 'sync_job_not_retryable',
+    });
+
+    const closed = vi
+      .fn()
+      .mockResolvedValue(
+        response({ code: 'sync_engine_not_running', detail: 'closed' }, { status: 503 }),
+      );
+    await expect(provider(closed).retrySyncJob('job_000022')).rejects.toMatchObject({
+      code: 'sync_engine_not_running',
+    });
+  });
+
+  it('reads both halves of the sync settings and patches the engine nested', async () => {
+    const body = {
+      pullStrategy: 'rebase',
+      pushOnSync: true,
+      maxPushRetries: 3,
+      supported: true,
+      engine: {
+        workers: 2,
+        batchSize: 20,
+        rate: 5,
+        maxAttempts: 5,
+        retentionHours: 168,
+        drainSeconds: 5,
+        running: true,
+      },
+      persisted: false,
+    };
+
+    const read = vi.fn().mockResolvedValue(response(body));
+    const settings = await provider(read).getSyncSettings();
+    expect(lastCall(read).url).toBe(`${BASE}/api/v1/sync/settings`);
+    expect(settings.engine).toMatchObject({ workers: 2, running: true });
+    expect(settings.persisted).toBe(false);
+
+    const patch = vi
+      .fn()
+      .mockResolvedValue(response({ ...body, engine: { ...body.engine, workers: 4 } }));
+    const next = await provider(patch).updateSyncSettings({ engine: { workers: 4 } });
+    const { url, init } = lastCall(patch);
+    expect(url).toBe(`${BASE}/api/v1/sync/settings`);
+    expect(init.method).toBe('PATCH');
+    expect(bodyOf(init)).toEqual({ engine: { workers: 4 } });
+    expect(next.engine?.workers).toBe(4);
+  });
+
+  it('publishes a sync.job frame for every topic and normalizes the phase', () => {
+    const socket = new FakeSocket('ws://x');
+    const client = provider(vi.fn(), { webSocketFactory: () => socket });
+    const events: ChangeEvent[] = [];
+    client.subscribe((event) => events.push(event));
+    socket.open();
+
+    socket.emit({
+      type: 'sync.job.progress',
+      seq: 11,
+      data: {
+        id: 'job_000021',
+        kind: 'youtrack.import',
+        key: 'ACME',
+        state: 'running',
+        attempt: 1,
+        processed: 7,
+        total: 20,
+      },
+    });
+    socket.emit({
+      type: 'sync.job.failed',
+      seq: 12,
+      data: {
+        id: 'job_000022',
+        kind: 'youtrack.import',
+        key: 'ACME',
+        state: 'failed',
+        attempt: 5,
+        processed: 8,
+        total: 20,
+        error: '403 Forbidden',
+        errorClass: 'terminal',
+      },
+    });
+
+    expect(events).toEqual([
+      {
+        kind: 'syncJob',
+        job: expect.objectContaining({ phase: 'progress', processed: 7, total: 20 }) as unknown,
+      },
+      {
+        kind: 'syncJob',
+        job: expect.objectContaining({
+          phase: 'failed',
+          error: '403 Forbidden',
+          errorClass: 'terminal',
+        }) as unknown,
+      },
+    ]);
+    client.dispose();
+  });
+
+  it('asks for a reconcile when the hub cuts a client off for falling behind', () => {
+    const socket = new FakeSocket('ws://x');
+    const client = provider(vi.fn(), { webSocketFactory: () => socket });
+    const events: ChangeEvent[] = [];
+    client.subscribe((event) => events.push(event));
+    socket.open();
+
+    socket.emit({ type: 'stream.overflow', seq: 99 });
+
+    expect(events).toContainEqual({
+      kind: 'syncJob',
+      job: expect.objectContaining({ phase: 'resync' }) as unknown,
+    });
+    client.dispose();
+  });
+});
+
+describe('CompanionProvider YouTrack import (epic GIT-EP-0012)', () => {
+  it('composes the autosuggest query and reads `linked` back', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      response({
+        items: [
+          {
+            id: '2-1',
+            idReadable: 'ACME-42',
+            summary: 'Rate limit the public API',
+            type: 'Task',
+            state: 'Open',
+            assignee: 'Jane Doe',
+            updated: '2026-09-10T09:00:00Z',
+            url: 'https://yt.example.com/youtrack/issue/ACME-42',
+            linked: { itemId: 'GIT-T-0400' },
+          },
+          { idReadable: 'ACME-43', summary: 'Another', linked: null },
+        ],
+        nextCursor: 'c2',
+      }),
+    );
+
+    const page = await provider(fetchImpl).searchYouTrackIssues(
+      { q: 'rate', preset: 'tasks', limit: 20 },
+      { projectKey: 'GIT' },
+    );
+
+    expect(lastCall(fetchImpl).url).toBe(
+      `${BASE}/api/v1/youtrack/issues?key=GIT&q=rate&preset=tasks&limit=20`,
+    );
+    expect(page.items[0]?.linked).toEqual({ itemId: 'GIT-T-0400' });
+    expect(page.items[1]?.linked).toBeNull();
+    expect(page.nextCursor).toBe('c2');
+  });
+
+  it('sends the vault import parameters verbatim to preview and to run', async () => {
+    const options = {
+      project: 'GIT',
+      ids: ['ACME-42'],
+      depth: 2,
+      includeLinks: true,
+      includeComments: false,
+      includeAttachments: false,
+    };
+
+    const preview = vi
+      .fn()
+      .mockResolvedValue(response({ project: 'GIT', issues: [], warnings: [] }));
+    await provider(preview).previewYouTrackImport(options, { projectKey: 'GIT' });
+    const previewCall = lastCall(preview);
+    expect(previewCall.url).toBe(`${BASE}/api/v1/youtrack/import/preview?key=GIT`);
+    expect(previewCall.init.method).toBe('POST');
+    expect(bodyOf(previewCall.init)).toEqual(options);
+
+    const run = vi.fn().mockResolvedValue(response({ jobId: 'job_000021' }));
+    const answer = await provider(run).runYouTrackImport(options, { projectKey: 'GIT' });
+    expect(lastCall(run).url).toBe(`${BASE}/api/v1/youtrack/import?key=GIT`);
+    expect(answer).toEqual({ jobId: 'job_000021', result: null });
+  });
+
+  it('reads an inline result as well as a queued job', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      response({
+        project: 'GIT',
+        created: 1,
+        updated: 0,
+        failed: 1,
+        issues: [
+          { youtrackId: 'ACME-42', itemId: 'GIT-T-0400', action: 'create', comments: 0 },
+          { youtrackId: 'ACME-44', action: 'create', comments: 0, error: '403 Forbidden' },
+        ],
+      }),
+    );
+
+    const answer = await provider(fetchImpl).runYouTrackImport({
+      ids: ['ACME-42', 'ACME-44'],
+      depth: 0,
+      includeLinks: false,
+      includeComments: false,
+      includeAttachments: false,
+    });
+
+    expect(answer.jobId).toBe('');
+    expect(answer.result).toMatchObject({ created: 1, failed: 1 });
+    expect(answer.result?.issues[1]?.error).toBe('403 Forbidden');
   });
 });

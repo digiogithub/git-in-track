@@ -19,11 +19,24 @@ import (
 // resolution runs with no network and no credentials.
 type fakeYouTrack struct {
 	issues      map[string]youtrack.Issue
+	articles    map[string]youtrack.Article
 	comments    map[string][]youtrack.Comment
 	attachments map[string][]youtrack.Attachment
 	search      []youtrack.Issue
 	queries     []string
 	reads       map[string]int
+	// articleReads counts the article requests, which is what proves a status
+	// call without the remote flag stays offline.
+	articleReads int
+}
+
+func (f *fakeYouTrack) Article(_ context.Context, id string) (youtrack.Article, error) {
+	f.articleReads++
+	article, ok := f.articles[id]
+	if !ok {
+		return youtrack.Article{}, fmt.Errorf("no article %s", id)
+	}
+	return article, nil
 }
 
 func (f *fakeYouTrack) Issue(_ context.Context, id string) (youtrack.Issue, error) {

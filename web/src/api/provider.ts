@@ -411,6 +411,137 @@ export type YouTrackFieldList = {
  */
 export type YouTrackScope = { projectKey?: string };
 
+// ------------------------------------------------ YouTrack import (GIT-EP-0012)
+
+/**
+ * The saved queries the import dialog offers instead of the YouTrack query
+ * language. `''` means "whatever the user typed, and nothing else".
+ */
+export type YouTrackIssuePreset = '' | 'epics' | 'stories' | 'tasks' | 'versions' | 'unresolved';
+
+/**
+ * One row of the issue autosuggest (`GET /api/v1/youtrack/issues`, GIT-US-0054).
+ *
+ * `linked` is resolved by the companion from its own index, by the
+ * `(external.system, external.id)` pair, so the picker can say "already
+ * imported" and offer the row as an update without a second round trip.
+ */
+export type YouTrackIssue = {
+  id: string;
+  idReadable: string;
+  summary: string;
+  type: string;
+  state: string;
+  assignee: string;
+  updated: string;
+  url: string;
+  /** The git-in-track item a previous import created for this issue. */
+  linked: { itemId: string } | null;
+};
+
+/** One page of the autosuggest; `nextCursor` is empty on the last one. */
+export type YouTrackIssuePage = {
+  items: YouTrackIssue[];
+  nextCursor: string;
+};
+
+/** What the autosuggest asks for. */
+export type YouTrackIssueQuery = {
+  q?: string;
+  preset?: YouTrackIssuePreset;
+  limit?: number;
+  cursor?: string;
+};
+
+/**
+ * The import options, as `internal/vault`'s `YouTrackImportParams` models them
+ * (story GIT-US-0047). Preview and run take exactly the same shape, which is
+ * what makes "what preview showed me is what run does" true by construction.
+ */
+export type YouTrackImportOptions = {
+  /** The git-in-track project to import into; the only one when omitted. */
+  project?: string;
+  /** Readable issue ids. Exactly one of `ids` and `query` is given. */
+  ids?: string[];
+  query?: string;
+  /** Subtask recursion: 0 imports the selected issues only. */
+  depth: number;
+  includeLinks: boolean;
+  includeComments: boolean;
+  includeAttachments: boolean;
+};
+
+/**
+ * One finding of the mapper (`internal/youtrack/mapping`.Warning). `reason` is
+ * a complete English sentence and is the only part a surface renders as prose —
+ * as **plain text**, because every field here is third-party content.
+ */
+export type YouTrackImportWarning = {
+  field: string;
+  value?: string;
+  fallback?: string;
+  reason: string;
+};
+
+/** What an import would do to one issue, before anything is written. */
+export type YouTrackImportPlanItem = {
+  youtrackId: string;
+  title: string;
+  mappedType: string;
+  action: 'create' | 'update';
+  /** The item an update would patch; empty for a create. */
+  targetId?: string;
+  parent?: string;
+  milestone?: string;
+  depth: number;
+  comments: number;
+  warnings?: YouTrackImportWarning[];
+};
+
+/** The answer of the preview operation: a plan, and nothing written. */
+export type YouTrackImportPreviewResult = {
+  project: string;
+  issues: YouTrackImportPlanItem[];
+  /** Findings about the import as a whole rather than about one issue. */
+  warnings?: YouTrackImportWarning[];
+};
+
+/** What one issue of a run produced; a failure never aborts the batch. */
+export type YouTrackImportIssueResult = {
+  youtrackId: string;
+  itemId?: string;
+  action: 'create' | 'update';
+  comments: number;
+  warnings?: YouTrackImportWarning[];
+  /** The failure message, empty when the issue landed. */
+  error?: string;
+};
+
+/** The answer of the run operation once the import has finished. */
+export type YouTrackImportResult = {
+  project: string;
+  issues: YouTrackImportIssueResult[];
+  created: number;
+  updated: number;
+  failed: number;
+  warnings?: YouTrackImportWarning[];
+};
+
+/**
+ * What asking for an import answers, which depends on how the runtime runs it.
+ *
+ * A companion with the job engine up enqueues the import and answers the job
+ * id at once: the work happens off the request, the browser follows it over the
+ * `sync.job.*` events and reads the failure, if any, back from
+ * `getSyncJob(jobId)`. A runtime that runs the import inline answers the
+ * finished `result` instead and leaves `jobId` empty. A caller handles both:
+ * `result` is the richer answer and `jobId` the one that needs watching.
+ */
+export type YouTrackImportRun = {
+  jobId: string;
+  result: YouTrackImportResult | null;
+};
+
 /** One repository's git state (`GET /api/v1/git/status`). */
 export type GitRepoStatus = {
   repo: string;
@@ -655,6 +786,18 @@ export type SyncSettings = {
    * (docs/06 §6.3, GIT-US-0042).
    */
   proxySource?: 'configured' | 'companion' | 'none';
+  /**
+   * The background job engine's half of the same settings (GIT-US-0084).
+   * Absent on a runtime that has no engine, which is what the settings card
+   * gates on.
+   */
+  engine?: SyncEngineSettings;
+  /**
+   * Whether the last change reached the configuration file. It is `false` for
+   * any change touching the engine today: the configuration file has no
+   * `sync.engine` section yet, so a knob is process-only until a restart.
+   */
+  persisted?: boolean;
 };
 
 /**
@@ -788,6 +931,148 @@ export type SyncSettingsPatch = {
   maxPushRetries?: number;
   /** Browser-only mode: the proxy that makes git over HTTPS possible at all. */
   corsProxy?: string;
+  /** The engine knobs; they are sent nested, which is the form that wins. */
+  engine?: SyncEngineSettingsPatch;
+};
+
+// ------------------------------------------- background job engine (GIT-EP-0015)
+
+/** Where a job is in the engine's state machine. */
+export type SyncJobState = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
+
+/**
+ * The last failure of a job, as the engine recorded it.
+ *
+ * `message` is third-party text — a tracker's error body, with the credentials
+ * the engine recognized already redacted. It is rendered as **plain text**,
+ * never as Markdown and never as HTML.
+ */
+export type SyncJobError = {
+  /** 1-based attempt this error came from. */
+  attempt: number;
+  /** How the engine classified it: `terminal`, `transient`, `rate_limited`, … */
+  class: string;
+  message: string;
+  at: string;
+  /** Nanoseconds the error itself asked to wait, absent when it asked for none. */
+  retryAfter?: number;
+};
+
+/**
+ * One job of the queue (`GET /api/v1/sync/jobs`). The job's *payload* is
+ * deliberately absent from this shape: it is the one part the API cannot vouch
+ * for, and nothing in the UI reads it.
+ */
+export type SyncJob = {
+  id: string;
+  /** `youtrack.import`, `youtrack.comment.push`, … */
+  kind: string;
+  /** What the job is keyed on — the project, usually. */
+  key: string;
+  state: SyncJobState;
+  attempts: number;
+  createdAt: string;
+  updatedAt: string;
+  /** When the next attempt is due; absent when none is scheduled. */
+  nextAttempt?: string;
+  lastError?: SyncJobError;
+  /** The job gave up and is waiting to be retried or cleared. */
+  deadLetter?: boolean;
+};
+
+/** How many jobs the whole queue holds in each state — never just the page. */
+export type SyncJobCounts = {
+  queued: number;
+  running: number;
+  done: number;
+  failed: number;
+  cancelled: number;
+};
+
+/** The filter `GET /api/v1/sync/jobs` accepts; `state` and `kind` are OR-ed. */
+export type SyncJobFilter = {
+  state?: SyncJobState[];
+  kind?: string[];
+  limit?: number;
+  cursor?: string;
+};
+
+/** One page of the queue, plus the whole queue's summary. */
+export type SyncJobPage = {
+  jobs: SyncJob[];
+  /** The id the next page starts at; empty on the last page. */
+  nextCursor: string;
+  /** How many jobs matched the filter, before paging. */
+  total: number;
+  counts: SyncJobCounts;
+  /** How many batches are inside a handler right now. */
+  running: number;
+  deadLetter: number;
+  /** Whether the worker pool is up. An idle engine is still `true`. */
+  engine: boolean;
+};
+
+/** The engine half of `GET|PATCH /api/v1/sync/settings`. */
+export type SyncEngineSettings = {
+  workers: number;
+  batchSize: number;
+  rate: number;
+  maxAttempts: number;
+  retentionHours: number;
+  drainSeconds: number;
+  running: boolean;
+};
+
+/**
+ * A sparse change to the knobs. `workers`, `batchSize` and `rate` take effect on
+ * the running pool at once; `maxAttempts` is fixed when the engine is built, so
+ * it is recorded and applies from the next start.
+ */
+export type SyncEngineSettingsPatch = {
+  workers?: number;
+  batchSize?: number;
+  rate?: number;
+  maxAttempts?: number;
+};
+
+/**
+ * The ranges the companion enforces (docs/07-cli-and-api.md §4.1). They are
+ * checked in the browser too, so a value that cannot work is refused before a
+ * request rather than after one.
+ */
+export const SYNC_ENGINE_RANGES = {
+  workers: { min: 1, max: 64 },
+  batchSize: { min: 1, max: 500 },
+  rate: { min: 0, max: 1000 },
+  maxAttempts: { min: 1, max: 20 },
+} as const;
+
+/**
+ * A `sync.job.*` frame, normalized. `phase` is the topic that carried it; the
+ * synthetic `resync` phase is what a reconnect, a `stream.overflow` or a
+ * `resume.gap` raises, and means "the stream lost its place, reconcile from
+ * `GET /api/v1/sync/jobs`" — it carries no job.
+ *
+ * `processed` and `total` count the *coalescing group* (the job's kind plus its
+ * key), which is the unit the engine batches by and the unit a progress bar
+ * renders. Progress is coalesced server-side to one frame per 500 ms per group
+ * and terminal frames are never throttled, so a consumer must not add a second
+ * layer of throttling and must treat a missing intermediate frame as normal.
+ */
+export type SyncJobEventPhase = 'queued' | 'started' | 'progress' | 'done' | 'failed' | 'resync';
+
+export type SyncJobEvent = {
+  phase: SyncJobEventPhase;
+  id: string;
+  kind: string;
+  key: string;
+  /** `done` on a terminal frame is `done` *or* `cancelled`; both end the row. */
+  state: SyncJobState | '';
+  attempt: number;
+  processed: number;
+  total: number;
+  error: string;
+  errorClass: string;
 };
 
 /** Statuses are configured per project in `project.yaml`; the UI never hardcodes them. */
@@ -983,13 +1268,21 @@ export type ProviderErrorCode =
   | 'youtrack_forbidden'
   | 'youtrack_not_found'
   | 'youtrack_unreachable'
+  /** No job of the queue has that id — a pruned job answers this too. */
+  | 'sync_job_not_found'
+  /** The job exists and is in a state the transition cannot be made from. */
+  | 'sync_job_not_retryable'
+  /** The engine has been closed, or was never started. */
+  | 'sync_engine_not_running'
   | 'internal';
 
 export type ChangeEvent =
   | { kind: 'items'; repoId: string; ids: string[] }
   | { kind: 'kb'; repoId: string; paths: string[] }
   | { kind: 'repo'; repoId: string }
-  | { kind: 'index'; repoId: string; stats: IndexStats };
+  | { kind: 'index'; repoId: string; stats: IndexStats }
+  /** A `sync.job.*` frame, or the `resync` phase that asks for a reconcile. */
+  | { kind: 'syncJob'; job: SyncJobEvent };
 
 export type Unsubscribe = () => void;
 
@@ -1304,6 +1597,58 @@ export interface DataProvider {
    * instead of free text. `project` defaults to the linked one.
    */
   listYouTrackFields(project?: string, scope?: YouTrackScope): Promise<YouTrackFieldList>;
+
+  // YouTrack import (`/api/v1/youtrack/issues` and the import operations,
+  // stories GIT-US-0054 and GIT-US-0047; epic GIT-EP-0012)
+  /**
+   * The issue autosuggest of the import dialog. The companion composes the
+   * effective query from the linked project, the caller's `q` and the preset,
+   * and resolves `linked` from its own index, so a result that a previous
+   * import already created says so.
+   */
+  searchYouTrackIssues(
+    query: YouTrackIssueQuery,
+    scope?: YouTrackScope,
+  ): Promise<YouTrackIssuePage>;
+  /**
+   * What an import would do, without writing anything: one plan row per issue
+   * with the action, the mapped type, the resolved parent and every warning the
+   * mapper raised. It takes the same options `runYouTrackImport` takes, which
+   * is what makes the preview honest.
+   */
+  previewYouTrackImport(
+    options: YouTrackImportOptions,
+    scope?: YouTrackScope,
+  ): Promise<YouTrackImportPreviewResult>;
+  /**
+   * Runs the import. Depending on the runtime it either enqueues a background
+   * job and answers its id, or runs inline and answers the finished result —
+   * see `YouTrackImportRun`. It never throws for a single failing issue: a
+   * partial failure is reported per issue, not as a rejected promise.
+   */
+  runYouTrackImport(
+    options: YouTrackImportOptions,
+    scope?: YouTrackScope,
+  ): Promise<YouTrackImportRun>;
+
+  // background jobs (`/api/v1/sync/jobs`, story GIT-US-0078)
+  /**
+   * One page of the queue plus the whole queue's counts. The list is the source
+   * of truth: the `sync.job.*` stream is a live hint that a client may miss
+   * frames from, so a reconnect reconciles from here.
+   */
+  listSyncJobs(filter?: SyncJobFilter): Promise<SyncJobPage>;
+  /** One job, or `sync_job_not_found` — which a pruned job also answers. */
+  getSyncJob(id: string): Promise<SyncJob>;
+  /**
+   * Re-queues a failed or cancelled job; any other state is
+   * `sync_job_not_retryable`. A failed job keeps its id; a cancelled one cannot
+   * (the state machine has no edge out of `cancelled`) and comes back as a new
+   * job, so the answer's `id` is the one to follow.
+   */
+  retrySyncJob(id: string): Promise<SyncJob>;
+  /** Withdraws a queued or running job; any other state is `sync_job_not_retryable`. */
+  cancelSyncJob(id: string): Promise<SyncJob>;
   /**
    * Commits now. With no `paths` it flushes what commit-on-save has batched,
    * which is the "Commit N changes" action of the sync panel.

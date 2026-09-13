@@ -2,7 +2,7 @@
 id: GIT-US-0084
 type: story
 title: Wire the sync engine into the server lifecycle and gintrack serve
-status: in_review
+status: done
 priority: high
 parent: GIT-EP-0015
 milestone: GIT-M-0011
@@ -10,8 +10,9 @@ author: mcp
 labels: [server, cli, docs]
 estimate: 3
 created: 2026-09-13T13:14:30Z
-updated: 2026-09-13T15:17:08Z
+updated: 2026-09-13T16:03:19Z
 started: 2026-09-13T15:16:52Z
+closed: 2026-09-13T16:03:19Z
 ---
 
 ## Description
@@ -26,10 +27,10 @@ Expose the knobs on `gintrack serve` as `--sync-workers`, `--sync-batch`, `--syn
 
 - [x] The engine is created in `Server.Start`, shut down on the same path as the other background components, and `Close` is idempotent.
 - [x] Shutdown drains the queue for a bounded grace period with `context.WithoutCancel`, then journals the remainder; no goroutine leaks, proved by a test.
-- [ ] Engine settings exist in `server.Options` and in `internal/config`, with validated defaults of 2 workers, batch 20, 5 req/s and 5 attempts.
-- [ ] `gintrack serve` accepts `--sync-workers`, `--sync-batch`, `--sync-rate` and `--sync-max-attempts`, and flag > env > file > default precedence is covered by a test.
+- [x] Engine settings exist in `server.Options` and in `internal/config`, with validated defaults of 2 workers, batch 20, 5 req/s and 5 attempts.
+- [x] `gintrack serve` accepts `--sync-workers`, `--sync-batch`, `--sync-rate` and `--sync-max-attempts`, and flag > env > file > default precedence is covered by a test.
 - [x] With no integration configured the engine starts idle, publishes nothing and adds no measurable start-up cost.
-- [ ] `docs/07-cli-and-api.md` documents the new flags and config keys, and `CHANGELOG.md` records the new background component.
+- [x] `docs/07-cli-and-api.md` documents the new flags and config keys, and `CHANGELOG.md` records the new background component.
 - [x] `go test -race ./internal/server/... ./cmd/...` passes, including a start/stop cycle with jobs in flight.
 
 ## Notes
@@ -38,8 +39,13 @@ Lifecycle precedents: `startWatch` (`internal/server/watch.go:64`) and the tunne
 
 Do NOT start the engine from a request handler or lazily on first use: a component with a shutdown contract belongs in `Server.Start`. Do NOT block `Server.Start` on a network call — the engine comes up whether or not YouTrack is reachable.
 
-**Three criteria are unticked for one reason**, not three: `internal/config` and
-every `docs/` file but `07-cli-and-api.md` belong to another agent this wave, so
-there is no `sync.engine` configuration section, no file layer in the precedence
-chain, and no paragraph in `docs/02-architecture.md`. The engine half of each is
-done and the seams are named in GIT-T-0175, GIT-T-0180 and GIT-T-0184.
+The three criteria that were unticked for want of an `internal/config` section
+are closed: `config.SyncEngine` is the `sync.engine` block, the file sits under
+the environment and the flags in the precedence chain, and `syncState.persist`
+writes the section back so `PATCH /api/v1/sync/settings` reports
+`persisted: true`.
+
+One line of documentation is still owed and is tracked on GIT-T-0184, which
+stays in review: `docs/02-architecture.md` does not yet list the engine among
+the background components. Every file under `docs/` except `07-cli-and-api.md`
+belonged to another agent this wave.

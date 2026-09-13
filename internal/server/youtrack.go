@@ -14,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/digiogithub/git-in-track/internal/config"
+	"github.com/digiogithub/git-in-track/internal/vault"
 	"github.com/digiogithub/git-in-track/internal/youtrack"
 )
 
@@ -59,6 +60,12 @@ type youtrackState struct {
 	// configPath is where a token change is persisted; empty means the change
 	// lives only for this process, exactly as gitState.persist documents.
 	configPath string
+
+	// jobClient overrides how a background job resolves its client. It is the
+	// one seam the job tests of this package replace, so that a handler can be
+	// exercised against a fake instance with no network and no clock. Nil means
+	// the cached client of the project (youtrackState.jobClientFor).
+	jobClient func(project string) (youtrackJobClient, vault.YouTrackLink, error)
 }
 
 // newYouTrackState builds the YouTrack layer over the mounted repositories.
@@ -381,6 +388,12 @@ func (s *Server) mountYouTrack(r chi.Router) {
 	r.Post("/test", s.handleYouTrackTest)
 	r.Get("/projects", s.handleYouTrackProjects)
 	r.Get("/fields", s.handleYouTrackFields)
+	// The issue search the import dialog types into (GIT-US-0054). It is a
+	// read, so it needs no If-Match and takes no body.
+	r.Get("/issues", s.handleYouTrackIssues)
+	// The two halves of running an import: what it would do, and doing it.
+	r.Post("/import/preview", s.handleYouTrackImportPreview)
+	r.Post("/import", s.handleYouTrackImport)
 }
 
 // youtrackProjectKey resolves the `key` query parameter onto a mounted project,

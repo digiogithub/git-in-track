@@ -88,6 +88,15 @@ import type {
   SyncOptions,
   SyncRepoStatus,
   SyncResult,
+  SyncEngineSettings,
+  SyncJob,
+  SyncJobCounts,
+  SyncJobError,
+  SyncJobEvent,
+  SyncJobEventPhase,
+  SyncJobFilter,
+  SyncJobPage,
+  SyncJobState,
   SyncSettings,
   SyncSettingsPatch,
   TeamProjectDraft,
@@ -100,6 +109,16 @@ import type {
   UpdateOp,
   YouTrackField,
   YouTrackFieldList,
+  YouTrackImportIssueResult,
+  YouTrackImportOptions,
+  YouTrackImportPlanItem,
+  YouTrackImportPreviewResult,
+  YouTrackImportResult,
+  YouTrackImportRun,
+  YouTrackImportWarning,
+  YouTrackIssue,
+  YouTrackIssuePage,
+  YouTrackIssueQuery,
   YouTrackKbSync,
   YouTrackKbSyncDirection,
   YouTrackProject,
@@ -137,7 +156,24 @@ const SUBSCRIBE_TOPICS = [
   'item.changed',
   'sync.progress',
   'conflict.detected',
+  // The background job engine (GIT-US-0074). The five topics are the contract;
+  // `sync.job.started` is subscribed to even though the engine does not report
+  // the queued -> running transition through its seam yet.
+  'sync.job.queued',
+  'sync.job.started',
+  'sync.job.progress',
+  'sync.job.done',
+  'sync.job.failed',
 ];
+
+/** The `sync.job.*` topics, by the phase each one carries. */
+const SYNC_JOB_PHASES: Record<string, SyncJobEventPhase> = {
+  'sync.job.queued': 'queued',
+  'sync.job.started': 'started',
+  'sync.job.progress': 'progress',
+  'sync.job.done': 'done',
+  'sync.job.failed': 'failed',
+};
 
 /** What the companion can do before `GET /capabilities` answers. */
 export const companionCapabilities: Capabilities = {
@@ -252,6 +288,12 @@ const PROBLEM_CODES: Record<string, ProviderErrorCode> = {
   youtrack_forbidden: 'youtrack_forbidden',
   youtrack_not_found: 'youtrack_not_found',
   youtrack_unreachable: 'youtrack_unreachable',
+  // The background job engine (GIT-US-0078). Each of the three is a different
+  // thing for the queue table to say: a job that is gone, a transition the
+  // job's state does not allow, and an engine that is not running at all.
+  sync_job_not_found: 'sync_job_not_found',
+  sync_job_not_retryable: 'sync_job_not_retryable',
+  sync_engine_not_running: 'sync_engine_not_running',
   index_unavailable: 'internal',
   rate_limited: 'internal',
   internal: 'internal',
@@ -866,6 +908,255 @@ export function toYouTrackFieldList(value: unknown): YouTrackFieldList {
   };
 }
 
+// ------------------------------------------------------- youtrack import
+
+/** One row of `GET /youtrack/issues`. */
+function toYouTrackIssue(value: unknown): YouTrackIssue {
+  const record = asRecord(value) ?? {};
+  const linked = asRecord(record['linked']);
+  const itemId = linked ? asString(linked['itemId']) : undefined;
+  return {
+    id: asString(record['id']) ?? '',
+    idReadable: asString(record['idReadable']) ?? '',
+    summary: asString(record['summary']) ?? '',
+    type: asString(record['type']) ?? '',
+    state: asString(record['state']) ?? '',
+    assignee: asString(record['assignee']) ?? '',
+    updated: asString(record['updated']) ?? '',
+    url: asString(record['url']) ?? '',
+    linked: itemId === undefined || itemId === '' ? null : { itemId },
+  };
+}
+
+/** `GET /youtrack/issues` → one page of the autosuggest. */
+export function toYouTrackIssuePage(value: unknown): YouTrackIssuePage {
+  const record = asRecord(value) ?? {};
+  return {
+    items: asArray(record['items']).map(toYouTrackIssue),
+    nextCursor: asString(record['nextCursor']) ?? '',
+  };
+}
+
+/** One mapper finding; every field is third-party text and stays text. */
+function toImportWarning(value: unknown): YouTrackImportWarning {
+  const record = asRecord(value) ?? {};
+  return {
+    field: asString(record['field']) ?? '',
+    ...(asString(record['value']) === undefined ? {} : { value: asString(record['value']) ?? '' }),
+    ...(asString(record['fallback']) === undefined
+      ? {}
+      : { fallback: asString(record['fallback']) ?? '' }),
+    reason: asString(record['reason']) ?? '',
+  };
+}
+
+function toImportWarnings(value: unknown): YouTrackImportWarning[] {
+  return asArray(value).map(toImportWarning);
+}
+
+/** An action the API did not name is read as a create: it is the safe default. */
+function toImportAction(value: unknown): 'create' | 'update' {
+  return asString(value) === 'update' ? 'update' : 'create';
+}
+
+function toImportPlanItem(value: unknown): YouTrackImportPlanItem {
+  const record = asRecord(value) ?? {};
+  return {
+    youtrackId: asString(record['youtrackId']) ?? '',
+    title: asString(record['title']) ?? '',
+    mappedType: asString(record['mappedType']) ?? '',
+    action: toImportAction(record['action']),
+    ...(asString(record['targetId']) === undefined
+      ? {}
+      : { targetId: asString(record['targetId']) ?? '' }),
+    ...(asString(record['parent']) === undefined
+      ? {}
+      : { parent: asString(record['parent']) ?? '' }),
+    ...(asString(record['milestone']) === undefined
+      ? {}
+      : { milestone: asString(record['milestone']) ?? '' }),
+    depth: asNumber(record['depth']) ?? 0,
+    comments: asNumber(record['comments']) ?? 0,
+    warnings: toImportWarnings(record['warnings']),
+  };
+}
+
+/** The preview operation → the plan, with nothing written. */
+export function toYouTrackImportPreview(value: unknown): YouTrackImportPreviewResult {
+  const record = asRecord(value) ?? {};
+  return {
+    project: asString(record['project']) ?? '',
+    issues: asArray(record['issues']).map(toImportPlanItem),
+    warnings: toImportWarnings(record['warnings']),
+  };
+}
+
+function toImportIssueResult(value: unknown): YouTrackImportIssueResult {
+  const record = asRecord(value) ?? {};
+  return {
+    youtrackId: asString(record['youtrackId']) ?? '',
+    ...(asString(record['itemId']) === undefined
+      ? {}
+      : { itemId: asString(record['itemId']) ?? '' }),
+    action: toImportAction(record['action']),
+    comments: asNumber(record['comments']) ?? 0,
+    warnings: toImportWarnings(record['warnings']),
+    ...(asString(record['error']) === undefined ? {} : { error: asString(record['error']) ?? '' }),
+  };
+}
+
+/** The run operation → the finished result, when the import ran inline. */
+export function toYouTrackImportResult(value: unknown): YouTrackImportResult {
+  const record = asRecord(value) ?? {};
+  return {
+    project: asString(record['project']) ?? '',
+    issues: asArray(record['issues']).map(toImportIssueResult),
+    created: asNumber(record['created']) ?? 0,
+    updated: asNumber(record['updated']) ?? 0,
+    failed: asNumber(record['failed']) ?? 0,
+    warnings: toImportWarnings(record['warnings']),
+  };
+}
+
+/**
+ * The run operation's answer in either of its two shapes: `{jobId}` when the
+ * companion enqueued the import on the job engine, or the finished result when
+ * it ran it inline.
+ */
+export function toYouTrackImportRun(value: unknown): YouTrackImportRun {
+  const record = asRecord(value) ?? {};
+  const jobId = asString(record['jobId']) ?? asString(record['id']) ?? '';
+  const inline = asRecord(record['result']) ?? (record['issues'] === undefined ? null : record);
+  return {
+    jobId,
+    result: inline === null ? null : toYouTrackImportResult(inline),
+  };
+}
+
+// --------------------------------------------------------- background jobs
+
+const SYNC_JOB_STATES = new Set<string>(['queued', 'running', 'done', 'failed', 'cancelled']);
+
+function toSyncJobState(value: unknown): SyncJobState {
+  const state = asString(value) ?? '';
+  return SYNC_JOB_STATES.has(state) ? (state as SyncJobState) : 'queued';
+}
+
+/** The last failure of a job. `message` is redacted third-party text. */
+function toSyncJobError(value: unknown): SyncJobError | undefined {
+  const record = asRecord(value);
+  if (!record) return undefined;
+  return {
+    attempt: asNumber(record['attempt']) ?? 0,
+    class: asString(record['class']) ?? '',
+    message: asString(record['message']) ?? '',
+    at: asString(record['at']) ?? '',
+    ...(asNumber(record['retryAfter']) === undefined
+      ? {}
+      : { retryAfter: asNumber(record['retryAfter']) ?? 0 }),
+  };
+}
+
+/** One job of `GET /sync/jobs`; the payload is never part of this shape. */
+export function toSyncJob(value: unknown): SyncJob {
+  const record = asRecord(value) ?? {};
+  const lastError = toSyncJobError(record['lastError']);
+  const nextAttempt = asString(record['nextAttempt']);
+  return {
+    id: asString(record['id']) ?? '',
+    kind: asString(record['kind']) ?? '',
+    key: asString(record['key']) ?? '',
+    state: toSyncJobState(record['state']),
+    attempts: asNumber(record['attempts']) ?? 0,
+    createdAt: asString(record['createdAt']) ?? '',
+    updatedAt: asString(record['updatedAt']) ?? '',
+    ...(nextAttempt === undefined ? {} : { nextAttempt }),
+    ...(lastError === undefined ? {} : { lastError }),
+    ...(asBoolean(record['deadLetter']) === true ? { deadLetter: true } : {}),
+  };
+}
+
+function toSyncJobCounts(value: unknown): SyncJobCounts {
+  const record = asRecord(value) ?? {};
+  return {
+    queued: asNumber(record['queued']) ?? 0,
+    running: asNumber(record['running']) ?? 0,
+    done: asNumber(record['done']) ?? 0,
+    failed: asNumber(record['failed']) ?? 0,
+    cancelled: asNumber(record['cancelled']) ?? 0,
+  };
+}
+
+/** `GET /sync/jobs` → one page plus the whole queue's summary. */
+export function toSyncJobPage(value: unknown): SyncJobPage {
+  const record = asRecord(value) ?? {};
+  const jobs = asArray(record['jobs']).map(toSyncJob);
+  return {
+    jobs,
+    nextCursor: asString(record['nextCursor']) ?? '',
+    total: asNumber(record['total']) ?? jobs.length,
+    counts: toSyncJobCounts(record['counts']),
+    running: asNumber(record['running']) ?? 0,
+    deadLetter: asNumber(record['deadLetter']) ?? 0,
+    // An engine that is up but idle is still `true`; only an explicit `false`
+    // means there is no pool.
+    engine: asBoolean(record['engine']) ?? false,
+  };
+}
+
+/** The engine half of the sync settings; absent on a runtime without one. */
+function toSyncEngineSettings(value: unknown): SyncEngineSettings | undefined {
+  const record = asRecord(value);
+  if (!record) return undefined;
+  return {
+    workers: asNumber(record['workers']) ?? 0,
+    batchSize: asNumber(record['batchSize']) ?? 0,
+    rate: asNumber(record['rate']) ?? 0,
+    maxAttempts: asNumber(record['maxAttempts']) ?? 0,
+    retentionHours: asNumber(record['retentionHours']) ?? 0,
+    drainSeconds: asNumber(record['drainSeconds']) ?? 0,
+    running: asBoolean(record['running']) ?? false,
+  };
+}
+
+/** `GET|PATCH /sync/settings` → the git half and the engine half together. */
+export function toSyncSettings(value: unknown): SyncSettings {
+  const record = asRecord(value) ?? {};
+  const engine = toSyncEngineSettings(record['engine']);
+  const persisted = asBoolean(record['persisted']);
+  return {
+    pullStrategy: (asString(record['pullStrategy']) as 'rebase' | 'merge' | undefined) ?? 'rebase',
+    pushOnSync: record['pushOnSync'] !== false,
+    maxPushRetries: asNumber(record['maxPushRetries']) ?? 3,
+    supported: record['supported'] !== false,
+    ...(asString(record['reason']) === undefined
+      ? {}
+      : { reason: asString(record['reason']) ?? '' }),
+    ...(engine === undefined ? {} : { engine }),
+    ...(persisted === undefined ? {} : { persisted }),
+  };
+}
+
+/**
+ * A `sync.job.*` frame. `phase` is the topic's last segment, so a topic this
+ * build does not know is dropped rather than rendered as a job state.
+ */
+export function toSyncJobEvent(phase: SyncJobEventPhase, payload: unknown): SyncJobEvent {
+  const record = asRecord(payload) ?? {};
+  return {
+    phase,
+    id: asString(record['id']) ?? '',
+    kind: asString(record['kind']) ?? '',
+    key: asString(record['key']) ?? '',
+    state: (asString(record['state']) ?? '') as SyncJobState | '',
+    attempt: asNumber(record['attempt']) ?? 0,
+    processed: asNumber(record['processed']) ?? 0,
+    total: asNumber(record['total']) ?? 0,
+    error: asString(record['error']) ?? '',
+    errorClass: asString(record['errorClass']) ?? '',
+  };
+}
+
 // ------------------------------------------------------------- query strings
 
 type QueryValue = string | number | boolean | string[] | undefined;
@@ -886,6 +1177,25 @@ function teamQuery(team?: string): string {
  */
 function youtrackQuery(scope: YouTrackScope): string {
   return buildQuery({ key: scope.projectKey });
+}
+
+/**
+ * The import options as `internal/vault`'s `YouTrackImportParams`. An option the
+ * caller left out is left out of the body too, so the vault's own defaults
+ * apply rather than a second set of defaults living here.
+ */
+function importBody(options: YouTrackImportOptions): Record<string, unknown> {
+  return {
+    ...(options.project === undefined || options.project === ''
+      ? {}
+      : { project: options.project }),
+    ...(options.ids === undefined || options.ids.length === 0 ? {} : { ids: options.ids }),
+    ...(options.query === undefined || options.query === '' ? {} : { query: options.query }),
+    depth: options.depth,
+    includeLinks: options.includeLinks,
+    includeComments: options.includeComments,
+    includeAttachments: options.includeAttachments,
+  };
 }
 
 function buildQuery(params: Record<string, QueryValue>): string {
@@ -1771,6 +2081,99 @@ export class CompanionProvider implements DataProvider {
     return toYouTrackFieldList(await this.#json(`${API_PREFIX}/youtrack/fields${query}`));
   }
 
+  // --------------------------------------------------- youtrack import
+
+  /**
+   * `GET /api/v1/youtrack/issues?key=&q=&preset=&limit=&cursor=`
+   * (story GIT-US-0054).
+   */
+  async searchYouTrackIssues(
+    query: YouTrackIssueQuery,
+    scope: YouTrackScope = {},
+  ): Promise<YouTrackIssuePage> {
+    const search = buildQuery({
+      key: scope.projectKey,
+      q: query.q === '' ? undefined : query.q,
+      preset: query.preset === '' ? undefined : query.preset,
+      limit: query.limit,
+      cursor: query.cursor === '' ? undefined : query.cursor,
+    });
+    return toYouTrackIssuePage(await this.#json(`${API_PREFIX}/youtrack/issues${search}`));
+  }
+
+  /**
+   * The preview operation of story GIT-US-0047, over REST.
+   *
+   * The vault method `youtrack.import.preview` exists and is what this calls;
+   * the HTTP route in front of it is owned by the server side of this epic.
+   * The body is the vault's `YouTrackImportParams` verbatim, so the two cannot
+   * drift.
+   */
+  async previewYouTrackImport(
+    options: YouTrackImportOptions,
+    scope: YouTrackScope = {},
+  ): Promise<YouTrackImportPreviewResult> {
+    return toYouTrackImportPreview(
+      await this.#json(`${API_PREFIX}/youtrack/import/preview${youtrackQuery(scope)}`, {
+        method: 'POST',
+        body: importBody(options),
+      }),
+    );
+  }
+
+  /**
+   * The run operation of story GIT-US-0047, over REST. The companion either
+   * enqueues the import on the job engine and answers `{jobId}`, or runs it
+   * inline and answers the finished result; `toYouTrackImportRun` reads both.
+   */
+  async runYouTrackImport(
+    options: YouTrackImportOptions,
+    scope: YouTrackScope = {},
+  ): Promise<YouTrackImportRun> {
+    return toYouTrackImportRun(
+      await this.#json(`${API_PREFIX}/youtrack/import${youtrackQuery(scope)}`, {
+        method: 'POST',
+        body: importBody(options),
+      }),
+    );
+  }
+
+  // ----------------------------------------------------- background jobs
+
+  /** `GET /api/v1/sync/jobs?state=&kind=&limit=&cursor=`. */
+  async listSyncJobs(filter: SyncJobFilter = {}): Promise<SyncJobPage> {
+    const query = buildQuery({
+      state: filter.state,
+      kind: filter.kind,
+      limit: filter.limit,
+      cursor: filter.cursor === '' ? undefined : filter.cursor,
+    });
+    return toSyncJobPage(await this.#json(`${API_PREFIX}/sync/jobs${query}`));
+  }
+
+  /** `GET /api/v1/sync/jobs/{id}`. */
+  async getSyncJob(id: string): Promise<SyncJob> {
+    return toSyncJob(await this.#json(`${API_PREFIX}/sync/jobs/${encodeURIComponent(id)}`));
+  }
+
+  /** `POST /api/v1/sync/jobs/{id}/retry`. */
+  async retrySyncJob(id: string): Promise<SyncJob> {
+    return toSyncJob(
+      await this.#json(`${API_PREFIX}/sync/jobs/${encodeURIComponent(id)}/retry`, {
+        method: 'POST',
+      }),
+    );
+  }
+
+  /** `POST /api/v1/sync/jobs/{id}/cancel`. */
+  async cancelSyncJob(id: string): Promise<SyncJob> {
+    return toSyncJob(
+      await this.#json(`${API_PREFIX}/sync/jobs/${encodeURIComponent(id)}/cancel`, {
+        method: 'POST',
+      }),
+    );
+  }
+
   /** `POST /api/v1/git/commit`; with no paths it flushes the batched edits. */
   async commitNow(
     input: { repoId?: string; paths?: string[]; message?: string } = {},
@@ -1797,32 +2200,22 @@ export class CompanionProvider implements DataProvider {
     return asArray(body ? body['repos'] : []) as SyncRepoStatus[];
   }
 
-  /** The sync half of `GET /api/v1/sync/status`. */
+  /**
+   * `GET /api/v1/sync/settings` — the git half of GIT-US-0021 and the engine
+   * half of GIT-US-0084 in one document.
+   */
   async getSyncSettings(): Promise<SyncSettings> {
-    const body = asRecord(await this.#json(`${API_PREFIX}/sync/status`));
-    const settings = asRecord(body ? body['settings'] : null);
-    return {
-      pullStrategy: (settings?.['pullStrategy'] as 'rebase' | 'merge') ?? 'rebase',
-      pushOnSync: settings?.['pushOnSync'] !== false,
-      maxPushRetries:
-        typeof settings?.['maxPushRetries'] === 'number' ? settings['maxPushRetries'] : 3,
-      supported: settings?.['supported'] !== false,
-      ...(typeof settings?.['reason'] === 'string' ? { reason: settings['reason'] } : {}),
-    };
+    return toSyncSettings(await this.#json(`${API_PREFIX}/sync/settings`));
   }
 
-  /** `PATCH /api/v1/sync/settings`. */
+  /**
+   * `PATCH /api/v1/sync/settings`. The engine knobs go nested under `engine`,
+   * which is the form that wins when a companion is sent both.
+   */
   async updateSyncSettings(patch: SyncSettingsPatch): Promise<SyncSettings> {
-    const settings = asRecord(
+    return toSyncSettings(
       await this.#json(`${API_PREFIX}/sync/settings`, { method: 'PATCH', body: patch }),
     );
-    return {
-      pullStrategy: (settings?.['pullStrategy'] as 'rebase' | 'merge') ?? 'rebase',
-      pushOnSync: settings?.['pushOnSync'] !== false,
-      maxPushRetries:
-        typeof settings?.['maxPushRetries'] === 'number' ? settings['maxPushRetries'] : 3,
-      supported: settings?.['supported'] !== false,
-    };
   }
 
   /**
@@ -2009,6 +2402,33 @@ export class CompanionProvider implements DataProvider {
   #emitRefresh(repoId = ''): void {
     this.#emit({ kind: 'repo', repoId });
     this.#emit({ kind: 'kb', repoId, paths: [] });
+    this.#emitSyncJobResync();
+  }
+
+  /**
+   * "The job stream lost its place, reconcile from `GET /sync/jobs`."
+   *
+   * A client may miss frames — the hub disconnects one that fills its
+   * 256-event buffer — so a reconnect, a `stream.overflow` and a `resume.gap`
+   * all mean the live counts are no longer trustworthy. The listing is the
+   * engine's own consistent snapshot and is the only thing that is.
+   */
+  #emitSyncJobResync(): void {
+    this.#emit({
+      kind: 'syncJob',
+      job: {
+        phase: 'resync',
+        id: '',
+        kind: '',
+        key: '',
+        state: '',
+        attempt: 0,
+        processed: 0,
+        total: 0,
+        error: '',
+        errorClass: '',
+      },
+    });
   }
 
   #eventsUrl(): string {
@@ -2036,6 +2456,7 @@ export class CompanionProvider implements DataProvider {
     this.#socket = socket;
 
     socket.onopen = () => {
+      const reconnected = this.#attempts > 0;
       this.#attempts = 0;
       this.#stopPolling();
       this.#setConnection('open');
@@ -2044,6 +2465,9 @@ export class CompanionProvider implements DataProvider {
       if (this.#lastSeq !== null) {
         socket.send(JSON.stringify({ op: 'resume', seq: this.#lastSeq }));
       }
+      // The replay ring may no longer hold our position, and a job can have
+      // finished while the socket was down. Reconcile rather than trust it.
+      if (reconnected) this.#emitSyncJobResync();
     };
     socket.onmessage = (event) => {
       this.#receive(event.data);
@@ -2074,8 +2498,9 @@ export class CompanionProvider implements DataProvider {
 
     const type = asString(frame['type']);
     if (type === undefined) return;
-    if (type === 'resume.gap') {
-      // The ring buffer no longer holds our position: refetch everything.
+    if (type === 'resume.gap' || type === 'stream.overflow') {
+      // The ring buffer no longer holds our position, or this client fell
+      // behind and was cut off: refetch everything.
       this.#lastSeq = null;
       this.#emitRefresh();
       return;
@@ -2083,6 +2508,16 @@ export class CompanionProvider implements DataProvider {
 
     const payload = asRecord(frame['data']) ?? {};
     const repoId = asString(payload['repo']) ?? '';
+
+    const phase = SYNC_JOB_PHASES[type];
+    if (phase !== undefined) {
+      // Progress is already coalesced server-side to one frame per 500 ms per
+      // group, and a terminal frame is never throttled, so this layer adds no
+      // throttling of its own and treats a missing intermediate frame as
+      // normal.
+      this.#emit({ kind: 'syncJob', job: toSyncJobEvent(phase, payload) });
+      return;
+    }
 
     switch (type) {
       case 'item.changed': {

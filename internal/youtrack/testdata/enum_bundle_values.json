@@ -1,0 +1,4 @@
+[
+  { "id": "71-0", "name": "Bug", "description": "Something is broken", "ordinal": 0, "archived": false, "localizedName": "", "color": { "id": "18", "background": "#E6F5FF", "foreground": "#1F5C99" }, "$type": "EnumBundleElement" },
+  { "id": "71-1", "name": "Feature", "description": "", "ordinal": 1, "archived": true, "localizedName": "Funcionalidad", "color": { "id": "4", "background": "#F0FDE9", "foreground": "#2E7D32" }, "$type": "EnumBundleElement" }
+]

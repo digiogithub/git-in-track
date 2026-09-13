@@ -2,7 +2,7 @@
 id: GIT-US-0072
 type: story
 title: Automatic push seams on comment writes
-status: backlog
+status: in_review
 priority: medium
 parent: GIT-EP-0013
 milestone: GIT-M-0011
@@ -10,7 +10,8 @@ author: mcp
 labels: [server, mcp]
 estimate: 5
 created: 2026-09-13T13:13:38Z
-updated: 2026-09-13T13:13:38Z
+updated: 2026-09-13T15:41:39Z
+started: 2026-09-13T15:41:29Z
 ---
 
 ## Description

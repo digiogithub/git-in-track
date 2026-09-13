@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/digiogithub/git-in-track/internal/syncengine"
 )
 
 // SchemaVersion is the configuration schema this build understands.
@@ -87,6 +89,9 @@ type Config struct {
 	Index            Index       `json:"index"                      yaml:"index"`
 	MCP              MCP         `json:"mcp"                        yaml:"mcp"`
 	Log              Log         `json:"log"                        yaml:"log"`
+	// Sync configures the background job engine that talks to the external
+	// trackers (docs/07-cli-and-api.md section 4.1).
+	Sync Sync `json:"sync" yaml:"sync"`
 	// Integrations holds the credentials of the external trackers this machine
 	// is linked to. It is the only place git-in-track stores a secret it did
 	// not generate itself (ADR-032), and it is excluded from JSON so that no
@@ -252,6 +257,79 @@ type Index struct {
 	Debounce time.Duration `json:"debounce"           yaml:"debounce"`
 }
 
+// The shipped defaults of the `sync.engine` section. They are taken from
+// internal/syncengine rather than restated, so that the file, the flags and the
+// engine cannot drift apart (GIT-T-0175).
+const (
+	// DefaultSyncWorkers is the size of the background worker pool.
+	DefaultSyncWorkers = syncengine.DefaultWorkers
+	// DefaultSyncBatchSize caps how many jobs one handler call receives.
+	DefaultSyncBatchSize = syncengine.DefaultBatchSize
+	// DefaultSyncRate is the shared outbound limit, in jobs per second.
+	DefaultSyncRate = syncengine.DefaultRate
+	// DefaultSyncMaxAttempts is the retry budget of one job.
+	DefaultSyncMaxAttempts = syncengine.DefaultMaxAttempts
+	// DefaultSyncRetention is how long a finished job is kept.
+	DefaultSyncRetention = syncengine.DefaultRetention
+)
+
+// The ranges `sync.engine` is validated against. They match the ones the
+// running engine applies to PATCH /api/v1/sync/settings, so a value the file
+// accepts can never be refused later by the API and vice versa.
+const (
+	MaxSyncWorkers     = 64
+	MaxSyncBatchSize   = 500
+	MaxSyncRate        = 1000
+	MaxSyncMaxAttempts = 20
+)
+
+// Sync is the `sync` section: everything about synchronizing with a system
+// that is not git.
+type Sync struct {
+	// Engine configures the background job engine of the companion.
+	Engine SyncEngine `json:"engine" yaml:"engine"`
+}
+
+// SyncEngine is the `sync.engine` section: the worker pool, the batch size, the
+// shared outbound rate limit, the retry budget and how long a finished job is
+// remembered.
+//
+// It is the file layer of the precedence chain `gintrack serve` applies —
+// flag > environment > file > default — and the section
+// PATCH /api/v1/sync/settings writes back, which is what makes a change made in
+// the web UI survive a restart.
+//
+// The journal directory is deliberately absent: the queue is persisted next to
+// the index, under `index.cacheDir`, because both are derived state that can be
+// thrown away and rebuilt.
+type SyncEngine struct {
+	// Workers is the size of the pool, 1 to MaxSyncWorkers.
+	Workers int `json:"workers" yaml:"workers"`
+	// BatchSize caps one handler call, 1 to MaxSyncBatchSize.
+	BatchSize int `json:"batchSize" yaml:"batchSize"`
+	// Rate is the shared outbound limit in jobs per second, at most
+	// MaxSyncRate. A negative value removes the limit; zero is refused,
+	// because "no jobs per second" is a stalled queue rather than a setting.
+	Rate float64 `json:"rate" yaml:"rate"`
+	// MaxAttempts is the retry budget of a job, 1 to MaxSyncMaxAttempts. One
+	// means never retry.
+	MaxAttempts int `json:"maxAttempts" yaml:"maxAttempts"`
+	// Retention is how long a finished job is kept before it is pruned. The
+	// file spells it as a Go duration, as `git.commitDebounce` does.
+	Retention time.Duration `json:"retention" yaml:"retention"`
+}
+
+// DefaultSyncEngine returns the shipped `sync.engine` section.
+func DefaultSyncEngine() SyncEngine {
+	return SyncEngine{
+		Workers:     DefaultSyncWorkers,
+		BatchSize:   DefaultSyncBatchSize,
+		Rate:        DefaultSyncRate,
+		MaxAttempts: DefaultSyncMaxAttempts,
+		Retention:   DefaultSyncRetention,
+	}
+}
+
 // MCP is the Model Context Protocol section.
 type MCP struct {
 	Enabled    bool `json:"enabled"    yaml:"enabled"`
@@ -290,7 +368,8 @@ func Default() *Config {
 			Watch:    true,
 			Debounce: DefaultDebounce,
 		},
-		Log: Log{Level: "info", Format: "text"},
+		Log:  Log{Level: "info", Format: "text"},
+		Sync: Sync{Engine: DefaultSyncEngine()},
 	}
 }
 

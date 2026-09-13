@@ -57,6 +57,9 @@ const YouTrackMaxIssues = 500
 type YouTrackSource interface {
 	// Issue reads one issue with the wide field selector the mapping needs.
 	Issue(ctx context.Context, id string) (youtrack.Issue, error)
+	// Article reads one knowledge-base article, which is what a KB status call
+	// compares a page against when it is asked to look at the remote side.
+	Article(ctx context.Context, id string) (youtrack.Article, error)
 	// IssueLinks reads the link graph of one issue, for an instance whose issue
 	// payload came back without it.
 	IssueLinks(ctx context.Context, id string) ([]youtrack.IssueLink, error)
@@ -82,6 +85,78 @@ type YouTrackLink struct {
 	// FieldMap overrides the default field names, keyed as config.FieldMapKeys
 	// spells them.
 	FieldMap map[string]string
+	// PushComments is the project's `integrations.youtrack.push_comments`
+	// setting: YouTrackPushAuto queues every new comment for the tracker,
+	// anything else (YouTrackPushManual, and the empty string a host that does
+	// not set it leaves) queues nothing and leaves the manual action as the
+	// only trigger.
+	PushComments string
+}
+
+// The two values of `integrations.youtrack.push_comments`.
+const (
+	// YouTrackPushManual is the default: a comment reaches YouTrack only when
+	// somebody asks for it.
+	YouTrackPushManual = "manual"
+	// YouTrackPushAuto queues a push for every comment written on a linked
+	// item, on every surface.
+	YouTrackPushAuto = "auto"
+)
+
+// The background job kinds this package asks the host to run. They are named
+// after the core method that creates them, so a job in the queue can be read
+// back to the call that made it.
+const (
+	// JobKindCommentPush pushes one comment file to the issue its item mirrors.
+	JobKindCommentPush = "youtrack.comment.push"
+	// JobKindKBPublish publishes one page, or one subtree, as articles.
+	JobKindKBPublish = "youtrack.kb.publish"
+	// JobKindKBPull writes one page, or one subtree, back from its articles.
+	JobKindKBPull = "youtrack.kb.pull"
+)
+
+// YouTrackJob is one unit of work the vault hands to the host's background
+// engine instead of doing inline.
+//
+// Every outbound write to YouTrack is queued rather than performed in the call
+// that triggered it: a comment saved in the web app must not wait on a remote
+// tracker, and an HTTP response that ends must not cancel the push it started.
+// Key is the coalescing key — the engine folds two queued jobs that share a
+// kind and a key into one — so a burst of edits on the same comment or the
+// same page produces exactly one push.
+type YouTrackJob struct {
+	// Kind is one of the JobKind constants above.
+	Kind string `json:"kind"`
+	// Key is the coalescing key: the comment path or the page path.
+	Key string `json:"key"`
+	// Project is the git-in-track project key the job runs against.
+	Project string `json:"project,omitempty"`
+	// Payload is the job's own arguments, encoded by the host.
+	Payload any `json:"payload,omitempty"`
+}
+
+// YouTrackEnqueuer hands a job to the host's background engine and returns the
+// id it was given. The vault never runs a job itself: it only decides that one
+// is needed, which is what keeps every network call out of the write path and
+// out of internal/core.
+//
+// A host that has no engine installs none, and the queueing methods then fail
+// with `unavailable` rather than pretending to have queued something.
+type YouTrackEnqueuer func(ctx context.Context, job YouTrackJob) (string, error)
+
+// SetYouTrackEnqueuer installs the background engine seam. Passing nil removes
+// it, which is what a browser-only session leaves in place.
+func (v *Vault) SetYouTrackEnqueuer(e YouTrackEnqueuer) {
+	v.seams.Lock()
+	defer v.seams.Unlock()
+	v.enqueue = e
+}
+
+// youtrackEnqueuer returns the installed enqueuer, nil when there is none.
+func (v *Vault) youtrackEnqueuer() YouTrackEnqueuer {
+	v.seams.Lock()
+	defer v.seams.Unlock()
+	return v.enqueue
 }
 
 // YouTrackProvider hands the import the client and the link configuration of
@@ -97,15 +172,20 @@ type YouTrackProvider func(ctx context.Context, project string) (YouTrackSource,
 // in place: "youtrack.import.*" then fails with `unavailable` instead of
 // pretending to have a tracker.
 func (v *Vault) SetYouTrackProvider(p YouTrackProvider) {
-	v.mu.Lock()
-	defer v.mu.Unlock()
+	v.seams.Lock()
+	defer v.seams.Unlock()
 	v.youtrack = p
 }
 
 // youtrackProvider returns the installed provider, nil when there is none.
+//
+// The seams have a mutex of their own rather than sharing the vault mutex, so
+// that a method already holding the vault lock can still ask whether a host
+// installed them. Installing a seam is a host lifecycle event; it never races
+// with a call in flight in a way the vault lock would have to arbitrate.
 func (v *Vault) youtrackProvider() YouTrackProvider {
-	v.mu.Lock()
-	defer v.mu.Unlock()
+	v.seams.Lock()
+	defer v.seams.Unlock()
 	return v.youtrack
 }
 

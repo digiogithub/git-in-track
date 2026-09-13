@@ -2,15 +2,18 @@
 id: GIT-US-0050
 type: story
 title: Import job kind in the sync engine
-status: backlog
+status: done
 priority: high
 parent: GIT-EP-0012
 milestone: GIT-M-0011
+assignees: [claude]
 author: mcp
 labels: [server, performance]
 estimate: 5
 created: 2026-09-13T13:11:50Z
-updated: 2026-09-13T13:11:50Z
+updated: 2026-09-13T15:59:37Z
+started: 2026-09-13T15:59:18Z
+closed: 2026-09-13T15:59:37Z
 ---
 
 ## Description
@@ -23,13 +26,13 @@ Attachments are downloaded when requested: `GET /api/issues/{id}/attachments`, t
 
 ## Acceptance Criteria
 
-- [ ] A `youtrack.import` `Kind` and `Handler` are registered with `internal/syncengine` and enqueued through `Engine.Enqueue`.
-- [ ] Issue resolution pages with `$top`/`$skip` and always appends `order by: created asc`; comments and attachments are paged explicitly.
-- [ ] Issues are processed in configurable batches (default 20), each batch one `youtrack.import.run` call and one commit.
-- [ ] `sync.job.progress` carries `{jobId, done, total, currentId}` and per-issue failures accumulate into the job result instead of failing the job.
-- [ ] Attachment download streams to a `.part` file and renames on success; an existing file of the right size is skipped.
-- [ ] Cancel stops the job between batches and mid-download, keeps committed batches and reports progress at the point of cancellation.
-- [ ] `go test -race ./internal/server/...` covers batching, progress emission and cancellation with a fake clock and a fake client.
+- [x] A `youtrack.import` `Kind` and `Handler` are registered with `internal/syncengine` and enqueued through `Engine.Enqueue`.
+- [x] Issue resolution pages with `$top`/`$skip` and always appends `order by: created asc`; comments and attachments are paged explicitly.
+- [x] Issues are processed in configurable batches (default 20), each batch one `youtrack.import.run` call and one commit.
+- [x] `sync.job.progress` carries `{jobId, done, total, currentId}` and per-issue failures accumulate into the job result instead of failing the job.
+- [x] Attachment download streams to a `.part` file and renames on success; an existing file of the right size is skipped.
+- [x] Cancel stops the job between batches and mid-download, keeps committed batches and reports progress at the point of cancellation.
+- [x] `go test -race ./internal/server/...` covers batching, progress emission and cancellation with a fake clock and a fake client.
 
 ## Notes
 

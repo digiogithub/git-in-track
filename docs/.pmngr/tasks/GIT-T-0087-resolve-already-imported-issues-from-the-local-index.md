@@ -2,7 +2,7 @@
 id: GIT-T-0087
 type: task
 title: Resolve already-imported issues from the local index
-status: todo
+status: done
 priority: medium
 parent: GIT-US-0054
 milestone: GIT-M-0011
@@ -10,7 +10,9 @@ author: mcp
 labels: [server, agent-ok]
 estimate: 2
 created: 2026-09-13T13:17:28Z
-updated: 2026-09-13T13:17:28Z
+updated: 2026-09-13T16:03:42Z
+started: 2026-09-13T16:03:26Z
+closed: 2026-09-13T16:03:42Z
 ---
 
 ## Description

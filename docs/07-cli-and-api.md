@@ -247,6 +247,16 @@ index:
   watch: true            # let `gintrack serve` run the file watcher
   debounce: 250ms        # Go duration
 
+# The background job engine: the queue an import, a comment push or a
+# knowledge-base publish runs on, off the request that asked for it (§4.1).
+sync:
+  engine:
+    workers: 2           # size of the worker pool, 1-64
+    batchSize: 20        # jobs handed to one handler call, 1-500
+    rate: 5              # shared outbound requests per second; negative removes the limit
+    maxAttempts: 5       # attempts before a job is dead-lettered, 1-20
+    retention: 168h      # how long a finished job is remembered; Go duration
+
 mcp:
   enabled: false         # mount POST /mcp on `gintrack serve` (same as --mcp-http)
   allowWrite: false      # write tools stay off until this is true, for `gintrack mcp`
@@ -277,9 +287,10 @@ rejected, so a file written by a newer binary still opens: the later phases add
 
 `PATCH /api/v1/git/settings` writes the `git:` section back to this file, so a
 change made in the web UI survives a restart. `PATCH /api/v1/youtrack/settings`
-writes the `integrations.youtrack.<projectKey>.token` key the same way. Those two
-are the only routes that edit the configuration; everything else remains a
-`gintrack config` operation.
+writes the `integrations.youtrack.<projectKey>.token` key the same way, and
+`PATCH /api/v1/sync/settings` writes `sync.engine`. Those three are the only
+routes that edit the configuration; everything else remains a `gintrack config`
+operation.
 
 The YouTrack token is never rendered back. It is excluded from the JSON encoding
 of the configuration, so `gintrack config show --json` omits it and
@@ -298,6 +309,10 @@ Effective value = flag > environment variable > config file > built-in default.
 | `GINTRACK_BIND`          | `server.bind`       |
 | `GINTRACK_TOKEN`         | `server.token`      |
 | `GINTRACK_GIT_BACKEND`   | `git.backend`       |
+| `GINTRACK_SYNC_WORKERS`  | `sync.engine.workers` |
+| `GINTRACK_SYNC_BATCH`    | `sync.engine.batchSize` |
+| `GINTRACK_SYNC_RATE`     | `sync.engine.rate`  |
+| `GINTRACK_SYNC_MAX_ATTEMPTS` | `sync.engine.maxAttempts` |
 | `GINTRACK_GIT_COMMIT_ON_SAVE` | `git.commitOnSave` |
 | `GINTRACK_YOUTRACK_TOKEN` | `integrations.youtrack.<key>.token`, for every project |
 | `GINTRACK_LOG_LEVEL`     | `log.level`         |
@@ -401,15 +416,49 @@ with the server and stops with it, and with no integration configured it starts
 | `--sync-rate` | `GINTRACK_SYNC_RATE` | `5` | > 0, at most 1000; a negative value removes the limit |
 | `--sync-max-attempts` | `GINTRACK_SYNC_MAX_ATTEMPTS` | `5` | 1–20 |
 
-Precedence is the chain of §3.3 — flag, then environment variable, then the
-default. A value outside its range fails the command **before the listener is
-opened**, naming the setting. The journal is written under the configured
-`index.cacheDir`; with no cache directory the queue lives in memory only and a
-restart starts empty.
+Precedence is the full chain of §3.3 — flag, then environment variable, then the
+configuration file, then the default. A value outside its range fails the
+command **before the listener is opened**, naming the setting. The journal is
+written under the configured `index.cacheDir`; with no cache directory the queue
+lives in memory only and a restart starts empty.
 
-> The configuration file has no `sync.engine` section yet, so these four
-> settings are not read from `config.yaml` and a change made through
-> `PATCH /api/v1/sync/settings` reports `persisted: false`.
+The file layer is the `sync.engine` section:
+
+```yaml
+sync:
+  engine:
+    workers: 2          # 1-64
+    batchSize: 20       # 1-500
+    rate: 5             # requests per second; a negative value removes the limit
+    maxAttempts: 5      # 1-20
+    retention: 168h     # how long a finished job is remembered
+```
+
+`retention` has no flag and no environment variable: it is a housekeeping
+setting, not something an operator tunes per run. An out-of-range value is
+refused by configuration validation with the dotted key that carries it, for
+example `sync.engine.workers: 0 is outside the range 1-64`.
+
+Because the section exists, a change made in the web app through
+`PATCH /api/v1/sync/settings` is written back to it and the response reports
+`persisted: true` — unless the companion was started without a configuration
+file (`serve --repo`, or a test), where the change lasts for the process only
+and `persisted` is `false`.
+
+The engine is a background component of the companion beside the watcher, the
+committer and the tunnel, and it is brought up and taken down on the same path
+as those (doc 02 §background components).
+
+Four job kinds are registered by `internal/server` before the journal is
+replayed, which is what lets a job queued by a previous run be dispatched after
+a restart:
+
+| Kind | What it does | Coalescing key |
+| --- | --- | --- |
+| `youtrack.import` | Imports a query result or an id list into a project backlog, in batches | the project key |
+| `youtrack.comment.push` | Posts one comment file to the issue its item mirrors, or edits the comment a previous push created | the comment path |
+| `youtrack.kb.publish` | Publishes a page or a folder as YouTrack articles | the selection |
+| `youtrack.kb.pull` | Writes a page or a folder back from its articles | the selection |
 
 **Shutdown** is a bounded drain: `SIGINT`/`SIGTERM` gives the queue a grace
 period (5 s) to finish what is in flight, on a context detached from the
@@ -2492,7 +2541,7 @@ GET /api/v1/sync/settings
 
 PATCH /api/v1/sync/settings   {"workers":4,"rate":10}
 200
-{ …, "engine":{"workers":4,"batchSize":20,"rate":10, …}, "persisted":false }
+{ …, "engine":{"workers":4,"batchSize":20,"rate":10, …}, "persisted":true }
 ```
 
 The four engine knobs may be sent flat, as above, or nested under `"engine"`;
@@ -2504,8 +2553,9 @@ engine is built, so it is recorded and applies from the next start.
 Out-of-range values are refused with `invalid_request` (400) naming the field;
 the ranges are the table in §4.1. `persisted` follows the same contract as
 `PATCH /api/v1/git/settings`: it is `true` only when the change reached the
-configuration file. It is **`false` for any change touching the engine today**,
-because the configuration file has no `sync.engine` section yet.
+configuration file, which for the engine half means the `sync.engine` section
+of §3.2. A companion started without a configuration file — `serve --repo`, or a
+test — keeps the change for the life of the process and answers `false`.
 
 | Code | Status | Meaning |
 | --- | --- | --- |
@@ -2519,7 +2569,7 @@ The browser never talks to YouTrack. It asks the companion, the companion holds
 the token and the companion makes the call, which is what keeps the credential
 on one machine and out of every devtools network log. There is no generic
 pass-through endpoint, for the same reason ADR-025 refuses to generalise the
-CORS proxy: only the five calls the UI needs exist.
+CORS proxy: only the calls the UI needs exist.
 
 ```http
 GET   /api/v1/youtrack/settings?key=DEMO     the connection of one project, token excluded
@@ -2527,6 +2577,9 @@ PATCH /api/v1/youtrack/settings?key=DEMO     sparse write of both halves
 POST  /api/v1/youtrack/test?key=DEMO         probe the connection, saved or typed
 GET   /api/v1/youtrack/projects?key=DEMO&q=  the instance's projects, for the autosuggest
 GET   /api/v1/youtrack/fields?key=DEMO&project=ACME   the remote project's custom fields
+GET   /api/v1/youtrack/issues?key=DEMO&q=&preset=&limit=&cursor=   search, for the import picker
+POST  /api/v1/youtrack/import/preview?key=DEMO   what an import would do; writes nothing
+POST  /api/v1/youtrack/import?key=DEMO           queue the import; answers a job id
 ```
 
 `key` is the **git-in-track** project key and may be omitted when the companion
@@ -2548,6 +2601,115 @@ GET /api/v1/youtrack/settings?key=DEMO
 There is no `token` field and there never will be one: `hasToken` and
 `tokenSource` (`flag` | `env` | `file` | `none`) report everything a UI needs
 about the credential without rendering it.
+
+##### The issue search (GIT-US-0054)
+
+`GET /api/v1/youtrack/issues` is what the import dialog types into. It is a
+search and not a cache: nothing it returns is written to the index, and the
+instance stays the authority on what matches.
+
+| Parameter | Meaning |
+| --- | --- |
+| `q` | a YouTrack issue query, as the user typed it |
+| `preset` | one of `epics`, `stories`, `tasks`, `versions`, `unresolved`; anything else is `400 invalid_request` naming the field |
+| `limit` | page size, default 50, clamped to 200 |
+| `cursor` | opaque; the `nextCursor` of the previous page |
+
+The effective query is `project: {<shortName>}`, then `q`, then the preset
+clause, and it **always ends with `order by: created asc`**. The ordering is not
+a nicety: YouTrack is free to re-order between two requests, so a `$skip` walk
+over an unordered query silently skips and duplicates rows between keystrokes.
+The composed query is echoed in the answer so a user can see what their typing
+became; it carries no credential.
+
+```json
+GET /api/v1/youtrack/issues?key=DEMO&q=checkout&preset=stories&limit=2
+200
+{ "projectKey": "DEMO", "project": "ACME",
+  "query": "project: {ACME} checkout Type: {User Story} order by: created asc",
+  "preset": "stories", "limit": 2,
+  "items": [
+    { "id": "2-1041", "idReadable": "ACME-42", "summary": "Guest checkout",
+      "type": "User Story", "state": "In Progress", "assignee": "marta",
+      "updated": "2026-09-13T10:00:00Z",
+      "url": "https://yt.example.com/youtrack/issue/ACME-42",
+      "linked": { "itemId": "DEMO-US-0001", "type": "story",
+                  "status": "in_progress", "title": "Guest checkout" } },
+    { "id": "2-1042", "idReadable": "ACME-43", "summary": "Saved cards",
+      "type": "Task", "state": "Open", "assignee": "jose",
+      "updated": "2026-09-12T08:14:00Z",
+      "url": "https://yt.example.com/youtrack/issue/ACME-43",
+      "linked": null }
+  ],
+  "nextCursor": "Mg" }
+```
+
+`linked` is resolved **locally**, from the index, by the pair
+`(external.system, external.id)`: whether an issue has already been imported is
+a fact about this repository, so the picker gets its "already imported" badge
+without a second round trip. It is `null` when nothing claims the issue.
+
+The `versions` preset is not a query at all. A version is a value of the
+project's version bundle, resolved through the custom-field settings of the
+field the project's `field_map` names for `milestone` (default `Fix versions`),
+and the values are returned in the same envelope with `"type": "version"` so the
+picker renders one list:
+
+```json
+GET /api/v1/youtrack/issues?key=DEMO&preset=versions
+200
+{ …, "items": [
+    { "id": "v-1", "idReadable": "1.0", "summary": "1.0", "type": "version",
+      "released": true, "linked": null },
+    { "id": "v-2", "idReadable": "2.0", "summary": "2.0", "type": "version",
+      "releaseDate": "2026-01-01", "linked": null } ] }
+```
+
+Archived versions are left out unless `archived=true` is passed. Upstream
+failures map to the `youtrack_*` codes of the table below, and neither the token
+nor the `Authorization` header ever reaches a response, a problem document or a
+log line.
+
+##### Running an import (GIT-US-0047, GIT-US-0050)
+
+Both import routes take `internal/vault.YouTrackImportParams` as the body —
+`{query | ids[], depth, includeLinks, includeComments, includeAttachments}` —
+and the `?key=` of this subtree. They differ in who waits:
+
+`POST /api/v1/youtrack/import/preview` is **synchronous**. It writes nothing, so
+the dialog can wait for it, and the answer is the plan: what each issue would
+become, which item an update would patch and what could not be resolved.
+
+```json
+POST /api/v1/youtrack/import/preview?key=DEMO
+{"ids":["ACME-42"],"depth":1,"includeComments":true}
+200
+{ "project": "DEMO",
+  "issues": [ { "youtrackId": "ACME-42", "title": "Guest checkout",
+                "mappedType": "story", "action": "create", "depth": 0,
+                "comments": 3, "warnings": [] } ],
+  "warnings": [] }
+```
+
+`POST /api/v1/youtrack/import` **queues**. A hundred issues are a hundred
+requests against somebody else's rate limit, and holding an HTTP response open
+across that is exactly what the background engine exists to avoid, so the answer
+is `202 Accepted` with a job id:
+
+```json
+POST /api/v1/youtrack/import?key=DEMO
+{"query":"#Unresolved","includeAttachments":true}
+202
+{ "jobId": "job_000021", "projectKey": "DEMO", "repo": "acme-api", "queued": true }
+```
+
+From there the job narrates itself on `sync.job.*` (§5.6) and is inspectable at
+`GET /api/v1/sync/jobs/{id}` (§5.5). It imports in batches — one batch is one
+vault call and one commit — so a cancelled import keeps every batch that already
+landed and reports how far it got. `queued` is always `true` and is spelled out
+so a client can tell this answer from a synchronous result without inspecting
+which keys are present. A project with no usable connection is refused **here**,
+before anything is queued, rather than inside a job nobody is watching.
 
 ```json
 PATCH /api/v1/youtrack/settings?key=DEMO
@@ -2934,6 +3096,29 @@ Event types and `data` schemas:
 { "type":"sync.job.progress",
   "data": { "id":"job_000021", "kind":"youtrack.import", "key":"ACME",
             "state":"done", "attempt":1, "processed":7, "total":20 } }
+
+// A handler that knows how far it has got publishes the same topic with a
+// wider payload: `jobId`, `done`, `total` and `currentId` — the unit it has
+// just finished — plus `failed`, the per-unit failures it accumulated without
+// failing the job. `id` and `processed` repeat `jobId` and `done` under the
+// names the engine's own events use, so one client-side reader handles both
+// sources without branching on which produced the frame. It is published once
+// per batch (an import) or once per page (a knowledge-base job), never per
+// item.
+{ "type":"sync.job.progress",
+  "data": { "jobId":"job_000021", "id":"job_000021", "kind":"youtrack.import",
+            "key":"ACME", "state":"running", "done":40, "processed":40,
+            "total":120, "currentId":"ACME-57", "failed":1 } }
+
+// youtrack.kb.conflict — a knowledge-base page and the article it mirrors both
+// changed since the last synchronization (GIT-US-0087). The page is left
+// exactly as it is and the incoming content is written to `conflictPath`;
+// there is no three-way merge and there is deliberately none. `direction` is
+// the job that found it, `publish` or `pull`.
+{ "type":"youtrack.kb.conflict",
+  "data": { "project":"DEMO", "path":"docs/handbook/onboarding.md",
+            "conflictPath":"docs/handbook/onboarding.conflict.md",
+            "articleId":"ACME-A-3", "direction":"pull" } }
 
 { "type":"sync.job.failed",
   "data": { "id":"job_000022", "kind":"youtrack.import", "key":"ACME",

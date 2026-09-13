@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/digiogithub/git-in-track/internal/config"
 	"github.com/digiogithub/git-in-track/internal/syncengine"
 )
 
@@ -58,9 +59,12 @@ const (
 // SyncEngine is the configuration of the background job engine. The zero value
 // is valid and means the documented defaults.
 //
-// It lives here rather than in internal/config only because the configuration
-// file has no `sync.engine` section yet; the shape is the one that section will
-// take, so moving it is a rename (see the report on GIT-T-0175).
+// It is the running form of the `sync.engine` section of the configuration
+// file: [config.SyncEngine] holds the five settings a file and the command line
+// can express, and this adds the three that only a running process knows — the
+// journal directory, the shutdown grace period and the coalescing window.
+// [SyncEngineFrom] converts one into the other, and syncState.persist converts
+// it back.
 type SyncEngine struct {
 	// Workers is the size of the pool. Zero means DefaultSyncWorkers.
 	Workers int
@@ -86,6 +90,34 @@ type SyncEngine struct {
 	// negative value dispatches every job immediately, which is what the tests
 	// of this package want.
 	Debounce time.Duration
+}
+
+// SyncEngineFrom renders the `sync.engine` section of the configuration file as
+// the running settings of the engine. Zero fields stay zero, so withDefaults
+// still has the last word and a file that omits the section is the same thing
+// as no file at all.
+func SyncEngineFrom(section config.SyncEngine) SyncEngine {
+	return SyncEngine{
+		Workers:     section.Workers,
+		BatchSize:   section.BatchSize,
+		Rate:        section.Rate,
+		MaxAttempts: section.MaxAttempts,
+		Retention:   section.Retention,
+	}
+}
+
+// section renders the settings back as the configuration-file section, which is
+// what persist writes. CacheDir, DrainTimeout and Debounce are deliberately
+// absent: the journal lives under `index.cacheDir` and the other two are not
+// settings a user edits.
+func (o SyncEngine) section() config.SyncEngine {
+	return config.SyncEngine{
+		Workers:     o.Workers,
+		BatchSize:   o.BatchSize,
+		Rate:        o.Rate,
+		MaxAttempts: o.MaxAttempts,
+		Retention:   o.Retention,
+	}
 }
 
 // withDefaults fills the zero fields.
@@ -163,6 +195,11 @@ type syncState struct {
 
 	engine   *syncengine.Engine
 	observer *syncObserver
+
+	// configPath is where a settings change is persisted; empty means the
+	// change lives only for this process, exactly as gitState.persist
+	// documents. It is fixed after New.
+	configPath string
 }
 
 // newSyncState builds the engine from the server options.
@@ -175,7 +212,7 @@ func newSyncState(opts Options, observer *syncObserver) (*syncState, error) {
 	if err != nil {
 		return nil, fmt.Errorf("build the sync engine: %w", err)
 	}
-	return &syncState{settings: settings, engine: engine, observer: observer}, nil
+	return &syncState{settings: settings, engine: engine, observer: observer, configPath: opts.ConfigPath}, nil
 }
 
 // current reports the settings in force.
@@ -273,13 +310,29 @@ func (s *syncState) applyPatch(patch syncEnginePatch) error {
 // persist writes the engine settings back to the configuration file, so that a
 // change made in the UI survives a restart.
 //
-// It reports false today and writes nothing: the configuration file has no
-// `sync.engine` section yet (GIT-T-0175 leaves that half to the owner of
-// internal/config). The contract around it is already the one the git settings
-// use — reload, replace one section, save, report whether the file took it — so
-// that filling it in is a three-line change here.
+// It is gitState.persist exactly: reload the file, replace one section, save,
+// and report whether the file took the change. Reloading rather than holding a
+// parsed configuration is what keeps a settings write from reverting an edit
+// somebody made to another section in the meantime.
+//
+// A server with no configuration path — a test, or `serve --repo` — keeps the
+// change in this process only and answers `persisted: false`.
 func (s *syncState) persist() (bool, error) {
-	return false, nil
+	s.mu.RLock()
+	path, settings := s.configPath, s.settings
+	s.mu.RUnlock()
+	if path == "" {
+		return false, nil
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		return false, err //nolint:wrapcheck // config already names the file
+	}
+	cfg.Sync.Engine = settings.section()
+	if err := config.Save(path, cfg); err != nil {
+		return false, err //nolint:wrapcheck // config already names the file
+	}
+	return true, nil
 }
 
 // RegisterSyncHandler registers the handler for one kind of background job.

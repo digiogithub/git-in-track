@@ -2,7 +2,7 @@
 id: GIT-US-0081
 type: story
 title: Sync engine settings card with a live queue table
-status: backlog
+status: done
 priority: medium
 parent: GIT-EP-0015
 milestone: GIT-M-0011
@@ -10,7 +10,9 @@ author: mcp
 labels: [web]
 estimate: 8
 created: 2026-09-13T13:14:16Z
-updated: 2026-09-13T13:14:16Z
+updated: 2026-09-13T15:50:45Z
+started: 2026-09-13T15:50:26Z
+closed: 2026-09-13T15:50:45Z
 ---
 
 ## Description
@@ -23,14 +25,14 @@ New `DataProvider` methods (`listSyncJobs`, `retrySyncJob`, `cancelSyncJob`, and
 
 ## Acceptance Criteria
 
-- [ ] `SyncEngineCard` renders in `SettingsPage` in companion mode only and is absent in browser-only mode.
-- [ ] Workers, batch size, rate limit and max attempts are editable, client-validated for range, and saved with a toast stating whether the change was persisted or process-only.
-- [ ] The queue table lists jobs with kind, key, state, attempts, next attempt and last error, and updates live from `sync.job.*` without polling.
-- [ ] Retry and Cancel actions work per row, are disabled for states where they do not apply, and show a toast on success and on failure.
-- [ ] A job failing in the background raises a toast even when the user is not on the Settings page.
-- [ ] Error text from YouTrack is rendered as plain text, and any Markdown preview path goes through `web/src/markdown/sanitize.ts`.
-- [ ] The new `DataProvider` methods exist on the interface and in the companion, browser and fake providers.
-- [ ] Vitest covers the knobs form, the table rendering from a fake provider, the retry and cancel actions and the capability gating.
+- [x] `SyncEngineCard` renders in `SettingsPage` in companion mode only and is absent in browser-only mode.
+- [x] Workers, batch size, rate limit and max attempts are editable, client-validated for range, and saved with a toast stating whether the change was persisted or process-only.
+- [x] The queue table lists jobs with kind, key, state, attempts, next attempt and last error, and updates live from `sync.job.*` without polling.
+- [x] Retry and Cancel actions work per row, are disabled for states where they do not apply, and show a toast on success and on failure.
+- [x] A job failing in the background raises a toast even when the user is not on the Settings page.
+- [x] Error text from YouTrack is rendered as plain text, and any Markdown preview path goes through `web/src/markdown/sanitize.ts`.
+- [x] The new `DataProvider` methods exist on the interface and in the companion, browser and fake providers.
+- [x] Vitest covers the knobs form, the table rendering from a fake provider, the retry and cancel actions and the capability gating.
 
 ## Notes
 
@@ -39,3 +41,5 @@ Card precedents: `SyncProxyCard.tsx:44-72` and `GitSettingsCard.tsx:47,62-66` fo
 Imported YouTrack error strings and job payloads are untrusted third-party content and must be treated as data, exactly as repository content is (`docs/10-development-guidelines.md:717-724`).
 
 Do NOT poll the jobs endpoint on a timer: the WebSocket stream already exists and polling would fight with it. Do NOT add a new table library — TanStack Table is already a dependency and used by the backlog view.
+
+**Landed.** Two points a reviewer should know. The gate is the presence of `SyncSettings.engine` rather than a capability flag: `GET /capabilities` declares no engine feature, and the sync settings document already answers the same question truthfully. And the queue table is a plain `<Table>`, not TanStack Table: there is no sorting, filtering or selection on it, so the headless table would have been ceremony around four `map`s.

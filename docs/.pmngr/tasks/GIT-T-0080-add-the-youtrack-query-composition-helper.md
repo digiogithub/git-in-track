@@ -2,7 +2,7 @@
 id: GIT-T-0080
 type: task
 title: Add the YouTrack query composition helper
-status: todo
+status: done
 priority: medium
 parent: GIT-US-0054
 milestone: GIT-M-0011
@@ -10,7 +10,9 @@ author: mcp
 labels: [server, agent-ok]
 estimate: 2
 created: 2026-09-13T13:17:15Z
-updated: 2026-09-13T13:17:15Z
+updated: 2026-09-13T16:03:39Z
+started: 2026-09-13T16:03:23Z
+closed: 2026-09-13T16:03:39Z
 ---
 
 ## Description

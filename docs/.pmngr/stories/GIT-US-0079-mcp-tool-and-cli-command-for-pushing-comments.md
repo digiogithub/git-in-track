@@ -2,7 +2,7 @@
 id: GIT-US-0079
 type: story
 title: MCP tool and CLI command for pushing comments
-status: backlog
+status: in_review
 priority: medium
 parent: GIT-EP-0013
 milestone: GIT-M-0011
@@ -10,7 +10,8 @@ author: mcp
 labels: [mcp, cli, docs]
 estimate: 3
 created: 2026-09-13T13:14:09Z
-updated: 2026-09-13T13:14:09Z
+updated: 2026-09-13T15:41:42Z
+started: 2026-09-13T15:41:32Z
 ---
 
 ## Description

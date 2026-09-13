@@ -6,7 +6,7 @@ with `GIT-US-0024`, plus `create_milestone` from `GIT-US-0033`;
 Phase: **Phase 5 — MCP server + agent workflows** (depends on Phase 2 companion CLI, Phase 3 boards, Phase 4 sync)
 Audience: contributors working on `internal/mcp`; authors of agent instructions (`AGENTS.md`)
 
-What ships today: eighteen tools over stdio and over streamable HTTP, read-only by default,
+What ships today: twenty-two tools over stdio and over streamable HTTP, read-only by default,
 with cursor pagination, field projection and a `rev` on every item. Resources, prompts, the
 audit log, dry-run and rate limiting are specified here and land in later stories of the
 epic; each is labelled where it appears.
@@ -175,10 +175,13 @@ advertised yet; they arrive with sections 5 and 6.
 
 ## 4. Tool catalog
 
-Eighteen tools ship: twelve with `GIT-US-0024`, `create_milestone` with `GIT-US-0033`, the
-three inbox tools with `GIT-US-0056` and the two sprint rollover tools with `GIT-US-0085`.
-They are the same eighteen on both transports, from the same registry, over the same
-workspace.
+Twenty-two tools ship: twelve with `GIT-US-0024`, `create_milestone` with `GIT-US-0033`, the
+three inbox tools with `GIT-US-0056`, the two sprint rollover tools with `GIT-US-0085` and the
+four YouTrack tools with `GIT-US-0062`, `GIT-US-0079` and `GIT-US-0094`. They are the same
+twenty-two on both transports, from the same registry, over the same workspace.
+
+Seven are read tools and fifteen are write tools; `gintrack mcp --list-tools` prints seven,
+and with `--allow-write` twenty-two.
 
 Common conventions for all tools:
 
@@ -217,6 +220,10 @@ Common conventions for all tools:
 | `triage_inbox_item` | write | `inbox.triage`         | ~90 tokens          |
 | `close_sprint`   | write | `sprint.close`            | ~40 tokens + 1/decision |
 | `transfer_sprint_items` | write | `sprint.transfer`  | ~40 tokens + 1/decision |
+| `import_youtrack_issues` | write | `youtrack.import.preview` / `youtrack.import.run` | ~60 tokens/issue |
+| `push_comment_to_youtrack` | write | `youtrack.comment.push` | ~30 tokens/comment |
+| `publish_kb_page_to_youtrack` | write | `youtrack.kb.publish` | ~20 tokens/page |
+| `sync_kb_page_from_youtrack` | write | `youtrack.kb.pull` | ~20 tokens/page |
 
 Write tools are advertised only when the server was started with writes enabled: with
 `--allow-write`, or with `mcp.allowWrite: true` in the configuration file, which
@@ -748,12 +755,108 @@ adding work to it would rewrite them.
 }
 ```
 
-### 4.16 Planned tools
+### 4.16 `import_youtrack_issues`
+
+Imports issues from the linked YouTrack project as backlog items, by query or by readable
+id. Give `query` or `ids`, never both. `depth` walks the subtask graph, 0 to 5.
+
+Identity, not position, decides what happens to an issue: an item already carrying
+`external: {system: youtrack, id: ACME-42}` is **updated in place and keeps its
+git-in-track id**, so re-importing the same issue can never produce a second item.
+
+`dryRun: true` dispatches `youtrack.import.preview` and writes nothing; the plan it returns
+is produced by the same code path as the run, so the two cannot disagree.
+
+```jsonc
+// input
+{ "project": "ACME", "ids": ["ACME-42"], "depth": 1, "includeComments": true }
+// output
+{
+  "project": "ACME", "dryRun": false,
+  "issues": [
+    {"youtrackId":"ACME-42","action":"create","itemId":"ACME-US-0043",
+     "rev":"sha256:8b1f…","comments":3}
+  ],
+  "created": 1, "updated": 0, "failed": 0,
+  "changed": [".pmngr/stories/ACME-US-0043-checkout-revamp.md"]
+}
+```
+
+Anything the mapping could not translate is a warning, never a failure: an import finishes
+and reports. A single unreachable issue is reported on its own line and the rest still land.
+
+### 4.17 `push_comment_to_youtrack`
+
+Queues one comment, or every comment of an item, for the YouTrack issue the item mirrors.
+Give `commentPath` or `all`, never both.
+
+Nothing is pushed inline. The tool **returns a job id** and the background engine does the
+talking, so an agent is never blocked on a remote tracker and a dropped session cannot
+cancel a push in flight.
+
+```jsonc
+// input
+{ "project": "ACME", "itemId": "ACME-US-0043", "all": true }
+// output
+{
+  "itemId": "ACME-US-0043", "jobId": "job_7f2a",
+  "pushed":  [{"commentPath":".pmngr/comments/ACME-US-0043/20260913T142500Z-claude.md"}],
+  "skipped": [{"commentPath":".pmngr/comments/ACME-US-0043/20260901T104512Z-marta.md",
+               "youtrackCommentId":"3-118","reason":"the comment is already on the issue"}],
+  "failed":  []
+}
+```
+
+`pushed` is what was *queued*, not what has already arrived. A comment that already carries
+a YouTrack reference is reported in `skipped` rather than sent twice. An item with no
+YouTrack `external` reference is refused with `invalid_request` — non-retryable on purpose,
+since no amount of waiting creates the issue to comment on; import or link the item first.
+
+A project configured with `integrations.youtrack.push_comments: auto` needs neither this
+tool nor the CLI: every comment written through `add_comment` is queued automatically by the
+same seam, in the vault's `comment.add`, which every surface goes through. `manual` is the
+default and queues nothing.
+
+### 4.18 `publish_kb_page_to_youtrack` and `sync_kb_page_from_youtrack`
+
+Publish a knowledge-base page, or a whole folder, as YouTrack articles; or write the pages
+back from the articles they mirror. Both take `{project, path, recursive}` and both queue a
+job rather than doing the work.
+
+`path` is a vault-relative path and goes through the path guard before the core is asked
+anything: a path that leaves the mounted roots is refused with `forbidden_path`.
+
+```jsonc
+// input
+{ "project": "ACME", "path": "docs/architecture", "recursive": true }
+// output
+{
+  "jobId": "job_91c4",
+  "pages": [
+    {"path":"docs/architecture/overview.md","action":"publish"},
+    {"path":"docs/architecture/auth.md","action":"publish"}
+  ]
+}
+```
+
+`articleId`, `url` and `error` on a page entry are filled by the job's own report, not by
+the call that queued it; follow the job through `sync.job.*` or `GET /api/v1/sync/jobs`.
+
+Three rules govern what crosses the boundary, and they are the same in both directions:
+
+- The title lives in exactly one place — the article summary — never as an H1 in the body.
+- The `## Feedback` block **never leaves the repository**. It is local review commentary
+  (ADR-030), it is stripped from every outgoing payload, and because it is rewritten on
+  every local write its absence upstream is never evidence of a remote change.
+- A page both sides changed produces `<page>.conflict.md` beside the page and leaves the
+  original untouched. Nothing is merged automatically.
+
+### 4.19 Planned tools
 
 `08` specified a larger catalog than `GIT-US-0024` implements. These are *planned*, each
 behind its own story: `list_workspaces`, `list_projects`, `get_kb_tree`, `link_items`,
 `list_comments`, `list_boards`, `get_board`, `get_sprint`, `list_retros`, `get_sync_status`
-and `run_sync` — verb first, like the eighteen above. Every one of them already has a core
+and `run_sync` — verb first, like the twenty-two above. Every one of them already has a core
 method behind it, so the work is framing rather than domain logic.
 
 `delete_item` is deliberately **not** on that list: deleting a backlog item is a human action

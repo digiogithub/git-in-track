@@ -29,20 +29,21 @@ func retryableStatus(status int) bool {
 // until the budget is spent. The returned response, when the error is nil, has
 // an unread body that the caller must close.
 func (c *Client) send(ctx context.Context, method, path string, query url.Values, payload []byte) (*http.Response, error) {
-	return c.sendTarget(ctx, method, c.requestURL(path, query), path, payload, acceptJSON)
+	return c.sendTarget(ctx, method, c.requestURL(path, query), path, payload, acceptJSON, contentTypeJSON)
 }
 
 // sendTarget is send against an already-built absolute URL. path is carried
 // separately so errors name the endpoint without its query string, which may
-// hold a signed attachment parameter.
-func (c *Client) sendTarget(ctx context.Context, method, target, path string, payload []byte, accept string) (*http.Response, error) {
+// hold a signed attachment parameter. contentType is the request type of the
+// payload, empty when no header should be sent at all.
+func (c *Client) sendTarget(ctx context.Context, method, target, path string, payload []byte, accept, contentType string) (*http.Response, error) {
 	var lastErr error
 
 	for attempt := 0; ; attempt++ {
 		if err := c.limiter.wait(ctx); err != nil {
 			return nil, err
 		}
-		req, err := c.newRequest(ctx, method, target, payload, accept)
+		req, err := c.newRequest(ctx, method, target, payload, accept, contentType)
 		if err != nil {
 			return nil, err
 		}

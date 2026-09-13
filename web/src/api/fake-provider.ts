@@ -103,6 +103,18 @@ import type {
   YouTrackSettings,
   YouTrackSettingsPatch,
   YouTrackTestResult,
+  SyncEngineSettings,
+  SyncJob,
+  SyncJobFilter,
+  SyncJobPage,
+  YouTrackImportOptions,
+  YouTrackImportPlanItem,
+  YouTrackImportPreviewResult,
+  YouTrackImportResult,
+  YouTrackImportRun,
+  YouTrackIssue,
+  YouTrackIssuePage,
+  YouTrackIssueQuery,
 } from '@/api/provider';
 import { ProviderError, readOnlyCapabilities } from '@/api/provider';
 import { DEFAULT_COMMIT_TEMPLATE, validateCommitTemplate } from '@/git/message';
@@ -143,6 +155,30 @@ export type FakeData = {
    * browser does. Supplying it opts a test into the companion behaviour.
    */
   youtrack?: FakeYouTrack;
+  /**
+   * The background job engine, in memory. Absent — the default — makes this
+   * fake a runtime that has no engine at all: the sync settings carry no
+   * `engine` half and every job call fails, which is what a browser does.
+   */
+  syncEngine?: FakeSyncEngine;
+};
+
+/**
+ * A job queue a card test can script (story GIT-US-0081): jobs in whatever
+ * states the test needs, the knobs, and a transition that refuses — the one
+ * thing a queue table has to handle well, because `sync_job_not_retryable` is
+ * what a row that finished a moment ago answers.
+ */
+export type FakeSyncEngine = {
+  jobs?: SyncJob[];
+  settings?: Partial<SyncEngineSettings>;
+  /** When set, every retry fails with this instead. */
+  retryError?: { code: ProviderErrorCode; message: string };
+  /** When set, every cancel fails with this instead. */
+  cancelError?: { code: ProviderErrorCode; message: string };
+  /** Whether a knob change reaches the configuration file; false by default,
+   * because the configuration file has no `sync.engine` section yet. */
+  persisted?: boolean;
 };
 
 /**
@@ -162,6 +198,24 @@ export type FakeYouTrack = {
   testError?: { code: ProviderErrorCode; message: string };
   /** Whether a patch reaches the configuration file; true by default. */
   persisted?: boolean;
+  /** The issues the import autosuggest offers. */
+  issues?: YouTrackIssue[];
+  /** When set, every search fails with this instead. */
+  searchError?: { code: ProviderErrorCode; message: string };
+  /** Overrides on the plan the preview answers; derived from `issues` otherwise. */
+  preview?: Partial<YouTrackImportPreviewResult>;
+  /** When set, every preview fails with this instead. */
+  previewError?: { code: ProviderErrorCode; message: string };
+  /**
+   * The job id a run answers, which is what makes the dialog follow the
+   * `sync.job.*` events instead of rendering a summary straight away. Empty —
+   * the default — runs the import inline and answers the finished result.
+   */
+  importJobId?: string;
+  /** Overrides on the result a run produces; derived from the plan otherwise. */
+  importResult?: Partial<YouTrackImportResult>;
+  /** When set, every run fails with this instead. */
+  importError?: { code: ProviderErrorCode; message: string };
 };
 
 /**
@@ -431,11 +485,78 @@ function isDone(card: BoardCard): boolean {
 const NO_YOUTRACK_REASON =
   'YouTrack is not available in this mode. Run `gintrack serve` to connect a project.';
 
+/** Why a fake with no engine block behaves like browser-only mode. */
+const NO_SYNC_ENGINE_REASON =
+  'The background job queue is not available in this mode. Run `gintrack serve` to see it.';
+
+/** The YouTrack issue types each preset of the import dialog selects. */
+const PRESET_TYPES: Record<string, string[]> = {
+  epics: ['Epic'],
+  stories: ['User Story'],
+  tasks: ['Task'],
+};
+
+/** Whether an issue belongs to a preset; `''` and `versions` select everything. */
+function matchesPreset(issue: YouTrackIssue, preset: string): boolean {
+  if (preset === 'unresolved') return issue.state !== 'Done' && issue.state !== 'Fixed';
+  const types = PRESET_TYPES[preset];
+  return types === undefined || types.includes(issue.type);
+}
+
+/** The git-in-track type an issue type maps onto, as the mapper would. */
+function mappedTypeOf(type: string): string {
+  switch (type) {
+    case 'Epic':
+      return 'epic';
+    case 'User Story':
+      return 'story';
+    default:
+      return 'task';
+  }
+}
+
 /** The projects the autosuggest offers unless a test supplies its own. */
 const sampleYouTrackProjects: YouTrackProject[] = [
   { id: '0-1', shortName: 'ACME', name: 'Acme Platform', archived: false },
   { id: '0-2', shortName: 'WEB', name: 'Acme Web', archived: false },
   { id: '0-3', shortName: 'OLD', name: 'Acme Legacy', archived: true },
+];
+
+/** The issues the import autosuggest offers unless a test supplies its own. */
+const sampleYouTrackIssues: YouTrackIssue[] = [
+  {
+    id: '2-1',
+    idReadable: 'ACME-42',
+    summary: 'Rate limit the public API',
+    type: 'Task',
+    state: 'Open',
+    assignee: 'Jane Doe',
+    updated: '2026-09-10T09:00:00Z',
+    url: 'https://yt.example.com/youtrack/issue/ACME-42',
+    linked: null,
+  },
+  {
+    id: '2-2',
+    idReadable: 'ACME-43',
+    summary: 'Retry the webhook delivery',
+    type: 'User Story',
+    state: 'In Progress',
+    assignee: 'John Roe',
+    updated: '2026-09-11T09:00:00Z',
+    url: 'https://yt.example.com/youtrack/issue/ACME-43',
+    linked: { itemId: 'GIT-US-0007' },
+  },
+  {
+    id: '2-3',
+    idReadable: 'ACME-44',
+    summary: 'Document the import flow',
+    type: 'Task',
+    state: 'Open',
+    assignee: '',
+    updated: '2026-09-12T09:00:00Z',
+    url: 'https://yt.example.com/youtrack/issue/ACME-44',
+    linked: null,
+  },
 ];
 
 /** The custom fields of that instance, as the field map sees them. */
@@ -816,6 +937,10 @@ export class FakeProvider implements DataProvider {
    * the settings card has to explain.
    */
   private youtrackEnvToken: boolean;
+  /** The job queue, in memory; null on a runtime that has no engine. */
+  private syncEngine: FakeSyncEngine | null;
+  private syncJobs: SyncJob[];
+  private engineSettings: SyncEngineSettings | null;
 
   constructor(data: FakeData = {}, opts: { readOnly?: boolean } = {}) {
     const base = opts.readOnly ? readOnlyCapabilities : writableCapabilities;
@@ -838,6 +963,21 @@ export class FakeProvider implements DataProvider {
       ...seeded,
     };
     this.youtrackEnvToken = this.youtrackSettings.tokenSource === 'env';
+    this.syncEngine = data.syncEngine ?? null;
+    this.syncJobs = structuredClone(data.syncEngine?.jobs ?? []);
+    this.engineSettings =
+      this.syncEngine === null
+        ? null
+        : {
+            workers: 2,
+            batchSize: 20,
+            rate: 5,
+            maxAttempts: 5,
+            retentionHours: 168,
+            drainSeconds: 5,
+            running: true,
+            ...this.syncEngine.settings,
+          };
     this.capabilities = {
       ...base,
       youtrackSupported: this.youtrack !== null,
@@ -2783,6 +2923,254 @@ export class FakeProvider implements DataProvider {
     );
   }
 
+  /**
+   * The import autosuggest. Matching is a substring over the readable id and
+   * the summary — enough for a picker test, and deliberately not the YouTrack
+   * query language, which the companion composes and this fake does not model.
+   */
+  searchYouTrackIssues(query: YouTrackIssueQuery = {}): Promise<YouTrackIssuePage> {
+    const youtrack = this.youtrackOrFail();
+    if (!youtrack) {
+      return Promise.reject(new ProviderError('read_only', NO_YOUTRACK_REASON));
+    }
+    if (youtrack.searchError) {
+      return Promise.reject(
+        new ProviderError(youtrack.searchError.code, youtrack.searchError.message),
+      );
+    }
+    const needle = (query.q ?? '').trim().toLowerCase();
+    const preset = query.preset ?? '';
+    const all = youtrack.issues ?? sampleYouTrackIssues;
+    const items = all.filter((issue) => {
+      if (needle !== '') {
+        const haystack = `${issue.idReadable} ${issue.summary}`.toLowerCase();
+        if (!haystack.includes(needle)) return false;
+      }
+      return matchesPreset(issue, preset);
+    });
+    const limit = query.limit ?? 20;
+    return Promise.resolve({
+      items: items.slice(0, limit).map((issue) => ({ ...issue })),
+      nextCursor: items.length > limit ? items[limit]!.idReadable : '',
+    });
+  }
+
+  /**
+   * The plan, with nothing written. It is derived from the issues the search
+   * knows so that a test that selects a row and previews it sees that row back:
+   * an issue that is already `linked` is an update, everything else a create.
+   */
+  previewYouTrackImport(options: YouTrackImportOptions): Promise<YouTrackImportPreviewResult> {
+    const youtrack = this.youtrackOrFail();
+    if (!youtrack) {
+      return Promise.reject(new ProviderError('read_only', NO_YOUTRACK_REASON));
+    }
+    if (youtrack.previewError) {
+      return Promise.reject(
+        new ProviderError(youtrack.previewError.code, youtrack.previewError.message),
+      );
+    }
+    const base: YouTrackImportPreviewResult = {
+      project: options.project ?? this.youtrackSettings.projectKey,
+      issues: this.planFor(options),
+      warnings: [],
+    };
+    return Promise.resolve({ ...base, ...youtrack.preview });
+  }
+
+  /**
+   * Runs the import, in whichever of the two shapes the test scripted: a job id
+   * to follow over the events, or the finished result inline.
+   */
+  runYouTrackImport(options: YouTrackImportOptions): Promise<YouTrackImportRun> {
+    const youtrack = this.youtrackOrFail();
+    if (!youtrack) {
+      return Promise.reject(new ProviderError('read_only', NO_YOUTRACK_REASON));
+    }
+    if (youtrack.importError) {
+      return Promise.reject(
+        new ProviderError(youtrack.importError.code, youtrack.importError.message),
+      );
+    }
+    const jobId = youtrack.importJobId ?? '';
+    if (jobId !== '') return Promise.resolve({ jobId, result: null });
+
+    const plan = this.planFor(options);
+    const result: YouTrackImportResult = {
+      project: options.project ?? this.youtrackSettings.projectKey,
+      issues: plan.map((row) => ({
+        youtrackId: row.youtrackId,
+        ...(row.action === 'update' && row.targetId !== undefined
+          ? { itemId: row.targetId }
+          : {
+              itemId: `${this.youtrackSettings.projectKey}-T-${row.youtrackId.split('-').pop() ?? '0'}`,
+            }),
+        action: row.action,
+        comments: row.comments,
+        warnings: row.warnings ?? [],
+      })),
+      created: plan.filter((row) => row.action === 'create').length,
+      updated: plan.filter((row) => row.action === 'update').length,
+      failed: 0,
+      warnings: [],
+      ...youtrack.importResult,
+    };
+    return Promise.resolve({ jobId: '', result });
+  }
+
+  /** The plan the preview and an inline run share. */
+  private planFor(options: YouTrackImportOptions): YouTrackImportPlanItem[] {
+    const youtrack = this.youtrack;
+    const all = youtrack?.issues ?? sampleYouTrackIssues;
+    const wanted = options.ids ?? [];
+    const selected = wanted.length === 0 ? all : all.filter((i) => wanted.includes(i.idReadable));
+    return selected.map((issue) => ({
+      youtrackId: issue.idReadable,
+      title: issue.summary,
+      mappedType: mappedTypeOf(issue.type),
+      action: issue.linked === null ? ('create' as const) : ('update' as const),
+      ...(issue.linked === null ? {} : { targetId: issue.linked.itemId }),
+      depth: 0,
+      comments: options.includeComments ? 1 : 0,
+      warnings: [],
+    }));
+  }
+
+  // ----------------------------------------------------- background jobs
+
+  /** Rejects on a runtime that has no engine, exactly as the browser does. */
+  private engineOrFail(): FakeSyncEngine {
+    if (this.syncEngine === null) {
+      throw new ProviderError('read_only', NO_SYNC_ENGINE_REASON);
+    }
+    return this.syncEngine;
+  }
+
+  listSyncJobs(filter: SyncJobFilter = {}): Promise<SyncJobPage> {
+    try {
+      this.engineOrFail();
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+    }
+    const matched = this.syncJobs.filter(
+      (job) =>
+        (filter.state === undefined || filter.state.includes(job.state)) &&
+        (filter.kind === undefined || filter.kind.includes(job.kind)),
+    );
+    const counts = {
+      queued: this.syncJobs.filter((job) => job.state === 'queued').length,
+      running: this.syncJobs.filter((job) => job.state === 'running').length,
+      done: this.syncJobs.filter((job) => job.state === 'done').length,
+      failed: this.syncJobs.filter((job) => job.state === 'failed').length,
+      cancelled: this.syncJobs.filter((job) => job.state === 'cancelled').length,
+    };
+    return Promise.resolve({
+      jobs: structuredClone(matched),
+      nextCursor: '',
+      total: matched.length,
+      counts,
+      running: counts.running,
+      deadLetter: this.syncJobs.filter((job) => job.deadLetter === true).length,
+      engine: this.engineSettings?.running ?? false,
+    });
+  }
+
+  getSyncJob(id: string): Promise<SyncJob> {
+    try {
+      this.engineOrFail();
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+    }
+    const job = this.syncJobs.find((row) => row.id === id);
+    if (!job) {
+      return Promise.reject(
+        new ProviderError('sync_job_not_found', `No job of this queue is called ${id}.`),
+      );
+    }
+    return Promise.resolve(structuredClone(job));
+  }
+
+  /**
+   * A failed job is re-queued in place and keeps its id; a cancelled one cannot
+   * be — the engine's state machine has no edge out of `cancelled` — so it
+   * comes back as a new job, which is why the answer is what a caller follows.
+   */
+  retrySyncJob(id: string): Promise<SyncJob> {
+    let engine: FakeSyncEngine;
+    try {
+      engine = this.engineOrFail();
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+    }
+    if (engine.retryError) {
+      return Promise.reject(new ProviderError(engine.retryError.code, engine.retryError.message));
+    }
+    const job = this.syncJobs.find((row) => row.id === id);
+    if (!job) {
+      return Promise.reject(
+        new ProviderError('sync_job_not_found', `No job of this queue is called ${id}.`),
+      );
+    }
+    if (job.state !== 'failed' && job.state !== 'cancelled') {
+      return Promise.reject(
+        new ProviderError(
+          'sync_job_not_retryable',
+          `Job ${id} is ${job.state}: only a failed or cancelled job can be retried.`,
+        ),
+      );
+    }
+    if (job.state === 'cancelled') {
+      const fresh: SyncJob = {
+        id: `${id}-retry`,
+        kind: job.kind,
+        key: job.key,
+        state: 'queued',
+        attempts: 0,
+        createdAt: job.createdAt,
+        updatedAt: job.updatedAt,
+      };
+      this.syncJobs = [...this.syncJobs, fresh];
+      return Promise.resolve({ ...fresh });
+    }
+    job.state = 'queued';
+    job.attempts = 0;
+    delete job.deadLetter;
+    return Promise.resolve(structuredClone(job));
+  }
+
+  cancelSyncJob(id: string): Promise<SyncJob> {
+    let engine: FakeSyncEngine;
+    try {
+      engine = this.engineOrFail();
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+    }
+    if (engine.cancelError) {
+      return Promise.reject(new ProviderError(engine.cancelError.code, engine.cancelError.message));
+    }
+    const job = this.syncJobs.find((row) => row.id === id);
+    if (!job) {
+      return Promise.reject(
+        new ProviderError('sync_job_not_found', `No job of this queue is called ${id}.`),
+      );
+    }
+    if (job.state !== 'queued' && job.state !== 'running') {
+      return Promise.reject(
+        new ProviderError(
+          'sync_job_not_retryable',
+          `Job ${id} is ${job.state}: only a queued or running job can be cancelled.`,
+        ),
+      );
+    }
+    job.state = 'cancelled';
+    return Promise.resolve(structuredClone(job));
+  }
+
+  /** Publishes one change event, so a test can drive the live-update path. */
+  emitEvent(event: ChangeEvent): void {
+    this.emit(event);
+  }
+
   listYouTrackFields(project?: string): Promise<YouTrackFieldList> {
     const youtrack = this.youtrackOrFail();
     if (!youtrack) {
@@ -2884,12 +3272,30 @@ export class FakeProvider implements DataProvider {
   };
 
   getSyncSettings(): Promise<SyncSettings> {
-    return Promise.resolve({ ...this.syncSettings });
+    return Promise.resolve(this.syncSettingsView());
   }
 
+  /**
+   * The engine knobs are applied to the running engine and reported as
+   * process-only unless a test says otherwise: the configuration file has no
+   * `sync.engine` section yet, which is exactly what the card has to say.
+   */
   updateSyncSettings(patch: SyncSettingsPatch): Promise<SyncSettings> {
-    this.syncSettings = { ...this.syncSettings, ...patch };
-    return Promise.resolve({ ...this.syncSettings });
+    const { engine, ...git } = patch;
+    this.syncSettings = { ...this.syncSettings, ...git };
+    if (engine !== undefined && this.engineSettings !== null) {
+      this.engineSettings = { ...this.engineSettings, ...engine };
+    }
+    return Promise.resolve(this.syncSettingsView());
+  }
+
+  /** Both halves of the sync settings, as the companion renders them. */
+  private syncSettingsView(): SyncSettings {
+    return {
+      ...this.syncSettings,
+      ...(this.engineSettings === null ? {} : { engine: { ...this.engineSettings } }),
+      persisted: this.syncEngine?.persisted ?? false,
+    };
   }
 
   async sync(repoId: string | undefined, opts: SyncOptions = {}): Promise<SyncResult[]> {

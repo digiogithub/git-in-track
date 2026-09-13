@@ -87,6 +87,11 @@ import type {
   SyncStatus,
   TunnelStatus,
   YouTrackFieldList,
+  YouTrackImportPreviewResult,
+  YouTrackImportRun,
+  YouTrackIssuePage,
+  SyncJob,
+  SyncJobPage,
   YouTrackProject,
   YouTrackSettings,
   YouTrackTestResult,
@@ -148,6 +153,15 @@ const BROWSER_TUNNEL_REASON =
  */
 const BROWSER_YOUTRACK_REASON =
   'YouTrack is not available in browser-only mode: there is no process to hold the credential and no way to reach the instance from a tab. Run `gintrack serve` to connect a project.';
+
+/**
+ * Why browser-only mode has no background job queue. The engine is a worker
+ * pool with a journal on disk, owned by the companion process; a tab has
+ * neither, and an empty table would claim a queue exists and happens to be
+ * empty.
+ */
+const BROWSER_SYNC_ENGINE_REASON =
+  'The background job queue is not available in browser-only mode: the engine runs inside the companion. Run `gintrack serve` to see it.';
 
 /** One conflicted path browser mode is holding for the resolver. */
 type PendingConflict = BrowserConflict & { resolved?: string };
@@ -1152,6 +1166,50 @@ export class BrowserProvider implements DataProvider {
 
   listYouTrackFields(): Promise<YouTrackFieldList> {
     return Promise.reject(new ProviderError('read_only', BROWSER_YOUTRACK_REASON));
+  }
+
+  /**
+   * Importing needs the same credential the connection needs, so it fails the
+   * same way and for the same reason. The import dialog is gated on the
+   * YouTrack capability, which is false here, so a call arriving at any of
+   * these three is a bug in the caller — and says so rather than producing a
+   * network error the user would read as a broken instance.
+   */
+  searchYouTrackIssues(): Promise<YouTrackIssuePage> {
+    return Promise.reject(new ProviderError('read_only', BROWSER_YOUTRACK_REASON));
+  }
+
+  previewYouTrackImport(): Promise<YouTrackImportPreviewResult> {
+    return Promise.reject(new ProviderError('read_only', BROWSER_YOUTRACK_REASON));
+  }
+
+  runYouTrackImport(): Promise<YouTrackImportRun> {
+    return Promise.reject(new ProviderError('read_only', BROWSER_YOUTRACK_REASON));
+  }
+
+  // ----------------------------------------------------- background jobs
+
+  /**
+   * There is no background job engine in a tab: the queue, its journal and its
+   * worker pool all belong to the companion process. The settings card is
+   * gated on the engine half of the sync settings being present, which it is
+   * not here, so these four fail loudly rather than pretending the queue is
+   * simply empty — an empty queue and no queue at all are different facts.
+   */
+  listSyncJobs(): Promise<SyncJobPage> {
+    return Promise.reject(new ProviderError('read_only', BROWSER_SYNC_ENGINE_REASON));
+  }
+
+  getSyncJob(): Promise<SyncJob> {
+    return Promise.reject(new ProviderError('read_only', BROWSER_SYNC_ENGINE_REASON));
+  }
+
+  retrySyncJob(): Promise<SyncJob> {
+    return Promise.reject(new ProviderError('read_only', BROWSER_SYNC_ENGINE_REASON));
+  }
+
+  cancelSyncJob(): Promise<SyncJob> {
+    return Promise.reject(new ProviderError('read_only', BROWSER_SYNC_ENGINE_REASON));
   }
 
   // --------------------------------------------------------------- git sync

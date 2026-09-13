@@ -2,7 +2,7 @@
 id: GIT-T-0091
 type: task
 title: Support the versions preset via the version bundle
-status: todo
+status: done
 priority: medium
 parent: GIT-US-0054
 milestone: GIT-M-0011
@@ -10,7 +10,9 @@ author: mcp
 labels: [server, docs, agent-ok]
 estimate: 2
 created: 2026-09-13T13:17:34Z
-updated: 2026-09-13T13:17:34Z
+updated: 2026-09-13T16:03:44Z
+started: 2026-09-13T16:03:28Z
+closed: 2026-09-13T16:03:44Z
 ---
 
 ## Description

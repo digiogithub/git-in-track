@@ -239,8 +239,10 @@ func (c *Client) apiError(resp *http.Response, method, path string) error {
 }
 
 // newRequest builds one attempt. It is a method so that the auth headers are
-// set in exactly one place.
-func (c *Client) newRequest(ctx context.Context, method, target string, payload []byte, accept string) (*http.Request, error) {
+// set in exactly one place. contentType is sent only when there is a payload;
+// a multipart upload passes its own boundary-carrying type, which is why this
+// is a parameter and not a constant.
+func (c *Client) newRequest(ctx context.Context, method, target string, payload []byte, accept, contentType string) (*http.Request, error) {
 	var reader io.Reader = http.NoBody
 	if payload != nil {
 		reader = bytes.NewReader(payload)
@@ -251,17 +253,19 @@ func (c *Client) newRequest(ctx context.Context, method, target string, payload 
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Accept", accept)
-	if payload != nil {
-		req.Header.Set("Content-Type", "application/json")
+	if payload != nil && contentType != "" {
+		req.Header.Set("Content-Type", contentType)
 	}
 	return req, nil
 }
 
 // Accept header values: JSON for the REST surface, anything for a binary
-// attachment download.
+// attachment download. contentTypeJSON is the request type of every call that
+// sends a JSON body; an attachment upload deliberately does not use it.
 const (
-	acceptJSON = "application/json"
-	acceptAny  = "*/*"
+	acceptJSON      = "application/json"
+	acceptAny       = "*/*"
+	contentTypeJSON = "application/json"
 )
 
 // closeBody closes a response body, ignoring the close error: the request has

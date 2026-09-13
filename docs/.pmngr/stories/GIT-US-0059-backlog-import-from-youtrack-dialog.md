@@ -2,7 +2,7 @@
 id: GIT-US-0059
 type: story
 title: Backlog Import from YouTrack dialog
-status: backlog
+status: in_review
 priority: high
 parent: GIT-EP-0012
 milestone: GIT-M-0011
@@ -10,7 +10,8 @@ author: mcp
 labels: [web]
 estimate: 13
 created: 2026-09-13T13:12:28Z
-updated: 2026-09-13T13:12:28Z
+updated: 2026-09-13T15:51:20Z
+started: 2026-09-13T15:51:00Z
 ---
 
 ## Description
@@ -23,14 +24,14 @@ Options are include subtasks with a depth stepper, include linked issues, includ
 
 ## Acceptance Criteria
 
-- [ ] Toolbar entry appears only when `features.youtrack` is reported and the project is linked; it is absent in browser-only mode.
-- [ ] Debounced autosuggest with preset chips, multi-select, and an "already imported" marker carrying the gintrack id.
-- [ ] Options for subtasks depth, linked issues, comments and attachments are sent to preview and run; the Inbox option is visibly disabled.
-- [ ] Preview table shows create vs update, mapped type, status, parent and warnings before anything is written.
-- [ ] Run shows live progress from `sync.job.progress` and a final summary with created, updated and failed counts and per-issue errors.
-- [ ] Provider methods are added to all provider implementations; the browser-only one fails with a clear message rather than a network error.
-- [ ] The dialog is keyboard navigable and uses design tokens only; `npm run tokens:check` passes.
-- [ ] Vitest covers the combobox behaviour, preset switching, preview rendering and the progress-to-summary transition with a mocked provider.
+- [x] Toolbar entry appears only when `features.youtrack` is reported and the project is linked; it is absent in browser-only mode.
+- [x] Debounced autosuggest with preset chips, multi-select, and an "already imported" marker carrying the gintrack id.
+- [x] Options for subtasks depth, linked issues, comments and attachments are sent to preview and run; the Inbox option is visibly disabled.
+- [x] Preview table shows create vs update, mapped type, status, parent and warnings before anything is written.
+- [x] Run shows live progress from `sync.job.progress` and a final summary with created, updated and failed counts and per-issue errors.
+- [x] Provider methods are added to all provider implementations; the browser-only one fails with a clear message rather than a network error.
+- [x] The dialog is keyboard navigable and uses design tokens only; `npm run tokens:check` passes.
+- [x] Vitest covers the combobox behaviour, preset switching, preview rendering and the progress-to-summary transition with a mocked provider.
 
 ## Notes
 
@@ -39,3 +40,5 @@ Depends on the search endpoint and the vault operations of this epic, on GIT-EP-
 Reuse rather than add: there is no `cmdk`, no shadcn `Command`, `Popover` or `DropdownMenu` in `web/src/components/ui/` — `ItemPicker.tsx` is the typeahead to copy, and GIT-EP-0011 extracts a generic `Combobox` from it. Event bridging follows `web/src/features/backlog/queries.ts:130-148`. Filter state in the backlog lives in the URL (`web/src/features/backlog/search.ts`); the dialog's own state does not belong there.
 
 Do NOT introduce a new UI dependency for the dialog. Do NOT write items from the frontend — the dialog only calls the import operations.
+
+**Held at `in_review`, not `done`, and deliberately.** Every criterion above is met against the provider seam and the whole flow is covered by Vitest with the fake provider, but the feature cannot work against a real companion yet: **none of the three HTTP routes it calls exists**. `GET /api/v1/youtrack/issues` is GIT-US-0054 (`backlog`), and the import preview/run routes over the vault's `youtrack.import.preview` / `youtrack.import.run` (GIT-US-0047, `in_review`) have no REST surface and no story. GIT-T-0111 (documentation) is also still `todo`. This story becomes `done` when those land and the dialog is exercised end to end once.

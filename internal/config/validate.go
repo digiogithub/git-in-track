@@ -80,6 +80,7 @@ func (c *Config) Validate() error {
 	if c.Index.Debounce < 0 {
 		add("index.debounce", "must not be negative")
 	}
+	c.validateSyncEngine(add)
 	if !validLogLevel(c.Log.Level) {
 		add("log.level", "unknown level %q: use debug, info, warn or error", c.Log.Level)
 	}
@@ -107,6 +108,35 @@ func (c *Config) validateServer(add func(field, format string, args ...any)) {
 	}
 	if c.Server.IdleTimeout < 0 {
 		add("server.idleTimeout", "must not be negative")
+	}
+}
+
+// validateSyncEngine checks the `sync.engine` section against the same ranges
+// the running engine applies, so that a value the file accepts is never refused
+// later by PATCH /api/v1/sync/settings. Every message names the dotted key the
+// operator typed, because that is the line they have to go and edit.
+//
+// A zero field means "the shipped default" and is left alone here: Default()
+// has already filled the section in, and a hand-written file that spells out
+// `workers: 0` is asking for a pool that cannot run anything, which is why zero
+// is refused for workers, the batch size and the attempt budget but not for the
+// rate, where a negative value has the documented meaning of "no limit".
+func (c *Config) validateSyncEngine(add func(field, format string, args ...any)) {
+	e := c.Sync.Engine
+	if e.Workers != 0 && (e.Workers < 1 || e.Workers > MaxSyncWorkers) {
+		add("sync.engine.workers", "%d is outside the range 1-%d", e.Workers, MaxSyncWorkers)
+	}
+	if e.BatchSize != 0 && (e.BatchSize < 1 || e.BatchSize > MaxSyncBatchSize) {
+		add("sync.engine.batchSize", "%d is outside the range 1-%d", e.BatchSize, MaxSyncBatchSize)
+	}
+	if e.Rate > MaxSyncRate {
+		add("sync.engine.rate", "%g is above the maximum of %d requests per second", e.Rate, MaxSyncRate)
+	}
+	if e.MaxAttempts != 0 && (e.MaxAttempts < 1 || e.MaxAttempts > MaxSyncMaxAttempts) {
+		add("sync.engine.maxAttempts", "%d is outside the range 1-%d", e.MaxAttempts, MaxSyncMaxAttempts)
+	}
+	if e.Retention < 0 {
+		add("sync.engine.retention", "must not be negative")
 	}
 }
 

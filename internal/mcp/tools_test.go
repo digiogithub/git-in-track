@@ -21,8 +21,9 @@ var readTools = []string{
 // writeTools is what enabling writes adds.
 var writeTools = []string{
 	"add_comment", "close_sprint", "create_epic", "create_inbox_item", "create_milestone",
-	"create_story", "create_task", "move_on_board", "transfer_sprint_items",
-	"triage_inbox_item", "update_item",
+	"create_story", "create_task", "import_youtrack_issues", "move_on_board",
+	"publish_kb_page_to_youtrack", "push_comment_to_youtrack", "sync_kb_page_from_youtrack",
+	"transfer_sprint_items", "triage_inbox_item", "update_item",
 }
 
 func TestToolSurface(t *testing.T) {

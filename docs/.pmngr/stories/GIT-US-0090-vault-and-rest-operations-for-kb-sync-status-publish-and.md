@@ -2,7 +2,7 @@
 id: GIT-US-0090
 type: story
 title: Vault and REST operations for KB sync status, publish and pull
-status: backlog
+status: in_review
 priority: medium
 parent: GIT-EP-0014
 milestone: GIT-M-0011
@@ -10,7 +10,8 @@ author: mcp
 labels: [core, server]
 estimate: 5
 created: 2026-09-13T13:15:01Z
-updated: 2026-09-13T13:15:01Z
+updated: 2026-09-13T15:41:38Z
+started: 2026-09-13T15:41:28Z
 ---
 
 ## Description

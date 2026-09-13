@@ -2,7 +2,7 @@
 id: GIT-T-0084
 type: task
 title: Add the issue search endpoint with cursor paging
-status: todo
+status: done
 priority: medium
 parent: GIT-US-0054
 milestone: GIT-M-0011
@@ -10,7 +10,9 @@ author: mcp
 labels: [server, agent-ok]
 estimate: 3
 created: 2026-09-13T13:17:23Z
-updated: 2026-09-13T13:17:23Z
+updated: 2026-09-13T16:03:41Z
+started: 2026-09-13T16:03:25Z
+closed: 2026-09-13T16:03:41Z
 ---
 
 ## Description

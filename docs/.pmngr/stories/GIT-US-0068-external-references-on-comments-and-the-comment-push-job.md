@@ -2,15 +2,17 @@
 id: GIT-US-0068
 type: story
 title: External references on comments and the comment push job kind
-status: backlog
+status: in_review
 priority: medium
 parent: GIT-EP-0013
 milestone: GIT-M-0011
+assignees: [claude]
 author: mcp
 labels: [core, server, docs]
 estimate: 8
 created: 2026-09-13T13:13:20Z
-updated: 2026-09-13T13:13:20Z
+updated: 2026-09-13T16:00:48Z
+started: 2026-09-13T16:00:29Z
 ---
 
 ## Description
@@ -24,12 +26,12 @@ Then register a `youtrack.comment.push` job kind with the sync engine. Its paylo
 ## Acceptance Criteria
 
 - [ ] `core.Comment` carries `external`; parser, serializer, key order, JSON schema and `docs/03-data-model.md` §11 are updated together.
-- [ ] A `youtrack.comment.push` job kind is registered with `internal/syncengine` and enqueued with `{project, itemId, commentPath}`.
-- [ ] First push creates the remote comment and writes its id back into `external` quoting the comment's rev.
-- [ ] A push for a comment that already has an `external` YouTrack id edits the remote comment rather than creating a new one.
-- [ ] The attribution line is rendered from a template configurable per project, and the item id is resolvable from it.
-- [ ] Deleting a comment locally never deletes it in YouTrack; the behaviour is documented.
-- [ ] An item without a YouTrack `external` reference fails the job with a clear, non-retryable error.
+- [x] A `youtrack.comment.push` job kind is registered with `internal/syncengine` and enqueued with `{project, itemId, commentPath}`.
+- [x] First push creates the remote comment and writes its id back into `external` quoting the comment's rev.
+- [x] A push for a comment that already has an `external` YouTrack id edits the remote comment rather than creating a new one.
+- [x] The attribution line is rendered from a template configurable per project, and the item id is resolvable from it.
+- [x] Deleting a comment locally never deletes it in YouTrack; the behaviour is documented.
+- [x] An item without a YouTrack `external` reference fails the job with a clear, non-retryable error.
 - [ ] `go test -race ./internal/core/... ./internal/server/...` covers round-trip serialization, create, edit and the missing-link failure.
 
 ## Notes
@@ -39,3 +41,12 @@ Depends on GIT-EP-0011 for the `external` field on items and for the client, and
 Endpoints: create `POST /api/issues/{id}/comments?fields=id,text,created,author(login)` with `{"text": "..."}`; edit `POST /api/issues/{id}/comments/{cid}` (scratchpad YouTrack report §3.6). YouTrack auto-links bare issue ids in comment text, so the attribution line must not wrap the item id in a link.
 
 Do NOT push inline from the write path — it would block the write. Do NOT mirror YouTrack comments back into the repository in this epic; import is GIT-EP-0012's concern and there is no bidirectional sync this phase.
+
+**Two criteria are unticked and the story is left in review** rather than done,
+because their halves belong to agents this wave did not give to the server
+owner. `core.Comment.External` **is** implemented, along with its parser and
+serializer — the push depends on it and pushes against it in the tests — but
+`docs/03-data-model.md` §11, the JSON schema in §18 and the extension of ADR-031
+are GIT-T-0150's, and every file under `docs/` except `07-cli-and-api.md`
+belongs elsewhere this wave. The `internal/core` half of the test criterion
+belongs with them for the same reason; the `internal/server` half is covered.

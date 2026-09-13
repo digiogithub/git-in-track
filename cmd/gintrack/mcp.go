@@ -33,9 +33,12 @@ func newMCPCommand(build buildInfo, flags *globalFlags) *cobra.Command {
 		Short: "Serve the backlog to AI agents over the Model Context Protocol",
 		Long: `Mcp speaks the Model Context Protocol over stdin and stdout, so that an agent
 runtime can spawn it as a tool server. It exposes the workspace's backlog and
-knowledge base as typed tools: list_items, search_items, get_item, create_epic,
-create_story, create_task, create_milestone, update_item, add_comment,
-move_on_board, list_kb_pages, get_kb_page and search_kb.
+knowledge base as typed tools: list_items, search_items, get_item, list_inbox,
+list_kb_pages, get_kb_page and search_kb are read-only; create_epic,
+create_story, create_task, create_milestone, create_inbox_item, update_item,
+add_comment, move_on_board, triage_inbox_item, close_sprint,
+transfer_sprint_items, import_youtrack_issues, push_comment_to_youtrack,
+publish_kb_page_to_youtrack and sync_kb_page_from_youtrack need writes.
 
 The server is read-only unless writes are enabled, either with --allow-write or
 with "mcp.allowWrite: true" in the configuration file, and the write tools are

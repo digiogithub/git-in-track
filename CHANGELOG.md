@@ -14,6 +14,53 @@ because a commit list cannot express them.
 
 ### Added
 
+- **The background job engine actually runs YouTrack work: four job kinds, and the HTTP
+  surface that starts them** (GIT-US-0050, GIT-US-0054, GIT-US-0068, GIT-US-0087,
+  docs/07 §4.1, §5.5, §5.6). `internal/server` registers `youtrack.import`,
+  `youtrack.comment.push`, `youtrack.kb.publish` and `youtrack.kb.pull` with the engine
+  before the journal is replayed, and installs the two seams every mounted vault needs —
+  the provider that resolves a client and the enqueuer that hands a job to the queue — so a
+  write path decides a job is needed and never performs it inline.
+  **Import** pages issues with `$top`/`$skip` over a query that always carries
+  `order by: created asc` (without it a `$skip` walk over a live instance silently skips and
+  duplicates rows), imports in batches of 20 — one batch is one vault call and one commit —
+  publishes `sync.job.progress` with `{jobId, done, total, currentId}` per batch, accumulates
+  per-issue failures into the result instead of failing the job, and downloads attachments to
+  a `.part` file that is renamed only after the stream closed at the size YouTrack reported,
+  skipping a file already there. Cancellation is observed between batches and mid-download:
+  the batches already committed survive, the temporary file is removed, and the job ends
+  `cancelled` rather than being retried. **Comment push** posts a comment once and writes the
+  remote id into the comment's `external` block rev-guarded, so a retry, a journal replay or
+  a dead-letter retry edits that comment instead of leaving a second copy; the trailing
+  attribution line renders from a per-project `integrations.youtrack.comment_template`, with
+  the item id emitted bare because YouTrack auto-links what it recognises. A comment deleted
+  locally is **never** deleted remotely: no job is enqueued for it, by design.
+  **Knowledge base** publishes a page or a whole folder — one parent article per directory
+  through `parentArticle`, parents before children, ordering taken from creation order
+  because `ordinal` is read-only and is silently ignored when sent — and pulls articles back
+  through the vault so `WritePage` and its feedback pruning apply normally. Change detection
+  compares the fingerprint recorded in the page's `external.key` against both sides, never
+  raw bytes, so a local feedback note is not mistaken for an edit; when both sides moved the
+  incoming content is written to `<page>.conflict.md`, the page is left untouched and
+  `youtrack.kb.conflict` says so. There is no three-way merge and deliberately none.
+  Three routes make all of it reachable: `GET /api/v1/youtrack/issues` searches the instance
+  for the import picker with the five presets `epics`, `stories`, `tasks`, `versions` and
+  `unresolved`, bounded pages behind an opaque cursor and an `already imported` badge
+  resolved **locally** from the index by `(external.system, external.id)`;
+  `POST /api/v1/youtrack/import/preview` answers the plan synchronously; and
+  `POST /api/v1/youtrack/import` queues the job and answers `202` with its id. No response,
+  log line, event payload or journalled job payload carries the token.
+
+- **The configuration file has a `sync.engine` section, so an engine setting survives a
+  restart** (GIT-US-0084, docs/07 §3.2, §3.3, §4.1). `workers`, `batchSize`, `rate`,
+  `maxAttempts` and `retention` are read from `config.yaml`, validated against the same
+  ranges the running engine applies — an out-of-range value is refused with the dotted key
+  that carries it — and layered under the `GINTRACK_SYNC_*` variables and the four
+  `gintrack serve` flags, so the documented **flag > environment > file > default**
+  precedence now holds in full. `PATCH /api/v1/sync/settings` writes the section back and
+  reports `persisted: true`; a companion started without a configuration file still keeps
+  the change for the life of the process and answers `false`.
+
 - **The companion runs a background job engine, and it is inspectable over REST and
   live on the WebSocket** (GIT-US-0074, GIT-US-0078, GIT-US-0084, docs/07 §4.1, §5.5, §5.6).
   `internal/syncengine` now starts with `gintrack serve`, beside the watcher, the committer
@@ -35,9 +82,9 @@ because a commit list cannot express them.
   is coalesced to at most one frame every 500 ms per coalescing group and a terminal event is
   never throttled; even so the hub drops a client that cannot keep up, so a client reconciles
   from `GET /api/v1/sync/jobs` after a gap rather than trusting the stream. No response, log
-  line or event payload carries a job payload or a credential. **No job handler ships with
-  this change**: the import, the comment push and the knowledge-base publish are later
-  stories, and each adds one `Server.RegisterSyncHandler` call.
+  line or event payload carries a job payload or a credential. The four job handlers that
+  run on it — the import, the comment push and the two knowledge-base directions — ship in
+  the entry above.
 
 - **The inbox is served: `GET /api/v1/inbox` and `POST /api/v1/items/{id}/triage`**
   (GIT-US-0056, ADR-033, docs/07 §5.5). The queue the previous release modelled is now

@@ -1,0 +1,4 @@
+[
+  { "id": "1-1", "login": "jose", "fullName": "Jose F. Rives", "email": "jose@example.com", "$type": "User" },
+  { "id": "1-2", "login": "ana", "fullName": "Ana Ruiz", "email": "ana@example.com", "$type": "User" }
+]

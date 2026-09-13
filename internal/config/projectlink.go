@@ -117,6 +117,15 @@ type YouTrackLink struct {
 	KBSync KBSyncMode `json:"kbSync,omitempty" yaml:"kb_sync,omitempty"`
 	// KBSyncDirection is which way that synchronization flows.
 	KBSyncDirection KBSyncDirection `json:"kbSyncDirection,omitempty" yaml:"kb_sync_direction,omitempty"`
+	// CommentTemplate is the attribution line appended to a comment pushed to
+	// the linked issue, as a text/template rendered against the comment's
+	// author and the git-in-track item id (GIT-US-0068). An empty value means
+	// the shipped default.
+	//
+	// It lives in project.yaml rather than in the machine-local file because it
+	// is a team decision about how this project signs what it publishes, and a
+	// clone must sign the same way.
+	CommentTemplate string `json:"commentTemplate,omitempty" yaml:"comment_template,omitempty"`
 }
 
 // Normalized returns the link with its defaults filled in and its values

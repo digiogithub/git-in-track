@@ -2,15 +2,18 @@
 id: GIT-US-0054
 type: story
 title: YouTrack issue search and autosuggest endpoint
-status: backlog
+status: done
 priority: high
 parent: GIT-EP-0012
 milestone: GIT-M-0011
+assignees: [claude]
 author: mcp
 labels: [server]
 estimate: 5
 created: 2026-09-13T13:12:06Z
-updated: 2026-09-13T13:12:06Z
+updated: 2026-09-13T16:04:12Z
+started: 2026-09-13T16:03:51Z
+closed: 2026-09-13T16:04:12Z
 ---
 
 ## Description
@@ -23,13 +26,13 @@ The response is a projection — `{items: [{id, idReadable, summary, type, state
 
 ## Acceptance Criteria
 
-- [ ] `GET /api/v1/youtrack/issues` exists with `q`, `preset`, `limit` and `cursor`, gated on `features.youtrack` and a linked project.
-- [ ] Query composition wraps the project key in braces, appends the preset clause and always ends with `order by: created asc`; it lives in `internal/youtrack` and is unit tested.
-- [ ] The five presets `epics`, `stories`, `tasks`, `versions`, `unresolved` are supported and an unknown preset is a field-level 400.
-- [ ] Paging uses `$top`/`$skip` behind an opaque cursor and is stable across pages.
-- [ ] Each result carries `linked` resolved from the local index by `(external.system, external.id)`.
-- [ ] Upstream 4xx/5xx and timeouts map to a documented error body without leaking the token or the Authorization header.
-- [ ] Endpoint documented in `docs/07-cli-and-api.md`; `go test -race ./internal/server/...` covers composition, paging and the gating.
+- [x] `GET /api/v1/youtrack/issues` exists with `q`, `preset`, `limit` and `cursor`, gated on `features.youtrack` and a linked project.
+- [x] Query composition wraps the project key in braces, appends the preset clause and always ends with `order by: created asc`; it lives in `internal/youtrack` and is unit tested.
+- [x] The five presets `epics`, `stories`, `tasks`, `versions`, `unresolved` are supported and an unknown preset is a field-level 400.
+- [x] Paging uses `$top`/`$skip` behind an opaque cursor and is stable across pages.
+- [x] Each result carries `linked` resolved from the local index by `(external.system, external.id)`.
+- [x] Upstream 4xx/5xx and timeouts map to a documented error body without leaking the token or the Authorization header.
+- [x] Endpoint documented in `docs/07-cli-and-api.md`; `go test -race ./internal/server/...` covers composition, paging and the gating.
 
 ## Notes
 
@@ -38,3 +41,10 @@ Depends on GIT-EP-0011 for the client, the token resolution and the `features.yo
 Query patterns and the brace-quoting rule are in the scratchpad YouTrack report §3.3; the endpoint is `GET /api/issues?query=&$top=&$skip=&fields=` (§8 row 8). Version bundles come from `GET /api/admin/customFieldSettings/bundles/version/{bid}/values` (§8 row 7). Follow `internal/server/items.go` for handler shape and `internal/server/api.go:134-156` for the `s.call` pattern.
 
 Do NOT route YouTrack through the CORS proxy (ADR-025) — it is companion-only. Do NOT cache results in the index; the remote is the source of truth for search.
+
+The handler landed as `internal/server/youtracksearch.go`, mounted from
+`mountYouTrack`. The composition helper is `youtrack.ProjectQuery` and
+`youtrack.EnsureOrderBy`, which already existed in `internal/youtrack` and are
+unit tested there (`paging_test.go`); only the preset clause table is local,
+because a preset is a product decision about what the dialog offers rather than
+a property of the query language.

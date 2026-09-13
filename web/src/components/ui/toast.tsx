@@ -20,6 +20,12 @@ export type ToastInput = {
   variant?: ToastVariant;
   /** Milliseconds before the toast dismisses itself; `0` keeps it until dismissed. */
   durationMs?: number;
+  /**
+   * One follow-up the notification offers — "show me the queue", never a
+   * second copy of the primary action. It dismisses the toast on its own,
+   * because a toast whose action has been taken is stale.
+   */
+  action?: { label: string; onClick: () => void };
 };
 
 type ToastRecord = ToastInput & { id: number };
@@ -102,6 +108,18 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               <p className="font-medium">{item.title}</p>
               {item.description ? (
                 <p className="mt-0.5 text-xs text-muted-foreground">{item.description}</p>
+              ) : null}
+              {item.action ? (
+                <button
+                  type="button"
+                  className="mt-1.5 rounded-sm text-xs font-medium text-accent underline underline-offset-4 transition-colors duration-fast hover:text-accent-hover"
+                  onClick={() => {
+                    item.action?.onClick();
+                    dismiss(item.id);
+                  }}
+                >
+                  {item.action.label}
+                </button>
               ) : null}
               <button
                 type="button"

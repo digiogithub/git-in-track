@@ -27,6 +27,7 @@ func registerTools(s *Server) {
 	registerBoardTools(s)
 	registerSprintTools(s)
 	registerKBTools(s)
+	registerYouTrackTools(s)
 }
 
 // A toolDef is the framing of one tool.

@@ -193,8 +193,9 @@ func TestServeSyncEngineFlagsAreDeclared(t *testing.T) {
 	}
 }
 
-// TestSyncEngineSettingsPrecedence covers the documented chain: the flag beats
-// the environment, which beats the default.
+// TestSyncEngineSettingsPrecedence covers the documented chain in full: the
+// flag beats the environment, which beats the configuration file, which beats
+// the shipped default.
 func TestSyncEngineSettingsPrecedence(t *testing.T) {
 	t.Parallel()
 
@@ -202,11 +203,30 @@ func TestSyncEngineSettingsPrecedence(t *testing.T) {
 		name        string
 		args        []string
 		env         map[string]string
+		file        config.SyncEngine
 		wantWorkers int
 		wantRate    float64
 		wantErr     string
 	}{
 		{name: "defaults", wantWorkers: server.DefaultSyncWorkers, wantRate: server.DefaultSyncRate},
+		{
+			name:        "the file beats the default",
+			file:        config.SyncEngine{Workers: 7, Rate: 2.5},
+			wantWorkers: 7, wantRate: 2.5,
+		},
+		{
+			name:        "the environment beats the file",
+			env:         map[string]string{envSyncWorkers: "6"},
+			file:        config.SyncEngine{Workers: 7, Rate: 2.5},
+			wantWorkers: 6, wantRate: 2.5,
+		},
+		{
+			name:        "the flag beats the file and the environment",
+			args:        []string{"--sync-workers", "3"},
+			env:         map[string]string{envSyncWorkers: "6"},
+			file:        config.SyncEngine{Workers: 7, Rate: 2.5},
+			wantWorkers: 3, wantRate: 2.5,
+		},
 		{
 			name:        "the environment beats the default",
 			env:         map[string]string{envSyncWorkers: "6", envSyncRate: "12.5"},
@@ -258,7 +278,8 @@ func TestSyncEngineSettingsPrecedence(t *testing.T) {
 			}
 			flags.syncRate = rate
 
-			got, err := syncEngineSettings(cmd, flags, &config.Config{}, func(key string) string {
+			cfg := &config.Config{Sync: config.Sync{Engine: tt.file}}
+			got, err := syncEngineSettings(cmd, flags, cfg, func(key string) string {
 				return tt.env[key]
 			})
 			if tt.wantErr != "" {

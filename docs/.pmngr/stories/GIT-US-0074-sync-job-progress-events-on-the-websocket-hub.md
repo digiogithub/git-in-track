@@ -2,7 +2,7 @@
 id: GIT-US-0074
 type: story
 title: Sync job progress events on the WebSocket hub
-status: in_review
+status: done
 priority: high
 parent: GIT-EP-0015
 milestone: GIT-M-0011
@@ -10,8 +10,9 @@ author: mcp
 labels: [server, web, docs]
 estimate: 5
 created: 2026-09-13T13:13:43Z
-updated: 2026-09-13T15:15:28Z
+updated: 2026-09-13T15:50:15Z
 started: 2026-09-13T15:15:12Z
+closed: 2026-09-13T15:50:15Z
 ---
 
 ## Description
@@ -29,8 +30,8 @@ On the frontend, bridge the new topics into TanStack Query the way `useBacklogEv
 - [x] Event payloads never contain a credential and carry the redacted error on failure.
 - [x] Clients resuming with `since` receive the events they missed from the replay ring, consistent with the existing contract.
 - [x] `docs/07-cli-and-api.md` §5.6 documents each topic and its payload alongside the existing `sync.progress` and `git.commit` entries.
-- [ ] A `useSyncJobEvents` hook subscribes to the topics and invalidates the jobs query; it unsubscribes cleanly on unmount.
-- [ ] `go test -race ./internal/server/...` covers publication for each state, and Vitest covers the hook's subscribe, invalidate and cleanup behaviour.
+- [x] A `useSyncJobEvents` hook subscribes to the topics and invalidates the jobs query; it unsubscribes cleanly on unmount.
+- [x] `go test -race ./internal/server/...` covers publication for each state, and Vitest covers the hook's subscribe, invalidate and cleanup behaviour.
 
 ## Notes
 
@@ -38,7 +39,4 @@ The WebSocket endpoint is `GET /api/v1/events` (`internal/server/events.go:44`) 
 
 Do NOT emit an event per imported item: the hub drops on overflow by design, and a dropped frame is worse than a coarser one. Do NOT make the engine publish directly — keeping the transport out of the package is what allows the fake-handler unit tests to exist.
 
-**Server half complete; frontend half not started.** GIT-T-0137 (`useSyncJobEvents`)
-is a `web/` change and was left `todo`: `web/` belongs to another agent this
-wave. The Go half of the last criterion is covered
-(`internal/server/syncjobevents_test.go`); the Vitest half waits on that task.
+**Both halves complete.** The frontend half landed in `web/src/features/sync/queries.ts` (`useSyncJobEvents`) plus the five topics in `CompanionProvider`'s subscription, covered by `web/src/features/sync/queries.test.tsx`. Reconciliation after a lost position is a synthetic `resync` phase raised by the provider on reconnect, `stream.overflow` and `resume.gap`; the hook treats it as an ordinary frame and re-reads `GET /api/v1/sync/jobs`.

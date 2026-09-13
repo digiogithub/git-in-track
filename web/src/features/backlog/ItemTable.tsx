@@ -42,6 +42,7 @@ import { useBacklogEvents, useItems, useProject } from '@/features/backlog/queri
 import { QuickViews } from '@/features/backlog/QuickViews';
 import { isEmptySearch, toItemFilter, type SortField } from '@/features/backlog/search';
 import { useItemSearch, useSetItemSearch } from '@/features/backlog/use-search';
+import { ImportFromYouTrackButton } from '@/features/youtrack/ImportButton';
 
 const features = tableFeatures({
   rowSelectionFeature,
@@ -315,7 +316,10 @@ function ItemTableView() {
             {itemsQuery.isSuccess ? ` — ${items.length} of ${total}` : null}
           </p>
         </div>
-        <NewItemLink project={projectKey} type="story" label="New item" variant="bar" />
+        <div className="flex flex-wrap items-center gap-2">
+          <ImportFromYouTrackButton projectKey={projectKey} />
+          <NewItemLink project={projectKey} type="story" label="New item" variant="bar" />
+        </div>
       </header>
 
       <QuickViews search={search} />

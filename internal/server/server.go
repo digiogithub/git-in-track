@@ -259,6 +259,14 @@ func New(opts Options) (*Server, error) {
 		return nil, fmt.Errorf("sync engine: %w", err)
 	}
 	s.sync = jobs
+	// The job handlers this package owns, and the two seams the vaults reach
+	// the engine and the tracker through. Both happen here rather than in Start
+	// because Start replays the journal: a replayed job whose kind has no
+	// handler can never be dispatched.
+	if err := s.registerYouTrackJobs(); err != nil {
+		return nil, err
+	}
+	s.installYouTrackSeams()
 	s.proxy = newCORSProxy(s)
 	s.tunnel = newTunnelState(opts)
 	s.router = s.routes()
