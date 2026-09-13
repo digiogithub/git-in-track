@@ -26,7 +26,7 @@ const connected: FakeYouTrack = {
     project: 'ACME',
     hasToken: true,
     tokenSource: 'file',
-    fieldMap: { status: 'State' },
+    fieldMap: { status: { field: 'State' } },
   },
 };
 

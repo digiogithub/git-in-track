@@ -3,13 +3,16 @@ package server
 import (
 	"context"
 	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/digiogithub/git-in-track/internal/core"
 	"github.com/digiogithub/git-in-track/internal/syncengine"
+	"github.com/digiogithub/git-in-track/internal/vault"
 )
 
 // The comment push, story GIT-US-0068.
@@ -326,4 +329,224 @@ func TestUpsertExternalReplacesOneSystem(t *testing.T) {
 	if len(added) != 2 || added[1].ID != "4-3" {
 		t.Errorf("a first reference was not appended: %+v", added)
 	}
+}
+
+// ------------------------------------------------------------ the route ---
+
+// The HTTP surface of the comment push, story GIT-US-0076.
+
+// newCommentPushAPIServer builds a companion over a linked copy of the fixture
+// whose story already mirrors an issue, with the engine running so a push can
+// actually queue.
+func newCommentPushAPIServer(t *testing.T) (*Server, string) {
+	t.Helper()
+
+	root := copyTree(t, fixtureRoot)
+	linkFixtureToYouTrack(t, root)
+	linkStoryToIssue(t, root, "DEMO-42")
+	s, _ := newJobServerIn(t, newFakeYouTrack(), root)
+	s.youtrack.mu.Lock()
+	s.youtrack.tokens.Set("DEMO", "perm:test-token")
+	s.youtrack.mu.Unlock()
+	s.startSyncEngine(t.Context())
+	t.Cleanup(func() { s.stopSyncEngine(context.WithoutCancel(t.Context())) })
+	return s, root
+}
+
+// TestCommentPushRouteQueues covers the happy path: the route answers 202 with
+// the job id and the three per-comment lists the vault produced.
+func TestCommentPushRouteQueues(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newCommentPushAPIServer(t)
+	var got vault.YouTrackCommentPushResult
+	decode(t, send(t, s, request{
+		method: http.MethodPost,
+		target: "/api/v1/youtrack/comments/push?key=DEMO",
+		body: map[string]any{
+			"itemId":      "DEMO-US-0001",
+			"commentPath": pushedCommentPath,
+		},
+	}), http.StatusAccepted, &got)
+
+	if got.JobID == "" {
+		t.Error("the answer carries no job id")
+	}
+	if got.ItemID != "DEMO-US-0001" || got.Project != "DEMO" {
+		t.Errorf("answer = %+v", got)
+	}
+	if len(got.Pushed) != 1 || got.Pushed[0].CommentPath != pushedCommentPath {
+		t.Errorf("pushed = %+v, want the one comment", got.Pushed)
+	}
+	if len(got.Failed) != 0 {
+		t.Errorf("failed = %+v", got.Failed)
+	}
+}
+
+// newCoalescingPushServer is newCommentPushAPIServer with a real coalescing
+// window instead of the immediate dispatch every other case here wants.
+//
+// The window is what makes coalescing observable at all. With `Debounce: -1` a
+// job runs the moment it is enqueued, so the first push can finish — writing
+// the comment's `external` entry — before the second request arrives, and the
+// second is then legitimately *skipped* as already delivered rather than folded
+// into the first. Both outcomes are correct in production; only one of them is
+// the thing under test, so the window holds both pushes in one batch.
+func newCoalescingPushServer(t *testing.T) (*Server, string) {
+	t.Helper()
+
+	root := copyTree(t, fixtureRoot)
+	linkFixtureToYouTrack(t, root)
+	linkStoryToIssue(t, root, "DEMO-42")
+	s, err := New(Options{
+		Token:     "test-token",
+		Version:   "0.0.1-test",
+		Workspace: "test",
+		Repos:     []Repo{{ID: testRepoID, Path: root, Role: "project", DocsFolder: "docs"}},
+		Now:       func() time.Time { return jobClock },
+		// Long enough that no job can run between two requests of one test, and
+		// never waited on: the test observes the queue, not the work.
+		SyncEngine: SyncEngine{Debounce: time.Minute},
+	})
+	if err != nil {
+		t.Fatalf("New(): %v", err)
+	}
+	s.youtrack.mu.Lock()
+	s.youtrack.jobClient = func(string) (youtrackJobClient, vault.YouTrackLink, error) {
+		return newFakeYouTrack(), vault.YouTrackLink{
+			BaseURL: "https://yt.example.com/youtrack", Project: "DEMO",
+		}, nil
+	}
+	s.youtrack.tokens.Set("DEMO", "perm:test-token")
+	s.youtrack.mu.Unlock()
+	s.startSyncEngine(t.Context())
+	t.Cleanup(func() { s.stopSyncEngine(context.WithoutCancel(t.Context())) })
+	return s, root
+}
+
+// TestCommentPushRouteCoalescesOnTheCommentPath pins the coalescing key: two
+// pushes of one comment are one job, and a second comment of the same item is
+// its own — the key is the comment path, not the item id.
+func TestCommentPushRouteCoalescesOnTheCommentPath(t *testing.T) {
+	t.Parallel()
+
+	s, root := newCoalescingPushServer(t)
+	other := "docs/.pmngr/comments/DEMO-US-0001/20260902T091200Z-jose.md"
+	writeSecondComment(t, root, other)
+	m, ok := s.repos.lookup(testRepoID)
+	if !ok {
+		t.Fatal("the fixture repository is not mounted")
+	}
+	// The comment was written behind the vault's back, so the index has to be
+	// folded forward before the push can select it.
+	if _, err := m.reindex(t.Context(), s.now); err != nil {
+		t.Fatalf("reindex: %v", err)
+	}
+
+	push := func(path string) string {
+		t.Helper()
+		var got vault.YouTrackCommentPushResult
+		decode(t, send(t, s, request{
+			method: http.MethodPost,
+			target: "/api/v1/youtrack/comments/push?key=DEMO",
+			body:   map[string]any{"itemId": "DEMO-US-0001", "commentPath": path},
+		}), http.StatusAccepted, &got)
+		return got.JobID
+	}
+	first, second := push(pushedCommentPath), push(pushedCommentPath)
+	third := push(other)
+	if first == "" || first != second {
+		t.Errorf("two pushes of one comment produced %q and %q, want one job", first, second)
+	}
+	if third == first {
+		t.Error("two comments of one item were folded into one job: the key is the item id, not the path")
+	}
+}
+
+// writeSecondComment adds another comment to the fixture story's thread.
+func writeSecondComment(t *testing.T, root, rel string) {
+	t.Helper()
+
+	body := "---\nitem: DEMO-US-0001\nauthor: jose\ncreated: 2026-09-02T09:12:00Z\ntype: comment\n---\n\nSecond.\n"
+	path := filepath.Join(root, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("create the comment folder: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil { //nolint:gosec // a fixture copy
+		t.Fatalf("write the comment: %v", err)
+	}
+}
+
+// TestCommentPushRouteRefusals covers what the route refuses, and that it
+// refuses before anything is queued: an unknown project, an unlinked item and a
+// request naming neither a comment nor the whole thread.
+func TestCommentPushRouteRefusals(t *testing.T) {
+	t.Parallel()
+
+	t.Run("an unlinked item", func(t *testing.T) {
+		t.Parallel()
+
+		root := copyTree(t, fixtureRoot)
+		linkFixtureToYouTrack(t, root)
+		s, _ := newJobServerIn(t, newFakeYouTrack(), root)
+		s.youtrack.mu.Lock()
+		s.youtrack.tokens.Set("DEMO", "perm:test-token")
+		s.youtrack.mu.Unlock()
+		s.startSyncEngine(t.Context())
+		t.Cleanup(func() { s.stopSyncEngine(context.WithoutCancel(t.Context())) })
+
+		rec := send(t, s, request{
+			method: http.MethodPost,
+			target: "/api/v1/youtrack/comments/push?key=DEMO",
+			body:   map[string]any{"itemId": "DEMO-US-0001", "all": true},
+		})
+		if rec.Code == http.StatusAccepted {
+			t.Fatalf("an item mirroring no issue was queued: %s", rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), "import or link") {
+			t.Errorf("the problem does not say what to do: %s", rec.Body.String())
+		}
+	})
+
+	t.Run("neither a comment nor the whole thread", func(t *testing.T) {
+		t.Parallel()
+
+		s, _ := newCommentPushAPIServer(t)
+		rec := send(t, s, request{
+			method: http.MethodPost,
+			target: "/api/v1/youtrack/comments/push?key=DEMO",
+			body:   map[string]any{"itemId": "DEMO-US-0001"},
+		})
+		if rec.Code == http.StatusAccepted {
+			t.Fatalf("a request selecting nothing was queued: %s", rec.Body.String())
+		}
+	})
+
+	t.Run("a project with no connection", func(t *testing.T) {
+		t.Parallel()
+
+		s, _ := newJobServerIn(t, newFakeYouTrack(), copyTree(t, fixtureRoot))
+		rec := send(t, s, request{
+			method: http.MethodPost,
+			target: "/api/v1/youtrack/comments/push?key=DEMO",
+			body:   map[string]any{"itemId": "DEMO-US-0001", "all": true},
+		})
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("status = %d, want 409 youtrack_not_configured: %s", rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), codeYouTrackNotConfigured) {
+			t.Errorf("the problem code is wrong: %s", rec.Body.String())
+		}
+	})
+
+	t.Run("without the bearer token", func(t *testing.T) {
+		t.Parallel()
+
+		s, _ := newCommentPushAPIServer(t)
+		res := do(t, s, http.MethodPost, "/api/v1/youtrack/comments/push?key=DEMO", nil)
+		defer func() { _ = res.Body.Close() }()
+		if res.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want 401", res.StatusCode)
+		}
+	})
 }

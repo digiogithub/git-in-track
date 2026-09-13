@@ -29,9 +29,15 @@ function Meta({ label, children }: { label: string; children: React.ReactNode })
  * The submission under triage: what it says, where it came from, and the thread
  * it already carries.
  *
- * The thread is read-only here. A triage pane answers one question — does this
- * belong in the backlog — and accepting opens the item itself, which is where
- * the conversation about it belongs.
+ * The thread is read-only here, and `CommentsPanel` is deliberately *not*
+ * exported from `features/backlog/ItemDetail.tsx` so that it stays that way.
+ * A triage pane answers one question — does this belong in the backlog — and
+ * accepting opens the item itself, which is where the conversation about it
+ * belongs. The pass is also driven from the keyboard, and `useKeyboardTriage`
+ * correctly ignores `j`, `k`, `a`, `r` and `s` while the focus is in a field:
+ * a composer inside the pane would therefore not steal those keys, it would
+ * quietly turn them off for as long as someone is typing, in the one place
+ * where moving through the queue is the whole job.
  */
 export function InboxDetail({ item, projectKey, project, today }: InboxDetailProps) {
   const comments = useComments(projectKey, item.id);

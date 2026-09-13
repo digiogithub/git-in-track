@@ -1475,6 +1475,8 @@ nothing was written (--dry-run)
 ```
 gintrack inbox list [--status pending|snoozed|rejected|accepted|duplicate|all]
                     [--project KEY] [--limit N] [--json]
+gintrack inbox add --title T [--project KEY] [--type epic|story|task|milestone]
+                   [--body B] [--source S] [--priority P] [--label L]... [--author A] [--json]
 gintrack inbox accept <id> [--status S] [--type T] [--parent ID] [--json]
 gintrack inbox reject <id> [--json]
 gintrack inbox snooze <id> --until DATE [--json]
@@ -1490,6 +1492,17 @@ application and the MCP tool `triage_inbox_item` call, quoting the `rev` the
 command read — so a row somebody triaged first is a conflict (exit `5`) and never
 an overwrite. `list` defaults to `--status pending`, which is the queue.
 
+`add` files a submission through `item.create` with an `inbox` block, which is
+what the MCP tool `create_inbox_item` calls too. It is deliberately thinner than
+`gintrack item new`: there is no `--status` and no `--parent`, because a
+submission has not been triaged yet and those are `accept`'s to choose. The
+defaults are `--type story` and `--source cli`; `--project` is required only when
+the workspace holds more than one project, and an omitted one is refused by the
+core naming how many it found (exit `2`). `--body -` reads the body from standard
+input, the same convention `item new` and `item comment` use. A project that
+declares no status in the triage category has no inbox and the command refuses
+with `no_triage_status`.
+
 ```
 $ gintrack inbox list
 ID            TYPE   TITLE                        TRIAGE   SOURCE    RECEIVED
@@ -1498,6 +1511,10 @@ DEMO-T-0091   task   Add a dark theme             snoozed  youtrack  6 days ago
 
 $ gintrack inbox accept DEMO-T-0090 --status todo --parent DEMO-US-0001
 accepted DEMO-T-0090 into todo under DEMO-US-0001; 1 pending
+
+$ cat report.md | gintrack inbox add --title "Checkout hangs on Safari" --body -
+filed DEMO-US-0092  docs/.pmngr/stories/DEMO-US-0092-checkout-hangs-on-safari.md
+pending, source cli
 ```
 
 The inbox REST surface is `GET /api/v1/inbox` and `POST /api/v1/items/{id}/triage`
@@ -2814,6 +2831,7 @@ GET   /api/v1/youtrack/fields?key=DEMO&project=ACME   the remote project's custo
 GET   /api/v1/youtrack/issues?key=DEMO&q=&preset=&limit=&cursor=   search, for the import picker
 POST  /api/v1/youtrack/import/preview?key=DEMO   what an import would do; writes nothing
 POST  /api/v1/youtrack/import?key=DEMO           queue the import; answers a job id
+POST  /api/v1/youtrack/comments/push?key=DEMO    queue a comment push; answers a job id
 GET   /api/v1/youtrack/kb/status?key=DEMO&path=&recursive=&remote=   page sync states
 POST  /api/v1/youtrack/kb/publish?key=DEMO       queue a publish; answers a job id
 POST  /api/v1/youtrack/kb/pull?key=DEMO          queue a pull; answers a job id
@@ -2863,6 +2881,11 @@ value it means: a status id for `status`, one of the four core priorities for
 trimmed value, and a configured value map is *overlaid on* the shipped
 translations rather than replacing them, so mapping one unusual state does not
 forget what `Fixed` means.
+
+The whole block — the field names *and* the value maps — is what the companion
+hands to the importer, so the preview and the import that follows it read one
+table. A value map is therefore never preview-only: the status an issue is shown
+as landing on is the status it lands on.
 
 Only those three keys accept `values`. They are exactly the three the importer
 translates value by value; a `values` block on any other key is refused with
@@ -3004,6 +3027,51 @@ nothing. `queued` is spelled out anyway so that a client reading either this
 shape or a `vault.YouTrackImportResult` from the MCP tool can tell them apart
 without inspecting which keys are present. A project with no usable connection is refused **here**,
 before anything is queued, rather than inside a job nobody is watching.
+
+##### Pushing a comment (GIT-US-0068, GIT-US-0076)
+
+`POST /api/v1/youtrack/comments/push` is what the **Send to YouTrack** action on
+a comment calls. Like every outbound write to a tracker it **queues**, and the
+answer is `202 Accepted` carrying the job id and what the vault decided about
+each comment:
+
+```json
+POST /api/v1/youtrack/comments/push?key=DEMO
+{"itemId":"DEMO-US-0001","commentPath":"docs/.pmngr/comments/DEMO-US-0001/20260901T104512Z-marta.md"}
+
+202
+{ "project": "DEMO", "itemId": "DEMO-US-0001", "jobId": "job_000032",
+  "pushed":  [ { "commentPath": "docs/.pmngr/comments/DEMO-US-0001/20260901T104512Z-marta.md" } ],
+  "skipped": [ { "commentPath": "docs/.pmngr/comments/DEMO-US-0001/20260902T091200Z-jose.md",
+                 "youtrackCommentId": "4-19",
+                 "url": "https://yt.example.com/youtrack/issue/DEMO-42#focus=Comments-4-19",
+                 "reason": "the comment is already on the issue" } ],
+  "failed":  [] }
+```
+
+Give `commentPath` for one comment or `all: true` for the whole thread — one or
+the other; neither and both are refused with a field-level `invalid_request`.
+
+Three things a client must not get wrong:
+
+- **`pushed` means *queued*.** It is not evidence the comment arrived. The
+  evidence is the comment's own `external` entry, which the job writes when the
+  post came back, and which `skipped` echoes for a comment that already had one.
+- **The coalescing key is the comment path, not the item id.** A burst of edits
+  to one comment is one push; two comments of the same item stay two.
+- **An item that mirrors no issue is refused here**, before anything is queued,
+  and non-retryably: there is nowhere to post, and no number of attempts creates
+  a link only a user can create. A project with no usable connection is likewise
+  refused in this call rather than inside a job nobody is watching, with the same
+  five `youtrack_*` problem codes as the rest of the subtree.
+
+A comment deleted locally is **never** deleted remotely: there is no job for it
+and deliberately none.
+
+With `integrations.youtrack.push_comments: auto` the route is unnecessary — every
+comment written on a linked item is queued by the same seam in the vault's
+`comment.add`, on every surface. Flipping the setting is not retroactive: it
+governs comments written from then on.
 
 ##### Knowledge-base synchronization (GIT-US-0087, GIT-US-0090)
 

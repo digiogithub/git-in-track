@@ -2,7 +2,7 @@
 id: GIT-US-0065
 type: story
 title: Field map configuration in the YouTrack settings card
-status: backlog
+status: done
 priority: medium
 parent: GIT-EP-0012
 milestone: GIT-M-0011
@@ -10,7 +10,9 @@ author: mcp
 labels: [web, server, docs]
 estimate: 5
 created: 2026-09-13T13:13:03Z
-updated: 2026-09-13T13:13:03Z
+updated: 2026-09-13T17:07:51Z
+started: 2026-09-13T17:07:43Z
+closed: 2026-09-13T17:07:51Z
 ---
 
 ## Description

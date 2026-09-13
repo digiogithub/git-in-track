@@ -380,8 +380,8 @@ export type YouTrackSettings = {
   url: string;
   /** The YouTrack project short name, the "ACME" of ACME-42. */
   project: string;
-  /** git-in-track field → the YouTrack custom field carrying it. */
-  fieldMap: Record<string, string>;
+  /** git-in-track field → the YouTrack field carrying it and its value map. */
+  fieldMap: Record<string, YouTrackFieldMapping>;
   pushComments: YouTrackPushComments;
   kbSync: YouTrackKbSync;
   kbSyncDirection: YouTrackKbSyncDirection;
@@ -405,7 +405,7 @@ export type YouTrackSettings = {
 export type YouTrackSettingsPatch = {
   url?: string;
   project?: string;
-  fieldMap?: Record<string, string>;
+  fieldMap?: Record<string, YouTrackFieldMapping>;
   pushComments?: YouTrackPushComments;
   kbSync?: YouTrackKbSync;
   kbSyncDirection?: YouTrackKbSyncDirection;
@@ -432,6 +432,35 @@ export type YouTrackProject = {
   archived: boolean;
 };
 
+/**
+ * One allowed value of a bundle-backed YouTrack field.
+ *
+ * `name` is the key a mapping is written against — it is stable, where the id
+ * is instance-local and the localized name changes with the UI language — and
+ * `label` is what to show.
+ *
+ * The instance also declares a colour per value. It is deliberately not carried
+ * here: a colour in a component is a bug (docs/13 §1), and a value table that
+ * painted itself in YouTrack's palette would be exactly that.
+ */
+export type YouTrackFieldValue = {
+  id: string;
+  /** The stable value name; the key a value mapping is written against. */
+  name: string;
+  /** What to render: the localized name when the instance declares one. */
+  label: string;
+  description?: string;
+  /** The position the instance lists the value at. */
+  ordinal: number;
+  /** Still on old issues, no longer offered. Shown, never hidden. */
+  archived: boolean;
+  /**
+   * Whether a state value marks an issue as done. Absent — not `false` — when
+   * the instance never said, which is why it must not propose a done status.
+   */
+  isResolved?: boolean;
+};
+
 /** One custom field of the remote project (`GET /api/v1/youtrack/fields`). */
 export type YouTrackField = {
   id: string;
@@ -440,6 +469,32 @@ export type YouTrackField = {
   bundleId: string;
   bundleType: string;
   canBeEmpty: boolean;
+  /** What the instance shows for an unset value, when it declares one. */
+  emptyFieldText?: string;
+  /**
+   * Whether this field's values are enumerable at all: false for a text, date,
+   * integer or period field, and for a bundle kind the companion does not know.
+   * `values` is then empty without that being a failure.
+   */
+  bundled: boolean;
+  values: YouTrackFieldValue[];
+  /** Why the values could not be read; already redacted by the companion. */
+  warnings: string[];
+};
+
+/**
+ * One entry of the field map: which YouTrack custom field carries a
+ * git-in-track field, and what its values mean here.
+ *
+ * `values` maps a YouTrack value *name* onto the git-in-track value it means —
+ * a status id for `status`, a priority for `priority`, an item type for
+ * `type` — and the companion accepts it on those three keys only
+ * (`valueMappableFields`). An entry with no value map leaves the importer's
+ * defaults in force.
+ */
+export type YouTrackFieldMapping = {
+  field: string;
+  values?: Record<string, string>;
 };
 
 /**
@@ -452,6 +507,12 @@ export type YouTrackFieldList = {
   fields: YouTrackField[];
   total: number;
   gintrackFields: string[];
+  /**
+   * The subset of `gintrackFields` whose *values* can be mapped one by one. A
+   * settings screen renders a value table only for these; the others take a
+   * field name and nothing else.
+   */
+  valueMappableFields: string[];
 };
 
 /**
@@ -556,40 +617,19 @@ export type YouTrackImportPreviewResult = {
   warnings?: YouTrackImportWarning[];
 };
 
-/** What one issue of a run produced; a failure never aborts the batch. */
-export type YouTrackImportIssueResult = {
-  youtrackId: string;
-  itemId?: string;
-  action: 'create' | 'update';
-  comments: number;
-  warnings?: YouTrackImportWarning[];
-  /** The failure message, empty when the issue landed. */
-  error?: string;
-};
-
-/** The answer of the run operation once the import has finished. */
-export type YouTrackImportResult = {
-  project: string;
-  issues: YouTrackImportIssueResult[];
-  created: number;
-  updated: number;
-  failed: number;
-  warnings?: YouTrackImportWarning[];
-};
-
 /**
- * What asking for an import answers, which depends on how the runtime runs it.
+ * What asking for an import answers: the id of the job that runs it.
  *
- * A companion with the job engine up enqueues the import and answers the job
- * id at once: the work happens off the request, the browser follows it over the
- * `sync.job.*` events and reads the failure, if any, back from
- * `getSyncJob(jobId)`. A runtime that runs the import inline answers the
- * finished `result` instead and leaves `jobId` empty. A caller handles both:
- * `result` is the richer answer and `jobId` the one that needs watching.
+ * `POST /api/v1/youtrack/import` always queues. An import is a hundred issues
+ * and a hundred requests against somebody else's rate limit, so it answers
+ * `202` with a job id and nothing that could go stale — the work happens off
+ * the request, the browser follows it over the `sync.job.*` events and reads
+ * the failure, if any, back from `getSyncJob(jobId)`. There is deliberately no
+ * synchronous shape to handle: the preview is the operation that answers
+ * inline, and it answers a plan rather than a result.
  */
 export type YouTrackImportRun = {
   jobId: string;
-  result: YouTrackImportResult | null;
 };
 
 /** One repository's git state (`GET /api/v1/git/status`). */
@@ -1730,10 +1770,10 @@ export interface DataProvider {
     scope?: YouTrackScope,
   ): Promise<YouTrackImportPreviewResult>;
   /**
-   * Runs the import. Depending on the runtime it either enqueues a background
-   * job and answers its id, or runs inline and answers the finished result —
-   * see `YouTrackImportRun`. It never throws for a single failing issue: a
-   * partial failure is reported per issue, not as a rejected promise.
+   * Queues the import and answers the id of the job that runs it — see
+   * `YouTrackImportRun`. It never throws for a single failing issue: the job
+   * records what each issue produced, and a partial failure is read back from
+   * the queue rather than raised here.
    */
   runYouTrackImport(
     options: YouTrackImportOptions,

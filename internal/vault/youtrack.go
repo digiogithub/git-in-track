@@ -3,6 +3,7 @@ package vault
 import (
 	"context"
 	"fmt"
+	"path"
 	"sort"
 	"strings"
 
@@ -82,9 +83,15 @@ type YouTrackLink struct {
 	// Project is the YouTrack project short name, the "ACME" of ACME-42. It
 	// scopes a query that does not scope itself.
 	Project string
-	// FieldMap overrides the default field names, keyed as config.FieldMapKeys
-	// spells them.
-	FieldMap map[string]string
+	// FieldMap overrides the default field names *and* the default value
+	// translations, keyed as config.FieldMapKeys spells them.
+	//
+	// It carries mapping.FieldSpec rather than a flat field name because a
+	// project configures both halves of the block — `{"status": {"field":
+	// "State", "values": {"In Progress": "in_progress"}}}` — and a flat map
+	// would let the names cross into the importer while every value map the
+	// user configured stayed behind (GIT-T-0131).
+	FieldMap map[string]mapping.FieldSpec
 	// PushComments is the project's `integrations.youtrack.push_comments`
 	// setting: YouTrackPushAuto queues every new comment for the tracker,
 	// anything else (YouTrackPushManual, and the empty string a host that does
@@ -531,7 +538,7 @@ func (v *Vault) youtrackResolve(
 		project:  p.Project,
 		params:   p,
 		link:     link,
-		fieldMap: mapping.DefaultFieldMap().WithFieldNames(link.FieldMap),
+		fieldMap: mapping.DefaultFieldMap().WithFields(link.FieldMap),
 	}
 
 	seeds, unreadable, warnings, err := youtrackSeeds(ctx, source, p, link)
@@ -918,45 +925,61 @@ func youtrackInSet(id string, plan youtrackPlan) bool {
 	return false
 }
 
-// youtrackAttachments records the attachment paths of an issue on the item.
+// youtrackAttachments records the attachments of an issue on the item.
+//
+// The entries are **bare file names**, which is what docs/03 §13.4 says
+// `attachments[]` holds everywhere else in the product: the folder is
+// `.pmngr/attachments/<ITEM-ID>/` by convention, derived from the item's own
+// id, and repeating it inside every entry only creates a second place for it to
+// be wrong (R-YT-7, R-ATT-4). The download job builds the same folder from the
+// item id rather than from these entries, so the two cannot disagree.
+//
 // The binaries are not downloaded here: fetching them is the sync engine's
-// work, and this call stays one synchronous batch of file writes.
+// work, and this call stays one synchronous batch of file writes. An item
+// imported over MCP or over the CLI can therefore list a file that is not on
+// disk yet (`W-ATT-MISSING`) until the job runs.
 func youtrackAttachments(
 	decision *youtrackDecision, entry youtrackEntry, plan youtrackPlan,
 ) []mapping.Warning {
 	if !plan.params.IncludeAttachments || len(entry.attachments) == 0 {
 		return nil
 	}
-	if decision.target == "" {
-		return []mapping.Warning{{
-			Field: "attachments",
-			Reason: "the item has no id yet, so the attachment paths were not recorded " +
-				"on this pass",
-		}}
-	}
-	paths := make([]string, 0, len(entry.attachments))
+	names := make([]string, 0, len(entry.attachments))
 	for _, attachment := range entry.attachments {
-		name := strings.TrimSpace(attachment.Name)
+		name := youtrackAttachmentName(attachment.Name)
 		if name == "" {
 			continue
 		}
-		paths = append(paths, fmt.Sprintf("%s/%s/%s",
-			mapping.DefaultAttachmentPrefix, decision.target, name))
+		names = append(names, name)
 	}
-	if len(paths) == 0 {
+	if len(names) == 0 {
 		return nil
 	}
-	sort.Strings(paths)
+	sort.Strings(names)
 	if decision.action == YouTrackImportCreate {
-		decision.draft.Attachments = paths
+		decision.draft.Attachments = names
 	} else {
-		decision.patch.AddAttachments = paths
+		decision.patch.AddAttachments = names
 	}
 	return []mapping.Warning{{
 		Field: "attachments",
-		Reason: fmt.Sprintf("%d attachment paths were recorded; the files themselves are "+
-			"downloaded by the synchronization job, not by the import", len(paths)),
+		Reason: fmt.Sprintf("%d attachments were recorded; the files themselves are "+
+			"downloaded by the synchronization job, not by the import", len(names)),
 	}}
+}
+
+// youtrackAttachmentName reduces the name a tracker reports to the plain file
+// name an `attachments[]` entry may hold. A name carrying a separator, or
+// naming a parent directory, would resolve outside the item's attachment folder
+// once the entry is read back as a relative name, so only the base is kept —
+// the same reduction the download job applies to the file it writes.
+func youtrackAttachmentName(raw string) string {
+	name := path.Base(strings.TrimSpace(strings.ReplaceAll(raw, `\`, "/")))
+	switch name {
+	case "", ".", "..", "/":
+		return ""
+	}
+	return name
 }
 
 // ------------------------------------------------------------- the writes ---

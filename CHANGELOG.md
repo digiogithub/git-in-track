@@ -49,6 +49,16 @@ because a commit list cannot express them.
   did not say, because an unknown flag must not read as "not done". A field whose values
   cannot be read comes back in place with a warning instead of being dropped.
 
+- **Sending a comment to YouTrack from the web app** (`GIT-US-0076`, docs/07 §5.5).
+  `POST /api/v1/youtrack/comments/push` queues one comment, or a whole thread, for the issue
+  its item mirrors, answering `202` with the job id and what the vault decided about each
+  comment — queued, skipped because it already carries a YouTrack reference, or failed. The
+  coalescing key is the **comment path**, not the item id, so a burst of edits to one comment
+  is one push while two comments of the same item stay two. An item mirroring no issue, and a
+  project with no usable connection, are both refused in this call rather than inside a job
+  nobody is watching. The settings card gained the `push_comments: manual | auto` toggle;
+  `auto` governs comments written from then on and never sends existing ones retroactively.
+
 - **The HTTP surface of knowledge-base synchronization** (`GIT-US-0090`, docs/07 §5.5):
   `GET /api/v1/youtrack/kb/status`, `POST …/kb/publish` and `POST …/kb/pull`, mounted under
   `/youtrack` and, from the same handlers, inside every `/kb` mount, so the per-project and
@@ -303,6 +313,17 @@ because a commit list cannot express them.
   answer to "this should have been an epic" is a new item and a duplicate marker, not a
   rewrite. **No REST route or screen yet** — the operations exist for agents and for the
   wiring still to come.
+
+- **The screens: triage, cycles and knowledge-base sync** (`GIT-US-0060`, `GIT-US-0089`,
+  `GIT-US-0093`, `GIT-US-0076`, docs/05 §3.1, §8.6). An inbox route with a two-pane triage queue,
+  keyboard navigation and accept, reject, snooze and duplicate; accepting reuses the ordinary item
+  editor in a second mode rather than a form of its own, because accepting *is* editing, with a
+  different verb. The scrum board gained an active-cycle view, a sprint list grouped by the status
+  the dates imply, and a close dialog whose counts come from a dry run that writes nothing. A
+  knowledge-base page carries a sync badge and a toolbar, and a conflict is announced in the page
+  rather than resolved behind it. A comment and a feedback note can be sent to the linked issue from
+  where they were written. Where a metric was reconstructed from a frozen snapshot and the
+  cumulative-flow series was not part of it, the panel says so instead of drawing zeroes.
 
 - **Feedback mode on items and knowledge-base pages** (ADR-030, docs/05 §8.5, docs/03 §14.4).
   A **Feedback** button on the item view and the page viewer — or simply selecting text in

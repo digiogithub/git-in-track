@@ -119,6 +119,7 @@ import type {
   UpdateOp,
   ProviderErrorCode,
   YouTrackField,
+  YouTrackFieldValue,
   YouTrackFieldList,
   YouTrackProject,
   YouTrackSettings,
@@ -131,7 +132,6 @@ import type {
   YouTrackImportOptions,
   YouTrackImportPlanItem,
   YouTrackImportPreviewResult,
-  YouTrackImportResult,
   YouTrackImportRun,
   YouTrackIssue,
   YouTrackIssuePage,
@@ -238,6 +238,8 @@ export type FakeYouTrack = {
   projects?: YouTrackProject[];
   fields?: YouTrackField[];
   gintrackFields?: string[];
+  /** The git-in-track fields whose values can be mapped one by one. */
+  valueMappableFields?: string[];
   /** What a successful probe reports. */
   test?: Partial<YouTrackTestResult>;
   /** When set, every probe fails with this code and message instead. */
@@ -253,13 +255,11 @@ export type FakeYouTrack = {
   /** When set, every preview fails with this instead. */
   previewError?: { code: ProviderErrorCode; message: string };
   /**
-   * The job id a run answers, which is what makes the dialog follow the
-   * `sync.job.*` events instead of rendering a summary straight away. Empty —
-   * the default — runs the import inline and answers the finished result.
+   * The job id a run answers. A run always answers one — the route always
+   * queues — so this only chooses *which* id the `sync.job.*` frames a test
+   * emits have to match.
    */
   importJobId?: string;
-  /** Overrides on the result a run produces; derived from the plan otherwise. */
-  importResult?: Partial<YouTrackImportResult>;
   /** When set, every run fails with this instead. */
   importError?: { code: ProviderErrorCode; message: string };
 };
@@ -608,6 +608,9 @@ function isDone(card: BoardCard): boolean {
 const NO_YOUTRACK_REASON =
   'YouTrack is not available in this mode. Run `gintrack serve` to connect a project.';
 
+/** The job id a run answers when a test did not pick one of its own. */
+const DEFAULT_IMPORT_JOB_ID = 'job_000001';
+
 /** Why a fake with no engine block behaves like browser-only mode. */
 const NO_SYNC_ENGINE_REASON =
   'The background job queue is not available in this mode. Run `gintrack serve` to see it.';
@@ -682,7 +685,20 @@ const sampleYouTrackIssues: YouTrackIssue[] = [
   },
 ];
 
-/** The custom fields of that instance, as the field map sees them. */
+/** One bundle value, spelled the way `GET /youtrack/fields` spells it. */
+function fieldValue(
+  name: string,
+  ordinal: number,
+  extra: Partial<YouTrackFieldValue> = {},
+): YouTrackFieldValue {
+  return { id: `v-${name}`, name, label: name, ordinal, archived: false, ...extra };
+}
+
+/**
+ * The custom fields of that instance, as the field map sees them — values
+ * included, because the three value-mappable fields are bundle-backed and the
+ * companion answers their bundles in the same call.
+ */
 const sampleYouTrackFields: YouTrackField[] = [
   {
     id: 'f-1',
@@ -691,6 +707,16 @@ const sampleYouTrackFields: YouTrackField[] = [
     bundleId: 'b-1',
     bundleType: 'StateBundle',
     canBeEmpty: false,
+    bundled: true,
+    values: [
+      fieldValue('Open', 0, { isResolved: false }),
+      fieldValue('In Progress', 1, { isResolved: false }),
+      fieldValue('Fixed', 2, { isResolved: true }),
+      // Archived, and with no flag at all: the instance never said whether it
+      // resolves, so nothing may be proposed for it.
+      fieldValue('Obsolete', 3, { archived: true }),
+    ],
+    warnings: [],
   },
   {
     id: 'f-2',
@@ -699,6 +725,9 @@ const sampleYouTrackFields: YouTrackField[] = [
     bundleId: 'b-2',
     bundleType: 'EnumBundle',
     canBeEmpty: true,
+    bundled: true,
+    values: [fieldValue('Show-stopper', 0), fieldValue('Critical', 1), fieldValue('Minor', 2)],
+    warnings: [],
   },
   {
     id: 'f-3',
@@ -707,9 +736,32 @@ const sampleYouTrackFields: YouTrackField[] = [
     bundleId: 'b-3',
     bundleType: 'EnumBundle',
     canBeEmpty: true,
+    bundled: true,
+    values: [fieldValue('Epic', 0), fieldValue('Feature', 1), fieldValue('Task', 2)],
+    warnings: [],
   },
-  { id: 'f-4', name: 'Assignee', type: 'user[1]', bundleId: '', bundleType: '', canBeEmpty: true },
-  { id: 'f-5', name: 'Estimation', type: 'period', bundleId: '', bundleType: '', canBeEmpty: true },
+  {
+    id: 'f-4',
+    name: 'Assignee',
+    type: 'user[1]',
+    bundleId: '',
+    bundleType: '',
+    canBeEmpty: true,
+    bundled: false,
+    values: [],
+    warnings: [],
+  },
+  {
+    id: 'f-5',
+    name: 'Estimation',
+    type: 'period',
+    bundleId: '',
+    bundleType: '',
+    canBeEmpty: true,
+    bundled: false,
+    values: [],
+    warnings: [],
+  },
 ];
 
 /** The git-in-track half of a mapping, as the companion declares it. */
@@ -3585,10 +3637,11 @@ export class FakeProvider implements DataProvider {
   }
 
   /**
-   * Runs the import, in whichever of the two shapes the test scripted: a job id
-   * to follow over the events, or the finished result inline.
+   * Runs the import the only way the route does: it queues, and answers the id
+   * of the job that will do the work. What the import then produced is the
+   * job's to report, over the `sync.job.*` frames a test emits.
    */
-  runYouTrackImport(options: YouTrackImportOptions): Promise<YouTrackImportRun> {
+  runYouTrackImport(): Promise<YouTrackImportRun> {
     const youtrack = this.youtrackOrFail();
     if (!youtrack) {
       return Promise.reject(new ProviderError('read_only', NO_YOUTRACK_REASON));
@@ -3598,33 +3651,10 @@ export class FakeProvider implements DataProvider {
         new ProviderError(youtrack.importError.code, youtrack.importError.message),
       );
     }
-    const jobId = youtrack.importJobId ?? '';
-    if (jobId !== '') return Promise.resolve({ jobId, result: null });
-
-    const plan = this.planFor(options);
-    const result: YouTrackImportResult = {
-      project: options.project ?? this.youtrackSettings.projectKey,
-      issues: plan.map((row) => ({
-        youtrackId: row.youtrackId,
-        ...(row.action === 'update' && row.targetId !== undefined
-          ? { itemId: row.targetId }
-          : {
-              itemId: `${this.youtrackSettings.projectKey}-T-${row.youtrackId.split('-').pop() ?? '0'}`,
-            }),
-        action: row.action,
-        comments: row.comments,
-        warnings: row.warnings ?? [],
-      })),
-      created: plan.filter((row) => row.action === 'create').length,
-      updated: plan.filter((row) => row.action === 'update').length,
-      failed: 0,
-      warnings: [],
-      ...youtrack.importResult,
-    };
-    return Promise.resolve({ jobId: '', result });
+    return Promise.resolve({ jobId: youtrack.importJobId ?? DEFAULT_IMPORT_JOB_ID });
   }
 
-  /** The plan the preview and an inline run share. */
+  /** The plan the preview answers. */
   private planFor(options: YouTrackImportOptions): YouTrackImportPlanItem[] {
     const youtrack = this.youtrack;
     const all = youtrack?.issues ?? sampleYouTrackIssues;
@@ -3964,6 +3994,7 @@ export class FakeProvider implements DataProvider {
       fields: fields.map((field) => ({ ...field })),
       total: fields.length,
       gintrackFields: youtrack.gintrackFields ?? sampleGintrackFields,
+      valueMappableFields: youtrack.valueMappableFields ?? ['status', 'priority', 'type'],
     });
   }
 

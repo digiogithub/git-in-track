@@ -80,6 +80,7 @@ export type Item = {
   start?: string;
   due?: string;
   links?: Link[];
+  /** Bare file names, resolved against the item's own attachments folder. */
   attachments?: string[];
   custom?: Record<string, unknown>;
   /** The trackers this item mirrors (ADR-031). */
@@ -1843,6 +1844,37 @@ export type CoreApi = {
       authorEmail?: string;
       body: string;
       inReplyTo?: string;
+    };
+    result: { comment: Comment; writes: WriteSet };
+  };
+  /**
+   * A sparse patch to one comment file that already exists (GIT-US-0068).
+   *
+   * A comment has no id of its own — the file name is its identity, which is
+   * what keeps two concurrent replies from ever conflicting in git — so the
+   * patch addresses `path`. `rev` is the revision of the bytes the caller read
+   * and is required: a blind write to a file somebody else may have edited is
+   * the failure mode this method exists to prevent, and `"*"` is the explicit
+   * write against whatever the file holds now. `id`, when given, is checked
+   * against the comment's own `item`, so a caller working from a stale path
+   * cannot write into the wrong thread.
+   *
+   * `body` replaces the text and is what stamps `updated`; `external` replaces
+   * the whole reference list, an empty list being how a comment is unlinked;
+   * `setExternal` upserts one entry **per system**, which is the shape a
+   * tracker push wants — a second push of the same comment must update the
+   * reference it wrote the first time rather than grow the list by one entry
+   * per attempt. There is deliberately no delete: a comment leaves a thread by
+   * having its file removed.
+   */
+  'comment.update': {
+    params: {
+      path: string;
+      id?: string;
+      rev: string;
+      body?: string;
+      external?: External[];
+      setExternal?: External[];
     };
     result: { comment: Comment; writes: WriteSet };
   };

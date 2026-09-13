@@ -234,3 +234,73 @@ func (m FieldMap) WithFieldNames(names map[string]string) FieldMap {
 	}
 	return out
 }
+
+// FieldSpec is one entry of a configured `integrations.youtrack.field_map`
+// block: the name of the YouTrack custom field that carries a git-in-track
+// field, and how the values of that field translate onto local ones.
+//
+// It is the whole of what a project configures, and it exists here so that the
+// value maps reach the importer as well as the preview. The flat
+// "field → YouTrack field name" shape WithFieldNames takes is the older half
+// of the same thing, and is deliberately lossy about the values.
+type FieldSpec struct {
+	// Field is the YouTrack custom field name, the "State" of a stock
+	// instance. Empty leaves the current name alone.
+	Field string
+	// Values maps a YouTrack value name onto the git-in-track value it means:
+	// a status id for "status", a core priority for "priority", an item type
+	// for "type". Only those three keys have value maps; anything else is
+	// ignored, as it is in the configuration that produced this.
+	Values map[string]string
+}
+
+// WithFields returns a copy of m with both halves of a configured field map
+// applied: the YouTrack custom-field names, exactly as WithFieldNames applies
+// them, and the per-value translations of the three fields that have them.
+//
+// A configured value map is **overlaid on** what m already holds rather than
+// replacing it, which is the opposite of the rule withDefaults follows for a
+// value map set in code. The difference is deliberate and follows the caller:
+// a caller assembling a table in Go that writes Statuses means exactly those
+// statuses, while a person who used a settings screen to say what one unusual
+// state means did not thereby intend to forget what "Fixed" means.
+//
+// Keys are folded before the overlay rather than after it. withDefaults folds
+// them too, but folding after a merge would let "In Progress" and "in progress"
+// collide in map-iteration order, which is a result nobody could debug.
+func (m FieldMap) WithFields(spec map[string]FieldSpec) FieldMap {
+	if len(spec) == 0 {
+		return m
+	}
+	names := make(map[string]string, len(spec))
+	for key, entry := range spec {
+		names[key] = entry.Field
+	}
+	out := m.WithFieldNames(names)
+	out.Statuses = overlayValues(out.Statuses, spec[KeyStatus].Values)
+	out.Priorities = overlayValues(out.Priorities, spec[KeyPriority].Values)
+	out.Types = overlayValues(out.Types, spec[KeyType].Values)
+	return out
+}
+
+// overlayValues merges one configured value map onto the map already in place,
+// folding the keys the way a lookup folds them. An entry whose YouTrack value
+// or local value is blank is dropped rather than written, so that a half-filled
+// row of a settings screen cannot map a value onto nothing.
+func overlayValues[T ~string](current map[string]T, configured map[string]string) map[string]T {
+	if len(configured) == 0 {
+		return current
+	}
+	out := make(map[string]T, len(current)+len(configured))
+	for from, to := range current {
+		out[normalizeKey(from)] = to
+	}
+	for from, to := range configured {
+		key := normalizeKey(from)
+		if key == "" || strings.TrimSpace(to) == "" {
+			continue
+		}
+		out[key] = T(strings.TrimSpace(to))
+	}
+	return out
+}

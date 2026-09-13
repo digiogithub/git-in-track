@@ -1,10 +1,11 @@
 /**
  * Accepting a submission into the backlog.
  *
- * The two things worth asserting are the two the flow exists for: the status
- * field arrives on a real workflow status instead of the triage one, and the
- * save commits the acceptance itself rather than a plain patch that would leave
- * the item in the queue.
+ * The page is `ItemEditorPage` in `accept` mode, so what is worth asserting is
+ * what the mode changes: the status field arrives on a real workflow status
+ * instead of the triage one, the save commits the acceptance itself rather than
+ * a plain patch that would leave the item in the queue, and the editor's
+ * session affordances — autosave, recovered drafts — are absent.
  */
 
 import { screen, waitFor } from '@testing-library/react';
@@ -26,6 +27,16 @@ describe('InboxAcceptPage', () => {
     await waitFor(() => {
       expect(screen.getByLabelText(/status/i)).toHaveValue('backlog');
     });
+  });
+
+  it('is the editor without its session affordances: no autosave, no draft banner', async () => {
+    renderInbox({ path: ACCEPT_PATH });
+
+    await screen.findByText('Accept into the backlog');
+    // Accepting is one write reached from the queue, not a surface a
+    // half-written edit is left open on.
+    expect(screen.queryByLabelText('Autosave')).toBeNull();
+    expect(screen.queryByRole('alertdialog', { name: 'Recovered draft' })).toBeNull();
   });
 
   it('never offers a type picker, because an id carries its type for life', async () => {

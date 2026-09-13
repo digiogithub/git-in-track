@@ -229,11 +229,15 @@ func (y *youtrackState) jobClientFor(project string) (youtrackJobClient, vault.Y
 // empty rather than defaulted here — config.YouTrackLink.Normalized already
 // wrote `manual` into anything a file left out, and inventing a default in a
 // second place is how the two would drift.
+//
+// The field map crosses as the whole block, value maps included: an import runs
+// through this provider, and a flat field-name projection would have left every
+// value translation the project configured on this side of the seam.
 func youtrackLinkOf(client *youtrack.Client, link *config.YouTrackLink) vault.YouTrackLink {
 	out := vault.YouTrackLink{BaseURL: client.BaseURL()}
 	if link != nil {
 		out.Project = link.Project
-		out.FieldMap = link.FieldMap.Names()
+		out.FieldMap = youtrackFieldSpecs(link)
 		out.PushComments = string(link.PushComments)
 	}
 	return out

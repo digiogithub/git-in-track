@@ -7,18 +7,18 @@
  * would be written *before* anything is. Preview and run are given the same
  * options object, so "what preview showed me" and "what run did" cannot drift.
  *
- * Running is not a spinner. The companion enqueues the import on its job engine
- * and answers a job id; the progress strip is fed by the `sync.job.*` events,
- * which are coalesced server-side to one frame per 500 ms per group with
- * terminal frames never throttled — so this component adds no throttling of its
- * own and treats a jump in the counts, or a missing intermediate frame, as
- * normal. A runtime that runs the import inline answers the finished result
- * instead and the strip is skipped; both end at the same summary.
+ * Running is not a spinner, and it is never inline. `POST /youtrack/import`
+ * always queues and always answers `202` with a job id, so the progress strip
+ * is fed by the `sync.job.*` events, which are coalesced server-side to one
+ * frame per 500 ms per group with terminal frames never throttled — this
+ * component adds no throttling of its own and treats a jump in the counts, or a
+ * missing intermediate frame, as normal.
  *
- * The summary is per issue rather than a count, because a partial failure is
- * the interesting case: eighteen issues landed and two did not, and the two are
- * the only ones worth a person's time. Their error text comes from the job the
- * engine recorded, already redacted, and is rendered as plain text.
+ * The summary therefore says what the queue knows: how many issues were
+ * processed, or, when the job failed outright, the message the engine recorded
+ * — already redacted, and rendered as plain text. The events carry counts and
+ * never the per-issue outcome, and there is no second call that would answer
+ * one, so the dialog does not pretend to have it.
  *
  * The dialog writes nothing itself. It calls the import operations and lets the
  * vault do the writing, which is what keeps one implementation of "import an
@@ -28,15 +28,12 @@
 import { useEffect, useState } from 'react';
 
 import type {
-  YouTrackImportIssueResult,
   YouTrackImportOptions,
   YouTrackImportPreviewResult,
-  YouTrackImportResult,
   YouTrackIssue,
   YouTrackIssuePreset,
   YouTrackScope,
 } from '@/api/provider';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -47,7 +44,6 @@ import {
 } from '@/components/ui/dialog';
 import { Progress } from '@/components/ui/progress';
 import { TooltipProvider } from '@/components/ui/tooltip';
-import { FeatureLink } from '@/features/backlog/FeatureLink';
 import { youtrackMessage } from '@/features/settings/youtrack-messages';
 import { useSyncJob, useSyncJobEvents } from '@/features/sync/queries';
 import { defaultImportOptions, type ImportOptionsDraft } from '@/features/youtrack/import-model';
@@ -85,7 +81,6 @@ export function ImportDialog({ open, onOpenChange, projectKey }: ImportDialogPro
   const [selected, setSelected] = useState<YouTrackIssue[]>([]);
   const [options, setOptions] = useState<ImportOptionsDraft>(defaultImportOptions);
   const [preview, setPreview] = useState<YouTrackImportPreviewResult | null>(null);
-  const [result, setResult] = useState<YouTrackImportResult | null>(null);
   const [progress, setProgress] = useState<RunProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -118,7 +113,7 @@ export function ImportDialog({ open, onOpenChange, projectKey }: ImportDialogPro
 
   // The events carry counts, never the per-issue outcome, so the job itself is
   // read once it is over: `lastError` is the redacted text of the failure.
-  const watched = progress !== null && progress.finished !== '' && result === null;
+  const watched = progress !== null && progress.finished !== '';
   const job = useSyncJob(progress?.jobId ?? '', watched);
 
   useEffect(() => {
@@ -139,7 +134,6 @@ export function ImportDialog({ open, onOpenChange, projectKey }: ImportDialogPro
     setSelected([]);
     setOptions(defaultImportOptions);
     setPreview(null);
-    setResult(null);
     setProgress(null);
     setError(null);
     previewMutation.reset();
@@ -168,12 +162,6 @@ export function ImportDialog({ open, onOpenChange, projectKey }: ImportDialogPro
     setPhase('running');
     runMutation.mutate(options_, {
       onSuccess: (run) => {
-        if (run.result !== null) {
-          // The runtime ran the import inline: there is nothing to watch.
-          setResult(run.result);
-          setPhase('summary');
-          return;
-        }
         setProgress({
           jobId: run.jobId,
           processed: 0,
@@ -265,12 +253,7 @@ export function ImportDialog({ open, onOpenChange, projectKey }: ImportDialogPro
             ) : null}
 
             {phase === 'summary' ? (
-              <ImportSummary
-                projectKey={projectKey}
-                result={result}
-                progress={progress}
-                jobError={job.data?.lastError?.message ?? ''}
-              />
+              <ImportSummary progress={progress} jobError={job.data?.lastError?.message ?? ''} />
             ) : null}
           </div>
 
@@ -352,20 +335,11 @@ function RunProgressStrip({
 }
 
 /**
- * The result, per issue. A created item links to itself; a failed one carries
- * the engine's message as plain text.
+ * What the queue knows once the job is over: the count it processed, or the
+ * engine's own message when it failed. The message is already redacted and is
+ * rendered as plain text.
  */
-function ImportSummary({
-  projectKey,
-  result,
-  progress,
-  jobError,
-}: {
-  projectKey: string;
-  result: YouTrackImportResult | null;
-  progress: RunProgress | null;
-  jobError: string;
-}) {
+function ImportSummary({ progress, jobError }: { progress: RunProgress | null; jobError: string }) {
   if (progress?.finished === 'cancelled') {
     return (
       <p role="status" className="text-sm">
@@ -375,82 +349,25 @@ function ImportSummary({
     );
   }
 
-  // A job that failed outright never produced a per-issue result: the engine's
-  // own message is everything there is to say, and it is already redacted.
-  if (result === null) {
-    const failed = progress?.finished === 'failed';
-    const message = jobError !== '' ? jobError : (progress?.error ?? '');
-    return (
-      <div role="status" className="space-y-2 text-sm">
-        <p>
-          {failed
-            ? 'The import failed.'
-            : `The import finished: ${String(progress?.processed ?? 0)} issues processed.`}
-        </p>
-        {message === '' ? null : (
-          <p className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-destructive">
-            {message}
-          </p>
-        )}
-        <p className="text-xs text-muted-foreground">
-          The queue in Settings holds the job, its attempts and its last error.
-        </p>
-      </div>
-    );
-  }
-
+  const failed = progress?.finished === 'failed';
+  const message = jobError !== '' ? jobError : (progress?.error ?? '');
   return (
-    <div role="status" className="space-y-3">
-      <p className="flex flex-wrap items-center gap-2 text-sm" data-testid="import-summary-counts">
-        <Badge variant="success">{result.created} created</Badge>
-        <Badge variant="info">{result.updated} updated</Badge>
-        {result.failed === 0 ? null : <Badge variant="destructive">{result.failed} failed</Badge>}
+    <div role="status" className="space-y-2 text-sm">
+      <p>
+        {failed
+          ? 'The import failed.'
+          : `The import finished: ${String(progress?.processed ?? 0)} issues processed.`}
       </p>
-
-      <ul aria-label="Imported issues" className="space-y-1 text-sm">
-        {result.issues.map((issue) => (
-          <SummaryRow key={issue.youtrackId} projectKey={projectKey} issue={issue} />
-        ))}
-      </ul>
+      {message === '' ? null : (
+        <p className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-destructive">
+          {message}
+        </p>
+      )}
+      <p className="text-xs text-muted-foreground">
+        The queue in Settings holds the job, its attempts and its last error, and the imported items
+        are in the backlog.
+      </p>
     </div>
   );
 }
 
-function SummaryRow({
-  projectKey,
-  issue,
-}: {
-  projectKey: string;
-  issue: YouTrackImportIssueResult;
-}) {
-  const failed = issue.error !== undefined && issue.error !== '';
-  return (
-    <li className="flex flex-wrap items-baseline gap-2 border-b border-border py-1 last:border-b-0">
-      <span className="font-mono text-xs text-muted-foreground">{issue.youtrackId}</span>
-      {failed ? (
-        <>
-          <Badge variant="destructive" size="sm">
-            Failed
-          </Badge>
-          {/* Third-party text: plain, never Markdown and never HTML. */}
-          <span className="text-destructive">{issue.error}</span>
-        </>
-      ) : (
-        <>
-          <Badge variant={issue.action === 'create' ? 'success' : 'info'} size="sm">
-            {issue.action === 'create' ? 'Created' : 'Updated'}
-          </Badge>
-          {issue.itemId === undefined || issue.itemId === '' ? null : (
-            <FeatureLink
-              to="/p/$project/items/$id"
-              params={{ project: projectKey, id: issue.itemId }}
-              className="font-mono text-xs text-accent underline underline-offset-4"
-            >
-              {issue.itemId}
-            </FeatureLink>
-          )}
-        </>
-      )}
-    </li>
-  );
-}

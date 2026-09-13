@@ -236,6 +236,45 @@ describe('publishing', () => {
     expect(screen.getByText(/may not read this project/)).toBeInTheDocument();
   });
 
+  it('relabels the manual publish when the project publishes on save', async () => {
+    renderKb(
+      new FakeProvider({
+        youtrack: {
+          settings: { configured: true, projectKey: 'ACME', kbSync: 'on_write' },
+        },
+      }),
+    );
+
+    const toolbar = await screen.findByTestId('kb-sync-toolbar');
+    // The setting already publishes; the button says it brings that forward
+    // rather than claiming to be how pages reach YouTrack.
+    expect(await within(toolbar).findByRole('button', { name: /Publish now/ })).toBeInTheDocument();
+    expect(within(toolbar).queryByRole('button', { name: /Publish to YouTrack/ })).toBeNull();
+    expect(within(toolbar).getByText(/saving a page already queues a publish/)).toBeInTheDocument();
+  });
+
+  it('keeps the manual wording when on_write only pulls', async () => {
+    renderKb(
+      new FakeProvider({
+        youtrack: {
+          settings: {
+            configured: true,
+            projectKey: 'ACME',
+            kbSync: 'on_write',
+            kbSyncDirection: 'pull',
+          },
+        },
+      }),
+    );
+
+    const toolbar = await screen.findByTestId('kb-sync-toolbar');
+    // A save that only pulls publishes nothing, so this button is still the
+    // only way a page reaches YouTrack.
+    expect(
+      await within(toolbar).findByRole('button', { name: /Publish to YouTrack/ }),
+    ).toBeInTheDocument();
+  });
+
   it('offers no folder publish for a project with no pages at all', async () => {
     renderKb(linked({ pages: [] }), '/p/ACME/kb/');
 

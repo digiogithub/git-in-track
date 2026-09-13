@@ -752,21 +752,43 @@ integrations:
 |---|---|---|---|---|
 | `url` | absolute URL | yes | — | `http` or `https`, context path included; no query, no fragment. Trailing `/` is trimmed. |
 | `project` | string | yes | — | YouTrack project short name: the `ACME` of `ACME-42`. |
-| `field_map` | mapping | no | `{}` | Keys from `status`, `priority`, `type`, `assignee`, `labels`, `estimate`, `milestone`, `due`, `sprint`; values are YouTrack custom-field names. |
+| `field_map` | mapping | no | `{}` | Keys from `status`, `priority`, `type`, `assignee`, `estimate`, `milestone`. An entry is either a YouTrack custom-field name or a `{field, values}` block; see below. |
 | `push_comments` | `manual` \| `auto` | no | `manual` | When a comment written here is pushed to the linked issue. |
 | `kb_sync` | `manual` \| `on_write` | no | `manual` | When a knowledge-base page is synchronized with a YouTrack article. |
 | `kb_sync_direction` | `push` \| `pull` \| `both` | no | `push` | Which way that synchronization flows. |
 | `comment_template` | `text/template` | no | see R-INT-6 | The attribution line appended to a comment pushed upstream. |
 
-`field_map` renames the YouTrack custom fields the importer reads; it does not translate the values
-inside them, which is what [§12.6](#126-what-a-youtrack-issue-becomes) documents, defaults included.
-Six of the nine keys reach the mapper — `status` → `State`, `priority` → `Priority`, `type` → `Type`,
-`assignee` → `Assignee`, `estimate` → `Estimation`, `milestone` → `Fix versions`. The remaining
-three are accepted, validated and stored, and today nothing consumes them: `labels` because YouTrack
-tags already carry the labels without a custom field, and `due` and `sprint` because no import maps
-either field yet (§12.6). They are in the vocabulary so that the settings screen can offer the whole
-row set and a project can record the mapping before the importer learns to use it — which is a
-promise this document is making, not a behaviour it is describing.
+`field_map` answers two different questions, and an entry says which one it is answering. Written as
+a plain string it renames a field: `status: State` tells the importer which custom field to read a
+status out of. Written as a block it also translates the values inside that field:
+
+```yaml
+field_map:
+  status:
+    field: State
+    values:
+      In Progress: in_progress
+      Fixed: done
+  priority: Priority
+```
+
+Both forms are read, both are valid, and the flat one is written back flat, so a file only grows the
+nesting it asked for. The keys are names on both sides — a YouTrack field name and a YouTrack value
+name — never ids, which are local to an instance, and never localized names, which change with the
+reader's language.
+
+Six keys name a field: `status` → `State`, `priority` → `Priority`, `type` → `Type`, `assignee` →
+`Assignee`, `estimate` → `Estimation`, `milestone` → `Fix versions`. Only three of them accept a
+`values` block — `status`, `priority` and `type` — because those are the fields whose vocabularies
+differ between the two systems; an estimate and an assignee are converted rather than looked up.
+[§12.6](#126-what-a-youtrack-issue-becomes) documents what the importer does with a field nobody
+mapped, defaults included.
+
+Earlier builds also accepted `labels`, `due` and `sprint`. They were stored, validated and then read
+by nothing, which is the worst outcome a configuration file can produce: the mapping is recorded and
+never honoured. They are now **refused at load time**, each with the reason it was never a mapping in
+the first place — labels travel as YouTrack tags rather than through a custom field, and neither a
+due date nor a sprint is read from one.
 
 - **R-INT-1 No credential is ever written here.** `project.yaml` is a committed file:
   the permanent token lives on the machine running the companion, in its `0600`
@@ -1357,7 +1379,7 @@ importantly, which ones it is not.
 | `Subtask` link, inward | `parent` | More than one parent keeps the first and warns |
 | `Subtask` link, outward | children | The other half of the same hierarchy |
 | Other link types | `links[]` | `Depend`, `Duplicate` and `Relates`; see below |
-| `attachments[]` | `attachments[]` | Recorded as full `.pmngr/attachments/<ITEM-ID>/<filename>` paths, not bare filenames — see R-YT-7 |
+| `attachments[]` | `attachments[]` | Recorded as bare filenames, like every other writer (§13.4); the bytes arrive later — see R-YT-7 |
 | `comments[]` | comment files | One file per comment (§11), keeping the original author and time |
 
 Nothing fills `sprint`, `due`, `effort` or `spent`. Those are git-in-track's own planning fields;
@@ -1429,12 +1451,17 @@ type would break every consumer of `links`.
   warning, both exempt inside code fences and code spans — and does nothing else. It does not
   escape, sanitise or rewrap; every renderer sanitises, and every agent treats the text as data
   rather than as instructions (§17.5, docs/02 §10.5).
-- **R-YT-7** An imported `attachments[]` entry is the full vault-relative path, which is a
-  deliberate divergence from R-ATT-4's bare filenames: an item can be imported before its id is
-  allocated, and a bare name would then resolve against the wrong folder. Only the background import
-  job downloads the binaries; the synchronous `youtrack.import.run` records the paths and leaves the
-  files to the job, so an item imported over MCP or over the CLI can legitimately list a file that
-  is not on disk yet (`W-ATT-MISSING` until the job runs).
+- **R-YT-7** An imported `attachments[]` entry is a **bare filename**, exactly as §13.4 specifies
+  for every other writer: the folder is `.pmngr/attachments/<ITEM-ID>/` by convention, derived from
+  the item's own id, and repeating it inside each entry would only create a second place for it to
+  be wrong. Whatever the tracker calls a file, only the base name is recorded, so an entry can never
+  resolve outside the item's folder. Earlier builds recorded the full vault-relative path and this
+  rule documented the divergence; the divergence is now resolved in favour of the model, because
+  nothing ever read those paths — the download job builds the folder from the item id. What remains
+  true is the timing: only the background import job downloads the binaries, and the synchronous
+  `youtrack.import.run` records the names and leaves the files to the job, so an item imported over
+  MCP or over the CLI can legitimately list a file that is not on disk yet (`W-ATT-MISSING` until
+  the job runs).
 
 ---
 
@@ -1483,6 +1510,8 @@ created through the UI/CLI/MCP. Defaults are materialised into the file at creat
 
 - Path: `<docs>/.pmngr/attachments/<ITEM-ID>/<filename>`.
 - Front matter `attachments: [sso-sequence.png]` lists *filenames*, resolved relative to that folder.
+  Every writer obeys this, importers included: the YouTrack import records bare filenames too
+  (R-YT-7), reduced to their base name so an entry can never point outside the folder.
 - **R-ATT-1** Filenames are sanitised to `[A-Za-z0-9._-]+`; spaces become `-`.
 - **R-ATT-2** Large binaries are the user's problem (git LFS is out of scope); the UI warns above
   1 MiB and refuses above 10 MiB by default (`attachments_max_bytes` is not configurable in Phase 1).

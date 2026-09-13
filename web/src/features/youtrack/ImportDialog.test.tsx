@@ -7,8 +7,8 @@
  * nothing says so), selected (a running count, and an already-imported issue
  * still pickable), previewing (create versus update, with warnings that do not
  * block), running (live progress from the events, not a spinner), cancelled
- * (a job that stopped without failing) and a partial failure (the issues that
- * landed and the ones that did not, with the reason).
+ * (a job that stopped without failing) and failed (the message the engine
+ * recorded, which is all a queued import can report).
  */
 
 import { screen, waitFor, within } from '@testing-library/react';
@@ -301,51 +301,28 @@ describe('ImportDialog', () => {
     expect(await screen.findByText(/The import was cancelled/)).toBeInTheDocument();
   });
 
-  it('reports a partial failure per issue, with a link to what landed', async () => {
+  it('reports a job that failed outright with the message the engine recorded', async () => {
     const user = userEvent.setup();
-    renderImportDialog(
-      providerWith({
-        importResult: {
-          project: 'GIT',
-          created: 1,
-          updated: 0,
-          failed: 1,
-          issues: [
-            {
-              youtrackId: 'ACME-42',
-              itemId: 'GIT-T-0400',
-              action: 'create',
-              comments: 0,
-              warnings: [],
-            },
-            {
-              youtrackId: 'ACME-44',
-              action: 'create',
-              comments: 0,
-              warnings: [],
-              error: '403 Forbidden: the token may not read ACME-44.',
-            },
-          ],
-        },
-      }),
-    );
+    const provider = providerWith({ importJobId: 'job_000021' }, true);
+    renderImportDialog(provider);
 
     await pick(user, 'ACME-42');
     await user.click(screen.getByRole('button', { name: 'Preview' }));
     await screen.findByRole('table');
     await user.click(screen.getByRole('button', { name: 'Run import' }));
 
-    const counts = await screen.findByTestId('import-summary-counts');
-    expect(counts).toHaveTextContent('1 created');
-    expect(counts).toHaveTextContent('1 failed');
+    provider.emitEvent({
+      kind: 'syncJob',
+      job: jobFrame({
+        phase: 'failed',
+        state: 'failed',
+        error: '403 Forbidden: the token may not read ACME-44.',
+      }),
+    });
 
-    const list = screen.getByRole('list', { name: 'Imported issues' });
-    expect(within(list).getByRole('link', { name: 'GIT-T-0400' })).toHaveAttribute(
-      'href',
-      '/p/GIT/items/GIT-T-0400',
-    );
+    expect(await screen.findByText('The import failed.')).toBeInTheDocument();
     expect(
-      within(list).getByText('403 Forbidden: the token may not read ACME-44.'),
+      screen.getByText('403 Forbidden: the token may not read ACME-44.'),
     ).toBeInTheDocument();
   });
 

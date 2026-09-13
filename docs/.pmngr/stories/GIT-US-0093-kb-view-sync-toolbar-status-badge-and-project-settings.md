@@ -2,7 +2,7 @@
 id: GIT-US-0093
 type: story
 title: KB view sync toolbar, status badge and project settings
-status: in_review
+status: done
 priority: medium
 parent: GIT-EP-0014
 milestone: GIT-M-0011
@@ -11,8 +11,9 @@ author: mcp
 labels: [web]
 estimate: 5
 created: 2026-09-13T13:15:19Z
-updated: 2026-09-13T16:41:49Z
+updated: 2026-09-13T17:04:07Z
 started: 2026-09-13T16:27:31Z
+closed: 2026-09-13T17:04:07Z
 ---
 
 ## Description

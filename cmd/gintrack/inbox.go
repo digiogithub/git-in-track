@@ -199,6 +199,7 @@ error so that ` + "`gintrack inbox list --json | jq`" + ` stays safe.`,
 	}
 	cmd.AddCommand(
 		newInboxListCommand(flags),
+		newInboxAddCommand(flags),
 		newInboxAcceptCommand(flags),
 		newInboxRejectCommand(flags),
 		newInboxSnoozeCommand(flags),
@@ -326,6 +327,149 @@ func parseInboxFilter(raw string) (string, error) {
 			"unknown triage state %q: use pending, snoozed, rejected, accepted, duplicate or all", raw)
 	}
 	return value, nil
+}
+
+// ------------------------------------------------------------------- add ---
+
+// inboxAddFlags mirrors the flags of `gintrack inbox add`.
+//
+// It is deliberately thinner than `gintrack item new`: a submission is
+// something that arrived, so its status, its parent and its milestone are the
+// triager's to choose and not the submitter's, exactly as the MCP tool
+// create_inbox_item is thin for the same reason.
+type inboxAddFlags struct {
+	project  string
+	typ      string
+	title    string
+	body     string
+	source   string
+	priority string
+	labels   []string
+	author   string
+	asJSON   bool
+}
+
+// inboxAddPayload is what `gintrack inbox add --json` prints.
+type inboxAddPayload struct {
+	Item    inboxRowPayload `json:"item"`
+	Written []string        `json:"written"`
+}
+
+// inboxSourceCLI is the `inbox.source` a submission filed from the terminal
+// records when the caller named none. It is free text like every other source,
+// and it names the surface rather than the person: the person is the author.
+const inboxSourceCLI = "cli"
+
+// newInboxAddCommand files a submission into the triage queue.
+func newInboxAddCommand(flags *globalFlags) *cobra.Command {
+	local := &inboxAddFlags{}
+
+	cmd := &cobra.Command{
+		Use:     "add --title <title>",
+		Short:   "File a submission into the inbox",
+		Aliases: []string{"new"},
+		Long: `File something into the triage queue instead of straight into the backlog: a
+bug report, a request, anything that still needs a human decision.
+
+The item is created in the project's triage status and marked pending; nobody
+has to accept it for it to be recorded. A project that declares no triage status
+has no inbox and the command refuses with no_triage_status.
+
+--status and --parent are deliberately absent: a submission has not been triaged
+yet, so those are decisions for ` + "`gintrack inbox accept`" + `. --body reads standard
+input when it is "-", which is how every other body flag in this CLI reads a
+piped body, so a bug report can be piped in:
+
+    cat report.md | gintrack inbox add --title "Checkout hangs" --body -
+
+--project is required only when the workspace holds more than one project.`,
+		Args: noArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runInboxAdd(cmd, flags, local)
+		},
+	}
+
+	f := cmd.Flags()
+	f.StringVar(&local.project, "project", "", "project key (required when the workspace holds more than one)")
+	f.StringVar(&local.title, "title", "", "one-line summary of what arrived (required)")
+	f.StringVar(&local.typ, "type", string(core.TypeStory), "epic, story, task or milestone")
+	f.StringVar(&local.body, "body", "", `body Markdown ("-" reads standard input)`)
+	f.StringVar(&local.source, "source", "", `where the submission came from (default "`+inboxSourceCLI+`")`)
+	f.StringVar(&local.priority, "priority", "", "critical, high, medium or low")
+	f.StringArrayVar(&local.labels, "label", nil, "label (repeatable)")
+	f.StringVar(&local.author, "author", "", "author recorded on the item (default: the configured user)")
+	f.BoolVar(&local.asJSON, "json", false, "print machine-readable JSON")
+	return cmd
+}
+
+// runInboxAdd creates one item carrying an `inbox` block.
+//
+// Every rule it appears to apply belongs to the core: whether the project has a
+// triage status, which status a submission lands in and what the `inbox` block
+// holds are all decided behind "item.create". The command validates only what a
+// bad invocation must not reach the core as — an empty title and a type an id
+// cannot pin — so that those exit 2 rather than 1.
+func runInboxAdd(cmd *cobra.Command, flags *globalFlags, local *inboxAddFlags) error {
+	if strings.TrimSpace(local.title) == "" {
+		return usagef("--title is required: a submission needs a one-line summary")
+	}
+	typ := core.ItemType(strings.TrimSpace(local.typ))
+	if !typ.Valid() || typ == core.TypeComment {
+		return usagef("--type must be epic, story, task or milestone")
+	}
+	body, err := readBody(cmd, local.body)
+	if err != nil {
+		return err
+	}
+	source := strings.TrimSpace(local.source)
+	if source == "" {
+		source = inboxSourceCLI
+	}
+
+	space, err := openSpaceFor(flags)
+	if err != nil {
+		return err
+	}
+	params := map[string]any{
+		"type":   string(typ),
+		"title":  strings.TrimSpace(local.title),
+		"body":   body,
+		"labels": local.labels,
+		"inbox":  map[string]any{"source": source},
+	}
+	if key := strings.TrimSpace(local.project); key != "" {
+		params["project"] = strings.ToUpper(key)
+	}
+	if priority := strings.TrimSpace(local.priority); priority != "" {
+		params["priority"] = priority
+	}
+	if author := strings.TrimSpace(local.author); author != "" {
+		params["author"] = author
+	}
+
+	created, err := dispatch[struct {
+		Item   core.Item          `json:"item"`
+		Writes corevault.WriteSet `json:"writes"`
+	}](cmd.Context(), space, "item.create", params)
+	if err != nil {
+		return err
+	}
+
+	payload := inboxAddPayload{
+		Item:    newInboxRow(created.Item),
+		Written: make([]string, 0, len(created.Writes.Written)),
+	}
+	for _, f := range created.Writes.Written {
+		payload.Written = append(payload.Written, f.Path)
+	}
+
+	p := flags.printer(cmd, local.asJSON)
+	if p.JSONMode() {
+		return render(p.JSON(payload))
+	}
+	p.Printf("filed %s  %s\n", payload.Item.ID, displayPath(created.Item.Path))
+	p.Printf("%s, source %s\n", payload.Item.Triage, orDash(payload.Item.Source))
+	return nil
 }
 
 // ---------------------------------------------------------------- triage ---

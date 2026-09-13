@@ -293,3 +293,147 @@ func TestInboxBadInvocations(t *testing.T) {
 		})
 	}
 }
+
+// ------------------------------------------------------------------- add ---
+
+// TestInboxAdd covers the fifth subcommand: a submission filed from the
+// terminal lands in the queue as pending, carrying the source it recorded.
+func TestInboxAdd(t *testing.T) {
+	tests := []struct {
+		name       string
+		args       []string
+		stdin      string
+		wantType   string
+		wantSource string
+		wantTitle  string
+	}{
+		{
+			name:       "a story by default",
+			args:       []string{"inbox", "add", "--title", "Checkout hangs on Safari", "--json"},
+			wantType:   "story",
+			wantSource: "cli",
+			wantTitle:  "Checkout hangs on Safari",
+		},
+		{
+			name: "a task with a source and a label",
+			args: []string{"inbox", "add", "--title", "Slow search", "--type", "task",
+				"--source", "support-form", "--label", "backend", "--json"},
+			wantType:   "task",
+			wantSource: "support-form",
+			wantTitle:  "Slow search",
+		},
+		{
+			name:       "the project may be named explicitly",
+			args:       []string{"inbox", "add", "--title", "Named project", "--project", "demo", "--json"},
+			wantType:   "story",
+			wantSource: "cli",
+			wantTitle:  "Named project",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			h := inboxHarness(t)
+			payload := decode[inboxAddPayload](t, h.mustRun(tc.args...))
+			if payload.Item.Title != tc.wantTitle {
+				t.Errorf("title = %q, want %q", payload.Item.Title, tc.wantTitle)
+			}
+			if payload.Item.Type != tc.wantType {
+				t.Errorf("type = %q, want %q", payload.Item.Type, tc.wantType)
+			}
+			if payload.Item.Triage != "pending" {
+				t.Errorf("triage = %q, want pending", payload.Item.Triage)
+			}
+			if payload.Item.Source != tc.wantSource {
+				t.Errorf("source = %q, want %q", payload.Item.Source, tc.wantSource)
+			}
+			if payload.Item.Status != "triage" {
+				t.Errorf("status = %q, want the triage status", payload.Item.Status)
+			}
+			if len(payload.Written) == 0 {
+				t.Error("no file was reported as written")
+			}
+			// The queue is the observation point that matters: a submission
+			// nobody can see was not filed.
+			queue := decode[inboxListPayload](t, h.mustRun("inbox", "list", "--json"))
+			found := false
+			for _, row := range queue.Items {
+				if row.ID == payload.Item.ID {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("%s is not in the pending queue", payload.Item.ID)
+			}
+			if queue.Pending != 2 {
+				t.Errorf("pending = %d, want the fixture submission plus this one", queue.Pending)
+			}
+		})
+	}
+}
+
+// TestInboxAddReadsAPipedBody covers the `--body -` convention: the same one
+// `item new` and `item comment` use, so a report can be piped in.
+func TestInboxAddReadsAPipedBody(t *testing.T) {
+	h := inboxHarness(t)
+	h.Stdin = strings.NewReader("## Steps\n\nOpen the cart, press pay, wait.\n")
+	payload := decode[inboxAddPayload](t,
+		h.mustRun("inbox", "add", "--title", "Piped report", "--body", "-", "--json"))
+
+	// The write set also holds the id counters the allocation touched; the
+	// item's own file is the one named after it.
+	var written string
+	for _, path := range payload.Written {
+		if strings.Contains(path, payload.Item.ID) {
+			written = filepath.Join(h.Repo, filepath.FromSlash(path))
+		}
+	}
+	if written == "" {
+		t.Fatalf("no written file is named after %s: %v", payload.Item.ID, payload.Written)
+	}
+	body, err := os.ReadFile(written)
+	if err != nil {
+		t.Fatalf("read %s: %v", written, err)
+	}
+	if !strings.Contains(string(body), "Open the cart, press pay, wait.") {
+		t.Fatalf("the piped body did not reach the file:\n%s", body)
+	}
+}
+
+// TestInboxAddRejectsABadInvocation covers the shared exit codes: a bad
+// invocation is 2, never 1.
+func TestInboxAddRejectsABadInvocation(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{"no title", []string{"inbox", "add"}},
+		{"a blank title", []string{"inbox", "add", "--title", "   "}},
+		{"a type no id can pin", []string{"inbox", "add", "--title", "Something", "--type", "comment"}},
+		{"an unknown type", []string{"inbox", "add", "--title", "Something", "--type", "epicish"}},
+		{"an unexpected argument", []string{"inbox", "add", "stray", "--title", "Something"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			h := inboxHarness(t)
+			_, stderr, code := h.run(tc.args...)
+			if code != exitUsage {
+				t.Fatalf("exit %d, want %d\n%s", code, exitUsage, stderr)
+			}
+		})
+	}
+}
+
+// TestInboxAddWithoutATriageStatus covers a project that simply has no inbox:
+// the refusal comes from the core and carries its machine code.
+func TestInboxAddWithoutATriageStatus(t *testing.T) {
+	h := newHarness(t)
+	h.register()
+	_, stderr, code := h.run("inbox", "add", "--title", "Nowhere to file this")
+	if code == exitOK {
+		t.Fatal("a project with no triage status accepted a submission")
+	}
+	if !strings.Contains(stderr, "no_triage_status") && !strings.Contains(stderr, "triage") {
+		t.Fatalf("the refusal does not say why:\n%s", stderr)
+	}
+}

@@ -128,3 +128,60 @@ func TestFieldMapWithFieldNames(t *testing.T) {
 		t.Error("the value maps must survive a field-name override")
 	}
 }
+
+// TestWithFieldsAppliesNamesAndValues covers the adapter a configured
+// `field_map` block reaches this package through: both halves of every entry
+// must arrive, and a configured value map must be overlaid on the shipped
+// defaults rather than replace them.
+func TestWithFieldsAppliesNamesAndValues(t *testing.T) {
+	got := DefaultFieldMap().WithFields(map[string]FieldSpec{
+		"status": {Field: " Estado ", Values: map[string]string{
+			" Parked ":    " backlog ",
+			"IN PROGRESS": "in_review",
+			"Blank":       "   ",
+		}},
+		"priority": {Field: "", Values: map[string]string{"Sev-1": "critical"}},
+		"type":     {Field: "Tipo"},
+		"labels":   {Field: "Tags"},
+	}).withDefaults()
+
+	t.Run("a field name is trimmed and applied", func(t *testing.T) {
+		if got.StateField != "Estado" {
+			t.Errorf("StateField = %q", got.StateField)
+		}
+		if got.TypeField != "Tipo" {
+			t.Errorf("TypeField = %q", got.TypeField)
+		}
+	})
+	t.Run("an empty field name leaves the default alone", func(t *testing.T) {
+		if got.PriorityField != "Priority" {
+			t.Errorf("PriorityField = %q", got.PriorityField)
+		}
+	})
+	t.Run("a configured value is added", func(t *testing.T) {
+		if got.Statuses["parked"] != core.Status("backlog") {
+			t.Errorf("statuses = %+v", got.Statuses)
+		}
+		if got.Priorities["sev-1"] != core.PriorityCritical {
+			t.Errorf("priorities = %+v", got.Priorities)
+		}
+	})
+	t.Run("a configured value overrides the shipped one", func(t *testing.T) {
+		if got.Statuses["in progress"] != core.Status("in_review") {
+			t.Errorf("statuses = %+v", got.Statuses)
+		}
+	})
+	t.Run("the shipped values the project said nothing about survive", func(t *testing.T) {
+		if got.Statuses["fixed"] != core.Status("done") {
+			t.Errorf("statuses = %+v", got.Statuses)
+		}
+		if got.Priorities["minor"] != core.PriorityLow {
+			t.Errorf("priorities = %+v", got.Priorities)
+		}
+	})
+	t.Run("a blank local value maps nothing", func(t *testing.T) {
+		if _, mapped := got.Statuses["blank"]; mapped {
+			t.Errorf("statuses = %+v", got.Statuses)
+		}
+	})
+}

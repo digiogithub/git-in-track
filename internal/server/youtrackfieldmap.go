@@ -1,8 +1,6 @@
 package server
 
 import (
-	"strings"
-
 	"github.com/digiogithub/git-in-track/internal/config"
 	"github.com/digiogithub/git-in-track/internal/youtrack/mapping"
 )
@@ -17,47 +15,32 @@ import (
 //
 // Two decisions worth knowing:
 //
-//   - A configured value map is **overlaid on** the shipped defaults rather
-//     than replacing them. mapping.FieldMap's own rule is the opposite — a
-//     caller that supplies a value map means exactly that map — which is right
-//     for a caller assembling a table in code, and wrong for a person who used
-//     a settings screen to say what one unusual state means and did not intend
-//     to forget what "Fixed" means.
-//   - Keys are folded to lower case here, before the overlay. mapping folds
-//     them too, but folding after a merge would let "In Progress" and
-//     "in progress" collide in map-iteration order, which is a non-deterministic
-//     result nobody could debug.
+//   - The translation itself — which keys carry value maps, how a configured
+//     map is overlaid on the shipped defaults, how keys are folded — belongs to
+//     mapping.FieldMap.WithFields. This file only reshapes one type into the
+//     other, so that the preview here and the importer in internal/vault read
+//     one set of rules rather than two that can drift.
+//   - The reshaped block, not a flat field-name map, is what reaches
+//     internal/vault: a flat map carries the field names and silently loses
+//     every value the project configured (GIT-T-0131).
 
-// youtrackFieldMapping renders a project's configured field map as the
-// translation table the importer and the issue preview read.
-func youtrackFieldMapping(link *config.YouTrackLink) mapping.FieldMap {
-	out := mapping.DefaultFieldMap()
+// youtrackFieldSpecs reshapes a project's configured field map into the shape
+// internal/youtrack/mapping and internal/vault take. Both halves of each entry
+// cross over: the YouTrack field name and the value map.
+func youtrackFieldSpecs(link *config.YouTrackLink) map[string]mapping.FieldSpec {
 	if link == nil || len(link.FieldMap) == 0 {
-		return out
+		return nil
 	}
-	out = out.WithFieldNames(link.FieldMap.Names())
-	out.Statuses = overlayValues(out.Statuses, link.FieldMap.ValuesFor("status"))
-	out.Priorities = overlayValues(out.Priorities, link.FieldMap.ValuesFor("priority"))
-	out.Types = overlayValues(out.Types, link.FieldMap.ValuesFor("type"))
+	out := make(map[string]mapping.FieldSpec, len(link.FieldMap))
+	for key, entry := range link.FieldMap {
+		out[key] = mapping.FieldSpec{Field: entry.Field, Values: link.FieldMap.ValuesFor(key)}
+	}
 	return out
 }
 
-// overlayValues merges one configured value map onto the defaults, folding the
-// keys the way mapping looks them up.
-func overlayValues[T ~string](defaults map[string]T, configured map[string]string) map[string]T {
-	if len(configured) == 0 {
-		return defaults
-	}
-	out := make(map[string]T, len(defaults)+len(configured))
-	for from, to := range defaults {
-		out[strings.ToLower(strings.TrimSpace(from))] = to
-	}
-	for from, to := range configured {
-		key := strings.ToLower(strings.TrimSpace(from))
-		if key == "" || strings.TrimSpace(to) == "" {
-			continue
-		}
-		out[key] = T(strings.TrimSpace(to))
-	}
-	return out
+// youtrackFieldMapping renders a project's configured field map as the
+// translation table the issue preview reads. The importer builds the same table
+// from the same specs, one layer down.
+func youtrackFieldMapping(link *config.YouTrackLink) mapping.FieldMap {
+	return mapping.DefaultFieldMap().WithFields(youtrackFieldSpecs(link))
 }

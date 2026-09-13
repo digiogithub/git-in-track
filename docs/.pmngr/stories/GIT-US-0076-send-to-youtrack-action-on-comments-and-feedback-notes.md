@@ -2,7 +2,7 @@
 id: GIT-US-0076
 type: story
 title: Send to YouTrack action on comments and feedback notes
-status: in_review
+status: done
 priority: medium
 parent: GIT-EP-0013
 milestone: GIT-M-0011
@@ -11,8 +11,9 @@ author: mcp
 labels: [web]
 estimate: 5
 created: 2026-09-13T13:13:53Z
-updated: 2026-09-13T16:37:36Z
+updated: 2026-09-13T16:45:42Z
 started: 2026-09-13T16:27:33Z
+closed: 2026-09-13T16:45:42Z
 ---
 
 ## Description

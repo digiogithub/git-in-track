@@ -13,6 +13,13 @@
  * job reports itself over the `sync.job.*` stream the viewer already listens
  * to. The toasts therefore say "queued", never "published" — claiming the
  * second would be a lie the moment an instance is slow.
+ *
+ * The manual publish reads the project's `kb_sync` setting rather than assuming
+ * it. Under `on_write` a save already enqueues a publish, so a button labelled
+ * "Publish to YouTrack" would be describing the setting's work as its own: it
+ * relabels to "Publish now" and the toolbar says where publishing actually
+ * comes from. The button is not disabled — publishing this page this instant is
+ * still a thing to want, most obviously when the last automatic job failed.
  */
 
 import { RefreshCw, UploadCloud } from 'lucide-react';
@@ -33,6 +40,7 @@ import { PUBLISH_SCOPE_NOTE } from '@/features/kb/kb-sync';
 import { KbSyncBadge } from '@/features/kb/KbSyncBadge';
 import { useKbSyncJob } from '@/features/kb/useKbData';
 import { youtrackMessage } from '@/features/settings/youtrack-messages';
+import { useYouTrackSettings } from '@/features/settings/youtrack-queries';
 
 export type KbSyncToolbarProps = {
   project: string;
@@ -68,6 +76,14 @@ export function KbSyncToolbar({
   const publish = useKbSyncJob(project, 'publish');
   const pull = useKbSyncJob(project, 'pull');
   const [confirmFolder, setConfirmFolder] = useState(false);
+  const settings = useYouTrackSettings(project);
+
+  // What the project's own setting already does, which is what decides whether
+  // the manual button is the way pages reach YouTrack or merely the fast one.
+  // An unset direction means `push`, the same default the settings card shows.
+  const direction = settings.data?.kbSyncDirection ?? '';
+  const publishesOnWrite =
+    settings.data?.kbSync === 'on_write' && direction !== 'pull';
 
   const busy = publish.isPending || pull.isPending;
   const folderLabel = folder === '' ? 'this project' : folder;
@@ -109,12 +125,17 @@ export function KbSyncToolbar({
         variant="outline"
         size="sm"
         disabled={path === '' || busy}
+        title={
+          publishesOnWrite
+            ? 'This project publishes on save; this queues a publish straight away'
+            : undefined
+        }
         onClick={() => {
           run('publish', { path }, 'this page');
         }}
       >
         <UploadCloud className="h-4 w-4" aria-hidden="true" />
-        Publish to YouTrack
+        {publishesOnWrite ? 'Publish now' : 'Publish to YouTrack'}
       </Button>
       <Button
         variant="ghost"
@@ -158,6 +179,13 @@ export function KbSyncToolbar({
       >
         {checking ? 'Checking…' : 'Check the article'}
       </Button>
+
+      {publishesOnWrite ? (
+        <span className="w-full text-xs text-muted-foreground">
+          This project is set to publish on save: saving a page already queues a publish, and these
+          buttons only bring it forward.
+        </span>
+      ) : null}
 
       <Dialog open={confirmFolder} onOpenChange={setConfirmFolder}>
         <DialogContent>

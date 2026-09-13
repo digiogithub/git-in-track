@@ -1657,34 +1657,21 @@ describe('CompanionProvider YouTrack import (epic GIT-EP-0012)', () => {
     const run = vi.fn().mockResolvedValue(response({ jobId: 'job_000021' }));
     const answer = await provider(run).runYouTrackImport(options, { projectKey: 'GIT' });
     expect(lastCall(run).url).toBe(`${BASE}/api/v1/youtrack/import?key=GIT`);
-    expect(answer).toEqual({ jobId: 'job_000021', result: null });
+    expect(answer).toEqual({ jobId: 'job_000021' });
   });
 
-  it('reads an inline result as well as a queued job', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(
-      response({
-        project: 'GIT',
-        created: 1,
-        updated: 0,
-        failed: 1,
-        issues: [
-          { youtrackId: 'ACME-42', itemId: 'GIT-T-0400', action: 'create', comments: 0 },
-          { youtrackId: 'ACME-44', action: 'create', comments: 0, error: '403 Forbidden' },
-        ],
-      }),
-    );
+  it('reads the job id whichever key the answer spells it with', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(response({ id: 'job_000022', queued: true }));
 
     const answer = await provider(fetchImpl).runYouTrackImport({
-      ids: ['ACME-42', 'ACME-44'],
+      ids: ['ACME-42'],
       depth: 0,
       includeLinks: false,
       includeComments: false,
       includeAttachments: false,
     });
 
-    expect(answer.jobId).toBe('');
-    expect(answer.result).toMatchObject({ created: 1, failed: 1 });
-    expect(answer.result?.issues[1]?.error).toBe('403 Forbidden');
+    expect(answer).toEqual({ jobId: 'job_000022' });
   });
 });
 

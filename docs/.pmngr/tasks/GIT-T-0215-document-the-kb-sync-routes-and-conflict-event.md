@@ -2,7 +2,7 @@
 id: GIT-T-0215
 type: task
 title: Document the KB sync routes and conflict event
-status: in_review
+status: done
 priority: medium
 parent: GIT-US-0090
 milestone: GIT-M-0011
@@ -10,8 +10,9 @@ author: mcp
 labels: [docs, agent-ok]
 estimate: 2
 created: 2026-09-13T13:21:22Z
-updated: 2026-09-13T16:20:51Z
+updated: 2026-09-13T16:56:47Z
 started: 2026-09-13T16:20:39Z
+closed: 2026-09-13T16:56:47Z
 ---
 
 ## Description
@@ -20,25 +21,14 @@ Document the three routes and the per-page status shape in `docs/07-cli-and-api.
 
 ## Acceptance Criteria
 
-- [ ] The routes and the status shape are documented in `docs/07-cli-and-api.md` §4.
+- [x] The routes and the status shape are documented in `docs/07-cli-and-api.md` §4.
 - [x] The conflict event and semantics are documented in §5.6 and in the KB documentation.
-- [ ] `CHANGELOG.md` has an entry and `make lint` passes.
+- [x] `CHANGELOG.md` has an entry and `make lint` passes.
 
 ## Notes
 
-**Partial, and deliberately left in review.** The knowledge-base half landed:
-`docs/03-data-model.md` §14.6 "Deciding who changed" now documents the five states
-(`unlinked`, `in_sync`, `local_ahead`, `remote_ahead`, `conflict`), why change detection is
-content-based rather than byte-based, that `remote_ahead` is only ever reported when the caller
-asked for the remote read, and the conflict semantics — last writer wins per direction, both
-changed writes `<page>.conflict.md` beside the page with a `conflict_of` front-matter key and
-leaves the original untouched, and there is deliberately no three-way merge. `youtrack.kb.conflict`
-is already documented in `docs/07-cli-and-api.md` §5.6, which landed with wave 4.
+The knowledge-base half landed first: `docs/03-data-model.md` §14.6 "Deciding who changed" documents the five states (`unlinked`, `in_sync`, `local_ahead`, `remote_ahead`, `conflict`), why change detection is content-based rather than byte-based, that `remote_ahead` is only ever reported when the caller asked for the remote read, and the conflict semantics — last writer wins per direction, both changed writes `<page>.conflict.md` beside the page with a `conflict_of` front-matter key and leaves the original untouched, and there is deliberately no three-way merge. `youtrack.kb.conflict` is documented in `docs/07-cli-and-api.md` §5.6.
 
-What is left is the first criterion, and it is not the docs agent's to close. At the commit this
-was verified against (`7d8d9a3`) the three routes **did not exist**: `mountYouTrack` served
-settings, test, projects, fields, issues and the two import routes and nothing else, and the KB
-methods were reachable only over the core API and the two MCP tools. GIT-T-0214 is landing them
-now; the `docs/07-cli-and-api.md` §4 entry belongs with that work, in the file that agent owns.
+The first criterion is now closed. GIT-T-0214 landed the three routes and `docs/07-cli-and-api.md` documents them under "Knowledge-base synchronization (GIT-US-0087, GIT-US-0090)": the route table, the `?key=` convention, the three scoped spellings mounted from the same handlers, the 404 on a project with no block, the full per-page status shape with `linked`, `articleId`, `url`, `state`, `syncedAt` and the per-page `error`, why `remote` is never defaulted on, and the queued `202 {project, jobId, pages}` answer of publish and pull. **Correction to this task's description**: the routes are REST, so they live in §5.5 and not in §4 — §4 is the CLI surface, where `gintrack youtrack kb` is documented separately.
 
-`CHANGELOG.md` was not touched — another agent owns it this wave.
+`CHANGELOG.md` carries the entry ("The HTTP surface of knowledge-base synchronization (GIT-US-0090, docs/07 §5.5)"), written by the agent who owns that file. `make lint` passes with zero Go issues.

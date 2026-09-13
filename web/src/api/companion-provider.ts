@@ -126,12 +126,12 @@ import type {
   Unsubscribe,
   UpdateOp,
   YouTrackField,
+  YouTrackFieldMapping,
+  YouTrackFieldValue,
   YouTrackFieldList,
-  YouTrackImportIssueResult,
   YouTrackImportOptions,
   YouTrackImportPlanItem,
   YouTrackImportPreviewResult,
-  YouTrackImportResult,
   YouTrackImportRun,
   YouTrackImportWarning,
   YouTrackIssue,
@@ -1037,10 +1037,10 @@ export function toCapabilities(value: unknown): Capabilities {
 /** `GET|PATCH /youtrack/settings` → the connection the settings card shows. */
 export function toYouTrackSettings(value: unknown): YouTrackSettings {
   const record = asRecord(value) ?? {};
-  const fieldMap: Record<string, string> = {};
+  const fieldMap: Record<string, YouTrackFieldMapping> = {};
   for (const [key, entry] of Object.entries(asRecord(record['fieldMap']) ?? {})) {
-    const name = asString(entry);
-    if (name !== undefined) fieldMap[key] = name;
+    const mapping = toYouTrackFieldMapping(entry);
+    if (mapping !== undefined) fieldMap[key] = mapping;
   }
   return {
     projectKey: asString(record['projectKey']) ?? '',
@@ -1056,6 +1056,29 @@ export function toYouTrackSettings(value: unknown): YouTrackSettings {
     persisted: asBoolean(record['persisted']) ?? false,
     projectPath: asString(record['projectPath']) ?? '',
     repo: asString(record['repo']) ?? '',
+  };
+}
+
+/**
+ * One entry of the field map.
+ *
+ * The companion always writes the object form, `{field, values}`. The scalar
+ * form is still read because a project.yaml may spell an entry as a bare field
+ * name and an older companion answered it that way; both mean the same thing.
+ */
+function toYouTrackFieldMapping(value: unknown): YouTrackFieldMapping | undefined {
+  const name = asString(value);
+  if (name !== undefined) return { field: name };
+  const record = asRecord(value);
+  if (!record) return undefined;
+  const values: Record<string, string> = {};
+  for (const [from, to] of Object.entries(asRecord(record['values']) ?? {})) {
+    const target = asString(to);
+    if (target !== undefined && target !== '') values[from] = target;
+  }
+  return {
+    field: asString(record['field']) ?? '',
+    ...(Object.keys(values).length === 0 ? {} : { values }),
   };
 }
 
@@ -1082,6 +1105,31 @@ function toYouTrackProject(value: unknown): YouTrackProject {
   };
 }
 
+/**
+ * One allowed value of a bundle-backed field.
+ *
+ * `isResolved` is copied only when the instance actually declared it: the
+ * companion omits the key rather than sending `false` for a value it knows
+ * nothing about, and reading an absent flag as `false` would turn "unknown"
+ * into "this value does not close an issue", which is a claim nobody made.
+ */
+function toYouTrackFieldValue(value: unknown): YouTrackFieldValue {
+  const record = asRecord(value) ?? {};
+  const name = asString(record['name']) ?? '';
+  const resolved = asBoolean(record['isResolved']);
+  return {
+    id: asString(record['id']) ?? '',
+    name,
+    label: asString(record['label']) ?? name,
+    ...(asString(record['description']) === undefined
+      ? {}
+      : { description: asString(record['description']) ?? '' }),
+    ordinal: asNumber(record['ordinal']) ?? 0,
+    archived: asBoolean(record['archived']) ?? false,
+    ...(resolved === undefined ? {} : { isResolved: resolved }),
+  };
+}
+
 function toYouTrackField(value: unknown): YouTrackField {
   const record = asRecord(value) ?? {};
   return {
@@ -1091,6 +1139,12 @@ function toYouTrackField(value: unknown): YouTrackField {
     bundleId: asString(record['bundleId']) ?? '',
     bundleType: asString(record['bundleType']) ?? '',
     canBeEmpty: asBoolean(record['canBeEmpty']) ?? false,
+    ...(asString(record['emptyFieldText']) === undefined
+      ? {}
+      : { emptyFieldText: asString(record['emptyFieldText']) ?? '' }),
+    bundled: asBoolean(record['bundled']) ?? false,
+    values: asArray(record['values']).map(toYouTrackFieldValue),
+    warnings: asStringArray(record['warnings']) ?? [],
   };
 }
 
@@ -1103,6 +1157,7 @@ export function toYouTrackFieldList(value: unknown): YouTrackFieldList {
     fields,
     total: asNumber(record['total']) ?? fields.length,
     gintrackFields: asStringArray(record['gintrackFields']) ?? [],
+    valueMappableFields: asStringArray(record['valueMappableFields']) ?? [],
   };
 }
 
@@ -1189,46 +1244,17 @@ export function toYouTrackImportPreview(value: unknown): YouTrackImportPreviewRe
   };
 }
 
-function toImportIssueResult(value: unknown): YouTrackImportIssueResult {
-  const record = asRecord(value) ?? {};
-  return {
-    youtrackId: asString(record['youtrackId']) ?? '',
-    ...(asString(record['itemId']) === undefined
-      ? {}
-      : { itemId: asString(record['itemId']) ?? '' }),
-    action: toImportAction(record['action']),
-    comments: asNumber(record['comments']) ?? 0,
-    warnings: toImportWarnings(record['warnings']),
-    ...(asString(record['error']) === undefined ? {} : { error: asString(record['error']) ?? '' }),
-  };
-}
-
-/** The run operation → the finished result, when the import ran inline. */
-export function toYouTrackImportResult(value: unknown): YouTrackImportResult {
-  const record = asRecord(value) ?? {};
-  return {
-    project: asString(record['project']) ?? '',
-    issues: asArray(record['issues']).map(toImportIssueResult),
-    created: asNumber(record['created']) ?? 0,
-    updated: asNumber(record['updated']) ?? 0,
-    failed: asNumber(record['failed']) ?? 0,
-    warnings: toImportWarnings(record['warnings']),
-  };
-}
-
 /**
- * The run operation's answer in either of its two shapes: `{jobId}` when the
- * companion enqueued the import on the job engine, or the finished result when
- * it ran it inline.
+ * `POST /youtrack/import` → the job the import runs as.
+ *
+ * The route always queues and always answers `{jobId, projectKey, repo,
+ * queued}`; there is no synchronous result to read, so there is nothing else
+ * worth keeping here. What each issue produced is the job's business, and
+ * `GET /sync/jobs/{id}` is where it is read back from.
  */
 export function toYouTrackImportRun(value: unknown): YouTrackImportRun {
   const record = asRecord(value) ?? {};
-  const jobId = asString(record['jobId']) ?? asString(record['id']) ?? '';
-  const inline = asRecord(record['result']) ?? (record['issues'] === undefined ? null : record);
-  return {
-    jobId,
-    result: inline === null ? null : toYouTrackImportResult(inline),
-  };
+  return { jobId: asString(record['jobId']) ?? asString(record['id']) ?? '' };
 }
 
 // --------------------------------------------------------- background jobs
@@ -2411,9 +2437,9 @@ export class CompanionProvider implements DataProvider {
   }
 
   /**
-   * The run operation of story GIT-US-0047, over REST. The companion either
-   * enqueues the import on the job engine and answers `{jobId}`, or runs it
-   * inline and answers the finished result; `toYouTrackImportRun` reads both.
+   * The run operation of story GIT-US-0047, over REST. The companion enqueues
+   * the import on its job engine and answers `202` with the job id; the caller
+   * follows it over the `sync.job.*` events.
    */
   async runYouTrackImport(
     options: YouTrackImportOptions,

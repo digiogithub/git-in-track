@@ -497,9 +497,11 @@ func TestYouTrackImportLinksAndAttachments(t *testing.T) {
 		if item.Links[0].Kind != core.LinkRelatesTo {
 			t.Fatalf("kind = %q", item.Links[0].Kind)
 		}
-		if len(item.Attachments) != 1 ||
-			!strings.HasSuffix(item.Attachments[0], byIssue["ACME-10"]+"/trace.log") {
-			t.Fatalf("attachments = %v", item.Attachments)
+		// A bare file name, as docs/03 §13.4 specifies for every writer: the
+		// folder is `.pmngr/attachments/<ITEM-ID>/` by convention and is never
+		// repeated inside the entry (R-ATT-4, R-YT-7).
+		if len(item.Attachments) != 1 || item.Attachments[0] != "trace.log" {
+			t.Fatalf("attachments = %v, want the bare file name", item.Attachments)
 		}
 		// The unresolvable half is a warning, never a dangling link.
 		warned := false
@@ -514,4 +516,108 @@ func TestYouTrackImportLinksAndAttachments(t *testing.T) {
 			t.Fatalf("issues = %+v", result.Issues)
 		}
 	})
+}
+
+// ------------------------------------------------- the configured values ---
+
+// importFixtureLinked is importFixture with a link the caller wrote, which is
+// how a project's configured `field_map` is put in front of the importer.
+func importFixtureLinked(t *testing.T, w *Workspace, fake *fakeYouTrack, link YouTrackLink) {
+	t.Helper()
+	mount, ok := w.MountForProject("DEMO")
+	if !ok {
+		t.Fatal("the fixture workspace serves no DEMO project")
+	}
+	mount.Vault.SetYouTrackProvider(
+		func(context.Context, string) (YouTrackSource, YouTrackLink, error) {
+			return fake, link, nil
+		})
+}
+
+// TestYouTrackImportAppliesConfiguredValueMaps covers GIT-T-0131: a project
+// that configured what its YouTrack states mean must have an actual import
+// honor it, not only the preview.
+//
+// The link below renames the state field *and* maps three of its values, so one
+// test fails on either half going missing: before the field map crossed the
+// seam whole, only the names arrived and every value fell back to the default.
+func TestYouTrackImportAppliesConfiguredValueMaps(t *testing.T) {
+	writableModes(t, func(t *testing.T, w *Workspace) {
+		state := func(id, summary, value string) youtrack.Issue {
+			issue := ytIssue(id, summary, "Task")
+			issue.CustomFields = append(issue.CustomFields, ytField("Estado", value))
+			return issue
+		}
+		fake := &fakeYouTrack{issues: map[string]youtrack.Issue{
+			// A value the shipped defaults do not know at all.
+			"ACME-21": state("ACME-21", "Parked work", "Parked"),
+			// A value the defaults do know, mapped somewhere else: the
+			// project's answer must win over the shipped one.
+			"ACME-22": state("ACME-22", "Remapped work", "In Progress"),
+			// A value the project said nothing about: the defaults must
+			// survive, because a configured map is overlaid and not a
+			// replacement.
+			"ACME-23": state("ACME-23", "Finished work", "Fixed"),
+		}}
+		importFixtureLinked(t, w, fake, YouTrackLink{
+			BaseURL: "https://yt.example.com",
+			Project: "ACME",
+			FieldMap: map[string]mapping.FieldSpec{
+				"status": {Field: "Estado", Values: map[string]string{
+					"Parked":      "backlog",
+					"In Progress": "in_review",
+				}},
+			},
+		})
+
+		result := runImport(t, w, map[string]any{
+			"project": "DEMO",
+			"ids":     []string{"ACME-21", "ACME-22", "ACME-23"},
+			"depth":   0,
+		})
+		if result.Created != 3 || result.Failed != 0 {
+			t.Fatalf("result = %+v", result)
+		}
+
+		want := map[string]core.Status{
+			"ACME-21": core.Status("backlog"),
+			"ACME-22": core.Status("in_review"),
+			"ACME-23": core.Status("done"),
+		}
+		for _, imported := range result.Issues {
+			item := decode[core.Item](t, wsCall(t, w, "item.get",
+				map[string]any{"id": imported.ItemID}))
+			if got := item.Status; got != want[imported.YouTrackID] {
+				t.Errorf("%s landed on status %q, want %q",
+					imported.YouTrackID, got, want[imported.YouTrackID])
+			}
+		}
+	})
+}
+
+// TestYouTrackAttachmentNameIsABareFileName covers the reduction that makes a
+// bare `attachments[]` entry safe: whatever a tracker calls a file, the entry
+// is a plain name that resolves inside the item's own attachment folder
+// (R-ATT-4, R-YT-7).
+func TestYouTrackAttachmentNameIsABareFileName(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"a plain name is kept", "trace.log", "trace.log"},
+		{"surrounding space is trimmed", "  trace.log  ", "trace.log"},
+		{"a path is reduced to its base", "reports/2026/trace.log", "trace.log"},
+		{"a traversal is reduced too", "../../etc/passwd", "passwd"},
+		{"a Windows path is reduced", `C:\temp\trace.log`, "trace.log"},
+		{"a directory name maps to nothing", "..", ""},
+		{"an empty name maps to nothing", "   ", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := youtrackAttachmentName(tc.raw); got != tc.want {
+				t.Errorf("youtrackAttachmentName(%q) = %q, want %q", tc.raw, got, tc.want)
+			}
+		})
+	}
 }
