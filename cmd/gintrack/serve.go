@@ -152,6 +152,10 @@ func runServe(cmd *cobra.Command, build buildInfo, flags *serveFlags) error {
 		// survive a restart.
 		Git:        cfg.Git,
 		ConfigPath: res.Path,
+		// The YouTrack credentials of the projects this workspace serves. They
+		// are resolved once here, flag over GINTRACK_YOUTRACK_TOKEN over the
+		// 0600 file, and the server hands them out to nobody (ADR-032).
+		YouTrack: cfg.YouTrackTokens(),
 		// The MCP endpoint is off unless asked for, on the command line or in
 		// the `mcp:` section of the configuration.
 		MCPHTTP:       pickBool(cmd, "mcp-http", flags.mcpHTTP, cfg.MCP.Enabled),

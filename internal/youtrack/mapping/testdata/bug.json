@@ -1,0 +1,26 @@
+{
+  "id": "2-500",
+  "idReadable": "ACME-77",
+  "summary": "Avatar upload corrupts PNGs",
+  "description": "The thumbnailer rewrites the alpha channel.\n\n![before](before.png)\n![after](after.png \"after the fix\")\n![remote](https://cdn.example.com/after.png)\n![nested](docs/after.png)\n",
+  "created": 1767230000000,
+  "updated": 1767330000000,
+  "resolved": 1767330000000,
+  "project": { "id": "0-1", "name": "Acme Platform", "shortName": "ACME" },
+  "reporter": { "id": "1-7", "login": "ana", "fullName": "Ana Ruiz", "email": "ana@example.com" },
+  "customFields": [
+    { "id": "110-1", "name": "Type", "$type": "SingleEnumIssueCustomField", "value": { "id": "70-1", "name": "Bug", "$type": "EnumBundleElement" } },
+    { "id": "110-2", "name": "State", "$type": "StateIssueCustomField", "value": { "id": "71-5", "name": "Fixed", "isResolved": true, "$type": "StateBundleElement" } },
+    { "id": "110-3", "name": "Priority", "$type": "SingleEnumIssueCustomField", "value": { "id": "72-4", "name": "Minor", "$type": "EnumBundleElement" } },
+    { "id": "110-4", "name": "Assignee", "$type": "MultiUserIssueCustomField", "value": [ { "id": "1-7", "login": "ana", "fullName": "Ana Ruiz", "$type": "User" }, { "id": "1-9", "fullName": "Contractor Without Login", "$type": "User" } ] },
+    { "id": "110-5", "name": "Estimation", "$type": "PeriodIssueCustomField", "value": { "id": "0", "minutes": 90, "$type": "PeriodValue" } },
+    { "id": "110-8", "name": "Fix versions", "$type": "MultiVersionIssueCustomField", "value": [ { "id": "113-1", "name": "1.5.0", "$type": "VersionBundleElement" }, { "id": "113-2", "name": "1.4.3", "$type": "VersionBundleElement" } ] }
+  ],
+  "links": [
+    { "id": "97-2b", "direction": "BOTH",
+      "linkType": { "id": "97-2", "name": "Relates", "sourceToTarget": "relates to", "targetToSource": "relates to", "directed": false },
+      "issues": [] }
+  ],
+  "tags": [ { "id": "5-4", "name": "media" }, { "id": "5-4", "name": "media" } ],
+  "$type": "Issue"
+}

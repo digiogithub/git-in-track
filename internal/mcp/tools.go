@@ -23,7 +23,9 @@ import (
 // read-only server does not merely refuse them: it does not advertise them.
 func registerTools(s *Server) {
 	registerItemTools(s)
+	registerInboxTools(s)
 	registerBoardTools(s)
+	registerSprintTools(s)
 	registerKBTools(s)
 }
 

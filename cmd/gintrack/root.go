@@ -97,6 +97,7 @@ Start with:
 		newItemCommand(flags),
 		newDoctorCommand(flags),
 		newConfigCommand(flags),
+		newYouTrackCommand(flags),
 	)
 	return cmd
 }

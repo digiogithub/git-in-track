@@ -14,13 +14,15 @@ import (
 
 // readTools is the surface a server started without --allow-write advertises.
 var readTools = []string{
-	"get_item", "get_kb_page", "list_items", "list_kb_pages", "search_items", "search_kb",
+	"get_item", "get_kb_page", "list_inbox", "list_items", "list_kb_pages",
+	"search_items", "search_kb",
 }
 
 // writeTools is what enabling writes adds.
 var writeTools = []string{
-	"add_comment", "create_epic", "create_milestone", "create_story", "create_task",
-	"move_on_board", "update_item",
+	"add_comment", "close_sprint", "create_epic", "create_inbox_item", "create_milestone",
+	"create_story", "create_task", "move_on_board", "transfer_sprint_items",
+	"triage_inbox_item", "update_item",
 }
 
 func TestToolSurface(t *testing.T) {

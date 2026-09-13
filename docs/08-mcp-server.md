@@ -6,7 +6,7 @@ with `GIT-US-0024`, plus `create_milestone` from `GIT-US-0033`;
 Phase: **Phase 5 — MCP server + agent workflows** (depends on Phase 2 companion CLI, Phase 3 boards, Phase 4 sync)
 Audience: contributors working on `internal/mcp`; authors of agent instructions (`AGENTS.md`)
 
-What ships today: thirteen tools over stdio and over streamable HTTP, read-only by default,
+What ships today: eighteen tools over stdio and over streamable HTTP, read-only by default,
 with cursor pagination, field projection and a `rev` on every item. Resources, prompts, the
 audit log, dry-run and rate limiting are specified here and land in later stories of the
 epic; each is labelled where it appears.
@@ -175,8 +175,9 @@ advertised yet; they arrive with sections 5 and 6.
 
 ## 4. Tool catalog
 
-Thirteen tools ship: twelve with `GIT-US-0024` and `create_milestone` with `GIT-US-0033`.
-They are the same thirteen on both transports, from the same registry, over the same
+Eighteen tools ship: twelve with `GIT-US-0024`, `create_milestone` with `GIT-US-0033`, the
+three inbox tools with `GIT-US-0056` and the two sprint rollover tools with `GIT-US-0085`.
+They are the same eighteen on both transports, from the same registry, over the same
 workspace.
 
 Common conventions for all tools:
@@ -211,6 +212,11 @@ Common conventions for all tools:
 | `update_item`    | write | `item.update`              | ~90 tokens         |
 | `add_comment`    | write | `comment.add`             | ~70 tokens          |
 | `move_on_board`  | write | `board.move`              | ~90 tokens          |
+| `list_inbox`     | read  | `inbox.list`              | ~45 tokens/entry    |
+| `create_inbox_item` | write | `item.create`          | ~90 tokens          |
+| `triage_inbox_item` | write | `inbox.triage`         | ~90 tokens          |
+| `close_sprint`   | write | `sprint.close`            | ~40 tokens + 1/decision |
+| `transfer_sprint_items` | write | `sprint.transfer`  | ~40 tokens + 1/decision |
 
 Write tools are advertised only when the server was started with writes enabled: with
 `--allow-write`, or with `mcp.allowWrite: true` in the configuration file, which
@@ -592,12 +598,162 @@ Every path argument is confined to the repositories the server mounts (section 7
 }
 ```
 
-### 4.11 Planned tools
+### 4.11 `create_inbox_item`
+
+The inbox is the triage queue: things that arrived and still need a human decision. An item
+is *in* the inbox because its status belongs to the reserved `triage` category — there is no
+inbox folder and no stored boolean (`03-data-model.md`, ADR-033). A project that declares no
+triage status simply has no inbox and refuses with `no_triage_status`.
+
+Use this rather than `create_story` when you are **reporting** something rather than planning
+it. `status`, `parent` and `type` are not the submitter's to choose: the tool files the item
+as pending and the triager decides the rest.
+
+```json
+// input
+{ "project": "ACME", "title": "Checkout hangs on Safari after the address step",
+  "body": "Reported by two customers on 2026-09-12. Reproduced on 17.6.", "source": "web" }
+// output
+{
+  "item": {"id":"ACME-US-0143","rev":"sha256:6d0c1f7a4e2b8593","type":"story",
+           "title":"Checkout hangs on Safari after the address step","status":"triage",
+           "updated":"2026-09-13T10:00:00Z"},
+  "changed": ["docs/.pmngr/stories/ACME-US-0143-checkout-hangs-on-safari.md"]
+}
+```
+
+`source` is free text — `web`, `mcp`, `youtrack`, the name of a form — and never an
+enumeration. It defaults to the agent name the server was started with.
+
+### 4.12 `list_inbox`
+
+The queue, with the counts per triage state across the whole of it, so a badge needs no
+second call. A snoozed entry whose date has arrived is listed as **pending again**: expiry is
+a comparison made when the queue is read, never a scheduler.
+
+```json
+// input
+{ "project": "ACME", "status": ["pending"], "limit": 2 }
+// output
+{
+  "items": [
+    {"id":"ACME-US-0143","rev":"sha256:6d0c1f7a4e2b8593","type":"story",
+     "title":"Checkout hangs on Safari after the address step","status":"triage",
+     "updated":"2026-09-13T10:00:00Z"}
+  ],
+  "total": 1,
+  "pending": 1,
+  "counts": {"pending":1,"snoozed":2,"accepted":9,"rejected":3,"duplicate":1}
+}
+```
+
+Bodies are never returned, as in `list_items`; read one entry with `get_item`. Submitted
+bodies are third-party content, so the result carries the untrusted-content marker.
+
+### 4.13 `triage_inbox_item`
+
+Exactly one decision per call, applied as a single rev-checked write.
+
+| `action`    | What it writes                                                              |
+| ----------- | --------------------------------------------------------------------------- |
+| `accept`    | Moves the item out of triage into `status` (default: the workflow's initial status), optionally under `parent`, and records `inbox.status: accepted` |
+| `reject`    | Moves the item to the project's cancelled status and records `inbox.status: rejected` |
+| `snooze`    | Records `snoozedUntil` and leaves the status alone                          |
+| `duplicate` | Records `duplicateOf`, adds a `duplicates` link and writes the `duplicated_by` inverse on the target |
+
+Accepting does **not** decide the rest for the user: it clears triage and moves the item into
+the ordinary workflow, and the web UI reopens the edit form so a person picks type, parent
+and status. Rejecting is a status, never a deletion (ADR-026): the file stays, with its id.
+`type` is accepted only when it matches the item's own type — an item id pins its type for
+life, so a submission filed as the wrong type becomes a `duplicate` of a new item, not a
+mutation of this one.
+
+```json
+// input
+{ "id": "ACME-US-0143", "rev": "sha256:6d0c1f7a4e2b8593",
+  "action": "accept", "status": "backlog", "parent": "ACME-EP-0004" }
+// output
+{
+  "item": {"id":"ACME-US-0143","rev":"sha256:be71c204af38d015","type":"story",
+           "title":"Checkout hangs on Safari after the address step","status":"backlog",
+           "parent":"ACME-EP-0004","updated":"2026-09-13T10:04:00Z"},
+  "action": "accept",
+  "pending": 4,
+  "changed": ["docs/.pmngr/stories/ACME-US-0143-checkout-hangs-on-safari.md"]
+}
+```
+
+A stale `rev` is refused with `stale_revision` and nothing is written; the retry protocol is
+the one in §4.5.
+
+### 4.14 `close_sprint`
+
+Close a sprint and, in the same operation, move what it did not finish into another sprint or
+back to the backlog. Finished work is never touched, and **nothing moves unless `mode` or
+`carry` says so** (`04-team-repository.md` R-SPR-3).
+
+**Ask for the preview first.** With `dryRun: true` the whole report is computed — how many are
+done, how many are not, where each would go, and every refusal — and no file is written, not
+even a `WriteSet`. Show those counts, then repeat the call with `dryRun: false`. That is the
+same two-step the web UI's confirmation dialog performs.
+
+```json
+// input
+{ "id": "ACME-TEAM-S-0007", "rev": "sha256:88fa1010c2b4e731",
+  "mode": "next", "target": "ACME-TEAM-S-0008", "dryRun": true }
+// output
+{
+  "sprint": "ACME-TEAM-S-0007", "board": "delivery", "state": "active", "dryRun": true,
+  "completed": 7, "incomplete": 3, "unresolved": 0, "moved": 3, "failed": 0,
+  "completedPoints": 21, "incompletePoints": 8,
+  "carried": [
+    {"ref":"ACME/ACME-T-0311","action":"next","sprint":"ACME-TEAM-S-0008"},
+    {"ref":"ACME/ACME-US-0042","action":"next","sprint":"ACME-TEAM-S-0008"},
+    {"ref":"WEB/WEB-US-0031","action":"next","sprint":"ACME-TEAM-S-0008"}
+  ]
+}
+```
+
+`mode` is `next`, `backlog` or `none`; `carry` overrides it for the references it names, so a
+caller can say "everything into the next sprint, except these three". A per-item failure —
+`repo_not_cloned` for a backlog return, a reference the sprint does not list — appears on its
+own `carried` line with an `error`, and the rest of the close still goes through (R-SPR-8).
+
+### 4.15 `transfer_sprint_items`
+
+The same rollover without the close: move the unfinished references of one sprint into
+another, or back to each item's own backlog, leaving both sprints open. `dryRun` works
+exactly as in `close_sprint`.
+
+The source sprint is not edited: its `items` keep every reference it ever held, and
+`committed` is never touched — it is the record of what was promised. A target whose derived
+status is `completed` is refused with `sprint_target_completed`: its numbers are history, and
+adding work to it would rewrite them.
+
+```json
+// input
+{ "id": "ACME-TEAM-S-0007", "rev": "*", "mode": "next", "target": "ACME-TEAM-S-0008" }
+// output
+{
+  "sprint": "ACME-TEAM-S-0007", "board": "delivery", "state": "active",
+  "rev": "sha256:0a4e2b85936d0c1f",
+  "completed": 7, "incomplete": 3, "moved": 2, "failed": 1,
+  "carried": [
+    {"ref":"ACME/ACME-T-0311","action":"next","sprint":"ACME-TEAM-S-0008"},
+    {"ref":"ACME/ACME-US-0042","action":"next","sprint":"ACME-TEAM-S-0008"},
+    {"ref":"WEB/WEB-US-0031","action":"backlog",
+     "error":"project WEB is not cloned on this machine; clone it to send WEB-US-0031 back to the backlog"}
+  ],
+  "changed": [".pmngr/sprints/ACME-TEAM-S-0008.md"]
+}
+```
+
+### 4.16 Planned tools
 
 `08` specified a larger catalog than `GIT-US-0024` implements. These are *planned*, each
 behind its own story: `list_workspaces`, `list_projects`, `get_kb_tree`, `link_items`,
 `list_comments`, `list_boards`, `get_board`, `get_sprint`, `list_retros`, `get_sync_status`
-and `run_sync` — verb first, like the thirteen above. Every one of them already has a core
+and `run_sync` — verb first, like the eighteen above. Every one of them already has a core
 method behind it, so the work is framing rather than domain logic.
 
 `delete_item` is deliberately **not** on that list: deleting a backlog item is a human action
@@ -709,9 +865,15 @@ Prompts are the cheapest place to encode team policy; they are plain strings in
   `--allow-write --tools update_item,add_comment` to let an agent report progress but never
   create items).
 
-### 7.2 Dry-run — *planned*
+### 7.2 Dry-run — *partly shipped*
 
-`--dry-run` (or per-call `"dryRun": true`) will make every write tool validate fully, allocate a
+`close_sprint` and `transfer_sprint_items` take `"dryRun": true` today, and it is the way to
+call them: the whole report is computed and no file is written, not even a `WriteSet`
+(`GIT-US-0085`). It ships first for those two because they are the only tools that can move
+a dozen items at once, which is exactly where a preview earns its keep.
+
+Everywhere else it is still *planned*. `--dry-run` (or per-call `"dryRun": true`) will make
+every write tool validate fully, allocate a
 preview ID where relevant, and return the unified diff without touching the filesystem:
 
 ```json

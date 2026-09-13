@@ -87,6 +87,19 @@ type Config struct {
 	Index            Index       `json:"index"                      yaml:"index"`
 	MCP              MCP         `json:"mcp"                        yaml:"mcp"`
 	Log              Log         `json:"log"                        yaml:"log"`
+	// Integrations holds the credentials of the external trackers this machine
+	// is linked to. It is the only place git-in-track stores a secret it did
+	// not generate itself (ADR-032), and it is excluded from JSON so that no
+	// API response and no `--json` output can ever carry it.
+	Integrations Integrations `json:"-" yaml:"integrations,omitempty"`
+
+	// youtrackToken is a token supplied by GINTRACK_YOUTRACK_TOKEN or by a
+	// --token flag: it beats the file for every project and lasts for this
+	// process only. It is unexported so that neither yaml.Marshal nor
+	// json.Marshal can write it anywhere.
+	youtrackToken string
+	// youtrackTokenSource is the provenance of that override.
+	youtrackTokenSource TokenSource
 }
 
 // Workspace is a named group of registered repositories. Repos holds repository
@@ -295,6 +308,13 @@ func (c *Config) Clone() *Config {
 	out.Repos = append([]Repo(nil), c.Repos...)
 	for i, r := range c.Repos {
 		out.Repos[i].DocsFolders = append([]string(nil), r.DocsFolders...)
+	}
+	out.Integrations = Integrations{}
+	if len(c.Integrations.YouTrack) > 0 {
+		out.Integrations.YouTrack = make(map[string]YouTrackCredential, len(c.Integrations.YouTrack))
+		for key, cred := range c.Integrations.YouTrack {
+			out.Integrations.YouTrack[key] = cred
+		}
 	}
 	return &out
 }

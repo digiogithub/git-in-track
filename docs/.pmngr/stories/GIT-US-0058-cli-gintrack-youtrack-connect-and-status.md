@@ -2,7 +2,7 @@
 id: GIT-US-0058
 type: story
 title: "CLI: gintrack youtrack connect and status"
-status: backlog
+status: done
 priority: medium
 parent: GIT-EP-0011
 milestone: GIT-M-0011
@@ -10,7 +10,9 @@ author: mcp
 labels: [cli, security, docs]
 estimate: 3
 created: 2026-09-13T13:12:27Z
-updated: 2026-09-13T13:12:27Z
+updated: 2026-09-13T14:44:54Z
+started: 2026-09-13T14:44:42Z
+closed: 2026-09-13T14:44:54Z
 ---
 
 ## Description
@@ -21,16 +23,24 @@ Add `cmd/gintrack/youtrack.go` with a cobra parent command and two subcommands, 
 
 ## Acceptance Criteria
 
-- [ ] `gintrack youtrack connect` and `gintrack youtrack status` exist, with help text in English and consistent with the other commands.
-- [ ] The token is read from `--token`, then `$GINTRACK_YOUTRACK_TOKEN`, then stdin, matching the documented flag > env > file precedence.
-- [ ] `connect` fails without writing anything when the probe returns 401, 403 or 404, printing which of the three it was.
-- [ ] Neither command prints or logs the token, in either text or `--json` output; a test asserts this.
-- [ ] `connect` writes `project.yaml` surgically, leaving every other key and comment intact.
-- [ ] `docs/07-cli-and-api.md` documents both commands, their flags and their exit codes.
-- [ ] `go test -race ./cmd/...` covers argument parsing, the token source precedence and the redaction assertion.
+- [x] `gintrack youtrack connect` and `gintrack youtrack status` exist, with help text in English and consistent with the other commands.
+- [x] The token is read from `--token`, then `$GINTRACK_YOUTRACK_TOKEN`, then stdin, matching the documented flag > env > file precedence.
+- [x] `connect` fails without writing anything when the probe returns 401, 403 or 404, printing which of the three it was.
+- [x] Neither command prints or logs the token, in either text or `--json` output; a test asserts this.
+- [x] `connect` writes `project.yaml` surgically, leaving every other key and comment intact.
+- [x] `docs/07-cli-and-api.md` documents both commands, their flags and their exit codes.
+- [x] `go test -race ./cmd/...` covers argument parsing, the token source precedence and the redaction assertion.
 
 ## Notes
 
 Existing commands under `cmd/gintrack/` are the style reference; the config helpers are `config.Load` (`internal/config/load.go:44`), `config.Save` (`:74`) and `config.Resolve` (`:146`). The YouTrack probe is `Client.Me` from the client story.
 
 Do NOT add an interactive prompt loop or a TTY password reader library — reading stdin when it is piped is enough and keeps the command scriptable. Do NOT let this command create or migrate a project: it only writes the integration block into an existing `project.yaml`.
+
+### As landed
+
+`connect` probes with `Me` **and** `Project`, so a token that authenticates but cannot see the named project fails before anything is written. It stores the token whichever of the three sources it came from — connecting is the act of making the link permanent — and reports `tokenInput` (`flag` | `env` | `stdin`) next to `tokenSource` (`file`), never the value. An existing `field_map` is preserved.
+
+Exit codes: 0 connected, 1 probe failed (the message says 401, 403 or 404), 2 a missing `--url`, `--project` or token, 3 a connection that would not be a valid block, 4 an unknown project or no connection at all.
+
+`go test -race ./cmd/...` has one **pre-existing, unrelated failure**: `TestMCPOverStdio` expects 13 MCP tools and another agent's in-flight `internal/mcp` change now advertises 18. Nothing in this story touches it; `go test -race ./cmd/... -run TestYouTrack` is green.

@@ -124,6 +124,9 @@ type Flags struct {
 	GitBackend string
 	LogLevel   string
 	LogFormat  string
+	// YouTrackToken is the permanent token a command was given on the command
+	// line. It beats the environment and the file and is never written back.
+	YouTrackToken string
 }
 
 // Resolution is the outcome of Resolve: the effective configuration and where
@@ -211,6 +214,9 @@ func applyEnv(c *Config, env Reader) error {
 		}
 		c.Git.CommitOnSave = on
 	}
+	if v := strings.TrimSpace(env(EnvYouTrackToken)); v != "" {
+		c.SetYouTrackTokenOverride(v, TokenSourceEnv)
+	}
 	if v := strings.TrimSpace(env(EnvLogLevel)); v != "" {
 		c.Log.Level = v
 	}
@@ -237,6 +243,9 @@ func applyFlags(c *Config, flags Flags) {
 	}
 	if flags.GitBackend != "" {
 		c.Git.Backend = Backend(flags.GitBackend)
+	}
+	if flags.YouTrackToken != "" {
+		c.SetYouTrackTokenOverride(flags.YouTrackToken, TokenSourceFlag)
 	}
 	if flags.LogLevel != "" {
 		c.Log.Level = flags.LogLevel

@@ -14,6 +14,131 @@ because a commit list cannot express them.
 
 ### Added
 
+- **A file can say where it came from: `external`** (ADR-031, docs/03 §12.5). Items, comments
+  and knowledge-base pages carry a list of `{system, id, url?, key?, synced_at?}`, and the
+  pair (`system`, `id`) is the identity of an entry — the idempotency key an importer matches
+  on, so re-running an import updates what it finds instead of duplicating it or guessing
+  from titles. `system` is deliberately **not an enumeration**: any
+  `[a-z0-9][a-z0-9._-]{0,31}` token round-trips untouched, so a file written by a tool this
+  project has never heard of survives a pass through an older binary. Writes are set
+  operations keyed on the pair, the discipline `labels` and `links` already use, so two
+  writers recording two different systems never clobber each other. The index keeps a map
+  from (`system`, `id`) to item id (`Index.ItemByExternal`), so the idempotence check an
+  importer performs a thousand times is one map read. The key sits between `links` and
+  `attachments` in the canonical order: it is a relation, just one that leaves the
+  repository. **Groundwork only so far** — the field parses, validates, round-trips and is
+  indexed in `internal/core`; no REST route, MCP tool or screen reads or writes it yet.
+
+- **The inbox: a reserved `triage` status category and an `inbox:` block** (ADR-033, docs/03
+  §6.4). Work that arrives from a form, an agent or an importer has to be real from the
+  moment it is submitted — a permanent id, a file, a git history, comments — and invisible to
+  planning until somebody accepts it. It is therefore an ordinary item whose `status` belongs
+  to a fifth reserved category, `triage`, carrying an `inbox:` block that records how it
+  arrived (`status`, `snoozed_until`, `duplicate_of`, `source`, `received`). **The category
+  is the truth and the block is metadata**, so no stored `is_inbox` boolean can disagree with
+  it, and accepting an item is one status change rather than an import step. Queries exclude
+  triage by default — `Filter.Inbox` is tri-state, so every filter written before the inbox
+  existed keeps its meaning — and board views, sprint views, sprint candidates and sprint
+  metrics exclude it unconditionally: a hand-edited sprint file naming a triage item reports
+  it as unresolved, not as work, so a thousand spam submissions change no burndown.
+  **Snoozing needs no scheduler**: a snoozed item whose `snoozed_until` has passed matches a
+  query for `pending`, compared against an instant the caller supplies, so a repository left
+  alone for a year answers correctly the moment somebody opens it. Two things to know: a
+  project that declares no status in the category simply has no inbox, with no error and no
+  warning, and every consumer that switches on a status category — including tools outside
+  this repository — now has a fifth case it did not have. **Groundwork only so far**: the
+  model, the parser and the query layer; there is no submission endpoint and no triage screen
+  yet.
+
+- **Sprint dates are optional, a sprint's status is derived from them, and closing one
+  freezes a snapshot** (ADR-034, docs/04 §8.2, §8.4, §12.1). `state` stays what it always
+  was, the record of the explicit start and close; what a reader is shown is now computed at
+  every read — `draft | upcoming | current | completed` — so the status on the board can no
+  longer disagree with the date on the wall, and a sprint becomes current on its start date
+  with nobody writing a file. `closed` always wins over the calendar. `start` and `end` are
+  given together or not at all, and a sprint with neither is a **draft**: a legal, listable
+  sprint with a goal and a scope and no place on the calendar yet, exempt from the no-overlap
+  rule — which is what finally makes it possible to plan three sprints ahead without
+  inventing date ranges that do not collide. The refusal a collision produces now names that
+  escape hatch. Closing a sprint writes a `snapshot` block — totals, the three distributions,
+  the observed burndown days and the provenance of the history they were frozen from — and it
+  is the one derived number this product stores, because after a close the items leave the
+  scope and the numbers stop being recomputable at all. It is written exactly once, never for
+  an open sprint, never recomputed, and honest about itself: a snapshot taken where no git
+  history could be read is marked approximate rather than passed off as a reconstruction. Two
+  prices are worth stating: "today" is a day in the **team timezone**, so clients that
+  disagree about it disagree about a sprint's status for a few hours around midnight, and a
+  closed sprint file grows by one burndown row per sprint day. **How much of this is wired:**
+  the derived status travels on every sprint payload today. Dateless sprints are accepted by
+  the model but still refused by `sprint.create` and `sprint.update`; the `snapshot` block
+  parses, round-trips and reaches the API, but `sprint.close` does not write one yet and the
+  metrics do not read one back yet. docs/04 §8.2 marks each half.
+
+- **`internal/youtrack`, a typed client for the YouTrack REST API** (`GIT-US-0046`, docs/02
+  §6): issues with their links, comments and attachments, projects, the authenticated user,
+  custom-field settings, version bundles and the article endpoints, with a shared 5 req/s
+  limiter, retries that honour `Retry-After` in both its forms, paging that stabilises the
+  order first — YouTrack guarantees none, and a `$skip` walk without an `order by:` clause
+  silently skips and duplicates rows — and a token that appears in no error and no rendering
+  of the client. It is native-only (`net/http`), so it sits beside `internal/gitops` rather
+  than in `internal/core`, and it decodes into its own types and stops there — mapping an
+  issue onto an item is the caller's job. **Nothing imports it yet**: there is no YouTrack
+  feature in the product, only the client the import story will use. Everything it returns —
+  issue descriptions, comment text, article content — is untrusted third-party Markdown,
+  returned verbatim for the caller to sanitize.
+
+- **`internal/syncengine`, a persistent background job queue** (`GIT-US-0063`, `GIT-US-0067`,
+  `GIT-US-0070`, docs/02 §6): a worker pool with keyed batching, a retry ladder with backoff
+  and jitter, a dead-letter list, and a JSON journal under the cache directory that replays
+  on start, so work started by an HTTP request outlives the response and the process. It is
+  generic — it schedules, batches, rate-limits, retries and journals, and knows nothing about
+  any tracker — and its one contract on callers is that **handlers must be idempotent**,
+  because a job is replayed after a retryable error, after a crash mid-run, and when somebody
+  retries it from the dead-letter list. The journal holds bookkeeping only: ids, kinds, keys,
+  attempt counts, states and redacted errors, never item content and never a credential, so
+  deleting it loses queued work and no user data, and a corrupt journal is moved aside rather
+  than being fatal. **Not reachable from any surface yet**: no route, no command, no
+  importer.
+
+- **A project can be connected to a YouTrack project** (`GIT-US-0048`, `GIT-US-0052`,
+  `GIT-US-0058`, ADR-032, docs/03 §6.5, docs/07 §4.15). The connection is deliberately split
+  in two. The half that belongs to the team is committed: an `integrations.youtrack` block in
+  `project.yaml` naming the instance, the YouTrack project, the field map and whether
+  comments and knowledge-base pages sync. The half that belongs to one person on one machine
+  is not: the permanent token lives in the companion's `0600` configuration file, keyed by
+  project, overridable with `GINTRACK_YOUTRACK_TOKEN`, and it appears in no API response, no
+  event payload, no log line and no `gintrack config show` output. **This is the first
+  credential the product stores**, and ADR-032 records why the promise in docs/10 that it
+  stored none had to be revised rather than worked around. `/api/v1/youtrack/settings`,
+  `/test`, `/projects` and `/fields` serve the settings screen, and `gintrack youtrack
+  connect|status` does the same from a terminal. An upstream refusal is reported as `502`
+  with its own problem code, never by forwarding YouTrack's `401`, which would tell a browser
+  its own session had expired. Companion-only: the browser-only mode cannot reach a YouTrack
+  instance, and the capability flags say so.
+
+- **A mapping layer from YouTrack issues to backlog items** (`GIT-US-0045`,
+  `internal/youtrack/mapping`). A pure package: decoded YouTrack types in, `core.ItemDraft`
+  or a sparse `core.ItemPatch` out, plus the warnings a value the field map did not
+  understand produced — because an import that drops a field silently is worse than one that
+  says what it could not translate. The `Subtask` link type is read as the hierarchy and
+  everything else becomes a `links[]` entry of a kind the model accepts. Nothing that names
+  another item is written onto the draft: parents, milestones and link targets come back as
+  YouTrack ids for the importer to resolve, so a half-imported set cannot produce a file that
+  fails validation. **Not reachable from any surface yet.**
+
+- **Inbox and sprint operations over the vault and MCP** (`GIT-US-0056`, `GIT-US-0085`,
+  docs/08 §4.11–§4.15). `inbox.list` and `inbox.triage` accept, reject, snooze and mark
+  duplicate in one rev-checked write, and `item.create` can drop work straight into triage.
+  Closing a sprint now transfers what is unfinished — to the next sprint, to a named one or
+  to the backlog — and both closing and transferring answer a dry run that reports the counts
+  without writing, which is what the confirmation dialog shows. Five MCP tools were added
+  (`create_inbox_item`, `list_inbox`, `triage_inbox_item`, `close_sprint`,
+  `transfer_sprint_items`), taking the surface to seven read-only and eighteen with
+  `--allow-write`. Accepting an item cannot change its type: an id encodes its type, so the
+  answer to "this should have been an epic" is a new item and a duplicate marker, not a
+  rewrite. **No REST route or screen yet** — the operations exist for agents and for the
+  wiring still to come.
+
 - **Feedback mode on items and knowledge-base pages** (ADR-030, docs/05 §8.5, docs/03 §14.4).
   A **Feedback** button on the item view and the page viewer — or simply selecting text in
   the description or the page — turns it on. Each selection opens an overlay for a comment

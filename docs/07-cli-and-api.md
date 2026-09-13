@@ -253,6 +253,17 @@ mcp:
                          # (the Settings page writes this field; section 5.5)
                          # over stdio as well as for POST /mcp
 
+# The credentials of the external trackers this machine is linked to. It is the
+# only place git-in-track stores a secret it did not generate itself, which is
+# why the whole file is 0600 (ADR-032). The committed half of the connection —
+# instance URL, remote project, field map, sync modes — lives in the project's
+# project.yaml instead (doc 03 §6.1), so a clone knows where its items came from
+# without holding a credential.
+integrations:
+  youtrack:
+    DEMO:                        # the git-in-track project key
+      token: perm:…              # YouTrack permanent token, prefix included
+
 log:
   level: info            # debug | info | warn | error
   format: text           # text | json
@@ -265,8 +276,15 @@ rejected, so a file written by a newer binary still opens: the later phases add
 `index.maxFileSizeKB` and `log.file` to the same sections.
 
 `PATCH /api/v1/git/settings` writes the `git:` section back to this file, so a
-change made in the web UI survives a restart. It is the only route that edits
-the configuration; everything else remains a `gintrack config` operation.
+change made in the web UI survives a restart. `PATCH /api/v1/youtrack/settings`
+writes the `integrations.youtrack.<projectKey>.token` key the same way. Those two
+are the only routes that edit the configuration; everything else remains a
+`gintrack config` operation.
+
+The YouTrack token is never rendered back. It is excluded from the JSON encoding
+of the configuration, so `gintrack config show --json` omits it and
+`gintrack config show` prints it as `[redacted]`; no API response, problem
+document, log line or WebSocket payload carries it (ADR-032).
 
 ### 3.3 Precedence and environment variables
 
@@ -281,6 +299,7 @@ Effective value = flag > environment variable > config file > built-in default.
 | `GINTRACK_TOKEN`         | `server.token`      |
 | `GINTRACK_GIT_BACKEND`   | `git.backend`       |
 | `GINTRACK_GIT_COMMIT_ON_SAVE` | `git.commitOnSave` |
+| `GINTRACK_YOUTRACK_TOKEN` | `integrations.youtrack.<key>.token`, for every project |
 | `GINTRACK_LOG_LEVEL`     | `log.level`         |
 | `GINTRACK_LOG_FORMAT`    | `log.format`        |
 | `NO_COLOR`               | disables ANSI color |
@@ -290,6 +309,15 @@ Global flags available on every command: `--config`, `--workspace/-w`,
 workspace that does not exist creates it. `--json` is declared by every command
 that has machine-readable output rather than globally, so that `gintrack --help`
 never offers it where it would mean nothing.
+
+`GINTRACK_YOUTRACK_TOKEN` is deliberately a name of its own: `GINTRACK_TOKEN`
+already means both the companion's bearer token and the HTTP password go-git
+authenticates a remote with, and a third meaning would make one leaked variable
+hand out three credentials. It overrides the stored token of *every* project,
+which is what a CI checkout with a single linked project wants; a machine
+serving two linked projects should use the file instead. The provenance of the
+effective token is reported — never its value — as `env`, `file`, `flag` or
+`none` by `gintrack youtrack status` and by `GET /api/v1/youtrack/settings`.
 
 ### 3.4 Git backend selection
 
@@ -1101,6 +1129,69 @@ backlog and no documentation folder:
   `gintrack add --team --key`, by `POST /repos/{id}/team` (§5.5) and by the add-repository
   wizard of the web app.
 
+### 4.15 `gintrack youtrack`
+
+```
+gintrack youtrack connect --url URL --project SHORTNAME [--project-key KEY]
+                          [--token TOKEN] [--push-comments manual|auto]
+                          [--kb-sync manual|on_write]
+                          [--kb-sync-direction push|pull|both] [--json]
+gintrack youtrack status  [--project-key KEY] [--offline] [--json]
+```
+
+`connect` links one git-in-track project to one YouTrack project. It resolves the
+permanent token from `--token`, then `$GINTRACK_YOUTRACK_TOKEN`, then standard
+input when it is piped — there is no interactive prompt, so the command stays
+scriptable — validates it with `GET /api/users/me` and reads the remote project,
+and only then writes anything. On success the instance URL, the project short
+name and the sync modes are written into the project's `project.yaml`
+(doc 03 §6.1) and the token into this machine's `0600` configuration file
+(§3.2). `--project-key` names the git-in-track project when the workspace holds
+more than one. An existing `field_map` is kept: connect sets the connection, it
+does not reset the mapping.
+
+`status` prints the instance, the project mapping, whether a token is present and
+where it came from, and — unless `--offline` — the result of a live probe.
+
+Neither command ever prints the token, in either form. `--json` reports the
+provenance (`flag`, `env`, `stdin`, `file` or `none`) and never the value.
+
+Prefer the environment or a pipe to `--token`: a token on a command line lands in
+the shell history and in every process listing on the machine.
+
+```
+# From a provisioning script: the token comes from the environment.
+$ export GINTRACK_YOUTRACK_TOKEN="$(vault read -field=token secret/youtrack)"
+$ gintrack youtrack connect --url https://yt.example.com/youtrack --project ACME --json
+
+# Or piped in, when the token is not already in the environment.
+$ printf '%s' "$YT_TOKEN" | gintrack youtrack connect --url https://yt.example.com/youtrack --project ACME
+Connected DEMO to ACME on https://yt.example.com/youtrack as jose.
+  link:  demo:docs/.pmngr/project.yaml
+  token: /home/jose/.config/gintrack/config.yaml (read from the stdin, stored file)
+
+$ gintrack youtrack status
+project:  DEMO
+instance: https://yt.example.com/youtrack
+mapping:  DEMO -> ACME
+link:     demo:docs/.pmngr/project.yaml
+token:    present (file)
+probe:    ok as jose
+
+$ gintrack youtrack status --json
+{"projectKey":"DEMO","configured":true,"url":"https://yt.example.com/youtrack",
+ "project":"ACME","hasToken":true,"tokenSource":"file",
+ "projectPath":"demo:docs/.pmngr/project.yaml","probed":true,"ok":true,"login":"jose",
+ "fullName":"Jose F. Rives"}
+```
+
+Exit codes (§4 conventions): `0` when the connection works; `2` for a missing
+`--url`, `--project` or token; `3` when the connection would not be a valid
+`integrations.youtrack` block; `4` when the project is unknown or declares no
+connection; `1` when the probe fails — the message says whether YouTrack
+answered 401 (bad token), 403 (no permission) or 404 (the URL is missing its
+instance context path). A failed probe writes nothing at all.
+
 ---
 
 ## 5. Local REST API
@@ -1272,7 +1363,10 @@ Catalog of `code` values: `unauthorized`, `forbidden`, `not_found`, `invalid_req
 `git_conflict`, `index_unavailable`, `rate_limited`, `not_implemented`, `internal`,
 and the CORS proxy's own: `cors_proxy_disabled`, `cors_proxy_forbidden`,
 `cors_proxy_bad_target`, `cors_proxy_host_not_allowed`, `cors_proxy_target_blocked`,
-`cors_proxy_too_large`, `cors_proxy_upstream_failed` (see the CORS proxy under §5.2).
+`cors_proxy_too_large`, `cors_proxy_upstream_failed` (see the CORS proxy under §5.2),
+and the YouTrack connection's own: `youtrack_not_configured`,
+`youtrack_unauthorized`, `youtrack_forbidden`, `youtrack_not_found`,
+`youtrack_unreachable` (see YouTrack under §5.5).
 
 `wip_limit_exceeded` (HTTP 409) is a *refusal the caller may repeat*: a board's WIP limit is
 advisory (doc 04 R-COL-5), so the move is declined once with the column and the limit in `detail`,
@@ -1340,6 +1434,8 @@ GET /api/v1/capabilities
     "search": "bleve",
     "renderer": "goldmark",
     "tunnel": true,
+    "youtrackSupported": true,
+    "youtrack": false,
     "write": true
   },
   "limits": { "maxUploadBytes": 5242880, "maxItemsPerPage": 500 },
@@ -1350,6 +1446,13 @@ GET /api/v1/capabilities
 
 The web app calls `/api/v1/capabilities` on load (with a 300 ms timeout) to decide between
 browser-only and companion mode; failure is a normal, silent fallback.
+
+`features.youtrackSupported` says this build can reach a tracker at all — only
+the companion can, because browser-only mode has neither the network reach nor
+the token — and `features.youtrack` says at least one served project actually
+declares an `integrations.youtrack` block. The settings card is shown on the
+first flag and filled from the second; browser-only mode reports neither and
+hides the whole feature (GIT-US-0048).
 
 #### Workspaces and repositories
 
@@ -2161,6 +2264,124 @@ POST /api/v1/sync/conflicts/resolve         {"repo":"TEAM","path":"…",
 POST /api/v1/sync/abort
 GET  /api/v1/git/log?item=ACME-T-0311&limit=20
 ```
+
+#### YouTrack (GIT-US-0052, GIT-EP-0011, ADR-032)
+
+The browser never talks to YouTrack. It asks the companion, the companion holds
+the token and the companion makes the call, which is what keeps the credential
+on one machine and out of every devtools network log. There is no generic
+pass-through endpoint, for the same reason ADR-025 refuses to generalise the
+CORS proxy: only the five calls the UI needs exist.
+
+```http
+GET   /api/v1/youtrack/settings?key=DEMO     the connection of one project, token excluded
+PATCH /api/v1/youtrack/settings?key=DEMO     sparse write of both halves
+POST  /api/v1/youtrack/test?key=DEMO         probe the connection, saved or typed
+GET   /api/v1/youtrack/projects?key=DEMO&q=  the instance's projects, for the autosuggest
+GET   /api/v1/youtrack/fields?key=DEMO&project=ACME   the remote project's custom fields
+```
+
+`key` is the **git-in-track** project key and may be omitted when the companion
+serves exactly one project; with several it is required, and its absence is
+`400 invalid_request`. `project` on `/fields` is the **YouTrack** project, short
+name or internal id, and defaults to the linked one.
+
+```json
+GET /api/v1/youtrack/settings?key=DEMO
+200
+{ "projectKey": "DEMO", "configured": true,
+  "url": "https://yt.example.com/youtrack", "project": "ACME",
+  "fieldMap": { "status": "State" },
+  "pushComments": "manual", "kbSync": "manual", "kbSyncDirection": "push",
+  "hasToken": true, "tokenSource": "file", "persisted": false,
+  "repo": "acme-api", "projectPath": "docs/.pmngr/project.yaml" }
+```
+
+There is no `token` field and there never will be one: `hasToken` and
+`tokenSource` (`flag` | `env` | `file` | `none`) report everything a UI needs
+about the credential without rendering it.
+
+```json
+PATCH /api/v1/youtrack/settings?key=DEMO
+{"url":"https://yt.example.com/youtrack","project":"ACME",
+ "fieldMap":{"status":"State"},"pushComments":"auto","token":"perm:…"}
+
+200
+{ …, "pushComments": "auto", "hasToken": true, "tokenSource": "file",
+  "persisted": true }
+```
+
+The body is sparse: an absent key is left alone, a present one is written. `url`,
+`project`, `fieldMap`, `pushComments`, `kbSync` and `kbSyncDirection` are the
+committed half and go into `project.yaml` through a surgical YAML edit that keeps
+every comment and every key the Go structs do not model. `token` is write-only
+and goes into the machine-local configuration file; an empty string forgets the
+stored credential. A settings change that would not load back is refused with
+`400 invalid_request` **before** anything is written, so `project.yaml` is never
+left half-edited.
+
+`persisted` follows the git-settings contract exactly: `false` means the running
+process took the token change but the server has no configuration file to write
+it to (`serve --repo`, or a test), so it will not survive a restart. It says
+nothing about the `project.yaml` half, which is written to a file by definition.
+
+```json
+POST /api/v1/youtrack/test?key=DEMO
+{}                                  // or {"url":"…","token":"…"} to test before saving
+
+200
+{ "ok": true, "baseUrl": "https://yt.example.com/youtrack", "login": "jose",
+  "fullName": "Jose F. Rives", "email": "jose@example.com", "project": "ACME" }
+```
+
+Testing with a body carries a URL and a token that have not been saved, which is
+what the settings card uses before the user presses save; nothing is written
+either way. Every failure is an RFC 7807 document whose `code` says which of
+them it was:
+
+| `code`                    | Status | Means                                                        |
+| ------------------------- | ------ | ------------------------------------------------------------ |
+| `youtrack_not_configured` | 409    | no `integrations.youtrack` block, or no stored token          |
+| `youtrack_unauthorized`   | 502    | YouTrack answered 401: the permanent token was rejected       |
+| `youtrack_forbidden`      | 502    | YouTrack answered 403: the account lacks permission           |
+| `youtrack_not_found`      | 502    | YouTrack answered 404: the URL is missing its context path    |
+| `youtrack_unreachable`    | 502    | transport failure, a 5xx after the retries, or a timeout      |
+| `rate_limited`            | 429    | the instance is throttling this client                        |
+
+An upstream failure is a **502**, not the status YouTrack returned: answering
+401 here would tell a browser that its own session had expired, which is exactly
+the wrong thing to believe. The `code` carries the distinction instead. No
+`detail` ever contains the token — `internal/youtrack` redacts it on every error
+path and the handler never renders an error's cause itself.
+
+```json
+GET /api/v1/youtrack/projects?key=DEMO&q=ac
+200
+{ "projects": [ { "id": "0-1", "shortName": "ACME", "name": "ACME API",
+                  "archived": false } ],
+  "total": 1, "limit": 100 }
+```
+
+```json
+GET /api/v1/youtrack/fields?key=DEMO&project=ACME
+200
+{ "project": "ACME",
+  "fields": [ { "id": "d1", "name": "State", "type": "state[1]",
+                "bundleId": "b1", "bundleType": "StateBundle",
+                "canBeEmpty": false } ],
+  "total": 1,
+  "gintrackFields": ["status","priority","type","assignee","labels","estimate",
+                     "milestone","due","sprint"] }
+```
+
+Both discovery endpoints are safe to call on a keystroke: the page is capped at
+`limit` server-side, the client is cached per project so every call shares one
+token-bucket limiter (five requests per second), and the UI debounces on top.
+`gintrackFields` is the left-hand side of a field mapping, so the settings card
+gets both halves from one call instead of hard-coding the list in the frontend.
+
+Each call is bounded by a 15 s timeout inside the router's 30 s one and honours
+request cancellation: closing the settings card cancels the call in flight.
 
 #### The CORS proxy (GIT-US-0042, docs/06 §6.3, ADR-025)
 

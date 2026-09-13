@@ -1,0 +1,54 @@
+{
+  "draft": {
+    "type": "epic",
+    "title": "Authentication overhaul",
+    "status": "in_progress",
+    "priority": "critical",
+    "author": "jose",
+    "labels": [
+      "security",
+      "agent-ok"
+    ],
+    "estimate": 10,
+    "start": null,
+    "due": null,
+    "external": [
+      {
+        "system": "youtrack",
+        "id": "ACME-30",
+        "url": "https://yt.example.com/youtrack/issue/ACME-30",
+        "syncedAt": null
+      }
+    ],
+    "body": "Bring every sign-in path onto one provider.\n\nSee ACME-42 for the Safari regression that started this.\n\n![architecture](.pmngr/attachments/ACME-EP-0001/auth-overview.png)\n"
+  },
+  "relations": {
+    "children": [
+      "ACME-42",
+      "ACME-43"
+    ],
+    "milestone": "1.5.0"
+  },
+  "warnings": [
+    "description: {width=…}: the YouTrack {width=…} image sizing extension is not portable Markdown and was removed"
+  ],
+  "patch": {
+    "title": "Authentication overhaul",
+    "status": "in_progress",
+    "priority": "critical",
+    "labels": [
+      "security",
+      "agent-ok"
+    ],
+    "estimate": 10,
+    "addExternal": [
+      {
+        "system": "youtrack",
+        "id": "ACME-30",
+        "url": "https://yt.example.com/youtrack/issue/ACME-30",
+        "syncedAt": null
+      }
+    ],
+    "body": "Bring every sign-in path onto one provider.\n\nSee ACME-42 for the Safari regression that started this.\n\n![architecture](.pmngr/attachments/ACME-EP-0001/auth-overview.png)\n"
+  }
+}

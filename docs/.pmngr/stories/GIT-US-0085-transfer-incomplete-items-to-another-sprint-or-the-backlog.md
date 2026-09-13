@@ -2,7 +2,7 @@
 id: GIT-US-0085
 type: story
 title: Transfer incomplete items to another sprint or the backlog in one operation
-status: backlog
+status: in_progress
 priority: high
 parent: GIT-EP-0017
 milestone: GIT-M-0012
@@ -10,7 +10,8 @@ author: mcp
 labels: [core, server, mcp]
 estimate: 8
 created: 2026-09-13T13:14:37Z
-updated: 2026-09-13T13:14:37Z
+updated: 2026-09-13T14:42:31Z
+started: 2026-09-13T14:42:31Z
 ---
 
 ## Description
@@ -23,13 +24,13 @@ Dry-run comes first. Both methods accept `dryRun: true` and return the report �
 
 ## Acceptance Criteria
 
-- [ ] `sprint.close` accepts `transfer: {mode, target?}` and expands it to a carry decision per unfinished reference, leaving finished items untouched.
-- [ ] `sprint.transfer` moves the incomplete references of one sprint into another without closing either, and refuses a target whose derived status is `completed`.
-- [ ] `dryRun: true` on both methods returns the full report — per-outcome counts, target, and each refusal with its reason — and writes nothing.
-- [ ] `repo_not_cloned` for a backlog return, and any other per-item failure, is reported on its own line and does not abort the rest of the operation (R-SPR-8).
-- [ ] Every write is rev-checked; the whole operation holds the vault mutex once and produces one `WriteSet` per repository.
+- [x] `sprint.close` accepts `transfer: {mode, target?}` and expands it to a carry decision per unfinished reference, leaving finished items untouched.
+- [x] `sprint.transfer` moves the incomplete references of one sprint into another without closing either, and refuses a target whose derived status is `completed`.
+- [x] `dryRun: true` on both methods returns the full report — per-outcome counts, target, and each refusal with its reason — and writes nothing.
+- [x] `repo_not_cloned` for a backlog return, and any other per-item failure, is reported on its own line and does not abort the rest of the operation (R-SPR-8).
+- [x] Every write is rev-checked; the whole operation holds the vault mutex once and produces one `WriteSet` per repository.
 - [ ] `POST /api/v1/sprints/{id}/close` (extended) and `POST /api/v1/sprints/{id}/transfer` are served, require `If-Match` on the sprint, and are documented in `docs/07-cli-and-api.md` §5.5.
-- [ ] MCP exposes `close_sprint` and `transfer_sprint_items`; both are write tools, hidden on a read-only server, and `TestToolSurface` is updated.
+- [x] MCP exposes `close_sprint` and `transfer_sprint_items`; both are write tools, hidden on a read-only server, and `TestToolSurface` is updated.
 - [ ] `go test -race ./internal/vault/... ./internal/server/... ./internal/mcp/...` covers bulk transfer, dry run, the completed-target refusal and the uncloned-project path.
 
 ## Notes

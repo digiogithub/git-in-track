@@ -111,6 +111,13 @@ type Options struct {
 	// this process only, which is what a test and `serve --repo` want.
 	ConfigPath string
 
+	// YouTrack are the machine-local YouTrack credentials, resolved by the
+	// precedence chain of internal/config: a flag, then
+	// GINTRACK_YOUTRACK_TOKEN, then the configuration file (ADR-032). The
+	// snapshot carries no exported field and no marshaler, so it cannot reach a
+	// response or a log line by accident.
+	YouTrack config.YouTrackTokens
+
 	// MCPHTTP mounts the Model Context Protocol server at POST /mcp, behind the
 	// same bearer token as the REST API (docs/08-mcp-server.md section 2.2).
 	MCPHTTP bool
@@ -155,6 +162,10 @@ type Server struct {
 	proxy *corsProxy
 	// tunnel owns the public tunnel toggled at /api/v1/tunnel.
 	tunnel *tunnelState
+	// youtrack owns the YouTrack connection of every mounted project: the
+	// committed link in project.yaml, the machine-local token and the clients
+	// built from the two (GIT-US-0052).
+	youtrack *youtrackState
 
 	// mu guards addr, which changes once when the listener resolves a
 	// wildcard port and is read concurrently by callers printing the URL.
@@ -219,6 +230,7 @@ func New(opts Options) (*Server, error) {
 		s.refreshOnRead(m)
 	}
 	s.git = newGitState(opts, s.repos, s.log, s.publishCommit)
+	s.youtrack = newYouTrackState(opts, s.repos)
 	// The metrics of GIT-US-0028 reconstruct their series from the git history
 	// of the item files. Only the companion can read it, so only the companion
 	// installs the reader (ADR-017).
@@ -428,6 +440,12 @@ func (s *Server) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 			// The CORS proxy that makes browser-only git reach a host at all
 			// (GIT-US-0042, docs/06 section 6.3).
 			"corsProxy": s.proxy.enabled(),
+			// YouTrack (GIT-EP-0011). `youtrackSupported` says this build can
+			// reach a tracker at all — only the companion can, browser-only
+			// mode has neither the network reach nor the token — and
+			// `youtrack` says at least one served project is actually linked.
+			"youtrackSupported": s.opts.Mode == modeCompanion,
+			"youtrack":          s.opts.Mode == modeCompanion && s.youtrack.configured(),
 			// The public tunnel of /api/v1/tunnel: whether this build can open
 			// one at all, not whether one is running.
 			"tunnel": s.tunnelSupported(),

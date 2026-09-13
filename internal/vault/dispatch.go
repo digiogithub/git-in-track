@@ -188,6 +188,12 @@ func (w *Workspace) Dispatch(ctx context.Context, method string, raw []byte) (an
 			return nil, err
 		}
 		return w.CloseSprint(ctx, p)
+	case "sprint.transfer":
+		p, err := decodeParams[SprintTransferParams](raw)
+		if err != nil {
+			return nil, err
+		}
+		return w.TransferSprintItems(ctx, p)
 	case "retro.list":
 		p, err := decodeParams[RetroListParams](raw)
 		if err != nil {

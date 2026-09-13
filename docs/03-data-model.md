@@ -520,6 +520,7 @@ The only non-Markdown file in `.pmngr/`. Plain YAML, no front matter.
 | `people` | list of mappings | no | `[]` | Optional local mirror of team members. |
 | `team` | mapping | no | — | Back-pointer to the team repo (`repo`, `key`). |
 | `links` | mapping | no | — | Host info for building blob URLs (`host: github\|gitlab\|gitea\|bitbucket`, `web_url`). |
+| `integrations` | mapping | no | — | External trackers this backlog mirrors ([§6.5](#65-integrations)). Credentials never appear here. |
 
 `docs` sub-keys: `path` (relative to repo root, informational — the real path is where the file
 was found), `wikilinks` (bool, default `true`), `mermaid` (bool, default `true`), `math` (bool,
@@ -640,6 +641,17 @@ team:
 links:
   host: github
   web_url: https://github.com/acme/platform
+
+integrations:
+  youtrack:
+    url: https://yt.example.com/youtrack
+    project: ACME
+    field_map:
+      status: State
+      priority: Priority
+    push_comments: manual
+    kb_sync: manual
+    kb_sync_direction: push
 ```
 
 ### 6.3 Validation rules for `project.yaml`
@@ -655,6 +667,9 @@ links:
 - `W-PROJ-LABEL-DUP` — duplicate label name (case-insensitive).
 - `W-PROJ-COUNTER-STALE` — a counter is lower than the maximum scanned ID (informational; the scan
   wins and the counter is rewritten on the next allocation).
+- `E-PROJ-INTEGRATION` — an `integrations.<system>` block is present but unusable: a `url` that is
+  not an absolute `http`/`https` URL, an empty `project`, an unknown mode, or a `field_map` key that
+  is not a git-in-track field ([§6.5](#65-integrations)).
 
 ### 6.4 The `triage` category and the inbox
 
@@ -709,6 +724,55 @@ inbox:
   nothing ordinary lands there by accident.
 
 ---
+
+
+### 6.5 `integrations`
+
+`integrations.<system>` records **where this backlog's items also live**, so that a
+clone knows what it is mirroring without being told. Only `youtrack` exists today
+([ADR-032](./adr/ADR-032-local-integration-credential-storage.md), GIT-EP-0011); the
+key is the same `system` an item's `external:` entry carries ([§12.5](#125-external-references)),
+which is what ties a connection to the references it produced.
+
+```yaml
+integrations:
+  youtrack:
+    url: https://yt.example.com/youtrack   # instance URL, context path included
+    project: ACME                          # YouTrack project short name
+    field_map:                             # git-in-track field -> YouTrack custom field
+      status: State
+      priority: Priority
+    push_comments: manual                  # manual | auto
+    kb_sync: manual                        # manual | on_write
+    kb_sync_direction: push                # push | pull | both
+```
+
+| Key | Type | Req. | Default | Notes |
+|---|---|---|---|---|
+| `url` | absolute URL | yes | — | `http` or `https`, context path included; no query, no fragment. Trailing `/` is trimmed. |
+| `project` | string | yes | — | YouTrack project short name: the `ACME` of `ACME-42`. |
+| `field_map` | mapping | no | `{}` | Keys from `status`, `priority`, `type`, `assignee`, `labels`, `estimate`, `milestone`, `due`, `sprint`; values are YouTrack custom-field names. |
+| `push_comments` | `manual` \| `auto` | no | `manual` | When a comment written here is pushed to the linked issue. |
+| `kb_sync` | `manual` \| `on_write` | no | `manual` | When a knowledge-base page is synchronized with a YouTrack article. |
+| `kb_sync_direction` | `push` \| `pull` \| `both` | no | `push` | Which way that synchronization flows. |
+
+- **R-INT-1 No credential is ever written here.** `project.yaml` is a committed file:
+  the permanent token lives on the machine running the companion, in its `0600`
+  configuration file, keyed by project key, overridable by `GINTRACK_YOUTRACK_TOKEN`
+  (doc 07 §3.2, ADR-032). A token found in a `project.yaml` is a leaked token, not a
+  configuration.
+- **R-INT-2 The block is written surgically.** A writer edits the YAML node tree in
+  place — the same mechanism the id allocator rewrites its counters with — so comments,
+  key order and every section no Go struct models survive. Re-serializing `project.yaml`
+  from a decoded struct would silently delete them, and is never done.
+- **R-INT-3 An unusable block is a load error, not a silent default.** A URL that is not
+  absolute, an empty project short name, an unknown mode or an unknown `field_map` key is
+  refused with `E-PROJ-INTEGRATION` naming the offending key, because a typo in a field map
+  is otherwise invisible until a sync writes the wrong field.
+- **R-INT-4 A block alone connects nothing.** Reaching the instance also needs a token on
+  this machine, and browser-only mode has neither the token nor the network reach: it hides
+  the feature entirely (doc 07, `features.youtrack`).
+
 
 ## 7. Epics
 

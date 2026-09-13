@@ -708,6 +708,18 @@ Rules for fixtures:
   existing git credential helper and SSH agent. Browser mode asks for a personal access
   token per session, keeps it in memory only (never `localStorage`), and scopes it to the
   single remote it was entered for. Tokens are redacted from all logs and error messages.
+- **Exactly one credential is stored: the external-tracker token.** Connecting a project to
+  YouTrack needs a permanent token at moments when nobody is at the keyboard, so the
+  companion stores it — and nothing else — in its own machine-local configuration file,
+  mode `0600`, keyed by project key, overridable by `GINTRACK_YOUTRACK_TOKEN`
+  ([ADR-032](./adr/ADR-032-local-integration-credential-storage.md), doc 07 §3.2). It is
+  **never** written to a repository: the committed half of the connection is the instance
+  URL, the remote project and the field map in `project.yaml`, and a token found there is a
+  leaked token. It is never returned by an API response, never rendered in a problem
+  document, a log line or a WebSocket payload, and never printed by the CLI: surfaces report
+  `hasToken` and a provenance of `flag`, `env`, `file` or `none` instead. Browser-only mode
+  cannot reach a tracker at all and stores nothing. `0600` is the whole boundary and an OS
+  keychain would be stronger; ADR-032 records why that trade was taken and what it costs.
 - **Path handling.** Every path derived from user input, front matter, wikilinks or MCP
   arguments is cleaned and verified to stay inside the vault root before use. A `..`
   segment or an absolute path is rejected, not normalised silently. This is the single most

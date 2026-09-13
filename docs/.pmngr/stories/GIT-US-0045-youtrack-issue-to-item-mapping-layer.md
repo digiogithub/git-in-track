@@ -2,7 +2,7 @@
 id: GIT-US-0045
 type: story
 title: YouTrack issue to item mapping layer
-status: backlog
+status: done
 priority: high
 parent: GIT-EP-0012
 milestone: GIT-M-0011
@@ -10,7 +10,9 @@ author: mcp
 labels: [core, server]
 estimate: 8
 created: 2026-09-13T13:11:09Z
-updated: 2026-09-13T13:11:09Z
+updated: 2026-09-13T14:35:46Z
+started: 2026-09-13T14:35:22Z
+closed: 2026-09-13T14:35:46Z
 ---
 
 ## Description
@@ -23,13 +25,13 @@ The description is normalised Markdown: YouTrack auto-links bare issue ids (`ACM
 
 ## Acceptance Criteria
 
-- [ ] `internal/youtrack/mapping` exposes `IssueToDraft`, `IssueToPatch` and `CommentsToDrafts` with no dependency on `internal/server`, `internal/vault` or `net/http`.
-- [ ] Type mapping covers Epic, User Story, Task, Bug and a Version-bundle value to `milestone`, with a configurable override from `field_map`.
-- [ ] `State`, `Priority`, `Estimation`, `Assignee` and `tags` map to `status`, `priority`, `estimate`, `assignees` and `labels`; unknown values fall back to defaults and are reported, never dropped silently.
-- [ ] Description normalisation leaves auto-linked issue ids untouched and rewrites attachment image refs to the local attachments path.
-- [ ] Link entries with an empty `issues` array are filtered; Subtask OUTWARD yields children and INWARD yields the parent; unsupported link types are reported, not invented.
-- [ ] Every draft carries `external: [{system: youtrack, id, url}]`.
-- [ ] Table-driven tests with fixture JSON under `internal/youtrack/mapping/testdata/` cover each field kind and the link-shape gotchas; `go test -race ./internal/youtrack/...` passes.
+- [x] `internal/youtrack/mapping` exposes `IssueToDraft`, `IssueToPatch` and `CommentsToDrafts` with no dependency on `internal/server`, `internal/vault` or `net/http`.
+- [x] Type mapping covers Epic, User Story, Task, Bug and a Version-bundle value to `milestone`, with a configurable override from `field_map`.
+- [x] `State`, `Priority`, `Estimation`, `Assignee` and `tags` map to `status`, `priority`, `estimate`, `assignees` and `labels`; unknown values fall back to defaults and are reported, never dropped silently.
+- [x] Description normalisation leaves auto-linked issue ids untouched and rewrites attachment image refs to the local attachments path.
+- [x] Link entries with an empty `issues` array are filtered; Subtask OUTWARD yields children and INWARD yields the parent; unsupported link types are reported, not invented.
+- [x] Every draft carries `external: [{system: youtrack, id, url}]`.
+- [x] Table-driven tests with fixture JSON under `internal/youtrack/mapping/testdata/` cover each field kind and the link-shape gotchas; `go test -race ./internal/youtrack/...` passes.
 
 ## Notes
 
@@ -38,3 +40,5 @@ Depends on GIT-EP-0011 for the `external` front-matter field (`core.Item`, `Seri
 Reference shapes: the issue JSON example and the `$type` table in the scratchpad YouTrack report §3.1, §3.5, §3.7 and §9. `customFields(...)` must be requested with `$type` (`customFields(id,name,$type,value(id,name,$type,login,fullName,presentation,minutes,isResolved))`) — the reference CLI omits it and is lossy. Most `links[]` entries come back with `"issues": []` and must be filtered.
 
 Do NOT put HTTP calls in this package — it maps already-decoded payloads. Do NOT add an `external` link kind to `core.LinkKind`; the five existing kinds are the whole set.
+
+The `field_map` arrives as a `mapping.FieldMap` struct the caller supplies rather than being read from `project.yaml` here: reading config is `internal/config`'s job and that package is owned elsewhere this wave. `DefaultFieldMap()` covers a stock YouTrack.

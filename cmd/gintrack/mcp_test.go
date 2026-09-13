@@ -153,8 +153,8 @@ func TestMCPOverStdio(t *testing.T) {
 		if err != nil {
 			t.Fatalf("tools/list: %v", err)
 		}
-		if len(listed.Tools) != 13 {
-			t.Errorf("tools = %d, want 13", len(listed.Tools))
+		if len(listed.Tools) != 18 {
+			t.Errorf("tools = %d, want 18", len(listed.Tools))
 		}
 		for _, tool := range listed.Tools {
 			if tool.InputSchema == nil || tool.OutputSchema == nil {

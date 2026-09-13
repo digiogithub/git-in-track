@@ -62,20 +62,34 @@ type harness struct {
 	writes  []WriteEvent
 }
 
+// mountSpec is one repository a harness opens.
+type mountSpec struct {
+	id   string
+	role string
+	src  string
+}
+
+// defaultMounts are the repositories every test gets unless it asks for more:
+// the team fixture and one project fixture.
+var defaultMounts = []mountSpec{
+	{"demo-team", vault.RoleTeam, teamFixture},
+	{"demo", vault.RoleProject, projectFixture},
+}
+
 // newHarness mounts writable copies of the project and team fixtures and
 // connects a client to a server over them.
 func newHarness(t *testing.T, allowWrite bool) *harness {
 	t.Helper()
+	return newHarnessWith(t, allowWrite, defaultMounts)
+}
+
+// newHarnessWith is newHarness over the repositories a test names, for the
+// tools that need a fixture the default two do not carry.
+func newHarnessWith(t *testing.T, allowWrite bool, mounts []mountSpec) *harness {
+	t.Helper()
 
 	h := &harness{space: vault.NewWorkspace()}
-	for _, mount := range []struct {
-		id   string
-		role string
-		src  string
-	}{
-		{"demo-team", vault.RoleTeam, teamFixture},
-		{"demo", vault.RoleProject, projectFixture},
-	} {
+	for _, mount := range mounts {
 		root := copyTree(t, mount.src)
 		fsys, err := osfs.New(root)
 		if err != nil {

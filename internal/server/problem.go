@@ -29,6 +29,28 @@ const (
 	// codeTunnelFailed reports that the tunnel provider could not be reached or
 	// died while being started or stopped.
 	codeTunnelFailed = "tunnel_failed"
+
+	// The YouTrack connection (GIT-US-0052). An upstream failure is reported as
+	// a gateway failure of this API — the request itself was well formed and
+	// this companion could not complete it — and the `code` says which of the
+	// four distinguishable causes it was. None of their details ever carries
+	// the token.
+	//
+	// codeYouTrackNotConfigured means the project declares no connection, or
+	// has no stored credential: the user fixes it in the settings, not by
+	// retrying.
+	codeYouTrackNotConfigured = "youtrack_not_configured"
+	// codeYouTrackUnauthorized is a 401 from YouTrack: the permanent token was
+	// rejected.
+	codeYouTrackUnauthorized = "youtrack_unauthorized"
+	// codeYouTrackForbidden is a 403: the token authenticates but the account
+	// lacks permission.
+	codeYouTrackForbidden = "youtrack_forbidden"
+	// codeYouTrackNotFound is a 404 on an /api path, which almost always means
+	// the base URL is missing its instance context path.
+	codeYouTrackNotFound = "youtrack_not_found"
+	// codeYouTrackUnreachable is a transport failure or a timeout.
+	codeYouTrackUnreachable = "youtrack_unreachable"
 )
 
 // problemField is one per-field validation failure of a problem document.
@@ -74,7 +96,7 @@ func statusForCode(code string) int {
 	case "duplicate_id", "wip_limit_exceeded", "sprint_overlap", "sprint_already_active", "board_in_use",
 		"project_exists", "team_exists",
 		vault.TeamProjectExistsCode, vault.TeamProjectReferencedCode,
-		codeTunnelRequiresToken:
+		codeTunnelRequiresToken, codeYouTrackNotConfigured:
 		// A WIP limit is advisory: the move is refused once, and the caller may
 		// repeat it with `force` (docs/04 R-COL-5). Two sprints of one board
 		// sharing a day, and a second active sprint, are the same shape of
@@ -96,6 +118,11 @@ func statusForCode(code string) int {
 		return http.StatusNotImplemented
 	case codeIndexUnavailable:
 		return http.StatusServiceUnavailable
+	case codeYouTrackUnauthorized, codeYouTrackForbidden, codeYouTrackNotFound, codeYouTrackUnreachable:
+		// The caller's own credentials were fine: it is the hop to YouTrack
+		// that failed. Answering 401 here would tell a browser its session had
+		// expired, which is exactly the wrong thing to believe.
+		return http.StatusBadGateway
 	case "rate_limited":
 		return http.StatusTooManyRequests
 	default:

@@ -2,7 +2,7 @@
 id: GIT-US-0056
 type: story
 title: "Inbox operations: create, list and triage over the vault, REST and MCP"
-status: backlog
+status: in_progress
 priority: high
 parent: GIT-EP-0016
 milestone: GIT-M-0012
@@ -10,7 +10,8 @@ author: mcp
 labels: [core, server, mcp]
 estimate: 8
 created: 2026-09-13T13:12:15Z
-updated: 2026-09-13T13:12:15Z
+updated: 2026-09-13T14:42:12Z
+started: 2026-09-13T14:42:12Z
 ---
 
 ## Description
@@ -23,13 +24,13 @@ The server layer is thin, as everywhere else: `internal/server/items.go` mounts 
 
 ## Acceptance Criteria
 
-- [ ] `inbox.list` and `inbox.triage` exist in both dispatch tables (`internal/vault/vault.go:320`, `internal/vault/dispatch.go:73`) and work in the WASM build as well as the companion.
+- [x] `inbox.list` and `inbox.triage` exist in both dispatch tables (`internal/vault/vault.go:320`, `internal/vault/dispatch.go:73`) and work in the WASM build as well as the companion.
 - [ ] Accept applies status, and optionally type and parent, in a single rev-checked write; the transition is validated by the project workflow and `started`/`closed` are stamped as usual.
-- [ ] Reject, snooze and duplicate each write exactly the fields their action owns; duplicate also writes the `duplicates` link and its `duplicated_by` inverse on the target.
-- [ ] A triage call quoting a stale rev is refused with `stale_revision` carrying `currentRev` and the conflicting fields; `rev: "*"` still waives.
+- [x] Reject, snooze and duplicate each write exactly the fields their action owns; duplicate also writes the `duplicates` link and its `duplicated_by` inverse on the target.
+- [x] A triage call quoting a stale rev is refused with `stale_revision` carrying `currentRev` and the conflicting fields; `rev: "*"` still waives.
 - [ ] `GET /api/v1/inbox?status=&project=&cursor=` paginates like the other listings and `POST /api/v1/items/{id}/triage` requires `If-Match` and answers 412 on a mismatch.
 - [ ] A `inbox.changed` WS event is published on every triage and on every inbox create, documented in `docs/07-cli-and-api.md` §WS topics.
-- [ ] MCP exposes `create_inbox_item`, `list_inbox` and `triage_inbox_item`; the write tools are hidden entirely on a read-only server, and `TestToolSurface` (`internal/mcp/tools_test.go:26`) is updated.
+- [x] MCP exposes `create_inbox_item`, `list_inbox` and `triage_inbox_item`; the write tools are hidden entirely on a read-only server, and `TestToolSurface` (`internal/mcp/tools_test.go:26`) is updated.
 - [ ] `go test -race ./internal/vault/... ./internal/server/... ./internal/mcp/...` covers each action, the stale-rev path and the snooze-expiry listing.
 
 ## Notes

@@ -352,7 +352,7 @@ func (v *Vault) Dispatch(ctx context.Context, method string, raw []byte) (any, e
 		return v.boardGet(ctx, raw)
 	case "board.move", "board.update",
 		"sprint.list", "sprint.get", "sprint.create", "sprint.update",
-		"sprint.start", "sprint.close":
+		"sprint.start", "sprint.close", "sprint.transfer":
 		return nil, failf("invalid_request",
 			"%s needs the workspace: the sprint and its items live in different repositories", method)
 
@@ -372,6 +372,11 @@ func (v *Vault) Dispatch(ctx context.Context, method string, raw []byte) (any, e
 		return v.itemDelete(ctx, raw)
 	case "item.task.set":
 		return v.itemTaskSet(ctx, raw)
+	case "inbox.list":
+		return v.inboxList(ctx, raw)
+	case "inbox.triage":
+		return v.inboxTriage(ctx, raw)
+
 	case "item.validate":
 		return v.itemValidate(raw)
 	case "item.parse":
@@ -961,8 +966,18 @@ func (v *Vault) itemCreate(ctx context.Context, raw []byte) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	draft := p.draft()
+	if p.Inbox != nil {
+		_, cfg, err := v.projectConfig(core.ProjectKey(p.Project))
+		if err != nil {
+			return nil, err
+		}
+		if err := v.inboxDraft(&draft, p.Inbox, cfg); err != nil {
+			return nil, err
+		}
+	}
 	v.fs.begin()
-	it, err := store.Create(ctx, p.draft())
+	it, err := store.Create(ctx, draft)
 	if err != nil {
 		return nil, fmt.Errorf("create item: %w", err)
 	}

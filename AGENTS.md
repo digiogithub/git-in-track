@@ -228,7 +228,7 @@ use the same shape):
 Drop `--allow-write` for a read-only session; the write tools are then absent
 from `tools/list` rather than failing at call time. `--agent <name>` is the
 author recorded on comments you write. Verify with `gintrack mcp --list-tools`
-(6 tools read-only, 13 with `--allow-write`).
+(7 tools read-only, 18 with `--allow-write`).
 
 The thirteen tools: `list_items`, `search_items`, `get_item`, `create_epic`,
 `create_story`, `create_task`, `create_milestone`, `update_item`, `add_comment`,

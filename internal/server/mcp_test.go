@@ -127,8 +127,8 @@ func TestMCPCapabilitiesReportTheEndpoint(t *testing.T) {
 		t.Errorf("features = %v, want the MCP endpoint enabled and writable", caps.Features)
 	}
 	tools, ok := caps.Features["mcpTools"].([]any)
-	if !ok || len(tools) != 13 {
-		t.Errorf("mcpTools = %v, want the thirteen tools", caps.Features["mcpTools"])
+	if !ok || len(tools) != 18 {
+		t.Errorf("mcpTools = %v, want the eighteen tools", caps.Features["mcpTools"])
 	}
 }
 
@@ -145,8 +145,8 @@ func TestMCPOverStreamableHTTP(t *testing.T) {
 		if err != nil {
 			t.Fatalf("tools/list: %v", err)
 		}
-		if len(listed.Tools) != 13 {
-			t.Fatalf("tools = %d, want 13", len(listed.Tools))
+		if len(listed.Tools) != 18 {
+			t.Fatalf("tools = %d, want 18", len(listed.Tools))
 		}
 	})
 

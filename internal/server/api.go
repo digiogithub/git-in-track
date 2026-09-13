@@ -93,6 +93,11 @@ func (s *Server) mountAPI(api chi.Router) {
 		// CLI flag (docs/08-mcp-server.md section 7.1).
 		p.Route("/mcp", s.mountMCPSettings)
 		p.Route("/git", s.mountGit)
+		// The YouTrack connection: its settings, the connection test and the
+		// two discovery calls the settings UI needs (GIT-US-0052). The browser
+		// never talks to YouTrack; it asks the companion, which holds the
+		// token.
+		p.Route("/youtrack", s.mountYouTrack)
 		p.Route("/sync", s.mountSync)
 	})
 
