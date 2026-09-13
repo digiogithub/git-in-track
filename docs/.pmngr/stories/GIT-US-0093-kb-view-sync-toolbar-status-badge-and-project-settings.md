@@ -2,15 +2,17 @@
 id: GIT-US-0093
 type: story
 title: KB view sync toolbar, status badge and project settings
-status: backlog
+status: in_review
 priority: medium
 parent: GIT-EP-0014
 milestone: GIT-M-0011
+assignees: [claude]
 author: mcp
 labels: [web]
 estimate: 5
 created: 2026-09-13T13:15:19Z
-updated: 2026-09-13T13:15:19Z
+updated: 2026-09-13T16:41:49Z
+started: 2026-09-13T16:27:31Z
 ---
 
 ## Description
@@ -23,13 +25,13 @@ State comes from a `useKbSyncStatus` hook in `web/src/features/kb/useKbData.ts` 
 
 ## Acceptance Criteria
 
-- [ ] Toolbar group and status badge appear only when the YouTrack feature is available and the project is linked.
-- [ ] The badge renders the five states, shows the article id and links to the article when linked.
-- [ ] Folder publish confirms and reports how many pages it will touch.
-- [ ] A conflict renders an inline notice linking to `<page>.conflict.md` and stating the page was left untouched.
-- [ ] Status invalidates on `sync.job.*` and `youtrack.kb.conflict` events without a manual refresh.
-- [ ] `kb_sync` and its direction are editable in the YouTrack settings card with an explanation of `on_write`.
-- [ ] Only design tokens are used; `npm run tokens:check` passes; Vitest covers gating, each badge state, folder confirmation and the conflict notice.
+- [x] Toolbar group and status badge appear only when the YouTrack feature is available and the project is linked.
+- [x] The badge renders the five states, shows the article id and links to the article when linked.
+- [x] Folder publish confirms and reports how many pages it will touch.
+- [x] A conflict renders an inline notice linking to `<page>.conflict.md` and stating the page was left untouched.
+- [x] Status invalidates on `sync.job.*` and `youtrack.kb.conflict` events without a manual refresh.
+- [x] `kb_sync` and its direction are editable in the YouTrack settings card with an explanation of `on_write`.
+- [x] Only design tokens are used; `npm run tokens:check` passes; Vitest covers gating, each badge state, folder confirmation and the conflict notice.
 
 ## Notes
 
@@ -38,3 +40,8 @@ Depends on the vault and REST operations of this epic and on GIT-EP-0011 for the
 Existing code: `web/src/features/kb/KbViewer.tsx` (535 lines, tree/page/outline columns), `KbTree.tsx`, `useKbData.ts` (`useKbTree` :74, `useKbPage` :89, `useAddPageFeedback` :63-79), provider surface `web/src/api/provider.ts:975-988`. There is no KB edit UI — `provider.writePage` has no caller outside a test — so this story adds sync actions to a viewer, not an editor.
 
 Do NOT build a KB editor here. Do NOT add a UI dependency; there is no `Popover` or `DropdownMenu` in the kit, so use a dialog or inline controls.
+
+The toolbar does not yet read the `kb_sync` setting it now exposes: it always
+offers both directions manually. Wiring `on_write` to disable or relabel the
+manual publish is the seam left on `KbSyncToolbar`'s props. The documentation
+half of GIT-T-0219 (`docs/05-web-app.md`, `CHANGELOG.md`) is also outstanding.

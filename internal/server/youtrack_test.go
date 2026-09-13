@@ -120,19 +120,19 @@ func ytProjectYAML(root string) string {
 
 // ytSettingsBody is the documented shape of /api/v1/youtrack/settings.
 type ytSettingsBody struct {
-	ProjectKey      string            `json:"projectKey"`
-	Configured      bool              `json:"configured"`
-	URL             string            `json:"url"`
-	Project         string            `json:"project"`
-	FieldMap        map[string]string `json:"fieldMap"`
-	PushComments    string            `json:"pushComments"`
-	KBSync          string            `json:"kbSync"`
-	KBSyncDirection string            `json:"kbSyncDirection"`
-	HasToken        bool              `json:"hasToken"`
-	TokenSource     string            `json:"tokenSource"`
-	Persisted       bool              `json:"persisted"`
-	ProjectPath     string            `json:"projectPath"`
-	Repo            string            `json:"repo"`
+	ProjectKey      string          `json:"projectKey"`
+	Configured      bool            `json:"configured"`
+	URL             string          `json:"url"`
+	Project         string          `json:"project"`
+	FieldMap        config.FieldMap `json:"fieldMap"`
+	PushComments    string          `json:"pushComments"`
+	KBSync          string          `json:"kbSync"`
+	KBSyncDirection string          `json:"kbSyncDirection"`
+	HasToken        bool            `json:"hasToken"`
+	TokenSource     string          `json:"tokenSource"`
+	Persisted       bool            `json:"persisted"`
+	ProjectPath     string          `json:"projectPath"`
+	Repo            string          `json:"repo"`
 }
 
 // TestYouTrackRoutesRequireTheBearerToken proves the whole subtree sits inside

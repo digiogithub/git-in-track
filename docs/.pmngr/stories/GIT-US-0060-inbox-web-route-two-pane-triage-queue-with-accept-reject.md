@@ -2,15 +2,17 @@
 id: GIT-US-0060
 type: story
 title: "Inbox web route: two-pane triage queue with accept, reject, snooze and duplicate"
-status: backlog
+status: in_review
 priority: medium
 parent: GIT-EP-0016
 milestone: GIT-M-0012
+assignees: [claude]
 author: mcp
 labels: [web]
 estimate: 8
 created: 2026-09-13T13:12:43Z
-updated: 2026-09-13T13:12:43Z
+updated: 2026-09-13T16:41:04Z
+started: 2026-09-13T16:27:29Z
 ---
 
 ## Description
@@ -23,14 +25,14 @@ Actions follow Plane's flow, which is the part worth copying: compute the next i
 
 ## Acceptance Criteria
 
-- [ ] `/p/$project/inbox` renders a two-pane triage view and the sidebar shows a pending-count badge; both are hidden for a project with no `triage` status.
-- [ ] The list supports `pending`, `snoozed` and `all` filters held in the URL, paginates incrementally, and a snoozed item whose date has passed appears under `pending`.
-- [ ] Accept opens the existing item edit form with a non-triage status preselected and commits the acceptance in the same save.
-- [ ] Reject, snooze (date picker) and duplicate (`ItemPicker` target) each have a dialog, report success and failure with a toast, and are refused cleanly on a stale rev with the existing `ConflictDialog`.
-- [ ] After any action the pane advances to the next queued item; next/previous buttons and keyboard shortcuts (`j`/`k`, `a`, `r`, `s`) do the same.
-- [ ] `listInbox`, `createInboxItem` and `triageInboxItem` exist on `DataProvider` and in all four implementations (interface, companion, browser, fake).
-- [ ] Optimistic updates roll back on error and the `inbox.changed` WS event refreshes an open pane.
-- [ ] Vitest covers the filter schema, the next-item computation, the optimistic rollback and the accept-form defaulting; `npm run lint` and `tsc` pass.
+- [x] `/p/$project/inbox` renders a two-pane triage view and the sidebar shows a pending-count badge; both are hidden for a project with no `triage` status.
+- [x] The list supports `pending`, `snoozed` and `all` filters held in the URL, paginates incrementally, and a snoozed item whose date has passed appears under `pending`.
+- [x] Accept opens the existing item edit form with a non-triage status preselected and commits the acceptance in the same save.
+- [x] Reject, snooze (date picker) and duplicate (`ItemPicker` target) each have a dialog, report success and failure with a toast, and are refused cleanly on a stale rev with the existing `ConflictDialog`.
+- [x] After any action the pane advances to the next queued item; next/previous buttons and keyboard shortcuts (`j`/`k`, `a`, `r`, `s`) do the same.
+- [x] `listInbox`, `createInboxItem` and `triageInboxItem` exist on `DataProvider` and in all four implementations (interface, companion, browser, fake).
+- [x] Optimistic updates roll back on error and the `inbox.changed` WS event refreshes an open pane.
+- [x] Vitest covers the filter schema, the next-item computation, the optimistic rollback and the accept-form defaulting; `npm run lint` and `tsc` pass.
 
 ## Notes
 
@@ -39,3 +41,7 @@ Existing code: `web/src/app/router.tsx:18-187`, `web/src/app/layout/AppShell.tsx
 Plane reference worth reading for the interaction only: `apps/web/core/components/inbox/content/inbox-issue-header.tsx` L126-160 (redirect-before-mutate) and `core/store/inbox/inbox-issue.store.ts` L99-142 (optimistic + badge arithmetic).
 
 Do NOT call `fetch('/api/...')` from feature code — everything goes through `DataProvider`. Do NOT build a bespoke accept form; reuse the editor. Do NOT add `cmdk` or a new combobox library for the duplicate picker. Item bodies are untrusted: they must keep going through `web/src/markdown/sanitize.ts`.
+
+The accept form reuses the editor's components through a wrapper rather than
+`ItemEditorPage` itself; see the comment on this story for why and for the
+follow-up that removes it.

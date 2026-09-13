@@ -2,7 +2,7 @@
 id: GIT-T-0179
 type: task
 title: Add the comment push provider methods and hooks
-status: todo
+status: done
 priority: medium
 parent: GIT-US-0076
 milestone: GIT-M-0011
@@ -10,7 +10,9 @@ author: mcp
 labels: [web, agent-ok]
 estimate: 2
 created: 2026-09-13T13:19:37Z
-updated: 2026-09-13T13:19:37Z
+updated: 2026-09-13T16:36:20Z
+started: 2026-09-13T16:36:08Z
+closed: 2026-09-13T16:36:20Z
 ---
 
 ## Description
@@ -19,6 +21,18 @@ Add `pushCommentToYoutrack` to the provider interface in `web/src/api/provider.t
 
 ## Acceptance Criteria
 
-- [ ] The provider method exists everywhere and fails clearly in browser-only mode.
-- [ ] `useCommentSyncState` derives state from `external` plus events, not from component state.
-- [ ] Vitest covers the three derived states with mocked events and provider.
+- [x] The provider method exists everywhere and fails clearly in browser-only mode.
+- [x] `useCommentSyncState` derives state from `external` plus events, not from component state.
+- [x] Vitest covers the three derived states with mocked events and provider.
+
+## Notes
+
+`Comment` gained `external`, so a reload shows the truth: a comment carrying a
+`youtrack` entry has arrived, whatever any event said.
+
+`external` always wins over a job frame. A re-delivered `failed` frame cannot
+un-send a comment that is already on the issue, which is the case the engine's
+at-least-once delivery makes real rather than theoretical.
+
+The queued job is recorded from the push *result*, which is the companion's
+statement about what it queued, never from the click.

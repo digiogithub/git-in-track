@@ -28,6 +28,7 @@ import { Input } from '@/components/ui/input';
 import { Logo } from '@/components/ui/logo';
 import { ThemeToggle } from '@/components/ui/theme-toggle';
 import { ToastProvider } from '@/components/ui/toast';
+import { InboxNavLink } from '@/features/inbox/InboxNavLink';
 import { SyncJobToasts } from '@/features/sync/SyncJobToasts';
 import { cn } from '@/lib/cn';
 
@@ -306,6 +307,13 @@ function RepoNav({ rows }: { rows: RepoInfo[] }) {
                         <BookOpen aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
                         <span className="truncate">{project} docs</span>
                       </Link>
+                      {/* Renders nothing for a project without a triage status:
+                          such a project has no inbox at all (ADR-033). */}
+                      <InboxNavLink
+                        project={project}
+                        className={cn(navLinkClass, 'py-1 text-[0.8125rem]')}
+                        activeClassName={navLinkActiveClass}
+                      />
                     </li>
                   ))}
                 </ul>

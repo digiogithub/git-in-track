@@ -21,6 +21,10 @@ func (s *Server) mountKB(r chi.Router) {
 	r.Put("/page", s.handleKBWrite)
 	r.Post("/feedback", s.handleKBFeedback)
 	r.Get("/asset", s.notImplemented("Serving knowledge-base assets arrives with Phase 3."))
+	// The YouTrack half of the knowledge base (GIT-US-0090). Mounting it here
+	// is what gives it the per-project and per-team scopes the rest of /kb has;
+	// the flat /youtrack/kb/… spelling reaches the very same handlers.
+	r.Route("/youtrack", s.mountYouTrackKB)
 }
 
 // kbScope resolves the repository and the project a knowledge-base request is

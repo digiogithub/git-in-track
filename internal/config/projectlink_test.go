@@ -65,9 +65,12 @@ func TestSaveYouTrackLinkPreservesTheFile(t *testing.T) {
 
 	path := writeProject(t, richProjectYAML)
 	link := YouTrackLink{
-		URL:      "https://yt.example.com/youtrack/",
-		Project:  "ACME",
-		FieldMap: map[string]string{"status": "State", "priority": "Priority"},
+		URL:     "https://yt.example.com/youtrack/",
+		Project: "ACME",
+		FieldMap: FieldMap{
+			"status":   {Field: "State"},
+			"priority": {Field: "Priority"},
+		},
 	}
 	changed, err := SaveYouTrackLink(path, link)
 	if err != nil {
@@ -109,7 +112,7 @@ func TestSaveYouTrackLinkPreservesTheFile(t *testing.T) {
 		reloaded.KBSyncDirection != KBSyncPush {
 		t.Errorf("defaults were not written: %+v", reloaded)
 	}
-	if reloaded.FieldMap["status"] != "State" || reloaded.FieldMap["priority"] != "Priority" {
+	if reloaded.FieldMap["status"].Field != "State" || reloaded.FieldMap["priority"].Field != "Priority" {
 		t.Errorf("field map = %v", reloaded.FieldMap)
 	}
 

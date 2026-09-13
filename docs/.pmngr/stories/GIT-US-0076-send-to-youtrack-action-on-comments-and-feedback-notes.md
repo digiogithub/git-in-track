@@ -2,15 +2,17 @@
 id: GIT-US-0076
 type: story
 title: Send to YouTrack action on comments and feedback notes
-status: backlog
+status: in_review
 priority: medium
 parent: GIT-EP-0013
 milestone: GIT-M-0011
+assignees: [claude]
 author: mcp
 labels: [web]
 estimate: 5
 created: 2026-09-13T13:13:53Z
-updated: 2026-09-13T13:13:53Z
+updated: 2026-09-13T16:37:36Z
+started: 2026-09-13T16:27:33Z
 ---
 
 ## Description
@@ -23,13 +25,13 @@ Feedback on an item is already just a comment (ADR-030, `web/src/features/feedba
 
 ## Acceptance Criteria
 
-- [ ] The action appears only when the YouTrack feature is available, the project is linked and the item has a YouTrack `external` reference.
-- [ ] Comment state renders as pending, sent (with a link to the YouTrack comment) or failed with a retry.
-- [ ] State is derived from the comment's `external` field and `sync.job.*` events and survives a page reload.
-- [ ] The feedback panel offers "send to YouTrack after saving" and honours it when the note is saved as a comment.
-- [ ] The YouTrack settings card exposes `push_comments: manual | auto` and the comment UI adapts to auto.
-- [ ] Only design tokens are used; `npm run tokens:check` passes and the controls are keyboard reachable.
-- [ ] Vitest covers gating, the three states, the retry path and the feedback checkbox with a mocked provider.
+- [x] The action appears only when the YouTrack feature is available, the project is linked and the item has a YouTrack `external` reference.
+- [x] Comment state renders as pending, sent (with a link to the YouTrack comment) or failed with a retry.
+- [x] State is derived from the comment's `external` field and `sync.job.*` events and survives a page reload.
+- [x] The feedback panel offers "send to YouTrack after saving" and honours it when the note is saved as a comment.
+- [x] The YouTrack settings card exposes `push_comments: manual | auto` and the comment UI adapts to auto.
+- [x] Only design tokens are used; `npm run tokens:check` passes and the controls are keyboard reachable.
+- [x] Vitest covers gating, the three states, the retry path and the feedback checkbox with a mocked provider.
 
 ## Notes
 
@@ -38,3 +40,7 @@ Depends on the push job kind and the auto-push seam of this epic, and on GIT-EP-
 Existing code: comments are fetched through `useComments` (`web/src/features/backlog/queries.ts:102-109`) and created with `useAddComment` (`:292-304`); feedback drafts live in `web/src/features/feedback/feedback-store.ts` with `localStorage` keys `gintrack:feedback:<item|kb>:<project>:<ref>`; event bridging is `queries.ts:130-148`.
 
 Do NOT build a second feedback sink — KB-page feedback is a block in the page and belongs to GIT-EP-0014, not here. Do NOT offer a delete-remotely action; deletion is deliberately local only.
+
+The documentation half of GIT-T-0188 (`docs/05-web-app.md`, `CHANGELOG.md`) is
+outstanding, and so is the companion route `POST /api/v1/youtrack/comments/push`
+the provider calls. See the comment on this story.

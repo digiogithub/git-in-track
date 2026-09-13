@@ -90,6 +90,11 @@ type SyncEngine struct {
 	// negative value dispatches every job immediately, which is what the tests
 	// of this package want.
 	Debounce time.Duration
+	// Clock is the source of time the engine schedules on. Nil means the system
+	// clock. It is the seam a test that has to observe the debounce window
+	// drives, so that coalescing is proven by advancing a clock rather than by
+	// sleeping and hoping.
+	Clock syncengine.Clock
 }
 
 // SyncEngineFrom renders the `sync.engine` section of the configuration file as
@@ -173,6 +178,7 @@ func (o SyncEngine) engineOptions(observer *syncObserver) syncengine.Options {
 		BatchSize: o.BatchSize,
 		Rate:      o.Rate,
 		Debounce:  o.Debounce,
+		Clock:     o.Clock,
 		Retry:     syncengine.RetryPolicy{MaxAttempts: o.MaxAttempts},
 		Retention: o.Retention,
 		CacheDir:  o.CacheDir,

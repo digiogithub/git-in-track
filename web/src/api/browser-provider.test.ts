@@ -741,6 +741,25 @@ describe('BrowserProvider — what a tab cannot do (GIT-EP-0012, GIT-EP-0015)', 
     expect(provider.capabilities.youtrack).toBe(false);
   });
 
+  it('refuses knowledge-base sync and the comment push with the reason', async () => {
+    const { provider: browser } = await mount();
+    const provider: DataProvider = browser;
+
+    const calls = [
+      provider.kbSyncStatus({ project: 'ACME' }),
+      provider.publishKbPage({ project: 'ACME', path: 'docs/handbook' }),
+      provider.pullKbPage({ project: 'ACME', path: 'docs/handbook/onboarding.md' }),
+      provider.pushCommentToYoutrack({ itemId: 'ACME-US-0042', all: true }),
+    ];
+
+    for (const call of calls) {
+      // Loudly, not silently: the toolbar and the comment action are gated on
+      // `capabilities.youtrack`, so a call arriving here is a bug in the caller.
+      await expect(call).rejects.toMatchObject({ code: 'read_only' });
+      await expect(call).rejects.toThrow(/companion|gintrack serve/i);
+    }
+  });
+
   it('refuses every job-queue call rather than pretending the queue is empty', async () => {
     const { provider: browser } = await mount();
     const provider: DataProvider = browser;

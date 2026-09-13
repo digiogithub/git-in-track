@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -219,10 +220,11 @@ func TestCommentPushFailsTerminallyWithoutAnItemLink(t *testing.T) {
 	}
 }
 
-// TestCommentPushWithoutAnEditorRefusesToDuplicate pins the honest failure of a
-// build whose client cannot edit a remote comment: it says so rather than
-// posting a second copy.
-func TestCommentPushWithoutAnEditorRefusesToDuplicate(t *testing.T) {
+// TestCommentPushEditsRatherThanDuplicates is the idempotence of the handler:
+// a job delivered twice — after a retry, a journal replay or a dead-letter
+// retry — edits the remote comment it already created instead of posting a
+// second copy.
+func TestCommentPushEditsRatherThanDuplicates(t *testing.T) {
 	t.Parallel()
 
 	root := copyTree(t, fixtureRoot)
@@ -233,38 +235,50 @@ func TestCommentPushWithoutAnEditorRefusesToDuplicate(t *testing.T) {
 	if err := pushOne(t.Context(), t, s); err != nil {
 		t.Fatalf("the first push failed: %v", err)
 	}
-	err := pushOne(t.Context(), t, s)
-	if err == nil {
-		t.Fatal("the second push succeeded without an edit endpoint")
+	if err := pushOne(t.Context(), t, s); err != nil {
+		t.Fatalf("the second push failed: %v", err)
 	}
 	if len(fake.created) != 1 {
 		t.Errorf("the comment was posted twice: %v", fake.created)
 	}
-	if class := syncengine.Classify(err, jobClock).Class; class != syncengine.ClassTerminal {
-		t.Errorf("class = %s, want terminal", class)
+	if len(fake.edited) != 1 {
+		t.Fatalf("the re-delivered job edited %d times, want once: %v", len(fake.edited), fake.edited)
+	}
+	if !strings.Contains(fake.edited[0], "DEMO-42|") {
+		t.Errorf("the edit did not name the issue and the comment: %q", fake.edited[0])
 	}
 }
 
-// TestWriteCommentExternalRefusesAStaleFile is the optimistic lock of the
+// TestRecordCommentExternalRefusesAStaleFile is the optimistic lock of the
 // write-back: a comment edited while it was in flight is reported, never
-// overwritten.
-func TestWriteCommentExternalRefusesAStaleFile(t *testing.T) {
+// overwritten. The lock is the vault's own, taken by "comment.update"; this
+// proves the job still classifies the refusal as retryable, so the next
+// attempt pushes what is on disk now.
+func TestRecordCommentExternalRefusesAStaleFile(t *testing.T) {
 	t.Parallel()
 
 	root := copyTree(t, fixtureRoot)
-	file := filepath.Join(root, filepath.FromSlash(pushedCommentPath))
-	data, err := os.ReadFile(file)
+	s, _ := newJobServerIn(t, newFakeYouTrack(), root)
+	m, ok := s.repos.lookup(testRepoID)
+	if !ok {
+		t.Fatal("the fixture repository is not mounted")
+	}
+	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(pushedCommentPath)))
 	if err != nil {
 		t.Fatalf("read the comment: %v", err)
 	}
 	rev := core.ComputeRev(data)
-
+	params := YouTrackCommentPushParams{ItemID: "DEMO-US-0001", CommentPath: pushedCommentPath}
 	ref := commentExternalRef("https://yt.example.com/youtrack", "DEMO-42", "4-9",
 		core.NewTimestamp(jobClock))
 
 	t.Run("the matching rev writes", func(t *testing.T) {
-		if err := writeCommentExternal(file, pushedCommentPath, rev, ref); err != nil {
-			t.Fatalf("writeCommentExternal(): %v", err)
+		writes, err := s.recordCommentExternal(t.Context(), m, params, rev, ref)
+		if err != nil {
+			t.Fatalf("recordCommentExternal(): %v", err)
+		}
+		if len(writes.Written) != 1 || writes.Written[0].Path != pushedCommentPath {
+			t.Errorf("write set = %+v, want the one comment file", writes)
 		}
 		if got := commentExternalID(t, root); got != "4-9" {
 			t.Errorf("the comment records %q, want 4-9", got)
@@ -272,9 +286,12 @@ func TestWriteCommentExternalRefusesAStaleFile(t *testing.T) {
 	})
 
 	t.Run("a stale rev is refused", func(t *testing.T) {
-		err := writeCommentExternal(file, pushedCommentPath, rev, ref)
+		_, err := s.recordCommentExternal(t.Context(), m, params, rev, ref)
 		if err == nil {
 			t.Fatal("a stale write was accepted")
+		}
+		if !errors.Is(err, errCommentStale) {
+			t.Errorf("err = %v, want the stale-comment failure", err)
 		}
 		if class := syncengine.Classify(err, jobClock).Class; class != syncengine.ClassRetryable {
 			t.Errorf("class = %s, want retryable: the next attempt pushes what is there now", class)

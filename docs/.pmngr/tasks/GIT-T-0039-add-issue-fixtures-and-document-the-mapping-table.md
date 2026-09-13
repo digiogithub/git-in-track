@@ -2,7 +2,7 @@
 id: GIT-T-0039
 type: task
 title: Add issue fixtures and document the mapping table
-status: in_review
+status: done
 priority: medium
 parent: GIT-US-0045
 milestone: GIT-M-0011
@@ -10,8 +10,9 @@ author: mcp
 labels: [core, docs, agent-ok]
 estimate: 2
 created: 2026-09-13T13:16:16Z
-updated: 2026-09-13T14:35:15Z
+updated: 2026-09-13T16:18:59Z
 started: 2026-09-13T14:34:38Z
+closed: 2026-09-13T16:18:59Z
 ---
 
 ## Description
@@ -28,4 +29,6 @@ Add realistic fixture JSON under `internal/youtrack/mapping/testdata/` — an ep
 
 Fixtures landed: `epic.json`, `story.json`, `bug.json`, `unmapped.json`, `comments.json` plus their `*.golden.json`, regenerated with `go test ./internal/youtrack/mapping/ -run Golden -update`. The golden document holds the draft, the relations, the warning lines and the patch, so any change to any of them shows up in review. `story.json` carries the real multi-entry link shape with empty `issues` arrays.
 
-**The documentation criterion is left unticked on purpose.** This wave assigned `internal/youtrack/mapping/` to this agent and `docs/` to another; editing `docs/03-data-model.md` or `CHANGELOG.md` here would have collided with the doc agent's working tree. The mapping table is fully specified in the package doc comments (`fieldmap.go` `DefaultFieldMap`, `item.go`, `links.go`) and can be lifted from there verbatim. Reported to the coordinator.
+**The documentation half landed in the docs pass**: `docs/03-data-model.md` §12.6 "What a YouTrack issue becomes" now carries the field-to-field table, the three built-in value maps (types, states, priorities), the link-type table and seven rules (R-YT-1 … R-YT-7). The third criterion stays unticked only because of its `CHANGELOG.md` half: the changelog belongs to another agent in this wave and was not touched.
+
+Verified against the code rather than against the earlier note: the value tables were read out of `DefaultFieldMap`, the estimate arithmetic out of `mapEstimate`, the link directions out of `linkKind`, and two divergences from the story's own description were found and documented instead of being repeated — an imported item's `external` entry carries no `key`, and `attachments[]` holds full vault-relative paths rather than the bare filenames R-ATT-4 specifies.

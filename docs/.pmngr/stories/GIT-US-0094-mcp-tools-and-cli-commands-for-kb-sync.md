@@ -2,7 +2,7 @@
 id: GIT-US-0094
 type: story
 title: MCP tools and CLI commands for KB sync
-status: in_review
+status: done
 priority: medium
 parent: GIT-EP-0014
 milestone: GIT-M-0011
@@ -10,8 +10,9 @@ author: mcp
 labels: [mcp, cli, docs]
 estimate: 3
 created: 2026-09-13T13:15:31Z
-updated: 2026-09-13T15:41:43Z
+updated: 2026-09-13T16:40:58Z
 started: 2026-09-13T15:41:34Z
+closed: 2026-09-13T16:40:58Z
 ---
 
 ## Description

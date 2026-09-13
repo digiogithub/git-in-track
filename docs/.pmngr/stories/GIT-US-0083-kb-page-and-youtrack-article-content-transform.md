@@ -2,7 +2,7 @@
 id: GIT-US-0083
 type: story
 title: KB page and YouTrack article content transform
-status: in_review
+status: done
 priority: medium
 parent: GIT-EP-0014
 milestone: GIT-M-0011
@@ -10,8 +10,9 @@ author: mcp
 labels: [core, server]
 estimate: 8
 created: 2026-09-13T13:14:26Z
-updated: 2026-09-13T15:00:49Z
+updated: 2026-09-13T16:21:22Z
 started: 2026-09-13T15:00:28Z
+closed: 2026-09-13T16:21:22Z
 ---
 
 ## Description

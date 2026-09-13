@@ -25,6 +25,25 @@
 
 import { resolveCompanionBaseUrl } from '@/api/detect';
 import type {
+  CommentPushEntry,
+  CommentPushInput,
+  CommentPushResult,
+  External,
+  InboxDraft,
+  InboxFilter,
+  InboxPage,
+  InboxStatus,
+  InboxTriageAction,
+  InboxTriageInput,
+  InboxTriageResult,
+  ItemInbox,
+  KbPageSyncStatus,
+  KbSyncJobResult,
+  KbSyncSelector,
+  KbSyncState,
+  KbSyncStatusResult,
+  SprintCloseInput,
+  SprintTransferInput,
   BatchResult,
   BoardMoveResult,
   BoardSummary,
@@ -77,7 +96,6 @@ import type {
   RetroPromotion,
   RetroResult,
   RetroView,
-  SprintCarry,
   SprintDraft,
   SprintFilter,
   SprintPatch,
@@ -164,6 +182,15 @@ const SUBSCRIBE_TOPICS = [
   'sync.job.progress',
   'sync.job.done',
   'sync.job.failed',
+  // The triage queue (ADR-033): one frame per decision, carrying the whole
+  // queue's pending count so a sidebar badge never needs a second call.
+  'inbox.changed',
+  // A sprint whose scope moved, by a close or by a transfer. A dry run
+  // publishes none (GIT-US-0085).
+  'sprint.changed',
+  // A knowledge-base page and its article both changed; the page was left
+  // untouched and the incoming content went to `<page>.conflict.md`.
+  'youtrack.kb.conflict',
 ];
 
 /** The `sync.job.*` topics, by the phase each one carries. */
@@ -273,6 +300,12 @@ const PROBLEM_CODES: Record<string, ProviderErrorCode> = {
   git_auth_failed: 'git_auth_failed',
   repo_not_cloned: 'repo_not_cloned',
   wip_limit_exceeded: 'wip_limit_exceeded',
+  sprint_overlap: 'sprint_overlap',
+  sprint_already_active: 'sprint_already_active',
+  // A transfer aimed at a sprint that is already over (GIT-US-0085).
+  sprint_target_completed: 'sprint_target_completed',
+  // A project with no triage status simply has no inbox (ADR-033).
+  no_triage_status: 'no_triage_status',
   project_exists: 'project_exists',
   team_exists: 'team_exists',
   team_project_exists: 'team_project_exists',
@@ -485,6 +518,168 @@ function malformed(what: string): ProviderError {
   return new ProviderError('internal', `The companion returned a malformed ${what}.`);
 }
 
+/**
+ * The two REST groups of the outbound YouTrack integration, in one place.
+ *
+ * They sit beside the rest of the `/youtrack` group the settings card and the
+ * import dialog already use. Keeping the two prefixes here — rather than
+ * spelled out at each call site — is what makes a change to either a one-line
+ * change in this file.
+ */
+const YOUTRACK_KB_PATH = `${API_PREFIX}/youtrack/kb`;
+const YOUTRACK_COMMENTS_PATH = `${API_PREFIX}/youtrack/comments`;
+
+/** The five states a knowledge-base page can be in against its article. */
+const KB_SYNC_STATES: KbSyncState[] = [
+  'unlinked',
+  'in_sync',
+  'local_ahead',
+  'remote_ahead',
+  'conflict',
+];
+
+function toKbPageSyncStatus(value: unknown): KbPageSyncStatus {
+  const record = asRecord(value) ?? {};
+  const state = asString(record['state']);
+  const row: KbPageSyncStatus = {
+    path: asString(record['path']) ?? '',
+    linked: asBoolean(record['linked']) ?? false,
+    state: KB_SYNC_STATES.includes(state as KbSyncState) ? (state as KbSyncState) : 'unlinked',
+  };
+  put(row, 'articleId', asString(record['articleId']));
+  put(row, 'url', asString(record['url']));
+  put(row, 'syncedAt', asString(record['syncedAt']));
+  put(row, 'error', asString(record['error']));
+  return row;
+}
+
+export function toKbSyncStatusResult(
+  value: unknown,
+  selector: KbSyncSelector,
+): KbSyncStatusResult {
+  const record = asRecord(value) ?? {};
+  return {
+    project: asString(record['project']) ?? selector.project ?? '',
+    pages: asArray(record['pages']).map(toKbPageSyncStatus),
+    remote: asBoolean(record['remote']) ?? false,
+  };
+}
+
+export function toKbSyncJobResult(value: unknown, selector: KbSyncSelector): KbSyncJobResult {
+  const record = asRecord(value) ?? {};
+  return {
+    project: asString(record['project']) ?? selector.project ?? '',
+    jobId: asString(record['jobId']) ?? '',
+    pages: asStringArray(record['pages']) ?? [],
+  };
+}
+
+function toCommentPushEntry(value: unknown): CommentPushEntry {
+  const record = asRecord(value) ?? {};
+  const entry: CommentPushEntry = { commentPath: asString(record['commentPath']) ?? '' };
+  put(entry, 'youtrackCommentId', asString(record['youtrackCommentId']));
+  put(entry, 'url', asString(record['url']));
+  put(entry, 'reason', asString(record['reason']));
+  put(entry, 'error', asString(record['error']));
+  return entry;
+}
+
+export function toCommentPushResult(value: unknown, input: CommentPushInput): CommentPushResult {
+  const record = asRecord(value) ?? {};
+  const result: CommentPushResult = {
+    project: asString(record['project']) ?? input.project ?? '',
+    itemId: asString(record['itemId']) ?? input.itemId,
+    pushed: asArray(record['pushed']).map(toCommentPushEntry),
+    skipped: asArray(record['skipped']).map(toCommentPushEntry),
+    failed: asArray(record['failed']).map(toCommentPushEntry),
+  };
+  put(result, 'jobId', asString(record['jobId']));
+  return result;
+}
+
+/** The five triage states, in the order a filter chip row reads them (ADR-033). */
+export const INBOX_STATUSES: InboxStatus[] = [
+  'pending',
+  'accepted',
+  'rejected',
+  'snoozed',
+  'duplicate',
+];
+
+/**
+ * `GET /api/v1/inbox` → one page of the queue.
+ *
+ * `counts` and `pending` are whole-queue numbers the server computed against
+ * its own clock, so an expired snooze already counts as pending here. They are
+ * read straight through rather than recomputed: a client cannot resolve an
+ * expiry it has no clock agreement on.
+ */
+export function toInboxPage(value: unknown): InboxPage {
+  const record = asRecord(value);
+  const items = (record ? asArray(record['items']) : asArray(value)).map(toItem);
+  const counts: Partial<Record<InboxStatus, number>> = {};
+  const rawCounts = record ? (asRecord(record['counts']) ?? {}) : {};
+  for (const status of INBOX_STATUSES) {
+    const n = asNumber(rawCounts[status]);
+    if (n !== undefined) counts[status] = n;
+  }
+  const page: InboxPage = {
+    items,
+    total: (record ? asNumber(record['total']) : undefined) ?? items.length,
+    counts,
+    pending: (record ? asNumber(record['pending']) : undefined) ?? (counts.pending ?? 0),
+  };
+  const cursor = record ? asString(record['nextCursor']) : undefined;
+  if (cursor !== undefined && cursor !== '') page.nextCursor = cursor;
+  return page;
+}
+
+/** `POST /api/v1/items/{id}/triage` → the item and the queue behind it. */
+export function toInboxTriageResult(value: unknown, fallback: InboxTriageInput): InboxTriageResult {
+  const record = asRecord(value) ?? {};
+  const action = asString(record['action']);
+  return {
+    item: toItem(record['item'] ?? record),
+    action: (action as InboxTriageAction | undefined) ?? fallback.action,
+    pending: asNumber(record['pending']) ?? 0,
+  };
+}
+
+/** One `external:` entry as the API sends it. An entry without both halves is dropped. */
+function toExternal(value: unknown): External | undefined {
+  const record = asRecord(value);
+  if (!record) return undefined;
+  const system = asString(record['system']);
+  const id = asString(record['id']);
+  if (system === undefined || id === undefined) return undefined;
+  const entry: External = { system, id };
+  put(entry, 'url', asString(record['url']));
+  put(entry, 'key', asString(record['key']));
+  put(entry, 'syncedAt', asString(record['syncedAt']));
+  return entry;
+}
+
+export function toExternalList(value: unknown): External[] | undefined {
+  const entries = asArray(value).map(toExternal).filter((e): e is External => e !== undefined);
+  return entries.length === 0 ? undefined : entries;
+}
+
+/** The `inbox:` block of an item in triage; absent for everything else. */
+function toItemInbox(value: unknown): ItemInbox | undefined {
+  const record = asRecord(value);
+  if (!record) return undefined;
+  const inbox: ItemInbox = {};
+  const status = asString(record['status']);
+  if (status !== undefined && INBOX_STATUSES.includes(status as InboxStatus)) {
+    inbox.status = status as InboxStatus;
+  }
+  put(inbox, 'snoozedUntil', asString(record['snoozedUntil']));
+  put(inbox, 'duplicateOf', asString(record['duplicateOf']));
+  put(inbox, 'source', asString(record['source']));
+  put(inbox, 'received', asString(record['received']));
+  return inbox;
+}
+
 export function toItem(value: unknown): Item {
   const record = asRecord(value);
   const id = record ? asString(record['id']) : undefined;
@@ -522,6 +717,8 @@ export function toItem(value: unknown): Item {
   put(item, 'links', toLinks(record['links']));
   put(item, 'attachments', asStringArray(record['attachments']));
   put(item, 'custom', asRecord(record['custom']) ?? undefined);
+  put(item, 'external', toExternalList(record['external']));
+  put(item, 'inbox', toItemInbox(record['inbox']));
   put(item, 'deleted', asBoolean(record['deleted']));
   return item;
 }
@@ -560,6 +757,7 @@ export function toComment(
   put(comment, 'updated', asString(record['updated']));
   put(comment, 'inReplyTo', asString(record['inReplyTo']));
   put(comment, 'kind', asString(record['kind']));
+  put(comment, 'external', toExternalList(record['external']));
   return comment;
 }
 
@@ -1843,18 +2041,44 @@ export class CompanionProvider implements DataProvider {
     )) as SprintResult;
   }
 
-  async closeSprint(
-    id: string,
-    carry?: SprintCarry[],
-    rev?: string,
-    team?: string,
-  ): Promise<SprintResult> {
+  /**
+   * `POST /api/v1/sprints/{id}/close`.
+   *
+   * A `dryRun` computes the whole report and writes nothing, not even a write
+   * set: it is what the confirmation dialog renders before anything moves.
+   */
+  async closeSprint(id: string, input: SprintCloseInput = {}, team?: string): Promise<SprintResult> {
     return (await this.#json(
       `${API_PREFIX}/sprints/${encodeURIComponent(id)}/close${teamQuery(team)}`,
       {
         method: 'POST',
-        rev: rev ?? '*',
-        body: { carry: carry ?? [] },
+        rev: input.rev ?? '*',
+        body: {
+          carry: input.carry ?? [],
+          ...(input.transfer === undefined ? {} : { transfer: input.transfer }),
+          ...(input.dryRun === undefined ? {} : { dryRun: input.dryRun }),
+        },
+      },
+    )) as SprintResult;
+  }
+
+  /** `POST /api/v1/sprints/{id}/transfer`: move scope without closing anything. */
+  async transferSprintItems(
+    id: string,
+    input: SprintTransferInput = {},
+    team?: string,
+  ): Promise<SprintResult> {
+    return (await this.#json(
+      `${API_PREFIX}/sprints/${encodeURIComponent(id)}/transfer${teamQuery(team)}`,
+      {
+        method: 'POST',
+        rev: input.rev ?? '*',
+        body: {
+          ...(input.mode === undefined ? {} : { mode: input.mode }),
+          ...(input.target === undefined ? {} : { target: input.target }),
+          ...(input.carry === undefined ? {} : { carry: input.carry }),
+          ...(input.dryRun === undefined ? {} : { dryRun: input.dryRun }),
+        },
       },
     )) as SprintResult;
   }
@@ -1920,6 +2144,71 @@ export class CompanionProvider implements DataProvider {
       body: author ? { body, author } : { body },
     });
     return toComment(answer, { item: id, author: author ?? '', body });
+  }
+
+  // --------------------------------------------------------------------- inbox
+
+  /**
+   * `GET /api/v1/inbox?project=&status=&…`.
+   *
+   * The filter's `status` is the *triage* state, never a workflow status:
+   * every item this route can answer with is in a triage status by
+   * construction (ADR-033).
+   */
+  async listInbox(filter: InboxFilter = {}): Promise<InboxPage> {
+    const sort =
+      filter.sort === undefined ? undefined : `${filter.order === 'desc' ? '-' : ''}${filter.sort}`;
+    const query = buildQuery({
+      project: filter.project,
+      status: filter.status,
+      type: filter.type,
+      label: filter.label,
+      assignee: filter.assignee,
+      q: filter.text,
+      sort,
+      limit: filter.limit,
+      cursor: filter.cursor === '' ? undefined : filter.cursor,
+      fields: filter.fields?.join(','),
+    });
+    return toInboxPage(await this.#json(`${API_PREFIX}/inbox${query}`));
+  }
+
+  /** `POST /api/v1/items` with the `inbox` option: a submission, not a backlog item. */
+  async createInboxItem(draft: InboxDraft): Promise<Item> {
+    const { source, received, ...rest } = draft;
+    const body = await this.#json(`${API_PREFIX}/items`, {
+      method: 'POST',
+      body: {
+        ...rest,
+        inbox: {
+          ...(source === undefined ? {} : { source }),
+          ...(received === undefined ? {} : { received }),
+        },
+      },
+    });
+    return this.#hydrate(body);
+  }
+
+  /**
+   * `POST /api/v1/items/{id}/triage`. The revision travels in `If-Match`, never
+   * in the body, so one write cannot claim two different preconditions.
+   */
+  async triageInboxItem(input: InboxTriageInput): Promise<InboxTriageResult> {
+    const answer = await this.#json(
+      `${API_PREFIX}/items/${encodeURIComponent(input.id)}/triage`,
+      {
+        method: 'POST',
+        rev: input.rev ?? '*',
+        body: {
+          action: input.action,
+          ...(input.status === undefined ? {} : { status: input.status }),
+          ...(input.parent === undefined ? {} : { parent: input.parent }),
+          ...(input.snoozedUntil === undefined ? {} : { snoozedUntil: input.snoozedUntil }),
+          ...(input.duplicateOf === undefined ? {} : { duplicateOf: input.duplicateOf }),
+        },
+      },
+    );
+    return toInboxTriageResult(answer, input);
   }
 
   async addPageFeedback(
@@ -2136,6 +2425,78 @@ export class CompanionProvider implements DataProvider {
         body: importBody(options),
       }),
     );
+  }
+
+  // ------------------------------------------------- youtrack knowledge base
+
+  /**
+   * `GET /api/v1/youtrack/kb/status?key=&path=&recursive=&remote=`.
+   *
+   * Without `remote` nothing leaves the companion: the state comes from each
+   * page's own `external` entry and the content it would publish, which is what
+   * makes asking about a whole tree affordable.
+   */
+  async kbSyncStatus(selector: KbSyncSelector = {}): Promise<KbSyncStatusResult> {
+    const query = buildQuery({
+      key: selector.project,
+      path: selector.path,
+      recursive: selector.recursive,
+      remote: selector.remote,
+    });
+    return toKbSyncStatusResult(await this.#json(`${YOUTRACK_KB_PATH}/status${query}`), selector);
+  }
+
+  /**
+   * `POST /api/v1/youtrack/kb/publish`. It queues a job and returns: a handbook
+   * is hundreds of articles, so the work happens where retries and rate
+   * limiting already live. The `## Feedback` block is never part of it — it
+   * stays in the repository (ADR-030).
+   */
+  async publishKbPage(selector: KbSyncSelector): Promise<KbSyncJobResult> {
+    return this.#kbSyncJob('publish', selector);
+  }
+
+  /** `POST /api/v1/youtrack/kb/pull`. */
+  async pullKbPage(selector: KbSyncSelector): Promise<KbSyncJobResult> {
+    return this.#kbSyncJob('pull', selector);
+  }
+
+  async #kbSyncJob(
+    direction: 'publish' | 'pull',
+    selector: KbSyncSelector,
+  ): Promise<KbSyncJobResult> {
+    const answer = await this.#json(
+      `${YOUTRACK_KB_PATH}/${direction}${buildQuery({ key: selector.project })}`,
+      {
+        method: 'POST',
+        body: {
+          ...(selector.path === undefined ? {} : { path: selector.path }),
+          ...(selector.recursive === undefined ? {} : { recursive: selector.recursive }),
+        },
+      },
+    );
+    return toKbSyncJobResult(answer, selector);
+  }
+
+  /**
+   * `POST /api/v1/youtrack/comments/push`.
+   *
+   * The answer says what was *queued*, never what arrived: the comment's own
+   * `external` entry, written by the job, is the evidence a reader trusts.
+   */
+  async pushCommentToYoutrack(input: CommentPushInput): Promise<CommentPushResult> {
+    const answer = await this.#json(
+      `${YOUTRACK_COMMENTS_PATH}/push${buildQuery({ key: input.project })}`,
+      {
+        method: 'POST',
+        body: {
+          itemId: input.itemId,
+          ...(input.commentPath === undefined ? {} : { commentPath: input.commentPath }),
+          ...(input.all === undefined ? {} : { all: input.all }),
+        },
+      },
+    );
+    return toCommentPushResult(answer, input);
   }
 
   // ----------------------------------------------------- background jobs
@@ -2520,6 +2881,42 @@ export class CompanionProvider implements DataProvider {
     }
 
     switch (type) {
+      case 'inbox.changed': {
+        this.#emit({
+          kind: 'inbox',
+          repoId,
+          project: asString(payload['project']) ?? '',
+          id: asString(payload['id']) ?? '',
+          action: asString(payload['action']) ?? '',
+          pending: asNumber(payload['pendingCount']) ?? 0,
+        });
+        return;
+      }
+      case 'sprint.changed': {
+        this.#emit({
+          kind: 'sprint',
+          sprint: asString(payload['sprint']) ?? '',
+          board: asString(payload['board']) ?? '',
+          state: asString(payload['state']) ?? '',
+          carried: asNumber(payload['carried']) ?? 0,
+          failed: asNumber(payload['failed']) ?? 0,
+        });
+        return;
+      }
+      case 'youtrack.kb.conflict': {
+        const path = asString(payload['path']) ?? '';
+        const event: Extract<ChangeEvent, { kind: 'kbConflict' }> = {
+          kind: 'kbConflict',
+          project: asString(payload['project']) ?? '',
+          path,
+          conflictPath: asString(payload['conflictPath']) ?? '',
+          direction: asString(payload['direction']) === 'publish' ? 'publish' : 'pull',
+        };
+        const articleId = asString(payload['articleId']);
+        if (articleId !== undefined) event.articleId = articleId;
+        this.#emit(event);
+        return;
+      }
       case 'item.changed': {
         const id = asString(payload['id']);
         if (id !== undefined) this.#emit({ kind: 'items', repoId, ids: [id] });

@@ -413,6 +413,97 @@ Nothing here is cached or persisted. A **new hostname is minted on every enable*
 card reads the status rather than remembering one, and turning the tunnel off invalidates
 every link already shared.
 
+**YouTrack connection (`features/settings/YouTrackCard.tsx`, stories GIT-US-0055 and
+GIT-US-0065).** Connecting a project to a YouTrack instance is three facts — an instance, a
+credential and a remote project — and the card exists so that the user finds out whether they are
+right *before* anything is written: **Test connection** probes the URL and token currently in the
+form, saved or not, and names the YouTrack user it resolved.
+
+The credential decides the shape of the screen. The API is write-only about it — a read returns
+`hasToken` and `tokenSource`, never the token (doc 07 §5.5, [ADR-032](./adr/ADR-032-local-integration-credential-storage.md))
+— so the field is **never** pre-filled, not even with a masked placeholder, which a save would
+happily write back as the literal string of asterisks. Instead the card says that a token is stored
+and where it came from: the companion's configuration file, its environment, or its command line. A
+token that arrived in the environment or on the command line belongs to whoever started the
+companion, and the card reports it rather than pretending it can clear it.
+
+The **YouTrack project** field is an autosuggest over the instance's own projects rather than a text
+box, and it degrades to a text box when the instance cannot be listed, because a short name typed
+from memory is the single most common way this connection is wrong. Three selects carry the rest of
+the committed block of doc 03 §6.5: push comments (`manual` / `auto`), knowledge base sync
+(`manual` / `on_write`) and sync direction (`push` / `pull` / `both`).
+
+Everything the instance says about itself arrives as a distinct problem code — a rejected token, a
+token without the permission, a base URL missing its context path, an unreachable host — and each is
+rendered as its own sentence with its own fix, never collapsed into one "failed" line. The companion
+answers `502` for all of them on purpose, so that a browser never mistakes YouTrack refusing a token
+for its own session expiring.
+
+The card shows whenever `youtrackSupported` is true — that is, in companion mode — and **not** only
+when a project is already linked: a card that appeared only once a project was connected could never
+connect the first one. That is the opposite gate from the import entry below, and the two are
+deliberately different questions (doc 02 §2).
+
+**The field map (`features/settings/YouTrackFieldMap.tsx`).** A table of the git-in-track fields of
+doc 03 §6.5 against the YouTrack custom fields that carry them. Neither list is hard-coded in the
+browser: the git-in-track side comes from the companion's own `FieldMapKeys` and the YouTrack side is
+discovered from the instance, so neither can drift from what the importer will actually read.
+
+Two rules make the table honest rather than convenient. **A default is proposed, never applied
+silently:** on first open every unmapped row is matched case-insensitively against the instance's
+real field names and marked as a proposal, so what gets saved is what somebody looked at. And **a
+mapping pointing at a field the instance no longer has is a warning, not a deletion:** it stays
+selected and clearing it is an explicit act, because a rename in YouTrack must not quietly unmap a
+field here and turn every later import into a silent default.
+
+**Import from YouTrack (`features/youtrack/`, story GIT-US-0059).** The entry is a button in the
+backlog toolbar, and it needs **both** capability flags: `youtrackSupported`, because a browser-only
+tab has no process to hold a token, and `youtrack`, because importing from an instance nothing is
+linked to is meaningless. Without both, the button is absent rather than disabled.
+
+The dialog is one linear flow — **pick**, **preview**, **run**, **summary**, the first two being one
+screen — and it is linear because an import writes items into a git repository, and the step that
+makes that safe is the one where the user sees what would be written before anything is.
+
+*Pick* is a typeahead over the linked project plus five saved queries, because the alternative is
+asking a person to remember a query language to answer "which of my issues do I want here". The
+preset chips are the common questions and the text box is the escape hatch; the two compose.
+Selection is multiple and additive with a running count always on screen — an import is a batch, and
+its size is the thing to know before pressing preview. A result a previous import already created is
+marked with the git-in-track id it became and **stays selectable**: that is not an edge case but the
+normal second import, and the preview will say `update` rather than `create`.
+
+The options are a subtask-depth stepper from 0 to 5 — 0 means the selected issues and nothing else,
+and the recursion is a number rather than a checkbox because "these three issues" and "these three
+issues and everything under them" are wildly different amounts of writing — plus three switches:
+include linked issues (non-hierarchy relations become `links[]`), include comments (one comment file
+each, keeping the original author and time), and include attachments (paths recorded on the item,
+files fetched by the job engine). A fifth control, *land in Inbox*, is present and **disabled on
+purpose**: it is the shape the Inbox epic gives an import, and a visibly unavailable control says so
+far better than a missing one, which reads as an option nobody thought of.
+
+**Preview and run are the same call with the same options object**, which is what stops "what the
+preview showed me" and "what the run did" from drifting. Preview is synchronous and writes nothing:
+it answers, per issue, what it would become, whether it is a `create` or an `update`, which item an
+update would patch, how deep the recursion found it, how many comments it would write, and every
+value the field map could not read. Run is not a spinner. The companion queues the import on its job
+engine and answers a job id, and the progress strip is fed by the `sync.job.*` events — coalesced
+server-side to one frame per 500 ms per group, terminal frames never throttled — so the component
+adds no throttling of its own and treats a jump in the counts as normal. The dialog also accepts a
+finished result answered inline and skips the strip; no runtime answers that way today — the
+companion always queues and answers `202` with a job id — and the branch exists so that a future one
+can, ending at the same summary either way.
+
+The summary is **per issue rather than a count**, because a partial failure is the interesting case:
+eighteen landed and two did not, and the two are the only ones worth a person's time. Their error
+text is what the engine recorded, already redacted, rendered as plain text.
+
+The dialog writes nothing itself. It calls the import operations and lets the vault do the writing,
+which is what keeps one implementation of "import an issue" behind REST, MCP and the CLI alike.
+
+Knowledge-base publish and pull have **no screen yet**: they exist over MCP and over the core API,
+and the only thing the web app shows of them is their jobs passing through the sync-engine queue.
+
 **SettingsLayout (`/settings/*`)** — Workspace (mounted repos, remove/repair,
 re-index, clear caches), per-repo (docs folder, project key, default branch,
 ignored globs), appearance (§12), sync (branch policy, commit-on-save toggle and

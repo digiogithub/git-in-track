@@ -2,15 +2,17 @@
 id: GIT-US-0089
 type: story
 title: Active cycle view, close dialog and status-grouped sprint list in the web app
-status: backlog
+status: in_review
 priority: medium
 parent: GIT-EP-0017
 milestone: GIT-M-0012
+assignees: [claude]
 author: mcp
 labels: [web]
 estimate: 8
 created: 2026-09-13T13:14:59Z
-updated: 2026-09-13T13:14:59Z
+updated: 2026-09-13T16:41:23Z
+started: 2026-09-13T16:27:30Z
 ---
 
 ## Description
@@ -23,14 +25,14 @@ Three pieces, all inside `web/src/features/boards/`. First, an `ActiveCycle.tsx`
 
 ## Acceptance Criteria
 
-- [ ] A scrum board shows an active-cycle panel with goal, dates, days remaining, progress against committed points, added-mid-sprint count and a burndown; the provenance note is printed above the chart.
-- [ ] A closed sprint's panel and metrics read the stored snapshot and say so; an open one reads live metrics.
-- [ ] The close dialog runs a dry run first and shows finished, unfinished and unresolved counts, the chosen destination, and every per-item refusal before the confirm button is enabled.
-- [ ] The target picker lists only sprints of the same board whose derived status is not `completed`.
-- [ ] `SprintList` groups by derived status in the order current → upcoming → draft → completed and marks drafts with a badge.
-- [ ] `NewSprintDialog` accepts a sprint with no dates and renders a `sprint_overlap` refusal with the other sprint's name and range plus the draft escape hatch.
-- [ ] `DataProvider` sprint methods carry derived status, transfer options and `dryRun`, implemented in the companion, browser and fake providers.
-- [ ] Vitest covers the grouping, the dry-run rendering, the draft badge and the overlap error path; `npm run lint` and `tsc` pass.
+- [x] A scrum board shows an active-cycle panel with goal, dates, days remaining, progress against committed points, added-mid-sprint count and a burndown; the provenance note is printed above the chart.
+- [x] A closed sprint's panel and metrics read the stored snapshot and say so; an open one reads live metrics.
+- [x] The close dialog runs a dry run first and shows finished, unfinished and unresolved counts, the chosen destination, and every per-item refusal before the confirm button is enabled.
+- [x] The target picker lists only sprints of the same board whose derived status is not `completed`.
+- [x] `SprintList` groups by derived status in the order current → upcoming → draft → completed and marks drafts with a badge.
+- [x] `NewSprintDialog` accepts a sprint with no dates and renders a `sprint_overlap` refusal with the other sprint's name and range plus the draft escape hatch.
+- [x] `DataProvider` sprint methods carry derived status, transfer options and `dryRun`, implemented in the companion, browser and fake providers.
+- [x] Vitest covers the grouping, the dry-run rendering, the draft badge and the overlap error path; `npm run lint` and `tsc` pass.
 
 ## Notes
 
@@ -39,3 +41,8 @@ Existing code: `web/src/features/boards/BoardView.tsx`, `SprintPanel.tsx`, `Spri
 Plane reference for the interaction only: `apps/web/core/components/cycles/active-cycle/`, `transfer-issues.tsx` L18-42 (the inline warning banner as the gate for the bulk action) and `transfer-issues-modal.tsx` L47-60 (success and error toasts).
 
 Do NOT compute derived status in the front end — it comes from the core so both hosts agree. Do NOT render a burndown without its provenance note. Do NOT add a charting dependency if the existing metrics components can be reused.
+
+`ActiveCycle` sits inside `SprintPanel`, which `BoardView` already renders above
+the columns, rather than as a second card; `BoardView.tsx` is unchanged.
+`SprintMetrics` was corrected in the same pass so a snapshot-backed view never
+draws the unfrozen cumulative-flow series as zeros.

@@ -95,6 +95,8 @@ Start with:
 		newSnapshotCommand(flags),
 		newSyncCommand(flags),
 		newItemCommand(flags),
+		newInboxCommand(flags),
+		newSprintCommand(flags),
 		newDoctorCommand(flags),
 		newConfigCommand(flags),
 		newYouTrackCommand(flags),

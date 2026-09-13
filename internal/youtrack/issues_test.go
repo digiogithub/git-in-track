@@ -3,10 +3,12 @@ package youtrack
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -322,5 +324,155 @@ func TestAttachmentsAndSignedDownload(t *testing.T) {
 	absolute, err := client.AttachmentURL(Attachment{ID: "8-14", URL: "https://cdn.example.com/a.png"})
 	if err != nil || absolute != "https://cdn.example.com/a.png" {
 		t.Fatalf("absolute URL = %q, err = %v", absolute, err)
+	}
+}
+
+// TestUpdateCommentEditsInPlace covers the comment edit endpoint, which is the
+// half of a comment push that keeps a re-delivered job from duplicating a
+// comment: the verb is POST, exactly like a create, and the comment id in the
+// path is the only thing that distinguishes the two.
+func TestUpdateCommentEditsInPlace(t *testing.T) {
+	const text = "Fixed in **1.4.1**.\n\n---\n_jose · git-in-track ACME-US-0042_"
+	srv, rec := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("reading the request body: %v", err)
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(body, &payload); err != nil {
+			t.Errorf("request body is not JSON: %v", err)
+		}
+		if payload["text"] != text {
+			t.Errorf("body = %v, want the edited text", payload)
+		}
+		if len(payload) != 1 {
+			t.Errorf("body = %v, want only the text field", payload)
+		}
+		writeJSON(t, w, "comment_updated.json")
+	})
+	client := newTestClient(t, srv.URL+"/yt", newFakeClock(), nil)
+
+	comment, err := client.UpdateComment(context.Background(), "ACME-42", "4-89", text)
+	if err != nil {
+		t.Fatalf("UpdateComment: %v", err)
+	}
+	if rec.count() != 1 {
+		t.Fatalf("%d requests, want exactly one: an edit must never post a second comment", rec.count())
+	}
+	req := rec.all()[0]
+	if req.Method != http.MethodPost {
+		t.Errorf("method = %s, want POST: YouTrack edits a comment with the same verb it creates one with", req.Method)
+	}
+	if req.URL.Path != "/yt/api/issues/ACME-42/comments/4-89" {
+		t.Errorf("path = %q, want the comment sub-resource under the instance context path", req.URL.Path)
+	}
+	if got := req.URL.Query().Get("fields"); got != CommentFields {
+		t.Errorf("fields = %q, want %q", got, CommentFields)
+	}
+	if comment.ID != "4-89" || comment.Text != text {
+		t.Fatalf("comment = %+v, want the edited comment as the server stored it", comment)
+	}
+	if comment.Updated.Time().IsZero() || !comment.Updated.Time().After(comment.Created.Time()) {
+		t.Errorf("updated = %v, created = %v: an edit must carry a later update stamp",
+			comment.Updated.Time(), comment.Created.Time())
+	}
+}
+
+// TestUpdateCommentRejectsEmptyArguments asserts the local validation: every
+// one of these would otherwise hit the instance and either 404 or, in the
+// empty-text case, blank a comment somebody is reading.
+func TestUpdateCommentRejectsEmptyArguments(t *testing.T) {
+	srv, rec := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("no request may be sent for a locally invalid call")
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	client := newTestClient(t, srv.URL, newFakeClock(), nil)
+
+	cases := []struct {
+		name      string
+		issue     string
+		comment   string
+		text      string
+		wantInErr string
+	}{
+		{name: "no issue", issue: "", comment: "4-89", text: "hello", wantInErr: "issue id is empty"},
+		{name: "no comment", issue: "ACME-42", comment: "", text: "hello", wantInErr: "comment id is empty"},
+		{name: "no text", issue: "ACME-42", comment: "4-89", text: "", wantInErr: "comment text is empty"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := client.UpdateComment(context.Background(), tc.issue, tc.comment, tc.text)
+			if !errors.Is(err, ErrInvalidInput) {
+				t.Fatalf("err = %v, want ErrInvalidInput", err)
+			}
+			if !strings.Contains(err.Error(), tc.wantInErr) {
+				t.Errorf("err = %v, want it to mention %q", err, tc.wantInErr)
+			}
+		})
+	}
+	if rec.count() != 0 {
+		t.Fatalf("%d requests were sent, want none", rec.count())
+	}
+}
+
+// TestUpdateCommentRedactsTheTokenOnFailure asserts the error path of an edit
+// obeys the package rule: a failing body is reported, but never with the token
+// in it, even when the instance echoes the Authorization header back.
+func TestUpdateCommentRedactsTheTokenOnFailure(t *testing.T) {
+	srv, _ := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, `{"error":"Forbidden","error_description":"`+
+			r.Header.Get("Authorization")+` may not edit this comment"}`)
+	})
+	client := newTestClient(t, srv.URL, newFakeClock(), nil)
+
+	_, err := client.UpdateComment(context.Background(), "ACME-42", "4-89", "edited")
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("err = %v, want ErrForbidden", err)
+	}
+	if strings.Contains(err.Error(), testToken) {
+		t.Fatalf("the token leaked into %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "[redacted]") {
+		t.Errorf("err = %v, want the redaction marker where the token was", err)
+	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Path != "/api/issues/ACME-42/comments/4-89" {
+		t.Errorf("err = %v, want an APIError naming the comment path", err)
+	}
+}
+
+// TestUpdateCommentRetriesWithoutDuplicating asserts that a retryable status is
+// retried on the edit path and that the retry is still an edit: the id in the
+// path is what stops a retry from becoming a second comment.
+func TestUpdateCommentRetriesWithoutDuplicating(t *testing.T) {
+	var attempts atomic.Int32
+	srv, rec := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		if attempts.Add(1) == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		writeJSON(t, w, "comment_updated.json")
+	})
+	clock := newFakeClock()
+	client := newTestClient(t, srv.URL, clock, nil)
+
+	comment, err := client.UpdateComment(context.Background(), "ACME-42", "4-89", "edited")
+	if err != nil {
+		t.Fatalf("UpdateComment: %v", err)
+	}
+	if comment.ID != "4-89" {
+		t.Fatalf("comment = %+v", comment)
+	}
+	if rec.count() != 2 {
+		t.Fatalf("%d requests, want two: one rejected attempt and one retry", rec.count())
+	}
+	for i, req := range rec.all() {
+		if req.URL.Path != "/api/issues/ACME-42/comments/4-89" {
+			t.Errorf("request %d went to %q: every attempt must address the same comment", i, req.URL.Path)
+		}
+	}
+	if clock.totalSlept() == 0 {
+		t.Error("the retry did not back off")
 	}
 }

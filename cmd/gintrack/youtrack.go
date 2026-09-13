@@ -20,10 +20,11 @@ import (
 
 // `gintrack youtrack`, story GIT-US-0058.
 //
-// Two commands, one for a person setting up a machine and one for the
-// provisioning script that has to check the setup took. Both are thin: the
-// connection lives in internal/config and the probe in internal/youtrack, and
-// neither ever prints the token, in text or in JSON (ADR-032).
+// This file is the configuration half: one command for a person setting up a
+// machine and one for the provisioning script that has to check the setup took.
+// Both are thin — the connection lives in internal/config and the probe in
+// internal/youtrack — and neither ever prints the token, in text or in JSON
+// (ADR-032). The commands that move content live in youtracksync.go.
 
 // youtrackProbeTimeout bounds the live probe of both commands, so a wrong URL
 // fails in seconds rather than hanging a provisioning script.
@@ -37,7 +38,7 @@ const maxTokenBytes = 8 << 10
 func newYouTrackCommand(flags *globalFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "youtrack",
-		Short: "Connect a project to YouTrack and check the connection",
+		Short: "Connect a project to YouTrack, import issues and sync content",
 		Long: strings.TrimSpace(`
 Link a git-in-track project to a YouTrack project and verify the credentials.
 
@@ -51,7 +52,15 @@ and never sent anywhere but the YouTrack instance itself.`),
 			return usageError(cmd.Help())
 		},
 	}
-	cmd.AddCommand(newYouTrackConnectCommand(flags), newYouTrackStatusCommand(flags))
+	cmd.AddCommand(
+		newYouTrackConnectCommand(flags),
+		newYouTrackStatusCommand(flags),
+		// The commands that move content rather than configuration; they live
+		// in youtracksync.go and dispatch one core method each.
+		newYouTrackImportCommand(flags),
+		newYouTrackPushCommentsCommand(flags),
+		newYouTrackKBCommand(flags),
+	)
 	return cmd
 }
 

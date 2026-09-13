@@ -163,42 +163,61 @@ func (s *Server) runYouTrackCommentPush(ctx context.Context, job syncengine.Job)
 		return classifyYouTrackJobError(fmt.Errorf("post a comment on %s: %w", issueID, err))
 	}
 	ref := commentExternalRef(link.BaseURL, issueID, created.ID, core.NewTimestamp(s.now()))
-	if err := writeCommentExternal(file, params.CommentPath, rev, ref); err != nil {
+	writes, err := s.recordCommentExternal(ctx, m, params, rev, ref)
+	if err != nil {
 		return err
 	}
-	// The file changed on disk outside the vault's own write path, so the index
-	// is rebuilt before anything reads the comment again, and commit-on-save is
-	// told about the one file that moved.
-	if _, err := m.reindex(ctx, s.now); err != nil {
-		s.log.Warn("the index could not be refreshed after a comment push",
-			"repo", m.id, "comment", params.CommentPath, "error", err)
-	}
-	s.commitJobWrites(ctx, m, vault.WriteSet{Written: []vault.File{{Path: params.CommentPath}}},
-		gitops.Fields{
-			ItemID: params.ItemID, Title: params.CommentPath,
-			Type: "comment", Action: gitops.ActionUpdate,
-		})
+	s.commitJobWrites(ctx, m, writes, gitops.Fields{
+		ItemID: params.ItemID, Title: params.CommentPath,
+		Type: "comment", Action: gitops.ActionUpdate,
+	})
 	s.log.Info("a comment was pushed to YouTrack",
 		"job", job.ID, "item", params.ItemID, "issue", issueID, "comment", created.ID)
 	return nil
 }
 
+// recordCommentExternal writes the remote comment id onto the local comment,
+// through the vault, and returns the write set the committer wants.
+//
+// It goes through "comment.update" rather than touching the file, which is what
+// keeps internal/server out of the business of writing repository files: the
+// vault takes the same optimistic lock this used to hand-roll (rev is the hash
+// of the bytes the push was built from, so a comment edited in flight is
+// reported rather than clobbered), upserts the reference by system so a
+// re-delivered job replaces its entry instead of appending a second one, and
+// folds the index forward itself.
+func (s *Server) recordCommentExternal(
+	ctx context.Context, m *mount, params YouTrackCommentPushParams, rev core.Rev, ref core.External,
+) (vault.WriteSet, error) {
+	var out struct {
+		Comment core.Comment   `json:"comment"`
+		Writes  vault.WriteSet `json:"writes"`
+	}
+	err := dispatchVault(ctx, m, "comment.update", map[string]any{
+		"id":          params.ItemID,
+		"path":        params.CommentPath,
+		"rev":         string(rev),
+		"setExternal": []core.External{ref},
+	}, &out)
+	if err != nil {
+		// A stale rev is retryable on purpose: the next attempt reads the text
+		// that is actually on disk and pushes that.
+		if errors.Is(err, core.ErrRevMismatch) {
+			return vault.WriteSet{}, fmt.Errorf("%w: %s", errCommentStale, params.CommentPath)
+		}
+		return vault.WriteSet{}, err
+	}
+	return out.Writes, nil
+}
+
 // editRemoteComment updates a comment that was already pushed.
 //
-// The edit endpoint is not part of the shipped client yet, so the capability is
-// probed rather than assumed: a client without it fails the job terminally,
-// which is the honest answer. Posting again would be the dishonest one — it
-// would leave a second copy of the comment on the issue, which is exactly what
-// the `external` field exists to prevent.
+// Posting again is not an option: it would leave a second copy of the comment
+// on the issue, which is exactly what the `external` field exists to prevent.
 func (s *Server) editRemoteComment(
 	ctx context.Context, client youtrackJobClient, issueID, commentID, text string,
 ) error {
-	editor, ok := client.(youtrackCommentEditor)
-	if !ok {
-		return terminalf("comment %s on %s was already pushed and this build cannot edit a remote comment; "+
-			"posting again would duplicate it", commentID, issueID)
-	}
-	if _, err := editor.UpdateComment(ctx, issueID, commentID, text); err != nil {
+	if _, err := client.UpdateComment(ctx, issueID, commentID, text); err != nil {
 		return classifyYouTrackJobError(fmt.Errorf("edit comment %s on %s: %w", commentID, issueID, err))
 	}
 	s.log.Info("a pushed comment was updated in YouTrack", "issue", issueID, "comment", commentID)
@@ -260,45 +279,11 @@ func readComment(file, rel string) (*core.Comment, core.Rev, error) {
 	return comment, core.ComputeRev(data), nil
 }
 
-// writeCommentExternal records the remote comment on the local one, under an
-// optimistic lock.
-//
-// The lock is the file-level equivalent of a rev: the bytes are read again
-// immediately before the write and their hash is compared with the hash of the
-// bytes the push was built from, so a comment somebody edited while it was in
-// flight is reported rather than clobbered. A stale rev is a retryable failure,
-// not a forced write — the next attempt pushes the text that is actually there.
-//
-// It writes the file directly rather than through the vault because there is no
-// vault method that rewrites a comment's front matter: `comment.add` appends
-// and nothing updates. That seam is named in the report on GIT-T-0158 and this
-// function is the one place to change when it exists.
-func writeCommentExternal(file, rel string, rev core.Rev, ref core.External) error {
-	current, err := os.ReadFile(file) //nolint:gosec // the path comes from the job payload, inside the mounted repository
-	if err != nil {
-		return fmt.Errorf("re-read %s: %w", rel, err)
-	}
-	if core.ComputeRev(current) != rev {
-		return fmt.Errorf("%w: %s", errCommentStale, rel)
-	}
-	comment, err := core.ParseComment(rel, current)
-	if err != nil {
-		return terminalf("parse %s: %w", rel, err)
-	}
-	comment.External = upsertExternal(comment.External, ref)
-	out, err := core.SerializeComment(comment)
-	if err != nil {
-		return fmt.Errorf("serialize %s: %w", rel, err)
-	}
-	if err := os.WriteFile(file, out, 0o644); err != nil { //nolint:gosec // comments are readable files, like every other file of the backlog
-		return fmt.Errorf("write %s: %w", rel, err)
-	}
-	return nil
-}
-
-// upsertExternal replaces the entry with the same (system, id) identity and
-// appends it when there is none, which is what makes a second push update the
-// reference instead of growing the list.
+// upsertExternal replaces the entry with the same system and appends it when
+// there is none, which is what makes a second write update the reference
+// instead of growing the list. A comment goes through "comment.update" and
+// leaves this to the vault; the knowledge-base publish, which assembles a whole
+// page before writing it, still needs it here.
 func upsertExternal(list []core.External, ref core.External) []core.External {
 	out := make([]core.External, 0, len(list)+1)
 	replaced := false

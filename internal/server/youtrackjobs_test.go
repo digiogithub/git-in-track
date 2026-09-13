@@ -184,6 +184,18 @@ func (f *fakeYouTrack) AddComment(_ context.Context, id, text string) (youtrack.
 	return youtrack.Comment{ID: fmt.Sprintf("4-%d", f.nextID), Text: text}, nil
 }
 
+// UpdateComment edits a comment that was already pushed, recording the edit so
+// a test can prove a re-delivered job updated rather than duplicated.
+func (f *fakeYouTrack) UpdateComment(_ context.Context, id, commentID, text string) (youtrack.Comment, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.postErr != nil {
+		return youtrack.Comment{}, f.postErr
+	}
+	f.edited = append(f.edited, id+"|"+commentID+"|"+text)
+	return youtrack.Comment{ID: commentID, Text: text}, nil
+}
+
 // Article answers the configured article.
 func (f *fakeYouTrack) Article(_ context.Context, id string) (youtrack.Article, error) {
 	f.mu.Lock()

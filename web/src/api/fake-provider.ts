@@ -7,6 +7,27 @@
  */
 
 import type {
+  CommentPushEntry,
+  CommentPushInput,
+  CommentPushResult,
+  External,
+  InboxDraft,
+  InboxFilter,
+  InboxPage,
+  InboxStatus,
+  InboxTriageInput,
+  InboxTriageResult,
+  KbPageSyncStatus,
+  KbSyncJobResult,
+  KbSyncSelector,
+  KbSyncStatusResult,
+  SprintCloseInput,
+  SprintCloseReport,
+  SprintSnapshot,
+  SprintSnapshotPoint,
+  SprintStatus,
+  SprintTransfer,
+  SprintTransferInput,
   BatchResult,
   BoardCard,
   BoardColumnView,
@@ -161,6 +182,31 @@ export type FakeData = {
    * `engine` half and every job call fails, which is what a browser does.
    */
   syncEngine?: FakeSyncEngine;
+  /**
+   * The knowledge-base synchronization states the toolbar and the tree render
+   * (story GIT-US-0093), keyed by page path. A path the map does not name is
+   * `unlinked`, which is what a page nobody has published looks like.
+   */
+  kbSync?: FakeKbSync;
+};
+
+/**
+ * The knowledge-base half of the YouTrack integration, in memory.
+ *
+ * Status is seeded rather than computed: the real comparison is a content
+ * fingerprint taken by the core, and a fake that guessed at it would be
+ * testing its own guess. What a test needs from this is the five states and
+ * the job a publish queues.
+ */
+export type FakeKbSync = {
+  /** One row per page the fake knows a state for. */
+  pages?: KbPageSyncStatus[];
+  /** The job id a publish or a pull answers with. */
+  jobId?: string;
+  /** When set, every status call fails with this instead. */
+  statusError?: { code: ProviderErrorCode; message: string };
+  /** When set, every publish and pull fails with this instead. */
+  jobError?: { code: ProviderErrorCode; message: string };
 };
 
 /**
@@ -288,14 +334,20 @@ export type FakeSprint = {
   title: string;
   board: string;
   state: SprintState;
-  start: string;
-  end: string;
+  /**
+   * Both dates are optional, and a sprint without them is a draft: its status
+   * is derived from the dates on every read and never stored (ADR-034).
+   */
+  start?: string;
+  end?: string;
   goal?: string;
   items: string[];
   committed?: string[];
   capacityHours?: number;
   velocityTarget?: number;
   participants?: string[];
+  /** The progress frozen at the close; written by `closeSprint`. */
+  snapshot?: SprintSnapshot;
   rev: string;
 };
 
@@ -418,6 +470,77 @@ export const sampleRetro: FakeRetro = {
  * The coarse bucket of a status. The fake knows the sample workflow, which is
  * what lets it tell finished work from open work the way the core does.
  */
+/**
+ * The status a reader sees, derived from the dates and the day (ADR-034).
+ *
+ * It mirrors `core.Sprint.DerivedStatus`: no dates at all is a draft, and a
+ * sprint is current on both its first and its last day.
+ */
+export function derivedSprintStatus(
+  start: string | undefined,
+  end: string | undefined,
+  today: string,
+): SprintStatus {
+  if (!start || !end) return 'draft';
+  if (today < start) return 'upcoming';
+  if (today > end) return 'completed';
+  return 'current';
+}
+
+/**
+ * A metrics view read from a stored snapshot.
+ *
+ * `flow` and `stats` come back empty on purpose: the cumulative-flow series is
+ * not frozen when a sprint closes, so there is nothing to report. A panel for
+ * either must be hidden or labelled — never rendered as zeros, which would
+ * read as "no work flowed" instead of "this was never recorded" (ADR-017).
+ */
+export function snapshotMetrics(
+  summary: SprintSummary,
+  snapshot: SprintSnapshot,
+): SprintMetricsView {
+  const frozen = snapshot.burndown ?? [];
+  const closedAt = snapshot.closedAt ? snapshot.closedAt.slice(0, 10) : '';
+  return {
+    sprint: summary,
+    burndown: {
+      sprint: summary.id,
+      ...(summary.start === undefined ? {} : { start: summary.start }),
+      ...(summary.end === undefined ? {} : { end: summary.end }),
+      committedPoints: snapshot.totals.committedPoints,
+      points: frozen.map((point, index) => ({
+        date: point.date,
+        day: index + 1,
+        ideal: point.ideal,
+        observed: true,
+        remaining: point.remainingPoints,
+        scope: snapshot.totals.committedPoints,
+        done: Math.max(0, snapshot.totals.committedPoints - point.remainingPoints),
+        items: point.remaining + point.completed,
+        completed: point.completed,
+        unknown: point.unknown,
+      })),
+    },
+    flow: { bands: ['done', 'cancelled', 'in_progress', 'todo', 'unknown'], days: [] },
+    stats: {
+      throughput: 0,
+      throughputPerWeek: 0,
+      cycleTime: { count: 0, mean: 0, median: 0, p85: 0, min: 0, max: 0 },
+      leadTime: { count: 0, mean: 0, median: 0, p85: 0, min: 0, max: 0 },
+      excluded: 0,
+    },
+    provenance: {
+      ...snapshot.provenance,
+      source: 'snapshot',
+      note:
+        'Read from the sprint\'s stored snapshot: these numbers were frozen when the sprint was closed' +
+        (closedAt === '' ? '' : ` on ${closedAt}`) +
+        ', not reconstructed now.',
+    },
+    items: [],
+  };
+}
+
 function categoryOf(status: string | undefined): StatusCategory {
   switch (status) {
     case 'done':
@@ -846,6 +969,76 @@ export const sampleItems: Item[] = [
   },
 ];
 
+/**
+ * A project that declares a status in the reserved `triage` category, and
+ * therefore has an inbox (ADR-033). `sampleProject` deliberately does not: a
+ * project without a triage status is the normal case the Inbox route has to
+ * disappear for.
+ */
+export const sampleTriageProject: ProjectSummary = {
+  ...sampleProject,
+  statuses: [{ id: 'triage', name: 'Triage', category: 'triage' }, ...sampleProject.statuses],
+  workflow: { initial: 'backlog' },
+};
+
+/**
+ * A triage queue with one of each state that matters.
+ *
+ * `ACME-US-0201` is snoozed until a date that has already passed against the
+ * fake's `today` of 2026-09-02, so it reads — and counts — as pending: an
+ * expired snooze is not a state of its own, it is simply back in the queue.
+ */
+export const sampleInboxItems: Item[] = [
+  {
+    id: 'ACME-US-0200',
+    type: 'story',
+    title: 'Reset password by email',
+    status: 'triage',
+    created: '2026-09-01T08:00:00Z',
+    updated: '2026-09-01T08:00:00Z',
+    inbox: { status: 'pending', source: 'web', received: '2026-09-01T08:00:00Z' },
+    body: '## Description\n\nA tenant admin asked for a self-service reset.\n',
+    path: 'docs/.pmngr/stories/ACME-US-0200-reset-password-by-email.md',
+    rev: 'sha256:0000000000000201',
+  },
+  {
+    id: 'ACME-US-0201',
+    type: 'story',
+    title: 'Bulk import of members',
+    status: 'triage',
+    created: '2026-08-30T10:00:00Z',
+    updated: '2026-08-30T10:00:00Z',
+    inbox: { status: 'snoozed', snoozedUntil: '2026-09-01', source: 'mcp' },
+    body: '## Description\n\nParked until the CSV format is agreed.\n',
+    path: 'docs/.pmngr/stories/ACME-US-0201-bulk-import-of-members.md',
+    rev: 'sha256:0000000000000202',
+  },
+  {
+    id: 'ACME-T-0202',
+    type: 'task',
+    title: 'Audit the login rate limit',
+    status: 'triage',
+    created: '2026-08-29T09:30:00Z',
+    updated: '2026-08-29T09:30:00Z',
+    inbox: { status: 'snoozed', snoozedUntil: '2026-10-01', source: 'web' },
+    body: '## Description\n\nComes back next month.\n',
+    path: 'docs/.pmngr/tasks/ACME-T-0202-audit-the-login-rate-limit.md',
+    rev: 'sha256:0000000000000203',
+  },
+  {
+    id: 'ACME-T-0203',
+    type: 'task',
+    title: 'Rewrite the landing page in Comic Sans',
+    status: 'triage',
+    created: '2026-08-28T16:00:00Z',
+    updated: '2026-08-28T16:05:00Z',
+    inbox: { status: 'rejected', source: 'web' },
+    body: '## Description\n\nNo.\n',
+    path: 'docs/.pmngr/tasks/ACME-T-0203-rewrite-the-landing-page.md',
+    rev: 'sha256:0000000000000204',
+  },
+];
+
 export const samplePages: KbPage[] = [
   {
     path: 'docs/index.md',
@@ -904,6 +1097,13 @@ function matches(item: Item, f: ItemFilter): boolean {
   return true;
 }
 
+/**
+ * Why a YouTrack call fails on a fake with no connection: the same sentence the
+ * browser provider gives, so a component test sees the message a person would.
+ */
+const FAKE_NO_YOUTRACK =
+  'YouTrack is not available in this mode: there is no process to hold the credential and no way to reach the instance from a tab. Run `gintrack serve` to connect a project.';
+
 export class FakeProvider implements DataProvider {
   readonly kind = 'browser' as const;
   readonly capabilities: Capabilities;
@@ -941,6 +1141,8 @@ export class FakeProvider implements DataProvider {
   private syncEngine: FakeSyncEngine | null;
   private syncJobs: SyncJob[];
   private engineSettings: SyncEngineSettings | null;
+  /** The knowledge-base synchronization fixture; null on a runtime with none. */
+  private kbSync: FakeKbSync | null;
 
   constructor(data: FakeData = {}, opts: { readOnly?: boolean } = {}) {
     const base = opts.readOnly ? readOnlyCapabilities : writableCapabilities;
@@ -963,6 +1165,7 @@ export class FakeProvider implements DataProvider {
       ...seeded,
     };
     this.youtrackEnvToken = this.youtrackSettings.tokenSource === 'env';
+    this.kbSync = data.kbSync ?? null;
     this.syncEngine = data.syncEngine ?? null;
     this.syncJobs = structuredClone(data.syncEngine?.jobs ?? []);
     this.engineSettings =
@@ -1597,6 +1800,209 @@ export class FakeProvider implements DataProvider {
     return Promise.resolve(structuredClone(comment));
   }
 
+  // --------------------------------------------------------------------- inbox
+
+  /**
+   * The triage queue of a project (ADR-033).
+   *
+   * An inbox item is an ordinary item whose workflow status belongs to the
+   * `triage` category; the `inbox:` block records only how it arrived and what
+   * was decided. A project that declares no triage status simply has no inbox
+   * and says so with `no_triage_status`, which is a state to explain rather
+   * than an error to retry.
+   */
+  listInbox(filter: InboxFilter = {}): Promise<InboxPage> {
+    const project = filter.project ?? this.projects[0]?.key ?? '';
+    const triage = this.triageStatuses(project);
+    if (triage.length === 0) {
+      return Promise.reject(
+        new ProviderError(
+          'no_triage_status',
+          `project ${project} declares no status in the triage category, so it has no inbox`,
+        ),
+      );
+    }
+    const queue = [...this.items.values()]
+      .filter((item) => !item.deleted)
+      .filter((item) => item.id.startsWith(`${project}-`))
+      .filter((item) => item.status !== undefined && triage.includes(item.status))
+      .sort((a, b) => (b.created ?? '').localeCompare(a.created ?? '') || a.id.localeCompare(b.id));
+
+    // Counts are over the whole queue, never over the page, and a snooze whose
+    // date has arrived is already counted as pending: that is what a reader
+    // sees, so it is what the badge must say.
+    const counts: Partial<Record<InboxStatus, number>> = {};
+    for (const item of queue) {
+      const state = this.effectiveInboxStatus(item);
+      counts[state] = (counts[state] ?? 0) + 1;
+    }
+
+    const wanted = filter.status;
+    let rows = queue.filter(
+      (item) => wanted === undefined || wanted.includes(this.effectiveInboxStatus(item)),
+    );
+    if (filter.type?.length) rows = rows.filter((item) => filter.type?.includes(item.type));
+    if (filter.label?.length) {
+      rows = rows.filter((item) => filter.label?.some((l) => (item.labels ?? []).includes(l)));
+    }
+    if (filter.assignee) {
+      rows = rows.filter((item) => (item.assignees ?? []).includes(filter.assignee ?? ''));
+    }
+    if (filter.text) {
+      const needle = filter.text.toLowerCase();
+      rows = rows.filter((item) => `${item.id} ${item.title}`.toLowerCase().includes(needle));
+    }
+
+    const total = rows.length;
+    const from = Number(filter.cursor ?? '0') || 0;
+    const limit = filter.limit && filter.limit > 0 ? filter.limit : rows.length;
+    const slice = rows.slice(from, from + limit);
+    const page: InboxPage = {
+      items: slice.map((item) => structuredClone(item)),
+      total,
+      counts,
+      pending: counts.pending ?? 0,
+    };
+    if (from + limit < total) page.nextCursor = String(from + limit);
+    return Promise.resolve(page);
+  }
+
+  createInboxItem(draft: InboxDraft): Promise<Item> {
+    this.assertWritable();
+    const triage = this.triageStatuses(draft.project);
+    if (triage.length === 0) {
+      return Promise.reject(
+        new ProviderError(
+          'no_triage_status',
+          `project ${draft.project} declares no status in the triage category, so it has no inbox`,
+        ),
+      );
+    }
+    const { source, received, ...rest } = draft;
+    const status = rest.status ?? triage[0] ?? '';
+    return this.createItem({ ...rest, status }).then((item) => {
+      const filed: Item = {
+        ...item,
+        inbox: {
+          status: 'pending',
+          ...(source === undefined ? {} : { source }),
+          ...(received === undefined ? {} : { received }),
+        },
+      };
+      this.items.set(filed.id, filed);
+      this.emitInboxChanged(filed.id, 'created');
+      return structuredClone(filed);
+    });
+  }
+
+  /**
+   * One triage decision.
+   *
+   * `accept` clears the triage block and moves the item into the ordinary
+   * workflow. It never touches the item's type: an item id encodes its type for
+   * life (R-ID-3), so "this should have been an epic" is answered by creating
+   * the right item and marking this one a duplicate of it.
+   */
+  triageInboxItem(input: InboxTriageInput): Promise<InboxTriageResult> {
+    this.assertWritable();
+    const item = this.items.get(input.id);
+    if (!item) {
+      return Promise.reject(new ProviderError('not_found', `Item ${input.id} not found`));
+    }
+    if (input.rev !== undefined && input.rev !== '*' && input.rev !== item.rev) {
+      return Promise.reject(
+        new ProviderError('stale_revision', `${input.id} changed since it was read`),
+      );
+    }
+    const project = input.id.split('-')[0] ?? '';
+    const next: Item = { ...structuredClone(item), rev: this.nextRev() };
+    switch (input.action) {
+      case 'accept': {
+        next.status = input.status ?? this.initialStatus(project);
+        if (input.parent !== undefined) next.parent = input.parent;
+        delete next.inbox;
+        break;
+      }
+      case 'reject':
+        next.inbox = { ...next.inbox, status: 'rejected' };
+        break;
+      case 'snooze': {
+        if (!input.snoozedUntil) {
+          return Promise.reject(
+            new ProviderError('validation_failed', 'A snooze needs a date to come back on'),
+          );
+        }
+        next.inbox = { ...next.inbox, status: 'snoozed', snoozedUntil: input.snoozedUntil };
+        break;
+      }
+      case 'duplicate': {
+        if (!input.duplicateOf) {
+          return Promise.reject(
+            new ProviderError('validation_failed', 'A duplicate needs the item it repeats'),
+          );
+        }
+        next.inbox = { ...next.inbox, status: 'duplicate', duplicateOf: input.duplicateOf };
+        next.links = [
+          ...(next.links ?? []).filter((link) => link.kind !== 'duplicates'),
+          { kind: 'duplicates', target: input.duplicateOf },
+        ];
+        break;
+      }
+    }
+    this.items.set(next.id, next);
+    this.emit({ kind: 'items', repoId: 'repo-1', ids: [next.id] });
+    const pending = this.pendingCount(project);
+    this.emitInboxChanged(next.id, input.action);
+    return Promise.resolve({ item: structuredClone(next), action: input.action, pending });
+  }
+
+  /** The statuses of a project that live in the reserved `triage` category. */
+  private triageStatuses(project: string): string[] {
+    const summary = this.projects.find((p) => p.key === project) ?? this.projects[0];
+    return (summary?.statuses ?? []).filter((s) => s.category === 'triage').map((s) => s.id);
+  }
+
+  /** The status `accept` moves an item to: the workflow's, or the first non-triage one. */
+  private initialStatus(project: string): string {
+    const summary = this.projects.find((p) => p.key === project) ?? this.projects[0];
+    const initial = summary?.workflow?.initial;
+    if (initial && initial !== '') return initial;
+    return (summary?.statuses ?? []).find((s) => s.category !== 'triage')?.id ?? 'backlog';
+  }
+
+  /** The triage state as a reader sees it: an expired snooze reads as pending. */
+  private effectiveInboxStatus(item: Item): InboxStatus {
+    const block = item.inbox;
+    if (!block?.status) return 'pending';
+    if (block.status !== 'snoozed') return block.status;
+    if (!block.snoozedUntil) return 'snoozed';
+    return block.snoozedUntil <= this.today ? 'pending' : 'snoozed';
+  }
+
+  private pendingCount(project: string): number {
+    const triage = this.triageStatuses(project);
+    return [...this.items.values()].filter(
+      (item) =>
+        !item.deleted &&
+        item.id.startsWith(`${project}-`) &&
+        item.status !== undefined &&
+        triage.includes(item.status) &&
+        this.effectiveInboxStatus(item) === 'pending',
+    ).length;
+  }
+
+  private emitInboxChanged(id: string, action: string): void {
+    const project = id.split('-')[0] ?? '';
+    this.emit({
+      kind: 'inbox',
+      repoId: 'repo-1',
+      project,
+      id,
+      action,
+      pending: this.pendingCount(project),
+    });
+  }
+
   // -------------------------------------------------------------------- boards
 
   listBoards(team?: string): Promise<BoardSummary[]> {
@@ -2129,6 +2535,10 @@ export class FakeProvider implements DataProvider {
     if (!sprint) return Promise.reject(new ProviderError('not_found', `No sprint ${id}`));
     const view = this.renderSprint(sprint);
     const summary = view.sprint;
+    // A sprint that carries a snapshot answers from it and reconstructs
+    // nothing: after the close the items have left the scope, so the frozen
+    // block is the only truthful answer (R-MET-12, ADR-034).
+    if (sprint.snapshot) return Promise.resolve(snapshotMetrics(summary, sprint.snapshot));
     const days = summary.totalDays > 0 ? summary.totalDays : 1;
     const committed = summary.metrics.committedPoints || summary.metrics.points;
     const start = new Date(`${summary.start ?? '2026-01-01'}T00:00:00Z`);
@@ -2195,14 +2605,26 @@ export class FakeProvider implements DataProvider {
     });
   }
 
+  /**
+   * A sprint with no dates is legal and lands as a draft: adding dates is what
+   * schedules it, which is also why the overlap check only ever compares two
+   * dated sprints.
+   */
   createSprint(input: SprintDraft): Promise<SprintResult> {
     this.assertWritable();
     if (!this.boards.has(input.board)) {
       return Promise.reject(new ProviderError('not_found', `No board ${input.board}`));
     }
-    const overlap = [...this.sprints.values()].find(
-      (s) => s.board === input.board && s.start <= input.end && input.start <= s.end,
-    );
+    const dated = Boolean(input.start && input.end);
+    const overlap = !dated
+      ? undefined
+      : [...this.sprints.values()].find(
+          (s) =>
+            s.board === input.board &&
+            Boolean(s.start && s.end) &&
+            (s.start ?? '') <= (input.end ?? '') &&
+            (input.start ?? '') <= (s.end ?? ''),
+        );
     if (overlap) {
       return Promise.reject(
         new ProviderError(
@@ -2218,8 +2640,8 @@ export class FakeProvider implements DataProvider {
       title: input.title ?? `Sprint ${next}`,
       board: input.board,
       state: input.state ?? 'planned',
-      start: input.start,
-      end: input.end,
+      ...(input.start ? { start: input.start } : {}),
+      ...(input.end ? { end: input.end } : {}),
       ...(input.goal === undefined ? {} : { goal: input.goal }),
       items: [...(input.items ?? [])],
       rev: this.nextRev(),
@@ -2288,17 +2710,152 @@ export class FakeProvider implements DataProvider {
     return Promise.resolve(result);
   }
 
-  closeSprint(id: string, carry: SprintCarry[] = [], rev?: string): Promise<SprintResult> {
-    this.assertWritable();
+  /**
+   * Closes a sprint and reports what would move where.
+   *
+   * `dryRun` is the whole point of the shape: it computes the same report and
+   * writes nothing at all — no status change, no carried reference, no
+   * snapshot — so the confirmation dialog can show the truth before anything
+   * is committed.
+   */
+  closeSprint(id: string, input: SprintCloseInput = {}, _team?: string): Promise<SprintResult> {
+    const dryRun = input.dryRun === true;
+    if (!dryRun) this.assertWritable();
     const sprint = this.sprints.get(id);
     if (!sprint) return Promise.reject(new ProviderError('not_found', `No sprint ${id}`));
-    if (rev !== undefined && rev !== '*' && rev !== sprint.rev) {
+    if (input.rev !== undefined && input.rev !== '*' && input.rev !== sprint.rev) {
       return Promise.reject(new ProviderError('stale_revision', `Sprint ${id} changed on disk`));
     }
     const view = this.renderSprint(sprint);
     const completed = view.cards.filter((card) => isDone(card));
-    const incomplete = view.cards.filter((card) => !isDone(card));
-    const carried = carry.map((decision) => {
+    const incomplete = view.cards.filter((card) => !isDone(card) && card.status !== undefined);
+    const unresolved = view.cards.filter((card) => card.status === undefined);
+
+    let decisions: SprintCarry[];
+    try {
+      decisions = this.expandCarries(sprint, incomplete, input.carry ?? [], input.transfer);
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new ProviderError('internal', String(error)));
+    }
+    const carried = this.applyCarries(sprint, decisions, dryRun);
+
+    const report: SprintCloseReport = {
+      sprint: sprint.id,
+      board: sprint.board,
+      completed,
+      incomplete,
+      unresolved,
+      completedPoints: completed.reduce((sum, card) => sum + (card.estimate ?? 0), 0),
+      incompletePoints: incomplete.reduce((sum, card) => sum + (card.estimate ?? 0), 0),
+      metrics: view.sprint.metrics,
+      carried,
+    };
+
+    if (dryRun) {
+      return Promise.resolve({ sprint: view, report, writes: [], dryRun: true });
+    }
+
+    sprint.state = 'closed';
+    sprint.snapshot = this.freezeSnapshot(view.sprint);
+    sprint.rev = this.nextRev();
+    this.emit({ kind: 'repo', repoId: 'repo-team' });
+    this.emitSprintChanged(sprint, carried);
+    return Promise.resolve({ sprint: this.renderSprint(sprint), report, writes: [] });
+  }
+
+  /**
+   * Moves the unfinished references of a sprint without closing anything.
+   * `mode` defaults to `next`, which is what a transfer is for.
+   */
+  transferSprintItems(
+    id: string,
+    input: SprintTransferInput = {},
+    _team?: string,
+  ): Promise<SprintResult> {
+    const dryRun = input.dryRun === true;
+    if (!dryRun) this.assertWritable();
+    const sprint = this.sprints.get(id);
+    if (!sprint) return Promise.reject(new ProviderError('not_found', `No sprint ${id}`));
+    if (input.rev !== undefined && input.rev !== '*' && input.rev !== sprint.rev) {
+      return Promise.reject(new ProviderError('stale_revision', `Sprint ${id} changed on disk`));
+    }
+    const view = this.renderSprint(sprint);
+    const incomplete = view.cards.filter((card) => !isDone(card) && card.status !== undefined);
+    let decisions: SprintCarry[];
+    try {
+      decisions = this.expandCarries(sprint, incomplete, input.carry ?? [], {
+        mode: input.mode ?? 'next',
+        ...(input.target === undefined ? {} : { target: input.target }),
+      });
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new ProviderError('internal', String(error)));
+    }
+    const carried = this.applyCarries(sprint, decisions, dryRun);
+    const report: SprintCloseReport = {
+      sprint: sprint.id,
+      board: sprint.board,
+      completed: view.cards.filter((card) => isDone(card)),
+      incomplete,
+      unresolved: view.cards.filter((card) => card.status === undefined),
+      completedPoints: 0,
+      incompletePoints: incomplete.reduce((sum, card) => sum + (card.estimate ?? 0), 0),
+      metrics: view.sprint.metrics,
+      carried,
+    };
+    if (dryRun) {
+      return Promise.resolve({ sprint: view, report, writes: [], dryRun: true });
+    }
+    sprint.rev = this.nextRev();
+    this.emit({ kind: 'repo', repoId: 'repo-team' });
+    this.emitSprintChanged(sprint, carried);
+    return Promise.resolve({ sprint: this.renderSprint(sprint), report, writes: [] });
+  }
+
+  /**
+   * Expands a bulk destination into one decision per unfinished reference. An
+   * explicit per-item decision always wins, so a dialog can offer "move
+   * everything to the next sprint, except these three".
+   */
+  private expandCarries(
+    _sprint: FakeSprint,
+    incomplete: BoardCard[],
+    explicit: SprintCarry[],
+    transfer: SprintTransfer | undefined,
+  ): SprintCarry[] {
+    const mode = transfer?.mode ?? 'none';
+    if (mode === 'next' && transfer?.target) {
+      const target = this.sprints.get(transfer.target);
+      if (!target) {
+        throw new ProviderError('not_found', `No sprint ${transfer.target}`);
+      }
+      if (derivedSprintStatus(target.start, target.end, this.today) === 'completed') {
+        throw new ProviderError(
+          'sprint_target_completed',
+          `sprint ${target.id} is already over; moving work into it would make its numbers lie`,
+        );
+      }
+    }
+    const named = new Map(explicit.map((decision) => [decision.ref, decision]));
+    const out = [...explicit];
+    if (mode === 'none') return out;
+    for (const card of incomplete) {
+      if (named.has(card.ref)) continue;
+      out.push({
+        ref: card.ref,
+        action: mode,
+        ...(mode === 'next' && transfer?.target ? { sprint: transfer.target } : {}),
+      });
+    }
+    return out;
+  }
+
+  /** Applies the decisions, or computes what they would do when `dryRun`. */
+  private applyCarries(
+    sprint: FakeSprint,
+    decisions: SprintCarry[],
+    dryRun: boolean,
+  ): SprintCarryResult[] {
+    return decisions.map((decision) => {
       const outcome: SprintCarryResult = { ref: decision.ref, action: decision.action };
       if (decision.action === 'next') {
         const target =
@@ -2308,43 +2865,89 @@ export class FakeProvider implements DataProvider {
           outcome.error = `no sprint to carry ${decision.ref} into`;
           return outcome;
         }
+        outcome.sprint = target.id;
+        if (dryRun) return outcome;
         if (!target.items.includes(decision.ref)) target.items.push(decision.ref);
         target.rev = this.nextRev();
-        outcome.sprint = target.id;
         return outcome;
       }
       if (decision.action === 'backlog') {
         const id = decision.ref.split('/')[1] ?? '';
         const item = this.items.get(id);
         if (!item) {
+          // The project is not cloned here, so no write can reach the item.
+          // It is reported per item, before anything is confirmed, rather than
+          // failing the whole close.
           outcome.error = `project ${decision.ref.split('/')[0] ?? ''} is not cloned on this machine`;
           return outcome;
         }
         const status = decision.status ?? 'backlog';
-        this.items.set(id, { ...item, status, rev: this.nextRev() });
         outcome.status = status;
+        if (dryRun) return outcome;
+        this.items.set(id, { ...item, status, rev: this.nextRev() });
         this.emit({ kind: 'items', repoId: 'repo-1', ids: [id] });
       }
       return outcome;
     });
-    sprint.state = 'closed';
-    sprint.rev = this.nextRev();
-    this.emit({ kind: 'repo', repoId: 'repo-team' });
-    return Promise.resolve({
-      sprint: this.renderSprint(sprint),
-      report: {
-        sprint: sprint.id,
-        board: sprint.board,
-        completed,
-        incomplete,
-        unresolved: [],
-        completedPoints: completed.reduce((sum, card) => sum + (card.estimate ?? 0), 0),
-        incompletePoints: incomplete.reduce((sum, card) => sum + (card.estimate ?? 0), 0),
-        metrics: view.sprint.metrics,
-        carried,
-      },
-      writes: [],
+  }
+
+  /** A `sprint.changed` frame, the way the companion publishes one. */
+  private emitSprintChanged(sprint: FakeSprint, carried: SprintCarryResult[]): void {
+    this.emit({
+      kind: 'sprint',
+      sprint: sprint.id,
+      board: sprint.board,
+      state: sprint.state,
+      carried: carried.filter((c) => c.error === undefined && c.action !== 'leave').length,
+      failed: carried.filter((c) => c.error !== undefined).length,
     });
+  }
+
+  /**
+   * Freezes the burndown at the close, the way the core does.
+   *
+   * Only the burndown is frozen. The cumulative-flow series and the flow
+   * statistics are not recomputable once the items have left the scope, so a
+   * snapshot-backed metrics answer comes back with an empty `flow` and `stats`
+   * rather than with zeros that would read as measurements.
+   */
+  private freezeSnapshot(summary: SprintSummary): SprintSnapshot {
+    const committed = summary.metrics.committedPoints || summary.metrics.points;
+    const days = Math.max(1, summary.totalDays);
+    const burndown: SprintSnapshotPoint[] = [];
+    const start = Date.parse(`${summary.start ?? this.today}T00:00:00Z`);
+    for (let i = 0; i < days; i += 1) {
+      const remainingPoints = Math.max(0, committed - Math.round((committed * i) / days));
+      burndown.push({
+        date: new Date(start + i * 86_400_000).toISOString().slice(0, 10),
+        remaining: Math.max(0, summary.metrics.items - Math.floor((summary.metrics.done * i) / days)),
+        remainingPoints,
+        ideal: Math.round(committed * (1 - i / Math.max(1, days - 1)) * 100) / 100,
+        completed: Math.floor((summary.metrics.done * i) / days),
+        unknown: 0,
+      });
+    }
+    return {
+      version: 1,
+      closedAt: `${this.today}T00:00:00Z`,
+      totals: {
+        items: summary.metrics.items,
+        resolved: summary.metrics.resolved,
+        done: summary.metrics.done,
+        unresolved: summary.metrics.unresolved,
+        points: summary.metrics.points,
+        committedPoints: summary.metrics.committedPoints,
+        donePoints: summary.metrics.donePoints,
+      },
+      burndown,
+      provenance: {
+        source: 'git',
+        approximate: false,
+        items: summary.metrics.items,
+        covered: summary.metrics.resolved,
+        note: 'Reconstructed from the repository history when the sprint was closed.',
+      },
+    };
   }
 
   /** Renders a sprint the way `core.BuildSprintView` does. */
@@ -2369,21 +2972,23 @@ export class FakeProvider implements DataProvider {
     const points = (list: BoardCard[]) => list.reduce((sum, card) => sum + (card.estimate ?? 0), 0);
     const days = (from: string, to: string) =>
       Math.floor((Date.parse(to) - Date.parse(from)) / 86_400_000) + 1;
+    const dated = Boolean(sprint.start && sprint.end);
     return {
       id: sprint.id,
       title: sprint.title,
       board: sprint.board,
       state: sprint.state,
-      start: sprint.start,
-      end: sprint.end,
+      status: derivedSprintStatus(sprint.start, sprint.end, this.today),
+      ...(sprint.start === undefined ? {} : { start: sprint.start }),
+      ...(sprint.end === undefined ? {} : { end: sprint.end }),
       ...(sprint.goal === undefined ? {} : { goal: sprint.goal }),
       ...(sprint.capacityHours === undefined ? {} : { capacityHours: sprint.capacityHours }),
       ...(sprint.velocityTarget === undefined ? {} : { velocityTarget: sprint.velocityTarget }),
       ...(sprint.participants ? { participants: sprint.participants } : {}),
       items: [...sprint.items],
       ...(sprint.committed ? { committed: [...sprint.committed] } : {}),
-      totalDays: days(sprint.start, sprint.end),
-      remainingDays: Math.max(0, days(this.today, sprint.end)),
+      totalDays: dated ? days(sprint.start ?? '', sprint.end ?? '') : 0,
+      remainingDays: dated ? Math.max(0, days(this.today, sprint.end ?? '')) : 0,
       metrics: {
         items: sprint.items.length,
         resolved: resolved.length,
@@ -2394,6 +2999,7 @@ export class FakeProvider implements DataProvider {
         added: started ? sprint.items.filter((ref) => !committed.has(ref)).length : 0,
         unresolved: sprint.items.length - resolved.length,
       },
+      ...(sprint.snapshot === undefined ? {} : { snapshot: structuredClone(sprint.snapshot) }),
       path: `.pmngr/sprints/${sprint.id}.md`,
       rev: sprint.rev,
     };
@@ -3034,6 +3640,176 @@ export class FakeProvider implements DataProvider {
       comments: options.includeComments ? 1 : 0,
       warnings: [],
     }));
+  }
+
+  // ------------------------------------------------- youtrack knowledge base
+
+  /**
+   * The synchronization state of the selected pages.
+   *
+   * States are seeded rather than computed: the real comparison is a content
+   * fingerprint taken by the core, and a fake that guessed at it would only be
+   * testing its own guess. A page the fixture does not name is `unlinked`,
+   * which is what a page nobody has published looks like.
+   */
+  kbSyncStatus(selector: KbSyncSelector = {}): Promise<KbSyncStatusResult> {
+    if (this.youtrack === null) {
+      return Promise.reject(new ProviderError('read_only', FAKE_NO_YOUTRACK));
+    }
+    if (this.kbSync?.statusError) {
+      const { code, message } = this.kbSync.statusError;
+      return Promise.reject(new ProviderError(code, message));
+    }
+    const seeded = this.kbSync?.pages ?? [];
+    const selected = this.kbSyncPaths(selector);
+    const pages: KbPageSyncStatus[] = selected.map(
+      (path) => seeded.find((row) => row.path === path) ?? { path, linked: false, state: 'unlinked' },
+    );
+    return Promise.resolve({
+      project: selector.project ?? this.youtrackSettings.projectKey,
+      pages: structuredClone(pages),
+      remote: selector.remote === true,
+    });
+  }
+
+  publishKbPage(selector: KbSyncSelector): Promise<KbSyncJobResult> {
+    return this.kbSyncJob('publish', selector);
+  }
+
+  pullKbPage(selector: KbSyncSelector): Promise<KbSyncJobResult> {
+    return this.kbSyncJob('pull', selector);
+  }
+
+  /** Queues a knowledge-base job and announces it the way the engine does. */
+  private kbSyncJob(
+    direction: 'publish' | 'pull',
+    selector: KbSyncSelector,
+  ): Promise<KbSyncJobResult> {
+    if (this.youtrack === null) {
+      return Promise.reject(new ProviderError('read_only', FAKE_NO_YOUTRACK));
+    }
+    if (this.kbSync?.jobError) {
+      const { code, message } = this.kbSync.jobError;
+      return Promise.reject(new ProviderError(code, message));
+    }
+    const pages = this.kbSyncPaths(selector);
+    const jobId = this.kbSync?.jobId ?? `job_kb_${direction}`;
+    this.emit({
+      kind: 'syncJob',
+      job: {
+        id: jobId,
+        kind: `youtrack.kb.${direction}`,
+        key: selector.project ?? this.youtrackSettings.projectKey,
+        state: 'queued',
+        phase: 'queued',
+        attempt: 0,
+        processed: 0,
+        total: pages.length,
+        error: '',
+        errorClass: '',
+      },
+    });
+    return Promise.resolve({
+      project: selector.project ?? this.youtrackSettings.projectKey,
+      jobId,
+      pages,
+    });
+  }
+
+  /** The pages a selector names: one page, or every page under a folder. */
+  private kbSyncPaths(selector: KbSyncSelector): string[] {
+    const all = [...this.pages.keys()].sort();
+    const prefix = (selector.path ?? '').replace(/\/+$/, '');
+    if (prefix === '') return all;
+    if (this.pages.has(prefix)) return [prefix];
+    const under = all.filter((path) => path.startsWith(`${prefix}/`));
+    if (selector.recursive === true) return under;
+    return under.filter((path) => !path.slice(prefix.length + 1).includes('/'));
+  }
+
+  /**
+   * Queues a comment push and reports what was queued.
+   *
+   * A comment that already carries a YouTrack reference is skipped rather than
+   * pushed again — that is the whole point of the reference — and a comment the
+   * fixture marked as failing comes back under `failed`.
+   */
+  pushCommentToYoutrack(input: CommentPushInput): Promise<CommentPushResult> {
+    if (this.youtrack === null) {
+      return Promise.reject(new ProviderError('read_only', FAKE_NO_YOUTRACK));
+    }
+    const thread = this.comments.filter((comment) => comment.item === input.itemId);
+    const selected = input.commentPath
+      ? thread.filter((comment) => comment.path === input.commentPath)
+      : thread;
+    if (input.commentPath && selected.length === 0) {
+      return Promise.reject(
+        new ProviderError('not_found', `No comment ${input.commentPath} on ${input.itemId}`),
+      );
+    }
+    const pushed: CommentPushEntry[] = [];
+    const skipped: CommentPushEntry[] = [];
+    for (const comment of selected) {
+      const existing = (comment.external ?? []).find((entry) => entry.system === 'youtrack');
+      if (existing) {
+        skipped.push({
+          commentPath: comment.path,
+          youtrackCommentId: existing.id,
+          ...(existing.url === undefined ? {} : { url: existing.url }),
+          reason: 'already pushed',
+        });
+        continue;
+      }
+      pushed.push({ commentPath: comment.path });
+    }
+    const jobId = pushed.length === 0 ? undefined : `job_comment_${this.nextRev().slice(-4)}`;
+    if (jobId !== undefined) {
+      this.emit({
+        kind: 'syncJob',
+        job: {
+          id: jobId,
+          kind: 'youtrack.comment.push',
+          // The coalescing key of this job kind is the comment path, not the
+          // item: one job pushes one comment file (docs/07 §5, job kinds).
+          key: pushed[0]?.commentPath ?? input.itemId,
+          state: 'queued',
+          phase: 'queued',
+          attempt: 0,
+          processed: 0,
+          total: pushed.length,
+          error: '',
+          errorClass: '',
+        },
+      });
+    }
+    return Promise.resolve({
+      project: input.project ?? this.youtrackSettings.projectKey,
+      itemId: input.itemId,
+      ...(jobId === undefined ? {} : { jobId }),
+      pushed,
+      skipped,
+      failed: [],
+    });
+  }
+
+  /**
+   * Test seam: marks a comment as having arrived upstream, the way the push job
+   * does once the remote comment exists. It is how a test drives the "sent"
+   * state without reaching into the store.
+   */
+  completeCommentPush(commentPath: string, external: External): void {
+    const index = this.comments.findIndex((comment) => comment.path === commentPath);
+    const comment = this.comments[index];
+    if (comment === undefined) return;
+    this.comments[index] = {
+      ...comment,
+      external: [
+        ...(comment.external ?? []).filter((entry) => entry.system !== external.system),
+        external,
+      ],
+      rev: this.nextRev(),
+    };
+    this.emit({ kind: 'items', repoId: 'repo-1', ids: [comment.item] });
   }
 
   // ----------------------------------------------------- background jobs

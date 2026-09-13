@@ -195,7 +195,7 @@ func (s *Server) fillIssueRows(
 	if err != nil {
 		return err //nolint:wrapcheck // failYouTrack classifies the client's own error and never echoes its cause
 	}
-	fields := mapping.DefaultFieldMap().WithFieldNames(link.FieldMap)
+	fields := youtrackFieldMapping(link)
 	linked := s.linkedItems(page.ProjectKey)
 	page.Items = make([]youtrackIssueRow, 0, len(issues))
 	for _, issue := range issues {
@@ -384,7 +384,7 @@ func (s *Server) versionBundleID(
 	if err != nil {
 		return "", err //nolint:wrapcheck // failYouTrack classifies the client's own error and never echoes its cause
 	}
-	want := mapping.DefaultFieldMap().WithFieldNames(link.FieldMap).MilestoneField
+	want := youtrackFieldMapping(link).MilestoneField
 	for _, setting := range settings {
 		if strings.EqualFold(strings.TrimSpace(setting.Field.Name), want) && setting.Bundle.ID != "" {
 			return setting.Bundle.ID, nil

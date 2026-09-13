@@ -14,6 +14,31 @@
  */
 
 import type {
+  CommentPushEntry,
+  CommentPushInput,
+  CommentPushResult,
+  External,
+  InboxDraftOptions,
+  InboxFilter,
+  InboxPage,
+  InboxStatus,
+  InboxTriageAction,
+  InboxTriageInput,
+  InboxTriageResult,
+  ItemInbox,
+  KbPageSyncStatus,
+  KbSyncJobResult,
+  KbSyncSelector,
+  KbSyncState,
+  KbSyncStatusResult,
+  SprintSnapshot,
+  SprintSnapshotBucket,
+  SprintSnapshotPoint,
+  SprintSnapshotTotals,
+  SprintStatus,
+  SprintTransfer,
+  SprintTransferMode,
+  WriteSet,
   BoardCard,
   BoardColumnPatch,
   BoardColumnView,
@@ -97,6 +122,31 @@ import type {
 } from '@/core-bridge/api';
 
 export type {
+  CommentPushEntry,
+  CommentPushInput,
+  CommentPushResult,
+  External,
+  InboxDraftOptions,
+  InboxFilter,
+  InboxPage,
+  InboxStatus,
+  InboxTriageAction,
+  InboxTriageInput,
+  InboxTriageResult,
+  ItemInbox,
+  KbPageSyncStatus,
+  KbSyncJobResult,
+  KbSyncSelector,
+  KbSyncState,
+  KbSyncStatusResult,
+  SprintSnapshot,
+  SprintSnapshotBucket,
+  SprintSnapshotPoint,
+  SprintSnapshotTotals,
+  SprintStatus,
+  SprintTransfer,
+  SprintTransferMode,
+  WriteSet,
   KbFeedbackNoteDraft,
   KbFeedbackNoteRef,
   BoardCard,
@@ -1231,6 +1281,17 @@ export type ProviderErrorCode =
   | 'wip_limit_exceeded'
   /** Two sprints of one board would share a day (docs/04 §8.4). */
   | 'sprint_overlap'
+  /**
+   * Work was aimed at a sprint whose derived status is `completed`. Moving it
+   * there would make that sprint's numbers lie, so it is refused outright
+   * rather than per item.
+   */
+  | 'sprint_target_completed'
+  /**
+   * The project declares no status in the `triage` category, which is simply a
+   * project without an inbox (ADR-033). It is a state to explain, not an error.
+   */
+  | 'no_triage_status'
   /** The board already runs a sprint; confirm to run two at once. */
   | 'sprint_already_active'
   /** The improvement action already became a task (docs/04 R-RETRO-2). */
@@ -1282,7 +1343,31 @@ export type ChangeEvent =
   | { kind: 'repo'; repoId: string }
   | { kind: 'index'; repoId: string; stats: IndexStats }
   /** A `sync.job.*` frame, or the `resync` phase that asks for a reconcile. */
-  | { kind: 'syncJob'; job: SyncJobEvent };
+  | { kind: 'syncJob'; job: SyncJobEvent }
+  /**
+   * An `inbox.changed` frame: one triage decision, or one submission filed
+   * straight into the queue. `pending` is the whole queue, so a sidebar badge
+   * never needs a second call (ADR-033).
+   */
+  | { kind: 'inbox'; repoId: string; project: string; id: string; action: string; pending: number }
+  /**
+   * A `sprint.changed` frame: a sprint whose scope moved, by a close or by a
+   * transfer. A dry run publishes none.
+   */
+  | { kind: 'sprint'; sprint: string; board: string; state: string; carried: number; failed: number }
+  /**
+   * A `youtrack.kb.conflict` frame: a page and the article it mirrors both
+   * changed. The page was left exactly as it is and the incoming content went
+   * to `conflictPath`.
+   */
+  | {
+      kind: 'kbConflict';
+      project: string;
+      path: string;
+      conflictPath: string;
+      articleId?: string;
+      direction: 'publish' | 'pull';
+    };
 
 export type Unsubscribe = () => void;
 
@@ -1400,6 +1485,24 @@ export interface DataProvider {
    * lives in; a handle is derived from the name for the file name.
    */
   addComment(id: string, body: string, author?: string): Promise<Comment>;
+
+  // inbox (ADR-033, docs/07 §5.3)
+  /**
+   * One page of a project's triage queue. `counts` and `pending` are over the
+   * whole queue rather than over the page, and a snoozed item whose date has
+   * arrived is already counted — and listed — as pending, because that is what
+   * a reader sees.
+   */
+  listInbox(filter?: InboxFilter): Promise<InboxPage>;
+  /** Files an ordinary draft straight into the triage queue instead of the backlog. */
+  createInboxItem(draft: InboxDraft): Promise<Item>;
+  /**
+   * One triage decision. `accept` clears triage and moves the item into the
+   * ordinary workflow — it can never change the item's type, because an item id
+   * encodes its type for life (R-ID-3), so "this should have been an epic" is
+   * answered by creating the right item and marking this one a duplicate.
+   */
+  triageInboxItem(input: InboxTriageInput): Promise<InboxTriageResult>;
   writePage(scope: KbScope, path: string, content: string, rev?: string): Promise<KbPage>;
   /**
    * Appends feedback notes to the feedback block at the end of a page, as the
@@ -1472,10 +1575,16 @@ export interface DataProvider {
    * modifies no item by itself: `carry` carries one explicit decision per
    * unfinished item (R-SPR-3).
    */
-  closeSprint(
+  closeSprint(id: string, input?: SprintCloseInput, team?: string): Promise<SprintResult>;
+  /**
+   * Moves the unfinished references of one sprint into another sprint or back
+   * to their project backlogs, without closing anything. A per-item refusal is
+   * not an error: it comes back on its own `report.carried[].error` line, so
+   * the rest of the transfer still happened (R-SPR-8).
+   */
+  transferSprintItems(
     id: string,
-    carry?: SprintCarry[],
-    rev?: string,
+    input?: SprintTransferInput,
     team?: string,
   ): Promise<SprintResult>;
   /**
@@ -1637,6 +1746,28 @@ export interface DataProvider {
    * of truth: the `sync.job.*` stream is a live hint that a client may miss
    * frames from, so a reconnect reconciles from here.
    */
+  /**
+   * The synchronization state of the selected knowledge-base pages. Without
+   * `remote` no request leaves the process: the answer comes from each page's
+   * own `external` entry and the content it would publish, which is what makes
+   * a whole tree affordable to ask about.
+   */
+  kbSyncStatus(selector?: KbSyncSelector): Promise<KbSyncStatusResult>;
+  /**
+   * Queues a publish of the selected pages. It never blocks on the network and
+   * it never publishes the `## Feedback` block, which stays in the repository
+   * (ADR-030).
+   */
+  publishKbPage(selector: KbSyncSelector): Promise<KbSyncJobResult>;
+  /** Queues a pull of the selected pages from their articles. */
+  pullKbPage(selector: KbSyncSelector): Promise<KbSyncJobResult>;
+  /**
+   * Queues a push of one comment, or of every comment of an item that carries
+   * no YouTrack reference yet. The answer says what was *queued*: the comment's
+   * `external` entry is what says it arrived.
+   */
+  pushCommentToYoutrack(input: CommentPushInput): Promise<CommentPushResult>;
+
   listSyncJobs(filter?: SyncJobFilter): Promise<SyncJobPage>;
   /** One job, or `sync_job_not_found` — which a pruned job also answers. */
   getSyncJob(id: string): Promise<SyncJob>;
@@ -1706,6 +1837,39 @@ export interface DataProvider {
 }
 
 /** How a retro listing is narrowed; the filters are ANDed. */
+/** A draft filed straight into the triage queue (ADR-033). */
+export type InboxDraft = ItemDraft & {
+  /** Free text: `web`, `mcp`, `youtrack`, the name of a form. */
+  source?: string;
+  /** When the submission arrived, which is not when the file was written. */
+  received?: string;
+};
+
+/**
+ * What closing a sprint decides.
+ *
+ * `dryRun` computes the whole report and writes nothing, not even a write set:
+ * it is what the confirmation dialog renders, so that nothing is committed
+ * before a person has seen what would move where.
+ */
+export type SprintCloseInput = {
+  /** One explicit decision per unfinished item; it wins over `transfer`. */
+  carry?: SprintCarry[];
+  /** One destination for every unfinished reference. */
+  transfer?: SprintTransfer;
+  rev?: string;
+  dryRun?: boolean;
+};
+
+/** What a standalone transfer moves, and where. `mode` defaults to `next`. */
+export type SprintTransferInput = {
+  mode?: SprintTransferMode;
+  target?: string;
+  carry?: SprintCarry[];
+  rev?: string;
+  dryRun?: boolean;
+};
+
 export type RetroFilter = { sprint?: string; board?: string; state?: RetroState };
 
 /** A retro listing: the retros and every action they left open. */

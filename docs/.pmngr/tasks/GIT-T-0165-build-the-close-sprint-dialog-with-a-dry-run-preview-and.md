@@ -2,7 +2,7 @@
 id: GIT-T-0165
 type: task
 title: Build the close-sprint dialog with a dry-run preview and target picker
-status: todo
+status: done
 priority: medium
 parent: GIT-US-0089
 milestone: GIT-M-0012
@@ -10,7 +10,9 @@ author: mcp
 labels: [web]
 estimate: 4
 created: 2026-09-13T13:19:19Z
-updated: 2026-09-13T13:19:19Z
+updated: 2026-09-13T16:39:07Z
+started: 2026-09-13T16:38:02Z
+closed: 2026-09-13T16:39:07Z
 ---
 
 ## Description
@@ -19,7 +21,19 @@ Add `web/src/features/boards/CloseSprintDialog.tsx`. On open it calls `closeSpri
 
 ## Acceptance Criteria
 
-- [ ] The dialog shows the dry-run counts, the destination choice and the filtered target picker.
-- [ ] Refusals are listed before confirming and the outcome is reported with success and error toasts.
-- [ ] Confirming closes the sprint and refreshes the board and sprint list.
-- [ ] Vitest covers the dry-run rendering, the target filtering and the refusal list.
+- [x] The dialog shows the dry-run counts, the destination choice and the filtered target picker.
+- [x] Refusals are listed before confirming and the outcome is reported with success and error toasts.
+- [x] Confirming closes the sprint and refreshes the board and sprint list.
+- [x] Vitest covers the dry-run rendering, the target filtering and the refusal list.
+
+## Notes
+
+The preview is modelled as a *query* rather than a mutation, because a dry run
+is a read that happens to compute a report: it is keyed by the chosen
+destination, so changing the destination re-runs it, and it never writes to the
+sprint cache.
+
+The refusals gate the confirm button through an acknowledgement checkbox, which
+resets whenever a new preview arrives — reading "this project is not cloned, so
+these three items will not move" is the point of the preview, and a button that
+is merely next to the banner is too easy to click past.

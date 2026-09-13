@@ -198,4 +198,60 @@ describe('YouTrackCard', () => {
     expect(screen.queryByRole('listbox')).toBeNull();
     expect(screen.getByText(/Save a token to search the instance for it/)).toBeInTheDocument();
   });
+
+  // ------------------------------------- push and sync policy (GIT-T-0188/0219)
+
+  it('spells out what pushing every comment actually means before it is saved', async () => {
+    renderCard(connected);
+    const user = userEvent.setup();
+
+    const push = await screen.findByLabelText('Push comments');
+    expect(screen.getByText(/Nothing leaves this repository until someone uses/)).toBeInTheDocument();
+
+    await user.selectOptions(push, 'auto');
+
+    // The consequence is named, and so is its limit: nothing is sent backwards.
+    expect(screen.getByText(/Every comment written here from now on/)).toBeInTheDocument();
+    expect(screen.getByText(/not sent retroactively/)).toBeInTheDocument();
+  });
+
+  it('persists the comment policy through the settings patch', async () => {
+    const provider = renderCard({ ...connected, persisted: true });
+    const user = userEvent.setup();
+
+    await user.selectOptions(await screen.findByLabelText('Push comments'), 'auto');
+    await user.click(screen.getByRole('button', { name: 'Save connection' }));
+
+    await expect(provider.getYouTrackSettings()).resolves.toMatchObject({
+      pushComments: 'auto',
+    });
+  });
+
+  it('spells out what on_write costs, and persists it with its direction', async () => {
+    const provider = renderCard({ ...connected, persisted: true });
+    const user = userEvent.setup();
+
+    const sync = await screen.findByLabelText('Knowledge base sync');
+    expect(screen.getByText(/published and pulled only from the knowledge-base toolbar/)).toBeInTheDocument();
+
+    await user.selectOptions(sync, 'on_write');
+    expect(screen.getByText(/Saving a knowledge-base page enqueues a publish/)).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText('Sync direction'), 'both');
+    await user.click(screen.getByRole('button', { name: 'Save connection' }));
+
+    await expect(provider.getYouTrackSettings()).resolves.toMatchObject({
+      kbSync: 'on_write',
+      kbSyncDirection: 'both',
+    });
+  });
+
+  it('never suggests the feedback block will be published', async () => {
+    renderCard(connected);
+
+    // The `## Feedback` block stays in the repository whichever way pages
+    // travel (ADR-030); the card has to say so rather than leave it implied.
+    expect(await screen.findByText(/is never published/)).toBeInTheDocument();
+    expect(screen.getByText(/reader notes stay in\s+this repository/)).toBeInTheDocument();
+  });
 });

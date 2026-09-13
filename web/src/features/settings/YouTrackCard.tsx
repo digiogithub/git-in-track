@@ -322,7 +322,7 @@ function YouTrackConnection() {
             </p>
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-3">
+          <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1">
               <Label htmlFor={pushId}>Push comments</Label>
               <Select
@@ -338,6 +338,11 @@ function YouTrackConnection() {
                 <option value="manual">Only when asked</option>
                 <option value="auto">On every comment</option>
               </Select>
+              <p className="text-muted-foreground">
+                {draft.pushComments === 'auto'
+                  ? 'Every comment written here from now on — by a person, by the CLI or by an agent — is queued for the linked issue, with no further confirmation. Comments already written are not sent retroactively.'
+                  : 'Nothing leaves this repository until someone uses “Send to YouTrack” on a comment.'}
+              </p>
             </div>
             <div className="space-y-1">
               <Label htmlFor={kbSyncId}>Knowledge base sync</Label>
@@ -354,6 +359,11 @@ function YouTrackConnection() {
                 <option value="manual">Only when asked</option>
                 <option value="on_write">On every write</option>
               </Select>
+              <p className="text-muted-foreground">
+                {draft.kbSync === 'on_write'
+                  ? 'Saving a knowledge-base page enqueues a publish of that page, every time. A busy afternoon of edits is a busy afternoon of background jobs.'
+                  : 'Pages are published and pulled only from the knowledge-base toolbar.'}
+              </p>
             </div>
             <div className="space-y-1">
               <Label htmlFor={kbDirectionId}>Sync direction</Label>
@@ -371,6 +381,17 @@ function YouTrackConnection() {
                 <option value="pull">Pull from YouTrack</option>
                 <option value="both">Both ways</option>
               </Select>
+              <p className="text-muted-foreground">
+                Which way pages travel. When both sides changed since the last sync, neither wins:
+                the page is left untouched and the incoming text is written beside it as{' '}
+                <code>&lt;page&gt;.conflict.md</code>.
+              </p>
+            </div>
+            <div className="space-y-1 sm:col-span-2">
+              <p className="text-muted-foreground">
+                The <code>## Feedback</code> block of a page is never published: reader notes stay in
+                this repository whichever direction is chosen.
+              </p>
             </div>
           </div>
 

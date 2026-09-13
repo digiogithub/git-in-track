@@ -16,6 +16,16 @@
  */
 
 import type {
+  CommentPushResult,
+  InboxDraft,
+  InboxFilter,
+  InboxPage,
+  InboxTriageInput,
+  InboxTriageResult,
+  KbSyncJobResult,
+  KbSyncStatusResult,
+  SprintCloseInput,
+  SprintTransferInput,
   BatchResult,
   BoardMoveResult,
   BoardDraft,
@@ -61,7 +71,6 @@ import type {
   RetroResult,
   RetroFilter,
   RetroView,
-  SprintCarry,
   SprintDraft,
   SprintFilter,
   SprintPatch,
@@ -193,6 +202,10 @@ const CORE_ERROR_CODES: Record<string, ProviderError['code']> = {
   stale_revision: 'stale_revision',
   wip_limit_exceeded: 'wip_limit_exceeded',
   repo_not_cloned: 'repo_not_cloned',
+  sprint_overlap: 'sprint_overlap',
+  sprint_already_active: 'sprint_already_active',
+  sprint_target_completed: 'sprint_target_completed',
+  no_triage_status: 'no_triage_status',
   project_exists: 'project_exists',
   team_exists: 'team_exists',
   team_project_exists: 'team_project_exists',
@@ -699,6 +712,49 @@ export class BrowserProvider implements DataProvider {
     return comment;
   }
 
+  // --------------------------------------------------------------------- inbox
+
+  /**
+   * The triage queue, straight out of the core. There is no companion here, so
+   * the clock the vault resolves an expired snooze against is this tab's — the
+   * same rule, evaluated in the same Go code, which is the point of compiling
+   * the core twice.
+   */
+  async listInbox(filter: InboxFilter = {}): Promise<InboxPage> {
+    await this.#ensureActive();
+    return this.#call('inbox.list', filter);
+  }
+
+  async createInboxItem(draft: InboxDraft): Promise<Item> {
+    const { source, received, ...rest } = draft;
+    return this.createItem({
+      ...rest,
+      inbox: {
+        ...(source === undefined ? {} : { source }),
+        ...(received === undefined ? {} : { received }),
+      },
+    });
+  }
+
+  async triageInboxItem(input: InboxTriageInput): Promise<InboxTriageResult> {
+    const mount = this.#mountForItem(input.id, await this.#ensureWritable());
+    const result = await this.#call('inbox.triage', input);
+    if (result.writes) await this.#persist(mount, result.writes);
+    this.#emit({ kind: 'items', repoId: mount.id, ids: [input.id] });
+    // There is no WebSocket in this mode, so the queue's own event is raised
+    // here: an open inbox pane and the sidebar badge subscribe to the same
+    // `inbox` event in both runtimes and need no second code path.
+    this.#emit({
+      kind: 'inbox',
+      repoId: mount.id,
+      project: input.id.split('-')[0] ?? '',
+      id: input.id,
+      action: input.action,
+      pending: result.pending,
+    });
+    return result;
+  }
+
   async addPageFeedback(
     scope: KbScope,
     path: string,
@@ -910,21 +966,53 @@ export class BrowserProvider implements DataProvider {
     );
   }
 
-  async closeSprint(
-    id: string,
-    carry?: SprintCarry[],
-    rev?: string,
-    team?: string,
-  ): Promise<SprintResult> {
+  /**
+   * A dry run writes nothing, so it needs no writable vault and produces no
+   * write set to persist: it is a read that happens to compute a report.
+   */
+  async closeSprint(id: string, input: SprintCloseInput = {}, team?: string): Promise<SprintResult> {
+    if (input.dryRun === true) {
+      await this.#ensureActive();
+      return this.#call('sprint.close', {
+        id,
+        dryRun: true,
+        ...(input.carry === undefined ? {} : { carry: input.carry }),
+        ...(input.transfer === undefined ? {} : { transfer: input.transfer }),
+        ...(input.rev === undefined ? {} : { rev: input.rev }),
+        ...teamScope(team),
+      });
+    }
     await this.#ensureWritable();
     return this.#persistSprint(
       await this.#call('sprint.close', {
         id,
-        ...(carry === undefined ? {} : { carry }),
-        ...(rev === undefined ? {} : { rev }),
+        ...(input.carry === undefined ? {} : { carry: input.carry }),
+        ...(input.transfer === undefined ? {} : { transfer: input.transfer }),
+        ...(input.rev === undefined ? {} : { rev: input.rev }),
         ...teamScope(team),
       }),
     );
+  }
+
+  async transferSprintItems(
+    id: string,
+    input: SprintTransferInput = {},
+    team?: string,
+  ): Promise<SprintResult> {
+    const params = {
+      id,
+      ...(input.mode === undefined ? {} : { mode: input.mode }),
+      ...(input.target === undefined ? {} : { target: input.target }),
+      ...(input.carry === undefined ? {} : { carry: input.carry }),
+      ...(input.rev === undefined ? {} : { rev: input.rev }),
+      ...teamScope(team),
+    };
+    if (input.dryRun === true) {
+      await this.#ensureActive();
+      return this.#call('sprint.transfer', { ...params, dryRun: true });
+    }
+    await this.#ensureWritable();
+    return this.#persistSprint(await this.#call('sprint.transfer', params));
   }
 
   // ------------------------------------------------------------------- retros
@@ -1184,6 +1272,29 @@ export class BrowserProvider implements DataProvider {
   }
 
   runYouTrackImport(): Promise<YouTrackImportRun> {
+    return Promise.reject(new ProviderError('read_only', BROWSER_YOUTRACK_REASON));
+  }
+
+  /**
+   * Knowledge-base synchronization and the comment push need the credential and
+   * the job engine, neither of which exists in a tab. They fail loudly for the
+   * same reason as the rest of the group: the toolbar and the comment action
+   * are gated on `capabilities.youtrack`, which is false here, so a call
+   * arriving at one of these four is a bug in the caller and says so.
+   */
+  kbSyncStatus(): Promise<KbSyncStatusResult> {
+    return Promise.reject(new ProviderError('read_only', BROWSER_YOUTRACK_REASON));
+  }
+
+  publishKbPage(): Promise<KbSyncJobResult> {
+    return Promise.reject(new ProviderError('read_only', BROWSER_YOUTRACK_REASON));
+  }
+
+  pullKbPage(): Promise<KbSyncJobResult> {
+    return Promise.reject(new ProviderError('read_only', BROWSER_YOUTRACK_REASON));
+  }
+
+  pushCommentToYoutrack(): Promise<CommentPushResult> {
     return Promise.reject(new ProviderError('read_only', BROWSER_YOUTRACK_REASON));
   }
 

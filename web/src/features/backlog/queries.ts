@@ -19,6 +19,7 @@ import { useEffect } from 'react';
 
 import type {
   Comment,
+  CommentPushResult,
   Item,
   ItemFilter,
   ItemPage,
@@ -27,6 +28,11 @@ import type {
   ProjectSummary,
 } from '@/api/provider';
 import { useProvider } from '@/api/provider-context';
+import {
+  applyCommentJobFrame,
+  COMMENT_PUSH_JOB_KIND,
+  rememberQueuedPush,
+} from '@/features/backlog/comment-sync';
 
 /** Key factory. Keep every backlog key under the project prefix. */
 export const backlogKeys = {
@@ -301,4 +307,77 @@ export function useAddComment(
       void queryClient.invalidateQueries({ queryKey: backlogKeys.comments(project, id) });
     },
   });
+}
+
+
+// ------------------------------------------------- pushing a comment upstream
+
+export type PushCommentVariables = {
+  /** The item whose thread is being pushed; its id names the project. */
+  id: string;
+  /** One comment file. Omitted with `all`, which pushes every unpushed one. */
+  commentPath?: string;
+  all?: boolean;
+};
+
+/**
+ * Queues a push of one comment to the YouTrack issue its item mirrors.
+ *
+ * The answer is a job id, not a result: the work happens in the background
+ * engine, where retries and rate limiting already live. What this hook does
+ * with that answer is remember which comment the job is carrying, so the badge
+ * can say "pending" before the first `sync.job.*` frame arrives — and then get
+ * out of the way, because the comment's own `external` entry is what finally
+ * says it landed.
+ */
+export function usePushCommentToYoutrack(
+  project: string,
+): UseMutationResult<CommentPushResult, Error, PushCommentVariables> {
+  const provider = useProvider();
+  const queryClient = useQueryClient();
+
+  return useMutation<CommentPushResult, Error, PushCommentVariables>({
+    mutationFn: ({ id, commentPath, all }) =>
+      provider.pushCommentToYoutrack({
+        itemId: id,
+        ...(commentPath === undefined ? {} : { commentPath }),
+        ...(all === undefined ? {} : { all }),
+      }),
+    onSuccess: (result, { id }) => {
+      const jobId = result.jobId ?? '';
+      for (const entry of result.pushed) {
+        if (jobId !== '') rememberQueuedPush(entry.commentPath, jobId);
+      }
+      // A comment that was skipped is already upstream; re-reading the thread
+      // is what makes its badge say so.
+      if (result.skipped.length > 0) {
+        void queryClient.invalidateQueries({ queryKey: backlogKeys.comments(project, id) });
+      }
+    },
+  });
+}
+
+/**
+ * Bridges the `sync.job.*` stream into the comment badges.
+ *
+ * A terminal frame also re-reads the thread: the job writes the remote id into
+ * the comment file, and that file — not this frame — is what the "sent" badge
+ * is allowed to believe.
+ */
+export function useCommentPushEvents(project: string, id: string): void {
+  const provider = useProvider();
+  const queryClient = useQueryClient();
+
+  useEffect(
+    () =>
+      provider.subscribe((event) => {
+        if (event.kind !== 'syncJob') return;
+        if (event.job.kind !== COMMENT_PUSH_JOB_KIND) return;
+        applyCommentJobFrame(event.job);
+        if (event.job.phase === 'done' || event.job.phase === 'failed') {
+          void queryClient.invalidateQueries({ queryKey: backlogKeys.comments(project, id) });
+        }
+      }),
+    [provider, queryClient, project, id],
+  );
 }

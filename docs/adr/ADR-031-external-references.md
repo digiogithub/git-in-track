@@ -95,6 +95,20 @@ as the core is concerned; the syncing is somebody else's package.
   until an ADR says how conflicts are resolved, it is not.
 - **Comments carry it too**, which means the comment file format grew a key that
   most comments will never have, and the comment round-trip tests grew with it.
+- **The correspondence is deliberately asymmetric about deletion, and that asymmetry
+  will surprise somebody.** A write propagates outward — a comment with no entry for
+  the system is created upstream and the returned id is written back; one that already
+  carries an entry is *edited*, which is what makes a re-delivered job idempotent
+  instead of a duplicate remark — but **a local delete never deletes remotely**. There
+  is no job for it and there is deliberately none: a repository is not the authority on
+  a conversation other people are having in the tracker, and a mistaken `rm`, or a
+  branch that simply never had the file, must not erase a thread. The same holds coming
+  the other way: a comment deleted upstream is left alone locally, and an import skips
+  it rather than removing anything. The price is that `external` can go stale in both
+  directions with nothing to detect it, and that removing an entry and pushing again
+  produces a *second* remote comment, because by then neither side can tell it is the
+  same one. That is the cost of never destroying somebody else's data on our say-so,
+  and it is the trade this ADR chooses. The rule is normative in docs/03 §11 (R-CMT-6).
 
 ## Alternatives considered
 

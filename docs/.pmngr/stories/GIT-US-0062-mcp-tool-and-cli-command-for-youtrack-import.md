@@ -2,7 +2,7 @@
 id: GIT-US-0062
 type: story
 title: MCP tool and CLI command for YouTrack import
-status: in_review
+status: done
 priority: medium
 parent: GIT-EP-0012
 milestone: GIT-M-0011
@@ -10,8 +10,9 @@ author: mcp
 labels: [mcp, cli, docs]
 estimate: 5
 created: 2026-09-13T13:12:44Z
-updated: 2026-09-13T15:41:40Z
+updated: 2026-09-13T16:40:38Z
 started: 2026-09-13T15:41:31Z
+closed: 2026-09-13T16:40:38Z
 ---
 
 ## Description

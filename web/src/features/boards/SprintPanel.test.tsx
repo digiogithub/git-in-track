@@ -40,7 +40,10 @@ describe('the scrum board', () => {
 
     const panel = await screen.findByTestId('sprint-panel');
     expect(within(panel).getByText('Sprint 7 — SSO end to end')).toBeInTheDocument();
+    // The lifecycle state and the status derived from the dates are two facts,
+    // and the panel shows both.
     expect(within(panel).getByText('active')).toBeInTheDocument();
+    expect(within(panel).getByText('Current')).toBeInTheDocument();
     expect(
       within(panel).getByText('A tenant can log in with their identity provider in staging.'),
     ).toBeInTheDocument();
@@ -48,7 +51,11 @@ describe('the scrum board', () => {
     expect(within(panel).getByText('5 of 14 days left')).toBeInTheDocument();
     // ACME-US-0042 is 8 points, WEB-US-0031 is 5, and both were committed.
     expect(within(panel).getByText('13 points')).toBeInTheDocument();
-    expect(within(panel).getByText('0 of 13 points')).toBeInTheDocument();
+    expect(within(panel).getAllByText('0 of 13 points').length).toBeGreaterThan(0);
+    // Progress is done against what was committed, not against the whole scope.
+    const bar = within(panel).getByRole('progressbar');
+    expect(bar).toHaveAttribute('aria-valuenow', '0');
+    expect(bar).toHaveAttribute('aria-valuemax', '13');
   });
 
   it('shows only the sprint scope, with the candidates in the backlog column', async () => {
@@ -118,7 +125,7 @@ describe('the scrum board', () => {
     });
   });
 
-  it('refuses a sprint whose dates overlap the running one', async () => {
+  it('refuses overlapping dates and offers the draft as the way out', async () => {
     const user = userEvent.setup();
     renderScrumBoard();
 
@@ -127,25 +134,40 @@ describe('the scrum board', () => {
     await user.type(screen.getByLabelText('End'), '2026-09-14');
     await user.click(screen.getByRole('button', { name: 'Create sprint' }));
 
-    expect(await screen.findByText('These dates overlap another sprint')).toBeInTheDocument();
+    // The refusal names the other sprint and its range, in the form rather than
+    // only in a toast: the fix is one of the fields on screen.
+    const refusal = await screen.findByRole('alert');
+    expect(refusal).toHaveTextContent('ACME-TEAM-S-0007');
+    expect(refusal).toHaveTextContent('2026-08-24 to 2026-09-06');
+
+    // And the escape hatch: a sprint with no dates is a draft, which overlaps
+    // nothing.
+    await user.click(
+      within(refusal).getByRole('button', { name: 'Remove the dates and keep it a draft' }),
+    );
+    expect(screen.getByLabelText('Start')).toHaveValue('');
+    expect(screen.getByLabelText('End')).toHaveValue('');
   });
 
-  it('closes a sprint, reporting completed against incomplete work', async () => {
+  it('closes a sprint through the dry-run preview', async () => {
     const user = userEvent.setup();
     const provider = renderScrumBoard();
 
     await user.click(await screen.findByRole('button', { name: 'Close sprint' }));
-    expect(
-      await screen.findByText(/0 of 2 items finished \(0 of 13 points\)/),
-    ).toBeInTheDocument();
 
-    // Each unfinished item gets an explicit decision; nothing happens by itself.
-    const unfinished = screen.getByRole('list', { name: 'Unfinished items' });
-    expect(within(unfinished).getAllByRole('listitem')).toHaveLength(2);
-    await user.selectOptions(
-      screen.getByLabelText('What happens to ACME-US-0042'),
-      'backlog',
-    );
+    // The preview grades the sprint before anything is written.
+    const counts = await screen.findByRole('group', { name: 'What this close would grade' });
+    expect(within(counts).getByText('Finished').nextSibling).toHaveTextContent('0');
+    expect(within(counts).getByText('Unfinished').nextSibling).toHaveTextContent('2');
+
+    await user.click(screen.getByRole('radio', { name: /Send it back to the backlog/ }));
+    // WEB belongs to a project this workspace has not cloned, so that half of
+    // the move is refused — and said so before the confirm button works.
+    const refusals = await screen.findByRole('alert');
+    expect(refusals).toHaveTextContent('WEB/WEB-US-0031');
+    expect(refusals).toHaveTextContent(/not cloned/);
+    await user.click(within(refusals).getByRole('checkbox'));
+
     await user.click(screen.getByRole('button', { name: 'Close sprint' }));
 
     await waitFor(async () => {

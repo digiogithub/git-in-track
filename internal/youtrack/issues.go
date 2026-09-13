@@ -129,6 +129,39 @@ func (c *Client) AddComment(ctx context.Context, id, text string) (Comment, erro
 	return out, nil
 }
 
+// UpdateComment edits a comment that was already posted and returns the
+// comment as the server stored it. text is Markdown and replaces the whole
+// body; YouTrack has no partial comment update.
+//
+// The verb is POST, not PUT: YouTrack addresses an existing comment with the
+// same method it creates one with, the id in the path being the whole of the
+// difference. That is why this package has no put helper.
+//
+// This is what makes a comment push idempotent. A caller that recorded the
+// remote id of a comment it created edits that comment on a re-delivery
+// instead of posting a second copy of it.
+func (c *Client) UpdateComment(ctx context.Context, id, commentID, text string) (Comment, error) {
+	if id == "" {
+		return Comment{}, fmt.Errorf("%w: issue id is empty", ErrInvalidInput)
+	}
+	if commentID == "" {
+		return Comment{}, fmt.Errorf("%w: comment id is empty", ErrInvalidInput)
+	}
+	if text == "" {
+		// An empty text would clear the comment rather than edit it, and no
+		// caller of this package means that; deleting a remote comment is a
+		// deliberate act, not the result of an empty string.
+		return Comment{}, fmt.Errorf("%w: comment text is empty", ErrInvalidInput)
+	}
+	body := map[string]any{"text": text}
+	var out Comment
+	path := "/api/issues/" + url.PathEscape(id) + "/comments/" + url.PathEscape(commentID)
+	if err := c.post(ctx, path, fieldsQuery(CommentFields, nil), body, &out); err != nil {
+		return Comment{}, err
+	}
+	return out, nil
+}
+
 // Attachments lists the files attached to an issue. $top is always sent, for
 // the same reason as on comments.
 func (c *Client) Attachments(ctx context.Context, id string) ([]Attachment, error) {

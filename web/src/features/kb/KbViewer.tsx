@@ -28,7 +28,12 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 
-import { ProviderError, type KbFeedbackNoteDraft, type KbScope } from '@/api/provider';
+import {
+  ProviderError,
+  type KbFeedbackNoteDraft,
+  type KbScope,
+  type KbSyncState,
+} from '@/api/provider';
 import { useProvider } from '@/api/provider-context';
 import {
   KB_TREE_DEFAULT_WIDTH,
@@ -49,16 +54,23 @@ import {
   kbHref,
   resolveRequestedPath,
 } from '@/features/kb/kb-links';
+import { conflictPathOf, folderOf, treePagesUnder } from '@/features/kb/kb-sync';
 import { KbBacklinks } from '@/features/kb/KbBacklinks';
+import { KbConflictNotice } from '@/features/kb/KbConflictNotice';
 import { KbFrontMatter } from '@/features/kb/KbFrontMatter';
 import { KbLink, RouterLink } from '@/features/kb/KbLink';
+import { KbSyncToolbar } from '@/features/kb/KbSyncToolbar';
 import { KbToc } from '@/features/kb/KbToc';
 import { KbTree } from '@/features/kb/KbTree';
 import { tocOutline } from '@/features/kb/toc';
 import {
   useAddPageFeedback,
+  useKbConflicts,
   useKbInvalidation,
   useKbPage,
+  useKbSyncEnabled,
+  useKbSyncInvalidation,
+  useKbSyncStatus,
   useKbTree,
 } from '@/features/kb/useKbData';
 import { cn } from '@/lib/cn';
@@ -89,6 +101,52 @@ export function KbViewer() {
 
   const pageQuery = useKbPage(project, scope, path);
   useKbInvalidation(project);
+
+  // ---------------------------------------------------------------- sync ----
+  // Two capabilities gate the whole group (see `useKbSyncEnabled`): in
+  // browser-only mode, and for a project nothing is linked to, none of this is
+  // rendered at all rather than rendered and failing.
+  const syncEnabled = useKbSyncEnabled();
+  useKbSyncInvalidation(project);
+  const conflicts = useKbConflicts(project);
+
+  // One local answer for the whole project feeds both the tree badges and the
+  // page badge: without `remote` it costs no request, which is the only reason
+  // asking about every page at once is affordable.
+  const syncQuery = useKbSyncStatus(project, { path: '', recursive: true }, syncEnabled);
+  // The checked answer is a separate question and therefore a separate cache
+  // entry; it is only ever issued when a reader presses "Check the article".
+  const [checkRequested, setCheckRequested] = useState(false);
+  const checkQuery = useKbSyncStatus(
+    project,
+    { path, remote: true },
+    syncEnabled && checkRequested && path !== '',
+  );
+
+  const syncStates = useMemo(() => {
+    const map = new Map<string, KbSyncState>();
+    for (const row of syncQuery.data?.pages ?? []) map.set(row.path, row.state);
+    return map;
+  }, [syncQuery.data]);
+
+  const checkedRow = checkQuery.data?.pages.find((row) => row.path === path);
+  const localRow = syncQuery.data?.pages.find((row) => row.path === path);
+  const pageSyncStatus = checkedRow ?? localRow;
+  const folder = folderOf(path);
+  const folderPages = useMemo(
+    () => treePagesUnder(treeQuery.data ?? [], folder),
+    [treeQuery.data, folder],
+  );
+
+  // A conflict is known from two places and both have to be honoured: the
+  // status the screen loaded with, and a frame that arrived while it was open —
+  // only the frame carries the file the incoming content went to.
+  const liveConflict = conflicts.get(path);
+  const conflictNotice =
+    liveConflict ??
+    (pageSyncStatus?.state === 'conflict'
+      ? { path, conflictPath: conflictPathOf(path) }
+      : undefined);
 
   const feedback = useFeedbackDraft({ kind: 'kb', project, ref: path });
   const addFeedback = useAddPageFeedback(project, scope);
@@ -215,7 +273,12 @@ export function KbViewer() {
         ) : treeQuery.isError ? (
           <p className="text-sm text-destructive">The docs folder could not be listed.</p>
         ) : (
-          <KbTree project={project} nodes={treeQuery.data} currentPath={path} />
+          <KbTree
+            project={project}
+            nodes={treeQuery.data}
+            currentPath={path}
+            syncStates={syncStates}
+          />
         )}
       </aside>
 
@@ -332,7 +395,36 @@ export function KbViewer() {
             </div>
           </div>
           {page && !documentOwnsTitle ? <h1 className="page-title">{page.title}</h1> : null}
+          {syncEnabled ? (
+            <KbSyncToolbar
+              project={project}
+              path={path}
+              folder={folder}
+              folderPages={folderPages}
+              status={pageSyncStatus}
+              remote={checkedRow !== undefined}
+              statusPending={syncQuery.isPending}
+              statusError={syncQuery.error}
+              checking={checkQuery.isFetching}
+              onCheck={() => {
+                setCheckRequested(true);
+                if (checkRequested) void checkQuery.refetch();
+              }}
+            />
+          ) : null}
         </header>
+
+        {syncEnabled && conflictNotice ? (
+          <KbConflictNotice
+            project={project}
+            path={conflictNotice.path}
+            conflictPath={conflictNotice.conflictPath}
+            articleId={
+              'articleId' in conflictNotice ? conflictNotice.articleId : pageSyncStatus?.articleId
+            }
+            direction={'direction' in conflictNotice ? conflictNotice.direction : undefined}
+          />
+        ) : null}
 
         {pageQuery.isPending && path !== '' ? <PageSkeleton /> : null}
 

@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -82,8 +84,11 @@ type youtrackJobClient interface {
 	// DownloadAttachment opens an attachment for reading. The caller closes it.
 	DownloadAttachment(ctx context.Context, attachment youtrack.Attachment) (io.ReadCloser, error)
 
-	// AddComment creates an issue comment and returns the created one.
+	// AddComment creates an issue comment and returns the created one, and
+	// UpdateComment edits one that was already pushed — which is what makes a
+	// re-delivered push update the remote comment instead of duplicating it.
 	AddComment(ctx context.Context, id, text string) (youtrack.Comment, error)
+	UpdateComment(ctx context.Context, id, commentID, text string) (youtrack.Comment, error)
 
 	// The knowledge-base half. Article is inherited from vault.YouTrackSource;
 	// ChildArticles walks the tree downwards, SearchArticles finds a parent
@@ -92,18 +97,6 @@ type youtrackJobClient interface {
 	UpdateArticle(ctx context.Context, id string, in youtrack.ArticleInput) (youtrack.Article, error)
 	ChildArticles(ctx context.Context, id string) ([]youtrack.ArticleRef, error)
 	SearchArticles(ctx context.Context, query string, page youtrack.Page) ([]youtrack.Article, error)
-}
-
-// youtrackCommentEditor is the optional half of the comment push: editing a
-// comment that was already pushed, with POST /api/issues/{id}/comments/{cid}.
-//
-// It is a separate, optionally implemented interface because the shipped
-// *youtrack.Client does not carry the method yet (see the report on
-// GIT-T-0154). A client that grows one satisfies this without a change here; a
-// client that has not makes the edit path fail terminally with a message that
-// says exactly that, instead of silently posting a second comment.
-type youtrackCommentEditor interface {
-	UpdateComment(ctx context.Context, id, commentID, text string) (youtrack.Comment, error)
 }
 
 // youtrackJobPayload is the envelope every job of this package carries.
@@ -229,11 +222,19 @@ func (y *youtrackState) jobClientFor(project string) (youtrackJobClient, vault.Y
 // youtrackLinkOf renders the committed half of a connection as the plain struct
 // internal/vault takes. The base URL comes from the client rather than from the
 // file, because the client is what normalised it.
+//
+// PushComments is carried across because it is the whole of the automatic
+// comment push: `Vault.autoPushComment` queues nothing unless the link it reads
+// back through this provider says `auto` (GIT-T-0164). An empty setting is left
+// empty rather than defaulted here — config.YouTrackLink.Normalized already
+// wrote `manual` into anything a file left out, and inventing a default in a
+// second place is how the two would drift.
 func youtrackLinkOf(client *youtrack.Client, link *config.YouTrackLink) vault.YouTrackLink {
 	out := vault.YouTrackLink{BaseURL: client.BaseURL()}
 	if link != nil {
 		out.Project = link.Project
-		out.FieldMap = link.FieldMap
+		out.FieldMap = link.FieldMap.Names()
+		out.PushComments = string(link.PushComments)
 	}
 	return out
 }
@@ -266,6 +267,7 @@ func (s *Server) installYouTrackSeamsOn(m *mount) {
 		return client, link, nil
 	})
 	m.vlt.SetYouTrackEnqueuer(func(ctx context.Context, job vault.YouTrackJob) (string, error) {
+		s.logCommentPushDecision(job)
 		// Detached on purpose: the HTTP response that asked for the job ends
 		// long before the job runs, and a queue entry cancelled by its own
 		// request going away would be work silently dropped. The same idiom
@@ -291,11 +293,43 @@ func (s *Server) enqueueYouTrackJob(
 	if err != nil {
 		return "", fmt.Errorf("encode the payload of a %s job: %w", kind, err)
 	}
-	job, err := s.sync.engine.Enqueue(ctx, syncengine.Request{Kind: kind, Key: key, Payload: body})
+	job, err := s.sync.engine.Enqueue(ctx, syncengine.Request{
+		Kind: kind, Key: key, Payload: body, ID: coalescedJobID(kind, envelope.Repo, key),
+	})
 	if err != nil {
 		return "", fmt.Errorf("queue a %s job: %w", kind, err)
 	}
 	return job.ID, nil
+}
+
+// coalescedJobID is the idempotence key of the three kinds whose Key is a path,
+// task GIT-T-0173.
+//
+// The engine already folds queued jobs that share a kind and a key into one
+// *batch*; this folds them into one *job*. The difference is the handler: a
+// batch of three jobs for one comment path is three deliveries, so the push
+// would create the comment and then edit it twice for no reason. A stable id
+// makes a burst of writes to one comment — or one knowledge-base page — exactly
+// one unit of work, while two different paths stay two.
+//
+// It is deliberately not applied to the import kind, whose key is a query
+// rather than a path: two imports of the same query asked for a minute apart
+// are two things a person asked for, not one thing said twice.
+//
+// The engine's own rule completes it: an id whose job has already finished is
+// not reused, it is replaced, so the *next* edit of a comment queues again
+// instead of being swallowed by the push that already ran.
+func coalescedJobID(kind syncengine.Kind, repo, key string) string {
+	if strings.TrimSpace(key) == "" {
+		return ""
+	}
+	switch kind {
+	case kindYouTrackCommentPush, kindYouTrackKBPublish, kindYouTrackKBPull:
+	default:
+		return ""
+	}
+	sum := sha256.Sum256([]byte(string(kind) + "\x00" + repo + "\x00" + key))
+	return "yt-" + hex.EncodeToString(sum[:8])
 }
 
 // ---------------------------------------------------------- registration ---

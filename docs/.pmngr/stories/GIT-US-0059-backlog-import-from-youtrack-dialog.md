@@ -2,7 +2,7 @@
 id: GIT-US-0059
 type: story
 title: Backlog Import from YouTrack dialog
-status: in_review
+status: done
 priority: high
 parent: GIT-EP-0012
 milestone: GIT-M-0011
@@ -10,8 +10,9 @@ author: mcp
 labels: [web]
 estimate: 13
 created: 2026-09-13T13:12:28Z
-updated: 2026-09-13T15:51:20Z
+updated: 2026-09-13T16:21:21Z
 started: 2026-09-13T15:51:00Z
+closed: 2026-09-13T16:21:21Z
 ---
 
 ## Description

@@ -14,6 +14,71 @@ because a commit list cannot express them.
 
 ### Added
 
+- **The command line reaches the whole YouTrack integration** (`GIT-US-0062`, `GIT-US-0079`,
+  `GIT-US-0094`, docs/07 §4.15). `gintrack youtrack import <query | ID...>` imports issues,
+  with `--dry-run` for the plan — what each issue would become, which item an update would
+  patch, what could not be resolved — and `--depth`, `--comments`, `--attachments` and
+  `--links` for the rest. `gintrack youtrack push-comments <ITEM-ID>` queues a thread, or one
+  comment, for the issue its item mirrors. `gintrack youtrack kb push|pull <path>` publishes
+  pages as articles and writes articles back, and `kb status` reports where each page stands
+  without touching the network unless `--remote` asks it to. None of them holds any
+  integration logic: each dispatches exactly one core method, the same ones the REST API and
+  the MCP server call, in a companion process that is built the usual way and simply never
+  binds a port. **`kb push|pull --wait` exits non-zero on a conflict** — `5`, distinct from
+  the `1` of a failed job — so a CI step fails on a divergence instead of reporting success
+  over it. A local comment delete still never deletes remotely.
+
+- **`gintrack sprint` and `gintrack inbox`** (`GIT-US-0066`, `GIT-US-0092`, docs/07 §4.16,
+  §4.17). `sprint list|show|start|close|transfer` drives the cadence from a terminal, listing
+  by the status derived from the dates rather than a stored one, and reporting per-item
+  refusals — an item in a repository this machine has not cloned — on their own lines, with a
+  non-zero exit only when *nothing* could be applied. `--dry-run` computes the whole close or
+  transfer report and writes nothing. `inbox list|accept|reject|snooze` works the triage queue
+  through the same rev-checked `inbox.triage` the web app and the MCP tool use.
+
+- **Per-value field mapping** (`GIT-US-0065`, docs/07 §4.15, §5.5). Until now a project could
+  say that the YouTrack field called `State` carries `status`, but not that the *value*
+  `In Progress` means the local status `in_progress`. `integrations.youtrack.field_map`
+  gained a nested shape for exactly that: an entry is either a scalar — the flat form,
+  unchanged, still meaning "the field that carries this" — or a `{field, values}` mapping.
+  An entry with no value map is written back as a scalar, so a `project.yaml` only grows the
+  nesting it asked for, and the surgical YAML edit still preserves every comment and every
+  key the Go structs do not model. `GET /api/v1/youtrack/fields` now resolves each field's
+  **values** as well as its name, in one call — enum, state, version, owned-field, build,
+  user and group bundles — with `isResolved` *omitted* rather than `false` when the instance
+  did not say, because an unknown flag must not read as "not done". A field whose values
+  cannot be read comes back in place with a warning instead of being dropped.
+
+- **The HTTP surface of knowledge-base synchronization** (`GIT-US-0090`, docs/07 §5.5):
+  `GET /api/v1/youtrack/kb/status`, `POST …/kb/publish` and `POST …/kb/pull`, mounted under
+  `/youtrack` and, from the same handlers, inside every `/kb` mount, so the per-project and
+  per-team spellings work and cannot drift. `remote` on the status route stays opt-in: it is
+  one article read per page.
+
+### Changed
+
+- **`field_map` no longer accepts `labels`, `due` or `sprint`.** All three were validated and
+  stored by earlier builds and read by no code at all, which is the worst of both worlds: a
+  person configures a mapping, the file keeps it, and no sync ever honours it. They are now
+  refused with a message saying why — labels travel as YouTrack tags rather than through a
+  custom field, and neither a due date nor a sprint is read from one. The accepted keys are
+  `status`, `priority`, `type`, `assignee`, `estimate` and `milestone`, which are exactly the
+  ones the importer translates. A `project.yaml` carrying a retired key now fails to load
+  until the entry is removed.
+
+- **A comment push writes through the vault.** `internal/server` no longer writes any
+  repository file directly: recording the remote comment id goes through the new
+  `comment.update` core method, which takes the same optimistic lock the hand-rolled version
+  took and upserts the reference by system, so a re-delivered job replaces its entry instead
+  of appending a second one. A pushed comment can now be *edited* upstream rather than
+  failing terminally, which is what makes a journal replay or a dead-letter retry harmless.
+
+- **A burst of writes to one comment or one page is one job.** The three job kinds whose
+  coalescing key is a path enqueue under a stable id, so three edits to one comment inside
+  the debounce window produce one push rather than one batch of three deliveries. The import
+  kind is deliberately excluded: its key is a query, and two imports of the same query a
+  minute apart are two things a person asked for.
+
 - **The background job engine actually runs YouTrack work: four job kinds, and the HTTP
   surface that starts them** (GIT-US-0050, GIT-US-0054, GIT-US-0068, GIT-US-0087,
   docs/07 §4.1, §5.5, §5.6). `internal/server` registers `youtrack.import`,
@@ -177,8 +242,10 @@ because a commit list cannot express them.
   silently skips and duplicates rows — and a token that appears in no error and no rendering
   of the client. It is native-only (`net/http`), so it sits beside `internal/gitops` rather
   than in `internal/core`, and it decodes into its own types and stops there — mapping an
-  issue onto an item is the caller's job. **Nothing imports it yet**: there is no YouTrack
-  feature in the product, only the client the import story will use. Everything it returns —
+  issue onto an item is the caller's job. It is now imported by `internal/vault` (the import
+  and the knowledge-base methods), by `internal/server` (the connection, the discovery
+  endpoints and the four job handlers) and by `internal/youtrack/mapping`. Everything it
+  returns —
   issue descriptions, comment text, article content — is untrusted third-party Markdown,
   returned verbatim for the caller to sanitize.
 
@@ -192,8 +259,9 @@ because a commit list cannot express them.
   retries it from the dead-letter list. The journal holds bookkeeping only: ids, kinds, keys,
   attempt counts, states and redacted errors, never item content and never a credential, so
   deleting it loses queued work and no user data, and a corrupt journal is moved aside rather
-  than being fatal. **Not reachable from any surface yet**: no route, no command, no
-  importer.
+  than being fatal. It now runs the four YouTrack job kinds behind
+  `/api/v1/sync/jobs`, and `gintrack youtrack push-comments` and `kb push|pull` drive the
+  same engine in a companion that never binds a port.
 
 - **A project can be connected to a YouTrack project** (`GIT-US-0048`, `GIT-US-0052`,
   `GIT-US-0058`, ADR-032, docs/03 §6.5, docs/07 §4.15). The connection is deliberately split
@@ -219,7 +287,9 @@ because a commit list cannot express them.
   everything else becomes a `links[]` entry of a kind the model accepts. Nothing that names
   another item is written onto the draft: parents, milestones and link targets come back as
   YouTrack ids for the importer to resolve, so a half-imported set cannot produce a file that
-  fails validation. **Not reachable from any surface yet.**
+  fails validation. It is reached through `internal/vault`'s import and through the issue
+  preview of `internal/server`, which is where a project's configured field and value
+  mappings are folded into the table it translates with.
 
 - **Inbox and sprint operations over the vault and MCP** (`GIT-US-0056`, `GIT-US-0085`,
   docs/08 §4.11–§4.15). `inbox.list` and `inbox.triage` accept, reject, snooze and mark

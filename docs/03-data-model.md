@@ -745,6 +745,7 @@ integrations:
     push_comments: manual                  # manual | auto
     kb_sync: manual                        # manual | on_write
     kb_sync_direction: push                # push | pull | both
+    comment_template: "\n\n---\n_{{.Author}} · git-in-track {{.ItemID}}_"
 ```
 
 | Key | Type | Req. | Default | Notes |
@@ -755,6 +756,17 @@ integrations:
 | `push_comments` | `manual` \| `auto` | no | `manual` | When a comment written here is pushed to the linked issue. |
 | `kb_sync` | `manual` \| `on_write` | no | `manual` | When a knowledge-base page is synchronized with a YouTrack article. |
 | `kb_sync_direction` | `push` \| `pull` \| `both` | no | `push` | Which way that synchronization flows. |
+| `comment_template` | `text/template` | no | see R-INT-6 | The attribution line appended to a comment pushed upstream. |
+
+`field_map` renames the YouTrack custom fields the importer reads; it does not translate the values
+inside them, which is what [§12.6](#126-what-a-youtrack-issue-becomes) documents, defaults included.
+Six of the nine keys reach the mapper — `status` → `State`, `priority` → `Priority`, `type` → `Type`,
+`assignee` → `Assignee`, `estimate` → `Estimation`, `milestone` → `Fix versions`. The remaining
+three are accepted, validated and stored, and today nothing consumes them: `labels` because YouTrack
+tags already carry the labels without a custom field, and `due` and `sprint` because no import maps
+either field yet (§12.6). They are in the vocabulary so that the settings screen can offer the whole
+row set and a project can record the mapping before the importer learns to use it — which is a
+promise this document is making, not a behaviour it is describing.
 
 - **R-INT-1 No credential is ever written here.** `project.yaml` is a committed file:
   the permanent token lives on the machine running the companion, in its `0600`
@@ -772,6 +784,18 @@ integrations:
 - **R-INT-4 A block alone connects nothing.** Reaching the instance also needs a token on
   this machine, and browser-only mode has neither the token nor the network reach: it hides
   the feature entirely (doc 07, `features.youtrack`).
+- **R-INT-5 An unknown `field_map` key is refused, an unused one is not.** The nine keys above are
+  the whole vocabulary and a tenth is `E-PROJ-INTEGRATION` (R-INT-3), because the alternative —
+  ignoring what looks like a typo — is a field map that silently does nothing. A key that is legal
+  but not yet consumed is accepted in silence, which is the cost of keeping the vocabulary stable
+  while the importer grows into it.
+- **R-INT-6 The attribution line is a team decision, so it is committed.** `comment_template` is a
+  Go `text/template` rendered against `.Author`, `.AuthorName`, `.ItemID`, `.IssueID` and
+  `.CommentRef`, appended to every comment this project pushes upstream; empty means the shipped
+  default, `\n\n---\n_{{.Author}} · git-in-track {{.ItemID}}_`. It lives here rather than in the
+  machine-local file because a clone must sign what it publishes the same way the original does. The
+  item id is emitted bare on purpose: YouTrack auto-links anything shaped like one of *its* issue
+  ids, a git-in-track id is not one, and a Markdown link around it would be a dead link.
 
 
 ## 7. Epics
@@ -1160,6 +1184,24 @@ SHOULD write few, high-value system comments; the git log is the audit trail, no
   the item lives in (`user.name`, `user.email`, or the configured `git.authorName`/`authorEmail`
   overrides): `author` becomes the handle of `user.name`, and `author_name`/`author_email` carry the
   identity itself. Only when no identity resolves does the handle fall back to `unknown`.
+- **R-CMT-5** `external` on a comment is the same list, with the same set semantics, as on an item
+  ([§12.5](#125-external-references)); what differs is what it is *for*. On an item it answers "is
+  this issue already imported?"; on a comment it answers "is this remark already upstream?", one
+  remark at a time, which is what makes pushing a thread idempotent. A comment that carries no
+  entry for the system is **created** remotely and the id that comes back is written into the file;
+  a comment that already carries one is **edited** in place. That is not an optimisation — the job
+  engine re-delivers a job after a retry, after a journal replay and when somebody clicks retry in
+  the dead-letter list, and without the reference each delivery would leave another copy of the same
+  remark on the issue.
+- **R-CMT-6 A local delete never deletes remotely, and there is deliberately no way to make it.**
+  Removing a comment file, or removing its `external` entry, unlinks the record and stops there: no
+  job is queued, and none exists to queue. A repository is not the authority on a conversation that
+  other people are also having in the tracker, and a mistaken `rm` — or a branch that never had the
+  file — must not erase a thread. The asymmetry is the point, not an omission: writes propagate
+  outward, deletions do not ([ADR-031](./adr/ADR-031-external-references.md)). A comment that is
+  deleted upstream is likewise left alone locally. A comment whose `external` entry was removed and
+  which is then pushed again produces a **second** remote comment, because as far as both sides can
+  tell it is a new one.
 
 ### 11.3 Complete example
 
@@ -1286,6 +1328,113 @@ external:
   items claiming the same pair is `W-EXT-DUP`; the first file in path order wins the lookup.
 - **R-EXT-7** Knowledge-base pages carry the same key in their (otherwise free-form) front matter.
   Comments carry it too, which is what lets a mirrored discussion be reconciled comment by comment.
+
+### 12.6 What a YouTrack issue becomes
+
+`external` answers "have I seen this issue before?"; this section answers "what does it turn into
+the first time?". The translation lives in `internal/youtrack/mapping`, it is a pure function of the
+payload and the field map, and every surface that imports — the REST route, the background job, the
+MCP tool, the CLI — calls the same one, so an issue cannot become one thing in the web app and
+another on the command line.
+
+The table is written down here because it is a *data-model* decision rather than an implementation
+detail: it says which of this document's fields a foreign tracker is allowed to fill, and, just as
+importantly, which ones it is not.
+
+| YouTrack | git-in-track | Notes |
+|---|---|---|
+| `summary` | `title` | Trimmed. An empty summary is a warning and an item with no title |
+| `description` | body | Normalised, never sanitised — see below |
+| `reporter` | `author` | The login, or the full name when the instance sent no login |
+| `tags[]` | `labels[]` | Trimmed and deduplicated, in the order YouTrack returned them |
+| `idReadable` | `external[]` | `{system: youtrack, id, url, synced_at}` — the idempotency key (§12.5). An imported item records no `key`; only a published page does (§14.6) |
+| Type field | `type` | Default `Type`; a value out of a *version* bundle is a `milestone` whatever it is called |
+| State field | `status` | Default `State` |
+| Priority field | `priority` | Default `Priority` |
+| Estimation field | `estimate` | Default `Estimation`; a period divided by one working day |
+| Assignee field | `assignees[]` | Default `Assignee`; multi-valued, the login is the handle |
+| Milestone field | `milestone` | Default `Fix versions`; several versions keeps the first and warns |
+| `Subtask` link, inward | `parent` | More than one parent keeps the first and warns |
+| `Subtask` link, outward | children | The other half of the same hierarchy |
+| Other link types | `links[]` | `Depend`, `Duplicate` and `Relates`; see below |
+| `attachments[]` | `attachments[]` | Recorded as full `.pmngr/attachments/<ITEM-ID>/<filename>` paths, not bare filenames — see R-YT-7 |
+| `comments[]` | comment files | One file per comment (§11), keeping the original author and time |
+
+Nothing fills `sprint`, `due`, `effort` or `spent`. Those are git-in-track's own planning fields;
+an import that guessed at them would overwrite a decision this team made with one YouTrack never
+took, and a re-import would do it again every time.
+
+**The six field names are configurable, the three value maps are not.** `integrations.youtrack.field_map`
+([§6.5](#65-integrations)) renames the custom fields a mapper reads; the *values* inside those
+fields are translated by the built-in tables below, which a project overrides in code rather than in
+`project.yaml`. That asymmetry is deliberate: a renamed field is a one-line configuration, whereas a
+state bundle with twenty entries is a decision nobody wants to express in YAML.
+
+**Types** — anything not listed becomes a `task`:
+
+| YouTrack `Type` | Item type |
+|---|---|
+| `Epic` | `epic` |
+| `User Story`, `Story`, `Feature` | `story` |
+| `Task`, `Bug`, `Usability Problem`, `Performance Problem`, `Cosmetics`, `Exception` | `task` |
+| `Milestone`, `Version`, or any value from a version bundle | `milestone` |
+
+**States** — anything not listed leaves `status` **unset**, so the project's own default status
+applies rather than a status this project may not even declare:
+
+| YouTrack `State` | Status |
+|---|---|
+| `Submitted`, `To be discussed` | `backlog` |
+| `Open`, `Reopened` | `todo` |
+| `In Progress` | `in_progress` |
+| `To Verify`, `In Review` | `in_review` |
+| `Fixed`, `Verified`, `Done` | `done` |
+| `Can't Reproduce`, `Duplicate`, `Won't fix`, `Obsolete`, `Incomplete` | `cancelled` |
+
+**Priorities** — anything not listed becomes `medium`:
+
+| YouTrack `Priority` | Priority |
+|---|---|
+| `Show-stopper`, `Critical`, `Blocker` | `critical` |
+| `Major`, `High` | `high` |
+| `Normal`, `Medium` | `medium` |
+| `Minor`, `Low` | `low` |
+
+**Link types.** `Relates` becomes `relates_to` in both directions. `Depend` is directed: its outward
+half ("is required for") is `blocks` and its inward half is `blocked_by`. `Duplicate` likewise gives
+`duplicates` outward and `duplicated_by` inward. A link type outside those three is a warning and no
+link — the five kinds of §12.1 are the whole vocabulary, and inventing a sixth to hold a YouTrack
+type would break every consumer of `links`.
+
+- **R-YT-1** All three lookups are case-insensitive on the trimmed value, so `In Progress`,
+  `in progress` and `  IN PROGRESS ` are one key.
+- **R-YT-2** **A value nobody understands is a warning, never an error and never a silent drop.** An
+  import of two hundred issues must finish and then say what it could not read; failing the batch on
+  one unknown enum value would make the feature unusable against any real instance.
+- **R-YT-3** An `Estimation` period is read from `minutes` when YouTrack sent it and from its
+  presentation (`1w 2d 3h`) otherwise, using a stock working week — 8 hours a day, 5 days a week —
+  and divided by one working day to give one story point, rounded to two decimals. A presentation
+  that does not parse cleanly yields **no** estimate and a warning: an estimate of `0` is a
+  statement, and guessing one is worse than leaving the field unset.
+- **R-YT-4** `parent`, `milestone` and `links[].target` are **not** written by the mapper. It returns
+  the YouTrack identifiers, and the importer resolves each one through the (`system`, `id`) index of
+  R-EXT-6 before writing anything; a target it cannot resolve is a warning and an omitted relation,
+  never an id of a foreign tracker sitting in a field this document says holds an item id.
+- **R-YT-5** A re-import **patches**, it does not replace. Only the fields YouTrack actually carried
+  are written, the item keeps the id it was allocated, `external` is merged rather than overwritten
+  (R-EXT-5), and a comment that already carries its YouTrack reference is not written twice.
+- **R-YT-6** Descriptions and comment bodies are **untrusted third-party Markdown**. The importer
+  normalises them structurally — attachment embeds become the `.pmngr/attachments/` paths the files
+  are downloaded to, and the YouTrack-only `{color:…}` and `{width=…}` extensions are dropped with a
+  warning, both exempt inside code fences and code spans — and does nothing else. It does not
+  escape, sanitise or rewrap; every renderer sanitises, and every agent treats the text as data
+  rather than as instructions (§17.5, docs/02 §10.5).
+- **R-YT-7** An imported `attachments[]` entry is the full vault-relative path, which is a
+  deliberate divergence from R-ATT-4's bare filenames: an item can be imported before its id is
+  allocated, and a bare name would then resolve against the wrong folder. Only the background import
+  job downloads the binaries; the synchronous `youtrack.import.run` records the paths and leaves the
+  files to the job, so an item imported over MCP or over the CLI can legitimately list a file that
+  is not on disk yet (`W-ATT-MISSING` until the job runs).
 
 ---
 
@@ -1434,6 +1583,91 @@ Which migration? There are two in this release.
 
 Feedback on a backlog item is not written into the item: it is posted as an ordinary comment
 (§11), with the quoted text and the note in its body.
+
+### 14.5 Publishing a page as a YouTrack article
+
+A knowledge-base page and a YouTrack article are the same document written twice, and the transform
+between them lives in `internal/youtrack/mapping` beside the issue mapper. It matters to this
+document rather than to the API reference because it decides what of a page's *stored form* crosses
+the boundary and what stays here — and everything that stays here is something a reader of the
+Markdown can see and a merge can conflict on.
+
+Five rules decide it, once, so that publishing and pulling cannot drift apart:
+
+- **R-KB-1 The title lives in exactly one place.** YouTrack keeps it in the article's `summary`, and
+  the article body never carries it as an H1. Going up, a leading H1 is removed; coming down, the
+  summary is written to the page's `title` front-matter key and nothing is prepended to the body. A
+  round trip therefore cannot end with the title twice, which is what happens to every naive copy.
+  A page with neither a title nor a leading H1 produces an empty summary and a warning saying that
+  YouTrack will not create an article without one; an H1 that *disagrees* with the title publishes
+  the title, drops the H1 and warns.
+- **R-KB-2 The `## Feedback` block never leaves the repository.** It is local review commentary
+  (§14.4, ADR-030), it is stripped from every outgoing payload, and it is put back unchanged on the
+  way down. Because R-FB-4 rewrites the block on every write, its absence upstream is never evidence
+  of a remote change — which is exactly the trap a byte comparison falls into.
+- **R-KB-3 Front matter is stripped going up and rebuilt coming down.** What YouTrack stores is
+  Markdown only. The page's front matter is the local side's business and is carried over key for
+  key, with `title` refreshed from the summary and this system's `external` entry refreshed in
+  place; every other key, including another system's `external` entry, survives untouched.
+- **R-KB-4 A wikilink becomes an article link only when its target is already published.** Anything
+  else degrades to the text the link displayed, with a warning. A published article must not carry a
+  link that resolves nowhere, and a `[[…]]` means nothing outside this vault.
+- **R-KB-5 An attachment is addressed by file name.** YouTrack resolves an image or a link target
+  against the article's own attachments rather than against a URL, so local references become bare
+  file names on the way up and are put back to the paths the page used on the way down. A base name
+  that two different local references share is ambiguous and is left alone, so a pull never moves a
+  file.
+
+The YouTrack Markdown extensions `{color:red}…{color}` and `{width=300px}` are **passed through**
+here, and preserved with a warning coming back, so that a round trip is byte-stable. That is the
+opposite of what an issue description gets (R-YT-6, which strips both), and the reason is the
+lifecycle rather than the syntax: an issue description is imported once and then belongs to us, while
+a page is round-tripped and still belongs to both sides.
+
+### 14.6 Deciding who changed
+
+Publishing and pulling are the same problem in two directions — *who edited since we last agreed?* —
+and both answer it the same way, from the page's own `external` entry:
+
+- `key` holds the **fingerprint of the content that was last synchronized**, and `synced_at` when
+  that was. This is the one place the model uses `key` for something other than §12.5's external
+  project key; a page has no project key to record, and a fingerprint that travels beside the
+  article id is a fingerprint that cannot be separated from it.
+- The fingerprint is taken over what actually crosses the boundary — front matter stripped, feedback
+  block stripped, title in the summary — never over the file's bytes. Comparing bytes would report a
+  remote edit every time somebody adds a local note (R-FB-4, R-KB-2), and "out of date" would become
+  permanent.
+- Both sides are compared against the recorded fingerprint rather than against each other. That is
+  what makes *both changed* distinguishable from *one changed* at all.
+
+| State | Meaning |
+|---|---|
+| `unlinked` | the page carries no `external` entry for this system |
+| `in_sync` | content and summary match the article |
+| `local_ahead` | the page moved since the recorded fingerprint |
+| `remote_ahead` | the article moved. Only ever reported when the remote was actually read |
+| `conflict` | both moved, or the two differ with no evidence of which one did |
+
+- **R-KB-6** A page published before the fingerprint existed, or linked by hand, has no `key` to
+  pivot on and falls back to comparing `updated` timestamps — which is all there is, and is weaker.
+- **R-KB-7 Last writer wins per direction; both-changed writes a file and merges nothing.** A
+  `conflict` leaves the page **exactly** as it is and writes the incoming content to
+  `<page>.conflict.md` beside it, carrying a `conflict_of` front-matter key naming the original. A
+  three-way merge of two documents nobody can diff meaningfully is worse than two files a person can
+  read side by side, and a silent merge is the worst answer of all. The `youtrack.kb.conflict` event
+  announces it (doc 07 §5.6); resolving it is a human editing two files and deleting one.
+- **R-KB-8 Asking for status is cheap unless you ask for the remote.** A documentation tree is
+  hundreds of pages, so the remote side is read only when the caller opts in; without it the answer
+  comes from the page's own `external` entry and the content the page would publish, and no request
+  leaves the process.
+
+Publishing and pulling are always **queued**, never performed in the call that asked for them: a
+handbook is hundreds of articles, and the retry ladder, the shared rate limit and the journal all
+live in the companion's job engine (docs/02 §3.2). Asking for status is the exception — it is a read,
+and it answers inline. All three are core-API methods (`youtrack.kb.status`, `.publish`, `.pull`) and
+are exposed as the MCP tools `publish_kb_page_to_youtrack` and `sync_kb_page_from_youtrack`; doc 07
+§5.5 is the normative reference for their HTTP surface. There is **no web-app screen** for either
+direction yet: the only thing the UI shows of them is their jobs passing through the sync queue.
 
 ---
 
@@ -1736,6 +1970,39 @@ couple of fields):
   "additionalProperties": false
 }
 ```
+
+Outline of `comment.schema.json`. It is the smallest of the item schemas and the only one whose
+`external` list is not about an item at all — it addresses one remark inside a thread (R-CMT-5), so
+its `id` is the external system's *comment* identifier, not the issue's:
+
+```jsonc
+{
+  "$id": "https://git-in-track.dev/schema/comment.schema.json",
+  "type": "object",
+  "required": ["type", "item", "author", "created"],
+  "properties": {
+    "type":         { "const": "comment" },
+    "item":         { "$ref": "common.defs.json#/$defs/id" },
+    "author":       { "$ref": "common.defs.json#/$defs/handle" },
+    "author_name":  { "type": "string" },
+    "author_email": { "type": "string" },
+    "created":      { "$ref": "common.defs.json#/$defs/timestamp" },
+    "updated":      { "$ref": "common.defs.json#/$defs/timestamp" },
+    "in_reply_to":  { "type": "string" },
+    "kind":         { "enum": ["comment", "status_change", "system"] },
+    "reactions":    { "type": "object", "additionalProperties": {
+                        "type": "array", "items": { "$ref": "common.defs.json#/$defs/handle" } } },
+    "external":     { "type": "array", "items": { "$ref": "common.defs.json#/$defs/external" } },
+    "attachments":  { "type": "array", "items": { "type": "string" } }
+  },
+  "patternProperties": { "^x-": true },
+  "additionalProperties": false
+}
+```
+
+`external` reuses the shared `$def` unchanged. Nothing in the schema distinguishes a comment
+reference from an item reference, and nothing should: the shape is identical, and which artifact an
+entry names is decided by the file it sits in.
 
 Note that `status` values, label membership, and custom-field types cannot be expressed in a static
 schema (they depend on `project.yaml`); those checks are performed by the Go validator after schema

@@ -1687,3 +1687,279 @@ describe('CompanionProvider YouTrack import (epic GIT-EP-0012)', () => {
     expect(answer.result?.issues[1]?.error).toBe('403 Forbidden');
   });
 });
+
+// ------------------------------------------------- inbox, sprints, KB sync
+
+describe('CompanionProvider inbox surface (story GIT-US-0060)', () => {
+  it('lists the queue over GET /inbox and reads the whole-queue counts', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      response({
+        items: [{ ...restItem, status: 'triage', inbox: { status: 'pending', source: 'web' } }],
+        nextCursor: 'eyJvIjoxfQ',
+        total: 12,
+        counts: { pending: 8, snoozed: 3, rejected: 1 },
+        pending: 8,
+      }),
+    );
+
+    const page = await provider(fetchImpl).listInbox({
+      project: 'ACME',
+      status: ['pending', 'snoozed'],
+      limit: 1,
+    });
+
+    const { url, init } = lastCall(fetchImpl);
+    expect(url).toBe(`${BASE}/api/v1/inbox?project=ACME&status=pending&status=snoozed&limit=1`);
+    expect(init.method).toBe('GET');
+    expect(page.total).toBe(12);
+    // The badge reads `pending` straight through: an expired snooze is already
+    // counted there by the companion, against its own clock.
+    expect(page.pending).toBe(8);
+    expect(page.counts).toEqual({ pending: 8, snoozed: 3, rejected: 1 });
+    expect(page.items[0]?.inbox).toEqual({ status: 'pending', source: 'web' });
+  });
+
+  it('sends a triage decision with the revision in If-Match, never in the body', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      response({
+        item: { ...restItem, status: 'backlog' },
+        action: 'accept',
+        pending: 7,
+      }),
+    );
+
+    const result = await provider(fetchImpl).triageInboxItem({
+      id: 'ACME-US-0042',
+      rev: 'sha256:6f1ca09',
+      action: 'accept',
+      status: 'backlog',
+      parent: 'ACME-EP-0007',
+    });
+
+    const { url, init } = lastCall(fetchImpl);
+    expect(url).toBe(`${BASE}/api/v1/items/ACME-US-0042/triage`);
+    expect(init.method).toBe('POST');
+    expect(headerOf(init, 'If-Match')).toBe('sha256:6f1ca09');
+    expect(bodyOf(init)).toEqual({ action: 'accept', status: 'backlog', parent: 'ACME-EP-0007' });
+    expect(result.pending).toBe(7);
+  });
+
+  it('translates an inbox.changed frame, pending count included', () => {
+    const client = eventProvider();
+    const events: ChangeEvent[] = [];
+    client.subscribe((event) => events.push(event));
+    FakeSocket.instances[0]?.open();
+
+    FakeSocket.instances[0]?.emit({
+      type: 'inbox.changed',
+      seq: 5001,
+      data: {
+        repo: 'acme-api',
+        project: 'ACME',
+        id: 'ACME-US-0101',
+        action: 'snooze',
+        pendingCount: 8,
+        origin: 'api',
+      },
+    });
+
+    expect(events).toEqual([
+      {
+        kind: 'inbox',
+        repoId: 'acme-api',
+        project: 'ACME',
+        id: 'ACME-US-0101',
+        action: 'snooze',
+        pending: 8,
+      },
+    ]);
+    client.dispose();
+  });
+});
+
+describe('CompanionProvider sprint close and transfer (story GIT-US-0089)', () => {
+  it('sends the transfer and the dry-run flag on a close', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(response({ sprint: {}, writes: [], dryRun: true }));
+
+    await provider(fetchImpl).closeSprint(
+      'TEAM-S-0008',
+      { transfer: { mode: 'next', target: 'TEAM-S-0009' }, rev: 'sha256:aa', dryRun: true },
+      'TEAM',
+    );
+
+    const { url, init } = lastCall(fetchImpl);
+    expect(url).toBe(`${BASE}/api/v1/sprints/TEAM-S-0008/close?team=TEAM`);
+    expect(headerOf(init, 'If-Match')).toBe('sha256:aa');
+    expect(bodyOf(init)).toEqual({
+      carry: [],
+      transfer: { mode: 'next', target: 'TEAM-S-0009' },
+      dryRun: true,
+    });
+  });
+
+  it('posts a standalone transfer to its own route', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(response({ sprint: {}, writes: [] }));
+
+    await provider(fetchImpl).transferSprintItems('TEAM-S-0008', {
+      mode: 'backlog',
+      rev: 'sha256:aa',
+    });
+
+    const { url, init } = lastCall(fetchImpl);
+    expect(url).toBe(`${BASE}/api/v1/sprints/TEAM-S-0008/transfer`);
+    expect(bodyOf(init)).toEqual({ mode: 'backlog' });
+  });
+
+  it('translates a sprint.changed frame', () => {
+    const client = eventProvider();
+    const events: ChangeEvent[] = [];
+    client.subscribe((event) => events.push(event));
+    FakeSocket.instances[0]?.open();
+
+    FakeSocket.instances[0]?.emit({
+      type: 'sprint.changed',
+      seq: 5002,
+      data: {
+        sprint: 'TEAM-S-0008',
+        board: 'platform-scrum',
+        state: 'active',
+        carried: 3,
+        failed: 1,
+      },
+    });
+
+    expect(events).toEqual([
+      {
+        kind: 'sprint',
+        sprint: 'TEAM-S-0008',
+        board: 'platform-scrum',
+        state: 'active',
+        carried: 3,
+        failed: 1,
+      },
+    ]);
+    client.dispose();
+  });
+});
+
+describe('CompanionProvider YouTrack knowledge base and comment push', () => {
+  it('reads the page states without asking for the remote side by default', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      response({
+        project: 'ACME',
+        remote: false,
+        pages: [
+          {
+            path: 'docs/handbook/onboarding.md',
+            linked: true,
+            articleId: 'ACME-A-3',
+            url: 'https://youtrack.example/articles/ACME-A-3',
+            state: 'local_ahead',
+            syncedAt: '2026-09-01T10:00:00Z',
+          },
+          { path: 'docs/handbook/index.md', linked: false, state: 'unlinked' },
+        ],
+      }),
+    );
+
+    const status = await provider(fetchImpl).kbSyncStatus({
+      project: 'ACME',
+      path: 'docs/handbook',
+      recursive: true,
+    });
+
+    const { url } = lastCall(fetchImpl);
+    expect(url).toBe(
+      `${BASE}/api/v1/youtrack/kb/status?key=ACME&path=docs%2Fhandbook&recursive=true`,
+    );
+    expect(status.remote).toBe(false);
+    expect(status.pages[0]).toMatchObject({ state: 'local_ahead', articleId: 'ACME-A-3' });
+    expect(status.pages[1]?.state).toBe('unlinked');
+  });
+
+  it('queues a publish and answers with the job and the pages it selected', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(
+        response({ project: 'ACME', jobId: 'job_000031', pages: ['docs/handbook/onboarding.md'] }),
+      );
+
+    const job = await provider(fetchImpl).publishKbPage({
+      project: 'ACME',
+      path: 'docs/handbook',
+      recursive: true,
+    });
+
+    const { url, init } = lastCall(fetchImpl);
+    expect(url).toBe(`${BASE}/api/v1/youtrack/kb/publish?key=ACME`);
+    expect(init.method).toBe('POST');
+    expect(bodyOf(init)).toEqual({ path: 'docs/handbook', recursive: true });
+    expect(job.jobId).toBe('job_000031');
+    expect(job.pages).toEqual(['docs/handbook/onboarding.md']);
+  });
+
+  it('queues a comment push and reports what was queued, not what arrived', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      response({
+        project: 'ACME',
+        itemId: 'ACME-US-0042',
+        jobId: 'job_000032',
+        pushed: [{ commentPath: 'docs/.pmngr/comments/ACME-US-0042/a.md' }],
+        skipped: [
+          {
+            commentPath: 'docs/.pmngr/comments/ACME-US-0042/b.md',
+            youtrackCommentId: '4-19',
+            reason: 'already pushed',
+          },
+        ],
+        failed: [],
+      }),
+    );
+
+    const result = await provider(fetchImpl).pushCommentToYoutrack({
+      project: 'ACME',
+      itemId: 'ACME-US-0042',
+      commentPath: 'docs/.pmngr/comments/ACME-US-0042/a.md',
+    });
+
+    const { url, init } = lastCall(fetchImpl);
+    expect(url).toBe(`${BASE}/api/v1/youtrack/comments/push?key=ACME`);
+    expect(bodyOf(init)).toEqual({
+      itemId: 'ACME-US-0042',
+      commentPath: 'docs/.pmngr/comments/ACME-US-0042/a.md',
+    });
+    expect(result.jobId).toBe('job_000032');
+    expect(result.skipped[0]?.youtrackCommentId).toBe('4-19');
+  });
+
+  it('translates a youtrack.kb.conflict frame for the page that is open', () => {
+    const client = eventProvider();
+    const events: ChangeEvent[] = [];
+    client.subscribe((event) => events.push(event));
+    FakeSocket.instances[0]?.open();
+
+    FakeSocket.instances[0]?.emit({
+      type: 'youtrack.kb.conflict',
+      seq: 5003,
+      data: {
+        project: 'DEMO',
+        path: 'docs/handbook/onboarding.md',
+        conflictPath: 'docs/handbook/onboarding.conflict.md',
+        articleId: 'ACME-A-3',
+        direction: 'pull',
+      },
+    });
+
+    expect(events).toEqual([
+      {
+        kind: 'kbConflict',
+        project: 'DEMO',
+        path: 'docs/handbook/onboarding.md',
+        conflictPath: 'docs/handbook/onboarding.conflict.md',
+        articleId: 'ACME-A-3',
+        direction: 'pull',
+      },
+    ]);
+    client.dispose();
+  });
+});

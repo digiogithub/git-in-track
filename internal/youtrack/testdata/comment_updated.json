@@ -1,0 +1,8 @@
+{
+  "id": "4-89",
+  "text": "Fixed in **1.4.1**.\n\n---\n_jose · git-in-track ACME-US-0042_",
+  "created": 1767240000000,
+  "updated": 1767250000000,
+  "author": { "id": "1-1", "login": "jose", "fullName": "Jose F. Rives", "email": "jose@example.com" },
+  "$type": "IssueComment"
+}

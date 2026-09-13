@@ -9,6 +9,7 @@ import { MilestoneList } from '@/features/backlog/MilestoneList';
 import { validateItemSearch } from '@/features/backlog/search';
 import { BoardList } from '@/features/boards/BoardList';
 import { validateNewItemSearch } from '@/features/editor/search';
+import { validateInboxSearch } from '@/features/inbox/search';
 import { KbViewer } from '@/features/kb/KbViewer';
 import { SettingsPage } from '@/features/settings/SettingsPage';
 import { SyncPanel } from '@/features/sync/SyncPanel';
@@ -70,6 +71,27 @@ const itemEditorRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: 'items/$id/edit',
   component: lazyRouteComponent(() => import('@/features/editor/ItemEditorPage'), 'ItemEditorPage'),
+});
+
+/**
+ * The triage queue (ADR-033, story GIT-US-0060). Its filter and the row it is
+ * showing live in the search params, so a half-finished pass is a link; the
+ * accept form is a route of its own because accepting is an edit.
+ */
+const inboxRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: 'inbox',
+  validateSearch: validateInboxSearch,
+  component: lazyRouteComponent(() => import('@/features/inbox/InboxPage'), 'InboxPage'),
+});
+
+const inboxAcceptRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: 'inbox/$id/accept',
+  component: lazyRouteComponent(
+    () => import('@/features/inbox/InboxAcceptPage'),
+    'InboxAcceptPage',
+  ),
 });
 
 const epicsRoute = createRoute({
@@ -156,6 +178,8 @@ export const routeTree = rootRoute.addChildren([
     newItemRoute,
     itemDetailRoute,
     itemEditorRoute,
+    inboxRoute,
+    inboxAcceptRoute,
     epicsRoute,
     milestonesRoute,
   ]),

@@ -87,8 +87,27 @@ func (d KBSyncDirection) Valid() bool {
 // order the settings UI shows them. A key outside this set is refused at load
 // time rather than silently ignored, because a typo in a field map is otherwise
 // invisible until a sync writes the wrong field.
+//
+// These six are exactly the fields the importer translates
+// (internal/youtrack/mapping, the Key* constants). Three keys that were once
+// accepted are not here: see retiredFieldMapKeys.
 var FieldMapKeys = []string{
-	"status", "priority", "type", "assignee", "labels", "estimate", "milestone", "due", "sprint",
+	"status", "priority", "type", "assignee", "estimate", "milestone",
+}
+
+// retiredFieldMapKeys were accepted, stored and validated by earlier builds and
+// then read by nothing at all, which is the worst of both worlds: a person
+// configures a mapping, the file keeps it, and no sync ever honors it.
+//
+// They are refused rather than kept, with a message that says why, because a
+// silent no-op is not something a configuration file should be able to express.
+// Each one has a reason it is not a mapping in the first place, and that reason
+// is the message: labels travel as YouTrack tags rather than through a custom
+// field, and neither a due date nor a sprint is read from one.
+var retiredFieldMapKeys = map[string]string{
+	"labels": "labels travel as YouTrack tags, not through a custom field",
+	"due":    "a due date is not read from a custom field",
+	"sprint": "a sprint is not read from a custom field",
 }
 
 // knownFieldMapKey reports whether a field-map key names a git-in-track field.
@@ -109,8 +128,10 @@ type YouTrackLink struct {
 	// Project is the YouTrack project short name, the "ACME" of ACME-42.
 	Project string `json:"project" yaml:"project"`
 	// FieldMap maps a git-in-track field onto the YouTrack custom field that
-	// carries it. Keys are drawn from FieldMapKeys.
-	FieldMap map[string]string `json:"fieldMap,omitempty" yaml:"field_map,omitempty"`
+	// carries it and, for the three fields whose values are enumerable, onto
+	// what those values mean here. Keys are drawn from FieldMapKeys; see
+	// fieldmap.go for the two spellings an entry accepts.
+	FieldMap FieldMap `json:"fieldMap,omitempty" yaml:"field_map,omitempty"`
 	// PushComments is when a comment is pushed to the linked issue.
 	PushComments PushCommentsMode `json:"pushComments,omitempty" yaml:"push_comments,omitempty"`
 	// KBSync is when a knowledge-base page is synchronized.
@@ -143,19 +164,7 @@ func (l YouTrackLink) Normalized() YouTrackLink {
 	if out.KBSyncDirection == "" {
 		out.KBSyncDirection = KBSyncPush
 	}
-	if len(l.FieldMap) > 0 {
-		out.FieldMap = make(map[string]string, len(l.FieldMap))
-		for key, value := range l.FieldMap {
-			key, value = strings.TrimSpace(key), strings.TrimSpace(value)
-			if key == "" || value == "" {
-				continue
-			}
-			out.FieldMap[key] = value
-		}
-		if len(out.FieldMap) == 0 {
-			out.FieldMap = nil
-		}
-	}
+	out.FieldMap = l.FieldMap.Normalized()
 	return out
 }
 
@@ -199,12 +208,7 @@ func (l YouTrackLink) Validate() error {
 	if !link.KBSyncDirection.Valid() {
 		add("kb_sync_direction", "unknown direction %q: use push, pull or both", link.KBSyncDirection)
 	}
-	for _, key := range sortedKeys(link.FieldMap) {
-		if !knownFieldMapKey(key) {
-			add("field_map."+key, "%q is not a git-in-track field: use one of %s",
-				key, strings.Join(FieldMapKeys, ", "))
-		}
-	}
+	link.FieldMap.validate(add)
 
 	if len(errs) == 0 {
 		return nil
@@ -412,16 +416,20 @@ func setScalar(parent *yaml.Node, key, value string) bool {
 
 // setFieldMap replaces the field_map mapping, dropping the key entirely when the
 // mapping is empty rather than leaving `field_map: {}` behind.
-func setFieldMap(parent *yaml.Node, fields map[string]string) bool {
+//
+// An entry with no value map is written as a scalar — the flat form — and one
+// with a value map as a `{field, values}` mapping, so the file only grows the
+// nesting a project actually asked for.
+func setFieldMap(parent *yaml.Node, fields FieldMap) bool {
 	if len(fields) == 0 {
 		return mapDelete(parent, "field_map")
 	}
 	node := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-	for _, key := range sortedKeys(fields) {
-		mapSet(node, key, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: fields[key]})
+	for _, key := range fields.Keys() {
+		mapSet(node, key, fieldMappingNode(fields[key]))
 	}
 	existing, ok := mapGet(parent, "field_map")
-	if ok && sameMapping(existing, node) {
+	if ok && sameNode(existing, node) {
 		return false
 	}
 	if ok {
@@ -431,18 +439,47 @@ func setFieldMap(parent *yaml.Node, fields map[string]string) bool {
 	return true
 }
 
-// sameMapping reports whether two flat scalar mappings hold the same pairs.
-func sameMapping(a, b *yaml.Node) bool {
-	if a.Kind != yaml.MappingNode || b.Kind != yaml.MappingNode || len(a.Content) != len(b.Content) {
+// fieldMappingNode renders one entry in the shortest spelling that says all of
+// it.
+func fieldMappingNode(entry FieldMapping) *yaml.Node {
+	if len(entry.Values) == 0 {
+		return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: entry.Field}
+	}
+	values := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	for _, from := range sortedKeys(entry.Values) {
+		mapSet(values, from, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: entry.Values[from]})
+	}
+	out := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	mapSet(out, "field", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: entry.Field})
+	mapSet(out, "values", values)
+	return out
+}
+
+// sameNode reports whether two scalar-or-mapping trees hold the same content.
+// It is what decides that a settings write changes nothing and the file is left
+// untouched, so it compares values rather than formatting: a comment, a quoting
+// style and a key order are not content.
+func sameNode(a, b *yaml.Node) bool {
+	if a.Kind != b.Kind {
 		return false
 	}
-	for i := 0; i+1 < len(a.Content); i += 2 {
-		value, ok := mapGet(b, a.Content[i].Value)
-		if !ok || value.Kind != yaml.ScalarNode || value.Value != a.Content[i+1].Value {
+	switch a.Kind {
+	case yaml.ScalarNode:
+		return a.Value == b.Value
+	case yaml.MappingNode:
+		if len(a.Content) != len(b.Content) {
 			return false
 		}
+		for i := 0; i+1 < len(a.Content); i += 2 {
+			value, ok := mapGet(b, a.Content[i].Value)
+			if !ok || !sameNode(a.Content[i+1], value) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
 	}
-	return true
 }
 
 // yamlIndent is the indentation project.yaml is written with; it is what

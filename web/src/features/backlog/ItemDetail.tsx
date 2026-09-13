@@ -1,8 +1,14 @@
 import { Link, useNavigate, useParams } from '@tanstack/react-router';
-import { MessageSquarePlus } from 'lucide-react';
+import {
+  CloudCheck,
+  CloudOff,
+  CloudUpload,
+  MessageSquarePlus,
+  TriangleAlert,
+} from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 
-import type { Item, ProjectSummary } from '@/api/provider';
+import type { Comment, Item, ProjectSummary, YouTrackPushComments } from '@/api/provider';
 import { ProviderError } from '@/api/provider';
 import { useProvider } from '@/api/provider-context';
 import { Badge } from '@/components/ui/badge';
@@ -20,6 +26,10 @@ import {
   StatusBadge,
   TypeBadge,
 } from '@/features/backlog/Badges';
+import {
+  hasYoutrackRef,
+  useCommentSyncState,
+} from '@/features/backlog/comment-sync';
 import { DeleteItemDialog } from '@/features/backlog/DeleteItemDialog';
 import { FeatureLink } from '@/features/backlog/FeatureLink';
 import {
@@ -38,16 +48,23 @@ import {
   useBacklogEvents,
   useChildren,
   useComments,
+  useCommentPushEvents,
   useDeleteItem,
   useItem,
   useMoveItem,
   useProject,
+  usePushCommentToYoutrack,
   useToggleTask,
 } from '@/features/backlog/queries';
-import { useFeedbackDraft } from '@/features/feedback/feedback-store';
+import {
+  useFeedbackDraft,
+  useFeedbackPushPreference,
+} from '@/features/feedback/feedback-store';
 import { FeedbackPanel } from '@/features/feedback/FeedbackPanel';
 import { FeedbackSelection } from '@/features/feedback/FeedbackSelection';
 import { formatFeedbackComment } from '@/features/feedback/format';
+import { youtrackMessage } from '@/features/settings/youtrack-messages';
+import { isYouTrackLinked, useYouTrackSettings } from '@/features/settings/youtrack-queries';
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -172,6 +189,107 @@ function StatusPicker({
   );
 }
 
+/**
+ * The YouTrack state of one comment, and — in `manual` mode — the action that
+ * changes it.
+ *
+ * The badge is always rendered once the surface is gated in, including for a
+ * comment nobody has sent: "not sent" is a state a reviewer has to be able to
+ * see, and a row that showed nothing would read as "already handled". In `auto`
+ * mode the action disappears and the badge stays, because every comment is
+ * pushed anyway and a button that changed nothing would be a lie.
+ */
+function CommentYouTrackState({
+  comment,
+  itemId,
+  projectKey,
+  mode,
+}: {
+  comment: Comment;
+  itemId: string;
+  projectKey: string;
+  mode: YouTrackPushComments;
+}) {
+  const sync = useCommentSyncState(comment);
+  const push = usePushCommentToYoutrack(projectKey);
+  const { toast } = useToast();
+
+  const send = () => {
+    push.mutate(
+      { id: itemId, commentPath: comment.path },
+      {
+        onSuccess: (result) => {
+          const already = result.skipped.length > 0 && result.pushed.length === 0;
+          toast({
+            title: already ? 'That comment is already on the issue' : 'Queued for YouTrack',
+            description: already
+              ? 'It carries a YouTrack reference already, so nothing was sent twice.'
+              : 'The push runs in the background; the comment will say when it has arrived.',
+          });
+        },
+        onError: (error) => {
+          toast({
+            variant: 'destructive',
+            title: 'The comment was not queued',
+            description: youtrackMessage(error),
+          });
+        },
+      },
+    );
+  };
+
+  const queueing = push.isPending;
+  const showAction = mode !== 'auto' && (sync.state === 'unsent' || sync.state === 'failed');
+
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2">
+      {sync.state === 'unsent' ? (
+        <Badge variant="outline">
+          <CloudOff aria-hidden="true" />
+          Not sent to YouTrack
+        </Badge>
+      ) : null}
+      {sync.state === 'pending' || (queueing && sync.state !== 'sent') ? (
+        <Badge variant="info">
+          <CloudUpload aria-hidden="true" />
+          Sending to YouTrack…
+        </Badge>
+      ) : null}
+      {sync.state === 'sent' ? (
+        <Badge variant="success">
+          <CloudCheck aria-hidden="true" />
+          {sync.url === undefined ? (
+            <>Sent as {sync.id}</>
+          ) : (
+            <>
+              Sent as{' '}
+              <a
+                href={sync.url}
+                target="_blank"
+                rel="noreferrer"
+                className="underline underline-offset-2"
+              >
+                {sync.id}
+              </a>
+            </>
+          )}
+        </Badge>
+      ) : null}
+      {sync.state === 'failed' ? (
+        <Badge variant="destructive">
+          <TriangleAlert aria-hidden="true" />
+          Not sent: {sync.error}
+        </Badge>
+      ) : null}
+      {showAction ? (
+        <Button size="sm" variant="ghost" disabled={queueing} onClick={send}>
+          {sync.state === 'failed' ? 'Retry' : 'Send to YouTrack'}
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
 function CommentsPanel({ item, projectKey }: { item: Item; projectKey: string }) {
   const provider = useProvider();
   const comments = useComments(projectKey, item.id);
@@ -180,6 +298,17 @@ function CommentsPanel({ item, projectKey }: { item: Item; projectKey: string })
   const [draft, setDraft] = useState('');
   const canWrite = provider.capabilities.write;
 
+  // Three separate facts, and all three have to hold: this runtime can reach
+  // YouTrack, this project is connected to a YouTrack project, and this item
+  // actually mirrors an issue. Without the third there is no issue to post to.
+  const youtrack = useYouTrackSettings(projectKey);
+  const pushable =
+    provider.capabilities.youtrack &&
+    isYouTrackLinked(youtrack.data) &&
+    hasYoutrackRef(item.external);
+  const pushMode: YouTrackPushComments = youtrack.data?.pushComments === 'auto' ? 'auto' : 'manual';
+  useCommentPushEvents(projectKey, item.id);
+
   return (
     <Card>
       <CardHeader>
@@ -187,6 +316,11 @@ function CommentsPanel({ item, projectKey }: { item: Item; projectKey: string })
       </CardHeader>
       <CardContent className="space-y-4">
         {comments.isPending ? <p className="text-sm text-muted-foreground">Loading…</p> : null}
+        {comments.isError ? (
+          <p role="alert" className="text-sm text-destructive">
+            The comments could not be read: {comments.error.message}
+          </p>
+        ) : null}
         {comments.isSuccess && comments.data.length === 0 ? (
           <p className="empty-state">No comments yet.</p>
         ) : null}
@@ -210,6 +344,14 @@ function CommentsPanel({ item, projectKey }: { item: Item; projectKey: string })
                   cacheKey={`${comment.path}@${comment.rev}`}
                 />
               </div>
+              {pushable ? (
+                <CommentYouTrackState
+                  comment={comment}
+                  itemId={item.id}
+                  projectKey={projectKey}
+                  mode={pushMode}
+                />
+              ) : null}
             </li>
           ))}
         </ul>
@@ -292,6 +434,9 @@ function ItemDetailView() {
   const feedback = useFeedbackDraft({ kind: 'item', project: projectKey, ref: id });
   const saveFeedback = useAddComment(projectKey);
   const [feedbackError, setFeedbackError] = useState<string | null>(null);
+  const feedbackPush = useFeedbackPushPreference(projectKey);
+  const pushFeedback = usePushCommentToYoutrack(projectKey);
+  const youtrack = useYouTrackSettings(projectKey);
 
   if (itemQuery.isPending) {
     return <p className="py-8 text-center text-sm text-muted-foreground">Loading {id}…</p>;
@@ -331,6 +476,12 @@ function ItemDetailView() {
   const custom = Object.entries(item.custom ?? {});
   const feedbackCount = feedback.draft.notes.length;
   const showFeedback = feedback.draft.active || feedbackCount > 0;
+  // The same three facts the per-comment action is gated on: this note becomes
+  // an ordinary comment, so it can only travel where a comment can.
+  const canPushFeedback =
+    provider.capabilities.youtrack &&
+    isYouTrackLinked(youtrack.data) &&
+    hasYoutrackRef(item.external);
 
   return (
     <div className="space-y-6">
@@ -551,14 +702,38 @@ function ItemDetailView() {
           canWrite={provider.capabilities.write}
           saving={saveFeedback.isPending}
           error={feedbackError}
+          {...(canPushFeedback
+            ? {
+                push: {
+                  enabled: feedbackPush.enabled,
+                  onChange: feedbackPush.setEnabled,
+                },
+              }
+            : {})}
           onSave={() => {
             setFeedbackError(null);
             saveFeedback.mutate(
               { id: item.id, body: formatFeedbackComment(feedback.draft.notes) },
               {
-                onSuccess: () => {
+                onSuccess: (comment) => {
                   feedback.clear();
                   toast({ title: 'Feedback saved as a comment' });
+                  // The note is a comment like any other, so sending it on is
+                  // the same push — asked for once, here, rather than by
+                  // hunting the new comment down in the thread afterwards.
+                  if (!canPushFeedback || !feedbackPush.enabled) return;
+                  pushFeedback.mutate(
+                    { id: item.id, commentPath: comment.path },
+                    {
+                      onError: (error) => {
+                        toast({
+                          variant: 'destructive',
+                          title: 'The feedback was saved, but not queued for YouTrack',
+                          description: youtrackMessage(error),
+                        });
+                      },
+                    },
+                  );
                 },
                 onError: (error) => {
                   setFeedbackError(`The feedback was not saved: ${error.message}`);

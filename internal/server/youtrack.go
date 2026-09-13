@@ -61,6 +61,11 @@ type youtrackState struct {
 	// lives only for this process, exactly as gitState.persist documents.
 	configPath string
 
+	// pushedItems remembers the items whose comments have already been
+	// announced, so the automatic push is logged once per item rather than once
+	// per comment (GIT-T-0164).
+	pushedItems map[string]bool
+
 	// jobClient overrides how a background job resolves its client. It is the
 	// one seam the job tests of this package replace, so that a handler can be
 	// exercised against a fake instance with no network and no clock. Nil means
@@ -92,8 +97,11 @@ type youtrackSettings struct {
 	URL string `json:"url,omitempty"`
 	// Project is the YouTrack project short name.
 	Project string `json:"project,omitempty"`
-	// FieldMap maps a git-in-track field onto a YouTrack custom field.
-	FieldMap map[string]string `json:"fieldMap,omitempty"`
+	// FieldMap maps a git-in-track field onto a YouTrack custom field and,
+	// for the three fields whose values are enumerable, onto what those values
+	// mean here. Each entry is an object: {"status":{"field":"State",
+	// "values":{"In Progress":"in_progress"}}}.
+	FieldMap config.FieldMap `json:"fieldMap,omitempty"`
 	// PushComments is `manual` or `auto`.
 	PushComments string `json:"pushComments,omitempty"`
 	// KBSync is `manual` or `on_write`, and KBSyncDirection `push`, `pull` or
@@ -119,12 +127,12 @@ type youtrackSettings struct {
 // "set to empty" stay distinguishable, which is what makes disconnecting a
 // project expressible at all.
 type youtrackSettingsPatch struct {
-	URL             *string            `json:"url"`
-	Project         *string            `json:"project"`
-	FieldMap        *map[string]string `json:"fieldMap"`
-	PushComments    *string            `json:"pushComments"`
-	KBSync          *string            `json:"kbSync"`
-	KBSyncDirection *string            `json:"kbSyncDirection"`
+	URL             *string          `json:"url"`
+	Project         *string          `json:"project"`
+	FieldMap        *config.FieldMap `json:"fieldMap"`
+	PushComments    *string          `json:"pushComments"`
+	KBSync          *string          `json:"kbSync"`
+	KBSyncDirection *string          `json:"kbSyncDirection"`
 	// Token is write-only: it is accepted here and never read back. An empty
 	// string forgets the stored credential.
 	Token *string `json:"token"`
@@ -160,8 +168,8 @@ type youtrackProjectInfo struct {
 }
 
 // youtrackFieldInfo is one row of GET /api/v1/youtrack/fields: a custom field
-// of the remote project, so the field-mapping UI offers real names instead of
-// free text.
+// of the remote project and, when its values are enumerable, those values — so
+// the field-mapping UI offers real names and real values instead of free text.
 type youtrackFieldInfo struct {
 	ID         string `json:"id"`
 	Name       string `json:"name"`
@@ -169,6 +177,52 @@ type youtrackFieldInfo struct {
 	BundleID   string `json:"bundleId,omitempty"`
 	BundleType string `json:"bundleType,omitempty"`
 	CanBeEmpty bool   `json:"canBeEmpty"`
+	// EmptyFieldText is what the instance shows for an unset value, when it
+	// declares one.
+	EmptyFieldText string `json:"emptyFieldText,omitempty"`
+	// Bundled reports that this field's values are enumerable at all. It is
+	// false for a text, date, integer or period field, and for a bundle kind
+	// this build does not know — and Values is then empty without that being a
+	// failure.
+	Bundled bool `json:"bundled"`
+	// Values are the allowed values, in the order the instance lists them.
+	Values []youtrackFieldValue `json:"values,omitempty"`
+	// Warnings says why a field came back without its values: an unsupported
+	// bundle kind, a bundle the token may not read, a value with an unexpected
+	// shape. They are already token-redacted by internal/youtrack.
+	Warnings []string `json:"warnings,omitempty"`
+}
+
+// youtrackFieldValue is one allowed value of a bundle-backed field.
+//
+// `name` is the key a mapping is written against — it is stable, where the id
+// is instance-local and the localized name changes with the UI language — and
+// `label` is what to show.
+type youtrackFieldValue struct {
+	ID    string `json:"id,omitempty"`
+	Name  string `json:"name"`
+	Label string `json:"label"`
+	// Description and Ordinal are what the instance says about the value;
+	// Ordinal is the order it is listed in.
+	Description string `json:"description,omitempty"`
+	Ordinal     int    `json:"ordinal"`
+	// Archived marks a value that still exists on old issues but is no longer
+	// offered, so a settings screen can grey it out instead of hiding a mapping
+	// that is still in force.
+	Archived bool `json:"archived"`
+	// Background and Foreground are the CSS colors the instance renders the
+	// value with, empty when it declares none.
+	Background string `json:"background,omitempty"`
+	Foreground string `json:"foreground,omitempty"`
+	// IsResolved says whether a state value marks an issue as done. It is a
+	// pointer because "the instance never told us" must not read as "false":
+	// absent means unknown, and an unknown flag must not propose a done status.
+	IsResolved *bool `json:"isResolved,omitempty"`
+	// Released marks a released version value.
+	Released bool `json:"released,omitempty"`
+	// Login and FullName are the identity of a user-bundle value.
+	Login    string `json:"login,omitempty"`
+	FullName string `json:"fullName,omitempty"`
 }
 
 // link is the committed half of a project's connection, together with where it
@@ -394,6 +448,13 @@ func (s *Server) mountYouTrack(r chi.Router) {
 	// The two halves of running an import: what it would do, and doing it.
 	r.Post("/import/preview", s.handleYouTrackImportPreview)
 	r.Post("/import", s.handleYouTrackImport)
+	// Queue one comment, or a whole thread, for the issue its item mirrors
+	// (GIT-US-0076). It queues like the import does and answers a job id.
+	r.Post("/comments/push", s.handleYouTrackCommentPush)
+	// Knowledge-base synchronization (GIT-US-0090). The same three handlers are
+	// mounted inside /kb, which is where the per-project and per-team scopes
+	// come from; see internal/server/youtrackkbapi.go.
+	r.Route("/kb", s.mountYouTrackKB)
 }
 
 // youtrackProjectKey resolves the `key` query parameter onto a mounted project,
@@ -588,21 +649,18 @@ func (s *Server) handleYouTrackFields(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), youtrackProbeTimeout)
 	defer cancel()
 
-	settings, err := client.CustomFieldSettings(ctx, project)
+	// One call resolves the fields and, for each bundle-backed one, its values:
+	// the custom-field settings, then the right bundle endpoint per field.
+	// Nothing is dropped silently — a field whose values could not be read
+	// comes back in place, with a warning saying why.
+	fields, err := client.ProjectFieldValues(ctx, project)
 	if err != nil {
 		s.failYouTrack(w, r, err)
 		return
 	}
-	out := make([]youtrackFieldInfo, 0, len(settings))
-	for _, setting := range settings {
-		out = append(out, youtrackFieldInfo{
-			ID:         setting.Field.ID,
-			Name:       setting.Field.Name,
-			Type:       setting.Field.FieldType.ID,
-			BundleID:   setting.Bundle.ID,
-			BundleType: setting.Bundle.Type,
-			CanBeEmpty: setting.CanBeEmpty,
-		})
+	out := make([]youtrackFieldInfo, 0, len(fields))
+	for _, field := range fields {
+		out = append(out, youtrackFieldRow(field))
 	}
 	writeJSON(w, r, http.StatusOK, map[string]any{
 		"project": project,
@@ -611,7 +669,52 @@ func (s *Server) handleYouTrackFields(w http.ResponseWriter, r *http.Request) {
 		// The git-in-track side of a mapping, so the UI offers both halves from
 		// one call instead of hard-coding the list in the frontend.
 		"gintrackFields": config.FieldMapKeys,
+		// The subset of those whose *values* can be mapped one by one. A
+		// settings screen renders a value table only for these three; the
+		// others take a field name and nothing else.
+		"valueMappableFields": config.FieldMapValueKeys,
 	})
+}
+
+// youtrackFieldRow projects one field and its values onto the JSON shape.
+func youtrackFieldRow(field youtrack.FieldValues) youtrackFieldInfo {
+	out := youtrackFieldInfo{
+		ID:             field.SettingID,
+		Name:           field.Name,
+		Type:           field.FieldType,
+		BundleID:       field.BundleID,
+		BundleType:     field.BundleType,
+		CanBeEmpty:     field.CanBeEmpty,
+		EmptyFieldText: field.EmptyFieldText,
+		Bundled:        field.Bundled,
+		Warnings:       field.Warnings,
+	}
+	if len(field.Values) == 0 {
+		return out
+	}
+	out.Values = make([]youtrackFieldValue, 0, len(field.Values))
+	for _, value := range field.Values {
+		row := youtrackFieldValue{
+			ID:          value.ID,
+			Name:        value.Name,
+			Label:       value.Label(),
+			Description: value.Description,
+			Ordinal:     value.Ordinal,
+			Archived:    value.Archived,
+			Background:  value.Color.Background,
+			Foreground:  value.Color.Foreground,
+			Released:    value.Released,
+			Login:       value.Login,
+			FullName:    value.FullName,
+		}
+		// Resolved() distinguishes "the instance said false" from "the instance
+		// did not say", and the pointer carries that distinction to the client.
+		if resolved, known := value.Resolved(); known {
+			row.IsResolved = &resolved
+		}
+		out.Values = append(out.Values, row)
+	}
+	return out
 }
 
 // failYouTrack turns an error from the client or from this package into the

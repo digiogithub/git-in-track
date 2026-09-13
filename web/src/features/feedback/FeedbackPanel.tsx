@@ -1,9 +1,11 @@
 import { Trash2 } from 'lucide-react';
-import { useState } from 'react';
+import { useId, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
 import { fieldClasses } from '@/components/ui/field';
+import { Label } from '@/components/ui/label';
 import type { FeedbackDraftApi } from '@/features/feedback/feedback-store';
 import { lineLabel } from '@/features/feedback/selection';
 import { cn } from '@/lib/cn';
@@ -17,6 +19,23 @@ export type FeedbackPanelProps = {
   /** Why the last save failed; the notes are kept. */
   error?: string | null;
   onSave: () => void;
+  /**
+   * The "send to YouTrack after saving" option.
+   *
+   * It is passed in rather than read here because only the caller knows the
+   * three facts that make it meaningful — the runtime can reach YouTrack, the
+   * project is connected, and the item mirrors an issue. Absent, the checkbox
+   * does not exist, which is also the only correct answer for the `page`
+   * destination: a note on a knowledge-base page is a block in the page, not a
+   * comment, and it has no issue to reach.
+   */
+  push?: FeedbackPushOption;
+};
+
+/** The state of the "send to YouTrack after saving" checkbox. */
+export type FeedbackPushOption = {
+  enabled: boolean;
+  onChange: (enabled: boolean) => void;
 };
 
 /**
@@ -31,10 +50,15 @@ export function FeedbackPanel({
   saving,
   error,
   onSave,
+  push,
 }: FeedbackPanelProps) {
   const { draft, updateNote, removeNote, setActive, clear } = feedback;
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const count = draft.notes.length;
+  const pushId = useId();
+  // The KB destination never offers it: that feedback is a block in the page,
+  // and it has no issue to reach.
+  const pushOption = destination === 'comment' ? push : undefined;
 
   return (
     <Card aria-label="Feedback notes" role="region">
@@ -88,6 +112,26 @@ export function FeedbackPanel({
           <p role="alert" className="text-sm text-destructive">
             {error}
           </p>
+        ) : null}
+
+        {pushOption ? (
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id={pushId}
+                checked={pushOption.enabled}
+                disabled={!canWrite}
+                onChange={(event) => pushOption.onChange(event.target.checked)}
+              />
+              <Label htmlFor={pushId} className="font-normal">
+                Send to YouTrack after saving
+              </Label>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              The note is saved as a comment here first, then queued for the linked issue. The
+              choice is remembered for this project.
+            </p>
+          </div>
         ) : null}
 
         <div className="flex flex-wrap items-center gap-2">
