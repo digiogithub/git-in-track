@@ -1,7 +1,7 @@
 import { Link } from '@tanstack/react-router';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 
-import type { BoardCard, BoardView, SprintCarry, SprintCarryAction } from '@/api/provider';
+import type { BoardView } from '@/api/provider';
 import { ProviderError } from '@/api/provider';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -14,34 +14,32 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Select } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/toast';
+import { ActiveCycle } from '@/features/boards/ActiveCycle';
+import { CloseSprintDialog } from '@/features/boards/CloseSprintDialog';
 import { NewSprintDialog } from '@/features/boards/NewSprintDialog';
-import {
-  useCloseSprint,
-  useSprint,
-  useStartSprint,
-  useUpdateSprint,
-} from '@/features/boards/sprint-queries';
+import { useSprint, useStartSprint, useUpdateSprint } from '@/features/boards/sprint-queries';
 
 /**
  * The scrum half of a board (docs/05-web-app.md §9, story GIT-US-0018).
  *
- * The header shows the goal, the dates, the days left and committed against
- * completed points. The planning dialog moves references in and out of the
- * sprint — one write to the sprint file in the team repository, so it works for
- * an item whose project nobody cloned. Starting a sprint freezes its
- * commitment; closing one reports what was finished and asks, per unfinished
- * item, whether to leave it, carry it into another sprint or send it back to
- * the backlog (docs/04 R-SPR-3).
+ * The panel is the sprint's actions; `ActiveCycle` inside it is the sprint's
+ * numbers. They sit in one card rather than two stacked ones because they are
+ * one object to a reader — the goal being editable right under the goal being
+ * shown is the whole point.
+ *
+ * The planning dialog moves references in and out of the sprint — one write to
+ * the sprint file in the team repository, so it works for an item whose project
+ * nobody cloned. Starting a sprint freezes its commitment; closing one goes
+ * through `CloseSprintDialog`, which previews the whole thing first
+ * (docs/04 R-SPR-3, GIT-US-0089).
  */
 export function SprintPanel({ view }: { view: BoardView }) {
   const info = view.sprintInfo;
   const sprint = useSprint(info?.id);
   const update = useUpdateSprint();
   const start = useStartSprint();
-  const close = useCloseSprint();
   const { toast } = useToast();
 
   const [planning, setPlanning] = useState(false);
@@ -49,19 +47,9 @@ export function SprintPanel({ view }: { view: BoardView }) {
   const [creating, setCreating] = useState(false);
   const [editingGoal, setEditingGoal] = useState(false);
   const [goal, setGoal] = useState(info?.goal ?? '');
-  const [decisions, setDecisions] = useState<Record<string, SprintCarryAction>>({});
 
   const detail = sprint.data;
   const rev = detail?.sprint.rev ?? info?.rev;
-
-  const incomplete = useMemo(
-    () => (detail?.cards ?? []).filter((card) => !isDone(card)),
-    [detail?.cards],
-  );
-  const completed = useMemo(
-    () => (detail?.cards ?? []).filter((card) => isDone(card)),
-    [detail?.cards],
-  );
 
   if (!info) return null;
 
@@ -79,17 +67,13 @@ export function SprintPanel({ view }: { view: BoardView }) {
       <CardHeader className="gap-1">
         <CardTitle className="flex flex-wrap items-center gap-2 text-base">
           <span>{info.title}</span>
+          {/* The lifecycle state (planned/active/closed) is a different fact
+              from the derived status (draft/upcoming/current/completed) that
+              `ActiveCycle` chips: one is what someone did, the other is what
+              the dates say. Both are shown because both are actionable. */}
           <Badge variant="outline" size="sm" className="font-normal">
             {info.state}
           </Badge>
-          <span className="text-xs font-normal text-muted-foreground">
-            {info.start} → {info.end}
-          </span>
-          <span className="text-xs font-normal text-muted-foreground">
-            {info.state === 'closed'
-              ? 'Sprint closed'
-              : `${info.remainingDays} of ${info.totalDays} days left`}
-          </span>
           <Link
             to="/metrics/$sprintId"
             params={{ sprintId: info.id }}
@@ -130,17 +114,7 @@ export function SprintPanel({ view }: { view: BoardView }) {
           </form>
         ) : null}
 
-        <dl className="flex flex-wrap gap-4 text-xs">
-          <Metric label="Committed" value={`${info.metrics.committedPoints} points`} />
-          <Metric
-            label="Completed"
-            value={`${info.metrics.donePoints} of ${info.metrics.points} points`}
-          />
-          <Metric label="Items" value={`${info.metrics.done} of ${info.metrics.items} done`} />
-          {info.metrics.added > 0 ? (
-            <Metric label="Added mid-sprint" value={`${info.metrics.added}`} />
-          ) : null}
-        </dl>
+        <ActiveCycle sprint={detail?.sprint ?? info} />
 
         <div className="flex flex-wrap gap-2">
           <Button
@@ -269,78 +243,8 @@ export function SprintPanel({ view }: { view: BoardView }) {
         </DialogContent>
       </Dialog>
 
-      {/* Closing: what was finished, and one explicit decision per unfinished item. */}
-      <Dialog open={closing} onOpenChange={setClosing}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Close {info.title}</DialogTitle>
-            <DialogDescription>
-              {completed.length} of {detail?.cards.length ?? 0} items finished (
-              {info.metrics.donePoints} of {info.metrics.points} points). Closing a sprint changes
-              no item by itself: choose what happens to each unfinished one.
-            </DialogDescription>
-          </DialogHeader>
-          <ul className="space-y-2 text-sm" aria-label="Unfinished items">
-            {incomplete.map((card) => (
-              <li key={card.ref} className="flex flex-wrap items-center justify-between gap-2">
-                <span>
-                  <span className="font-mono text-xs">{card.item}</span> {card.title ?? card.ref}
-                </span>
-                <Select
-                  aria-label={`What happens to ${card.item}`}
-                  className="h-8 w-44 text-xs"
-                  value={decisions[card.ref] ?? 'leave'}
-                  onChange={(event) =>
-                    setDecisions({
-                      ...decisions,
-                      [card.ref]: event.target.value as SprintCarryAction,
-                    })
-                  }
-                >
-                  <option value="leave">Leave it here</option>
-                  <option value="next">Carry to the next sprint</option>
-                  <option value="backlog">Back to the backlog</option>
-                </Select>
-              </li>
-            ))}
-            {incomplete.length === 0 ? (
-              <li className="text-muted-foreground">Everything in this sprint is finished.</li>
-            ) : null}
-          </ul>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setClosing(false)}>
-              Cancel
-            </Button>
-            <Button
-              onClick={() => {
-                const carry: SprintCarry[] = incomplete.map((card) => ({
-                  ref: card.ref,
-                  action: decisions[card.ref] ?? 'leave',
-                }));
-                close.mutate(
-                  { id: info.id, carry, rev },
-                  {
-                    onSuccess: (result) => {
-                      const failed = (result.report?.carried ?? []).filter((one) => one.error);
-                      for (const one of failed) {
-                        toast({
-                          variant: 'destructive',
-                          title: `${one.ref} stayed where it was`,
-                          description: one.error ?? '',
-                        });
-                      }
-                      setClosing(false);
-                    },
-                    onError: refuse('The sprint could not be closed'),
-                  },
-                );
-              }}
-            >
-              Close sprint
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* Closing: previewed with a dry run before anything is written. */}
+      <CloseSprintDialog sprint={detail?.sprint ?? info} open={closing} onOpenChange={setClosing} />
 
       {/* A new sprint: the id is allocated by the core, never by the UI. */}
       <NewSprintDialog board={view.id} open={creating} onOpenChange={setCreating} />
@@ -349,17 +253,3 @@ export function SprintPanel({ view }: { view: BoardView }) {
   );
 }
 
-/** One number of the sprint header. */
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <dt className="text-muted-foreground">{label}</dt>
-      <dd className="font-medium">{value}</dd>
-    </div>
-  );
-}
-
-/** A card sits in a terminal status of its own project. */
-function isDone(card: BoardCard): boolean {
-  return card.category === 'done' || card.category === 'cancelled';
-}

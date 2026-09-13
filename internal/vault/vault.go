@@ -65,6 +65,18 @@ type Vault struct {
 
 	// onRefresh hears what a read-time refresh changed. Nil when nobody asked.
 	onRefresh func(core.IndexDelta)
+
+	// seams guards the two host-installed hooks below. They are deliberately
+	// not under mu: a call that already holds the vault lock has to be able to
+	// ask whether a host installed them.
+	seams sync.Mutex
+	// youtrack hands the YouTrack import its client and the project's link
+	// configuration. Nil where no host installed one, which is every
+	// browser-only session (see SetYouTrackProvider).
+	youtrack YouTrackProvider
+	// enqueue hands a background job to the host's engine. Nil where no host
+	// installed one (see SetYouTrackEnqueuer).
+	enqueue YouTrackEnqueuer
 }
 
 // Options configures a Vault.
@@ -312,6 +324,35 @@ func (v *Vault) Dispatch(ctx context.Context, method string, raw []byte) (any, e
 			hook(refreshed)
 		}
 	}()
+	switch method {
+	case "youtrack.import.preview", "youtrack.import.run":
+		// The import resolves its issues over the network. It takes the vault
+		// mutex itself, for the index reads and the writes only, so that a
+		// remote call never blocks every other reader of this repository
+		// (GIT-US-0047).
+		return v.youtrackDispatch(ctx, method, raw)
+	case "youtrack.kb.status", "youtrack.kb.publish", "youtrack.kb.pull":
+		// Status reads articles when it is asked to, and both queueing methods
+		// resolve the project link through the host. Neither may run with the
+		// vault mutex held (GIT-US-0090).
+		return v.youtrackKBDispatch(ctx, method, raw)
+	case "youtrack.comment.push":
+		return v.youtrackCommentDispatch(ctx, raw)
+	case "comment.add":
+		// A new comment on a linked item is queued for YouTrack when the
+		// project asked for it. The enqueue runs after the lock is released, so
+		// that saving a comment never waits on anything but the file system
+		// (GIT-US-0072).
+		out, err := v.lockedCall(ctx, method, raw, func() (any, error) {
+			return v.commentAdd(ctx, raw)
+		})
+		if err != nil {
+			return nil, err
+		}
+		v.autoPushComment(ctx, out)
+		return out, nil
+	}
+
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	refreshed = v.freshen(ctx, method, raw)
@@ -352,7 +393,7 @@ func (v *Vault) Dispatch(ctx context.Context, method string, raw []byte) (any, e
 		return v.boardGet(ctx, raw)
 	case "board.move", "board.update",
 		"sprint.list", "sprint.get", "sprint.create", "sprint.update",
-		"sprint.start", "sprint.close":
+		"sprint.start", "sprint.close", "sprint.transfer":
 		return nil, failf("invalid_request",
 			"%s needs the workspace: the sprint and its items live in different repositories", method)
 
@@ -372,6 +413,11 @@ func (v *Vault) Dispatch(ctx context.Context, method string, raw []byte) (any, e
 		return v.itemDelete(ctx, raw)
 	case "item.task.set":
 		return v.itemTaskSet(ctx, raw)
+	case "inbox.list":
+		return v.inboxList(ctx, raw)
+	case "inbox.triage":
+		return v.inboxTriage(ctx, raw)
+
 	case "item.validate":
 		return v.itemValidate(raw)
 	case "item.parse":
@@ -381,8 +427,8 @@ func (v *Vault) Dispatch(ctx context.Context, method string, raw []byte) (any, e
 
 	case "comment.list":
 		return v.commentList(raw)
-	case "comment.add":
-		return v.commentAdd(ctx, raw)
+	case "comment.update":
+		return v.commentUpdate(ctx, raw)
 
 	case "kb.tree":
 		return v.kbTree(raw)
@@ -401,6 +447,28 @@ func (v *Vault) Dispatch(ctx context.Context, method string, raw []byte) (any, e
 	default:
 		return nil, failf("unknown_method", "unknown method %q", method)
 	}
+}
+
+// lockedCall runs fn under the vault mutex with the same read-time refresh and
+// the same refresh-hook contract Dispatch applies, and returns once the lock is
+// released.
+//
+// It exists for the handful of methods that have work to do after their write
+// which must not hold the lock — queueing a background job, today — so that
+// they get the locking rules of Dispatch rather than a second copy of them.
+func (v *Vault) lockedCall(
+	ctx context.Context, method string, raw []byte, fn func() (any, error),
+) (any, error) {
+	v.mu.Lock()
+	refreshed := v.freshen(ctx, method, raw)
+	hook := v.onRefresh
+	out, err := fn()
+	v.mu.Unlock()
+
+	if hook != nil && !refreshed.Empty() {
+		hook(refreshed)
+	}
+	return out, err
 }
 
 // ---------------------------------------------------------------- vault ----
@@ -961,8 +1029,18 @@ func (v *Vault) itemCreate(ctx context.Context, raw []byte) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	draft := p.draft()
+	if p.Inbox != nil {
+		_, cfg, err := v.projectConfig(core.ProjectKey(p.Project))
+		if err != nil {
+			return nil, err
+		}
+		if err := v.inboxDraft(&draft, p.Inbox, cfg); err != nil {
+			return nil, err
+		}
+	}
 	v.fs.begin()
-	it, err := store.Create(ctx, p.draft())
+	it, err := store.Create(ctx, draft)
 	if err != nil {
 		return nil, fmt.Errorf("create item: %w", err)
 	}

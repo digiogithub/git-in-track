@@ -80,6 +80,7 @@ func (c *Config) Validate() error {
 	if c.Index.Debounce < 0 {
 		add("index.debounce", "must not be negative")
 	}
+	c.validateSyncEngine(add)
 	if !validLogLevel(c.Log.Level) {
 		add("log.level", "unknown level %q: use debug, info, warn or error", c.Log.Level)
 	}
@@ -88,6 +89,7 @@ func (c *Config) Validate() error {
 	}
 	c.validateRepos(add)
 	c.validateWorkspaces(add)
+	c.validateIntegrations(add)
 
 	if len(errs) == 0 {
 		return nil
@@ -106,6 +108,35 @@ func (c *Config) validateServer(add func(field, format string, args ...any)) {
 	}
 	if c.Server.IdleTimeout < 0 {
 		add("server.idleTimeout", "must not be negative")
+	}
+}
+
+// validateSyncEngine checks the `sync.engine` section against the same ranges
+// the running engine applies, so that a value the file accepts is never refused
+// later by PATCH /api/v1/sync/settings. Every message names the dotted key the
+// operator typed, because that is the line they have to go and edit.
+//
+// A zero field means "the shipped default" and is left alone here: Default()
+// has already filled the section in, and a hand-written file that spells out
+// `workers: 0` is asking for a pool that cannot run anything, which is why zero
+// is refused for workers, the batch size and the attempt budget but not for the
+// rate, where a negative value has the documented meaning of "no limit".
+func (c *Config) validateSyncEngine(add func(field, format string, args ...any)) {
+	e := c.Sync.Engine
+	if e.Workers != 0 && (e.Workers < 1 || e.Workers > MaxSyncWorkers) {
+		add("sync.engine.workers", "%d is outside the range 1-%d", e.Workers, MaxSyncWorkers)
+	}
+	if e.BatchSize != 0 && (e.BatchSize < 1 || e.BatchSize > MaxSyncBatchSize) {
+		add("sync.engine.batchSize", "%d is outside the range 1-%d", e.BatchSize, MaxSyncBatchSize)
+	}
+	if e.Rate > MaxSyncRate {
+		add("sync.engine.rate", "%g is above the maximum of %d requests per second", e.Rate, MaxSyncRate)
+	}
+	if e.MaxAttempts != 0 && (e.MaxAttempts < 1 || e.MaxAttempts > MaxSyncMaxAttempts) {
+		add("sync.engine.maxAttempts", "%d is outside the range 1-%d", e.MaxAttempts, MaxSyncMaxAttempts)
+	}
+	if e.Retention < 0 {
+		add("sync.engine.retention", "must not be negative")
 	}
 }
 
@@ -168,6 +199,59 @@ func (c *Config) validateWorkspaces(add func(field, format string, args ...any))
 	if c.DefaultWorkspace != "" && !seen[c.DefaultWorkspace] {
 		add("defaultWorkspace", "unknown workspace %q", c.DefaultWorkspace)
 	}
+}
+
+// validateIntegrations checks the machine-local credentials. The messages name
+// the key and never the value: a validation error is printed, and a printed
+// credential is a leaked credential (ADR-032).
+//
+// This package has no inventory of project keys — the backlog does, and it lives
+// in the repositories rather than in this file — so "unknown project key" is
+// checked as far as it can be here: the key must look like a project key at all.
+// A key that is well formed but names no project simply never resolves a token.
+func (c *Config) validateIntegrations(add func(field, format string, args ...any)) {
+	keys := make([]string, 0, len(c.Integrations.YouTrack))
+	for key := range c.Integrations.YouTrack {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		field := "integrations.youtrack." + key
+		if err := validProjectKey(key); err != nil {
+			add(field, "%s", err.Error())
+		}
+		if strings.TrimSpace(c.Integrations.YouTrack[key].Token) == "" {
+			add(field+".token", "must not be empty: remove the entry instead")
+		}
+	}
+}
+
+// maxProjectKeyLen bounds a project key, generously: the data model builds item
+// ids out of it and a key longer than this is a typo, not a project.
+const maxProjectKeyLen = 32
+
+// validProjectKey checks the shape of a gintrack project key: upper-case
+// letters, digits, dashes and underscores, starting with a letter, as
+// docs/03 section 4.1 spells them.
+func validProjectKey(raw string) error {
+	key := strings.TrimSpace(raw)
+	switch {
+	case key == "":
+		return errors.New("must not be empty")
+	case key != raw:
+		return errors.New("must not be padded with spaces")
+	case len(key) > maxProjectKeyLen:
+		return fmt.Errorf("is longer than %d characters, so it is not a project key", maxProjectKeyLen)
+	}
+	for i, r := range key {
+		switch {
+		case r >= 'A' && r <= 'Z':
+		case i > 0 && (r >= '0' && r <= '9' || r == '-' || r == '_'):
+		default:
+			return errors.New("is not a project key: use upper-case letters, digits, dashes and underscores, starting with a letter")
+		}
+	}
+	return nil
 }
 
 // validLogLevel reports whether the level is one configureLogging accepts.

@@ -12,7 +12,356 @@ because a commit list cannot express them.
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [1.4.0] — 2026-09-13
+
 ### Added
+
+- **The command line reaches the whole YouTrack integration** (`GIT-US-0062`, `GIT-US-0079`,
+  `GIT-US-0094`, docs/07 §4.15). `gintrack youtrack import <query | ID...>` imports issues,
+  with `--dry-run` for the plan — what each issue would become, which item an update would
+  patch, what could not be resolved — and `--depth`, `--comments`, `--attachments` and
+  `--links` for the rest. `gintrack youtrack push-comments <ITEM-ID>` queues a thread, or one
+  comment, for the issue its item mirrors. `gintrack youtrack kb push|pull <path>` publishes
+  pages as articles and writes articles back, and `kb status` reports where each page stands
+  without touching the network unless `--remote` asks it to. None of them holds any
+  integration logic: each dispatches exactly one core method, the same ones the REST API and
+  the MCP server call, in a companion process that is built the usual way and simply never
+  binds a port. **`kb push|pull --wait` exits non-zero on a conflict** — `5`, distinct from
+  the `1` of a failed job — so a CI step fails on a divergence instead of reporting success
+  over it. A local comment delete still never deletes remotely.
+
+- **Anyone can put something in the inbox from the UI** (`GIT-US-0066`, docs/05 §3.1). An
+  *Add to inbox* control sits in the items page header beside *New item*, and in the Inbox
+  header itself. It opens the only create form in the app that asks **no type, no parent and
+  no status question**: a title, optionally what happened, and nothing else. A report is not a
+  plan, so nothing places it — the item is filed with the project's triage status and
+  `inbox.source: web`, and the dialog then names the id it was given and links to the queue.
+  Like the sidebar entry, it renders nothing at all for a project that declares no triage
+  status. Until now the inbox could be filled from the CLI (`gintrack inbox add`) and from an
+  agent (`create_inbox_item`) but not from the application.
+
+- **`integrations.youtrack.land_in_inbox`** (`GIT-US-0066`, ADR-033, docs/03 §6 R-INT-7). A
+  per-project option that makes imported issues arrive in the triage queue instead of the
+  backlog, so a large import is reviewed before it becomes a commitment. It defaults to
+  `false`, which is what every import did before the key existed. The landing decision is one
+  helper, `core.InboxLandingStatus`, shared by every entry point that files work, and it
+  **refuses** rather than guesses: a project that declares no triage status and turns the
+  option on is a configuration error, because quietly landing a thousand issues in the backlog
+  is the one outcome the option exists to prevent. The key is read and never written, so a
+  connection saved from the settings screen cannot drop it. **The importer does not consume it
+  yet** — wiring it into the import write path is GIT-EP-0012.
+
+- **`gintrack sprint` and `gintrack inbox`** (`GIT-US-0066`, `GIT-US-0092`, docs/07 §4.16,
+  §4.17). `sprint list|show|start|close|transfer` drives the cadence from a terminal, listing
+  by the status derived from the dates rather than a stored one, and reporting per-item
+  refusals — an item in a repository this machine has not cloned — on their own lines, with a
+  non-zero exit only when *nothing* could be applied. `--dry-run` computes the whole close or
+  transfer report and writes nothing. `inbox list|accept|reject|snooze` works the triage queue
+  through the same rev-checked `inbox.triage` the web app and the MCP tool use.
+
+- **Per-value field mapping** (`GIT-US-0065`, docs/07 §4.15, §5.5). Until now a project could
+  say that the YouTrack field called `State` carries `status`, but not that the *value*
+  `In Progress` means the local status `in_progress`. `integrations.youtrack.field_map`
+  gained a nested shape for exactly that: an entry is either a scalar — the flat form,
+  unchanged, still meaning "the field that carries this" — or a `{field, values}` mapping.
+  An entry with no value map is written back as a scalar, so a `project.yaml` only grows the
+  nesting it asked for, and the surgical YAML edit still preserves every comment and every
+  key the Go structs do not model. `GET /api/v1/youtrack/fields` now resolves each field's
+  **values** as well as its name, in one call — enum, state, version, owned-field, build,
+  user and group bundles — with `isResolved` *omitted* rather than `false` when the instance
+  did not say, because an unknown flag must not read as "not done". A field whose values
+  cannot be read comes back in place with a warning instead of being dropped.
+
+- **Sending a comment to YouTrack from the web app** (`GIT-US-0076`, docs/07 §5.5).
+  `POST /api/v1/youtrack/comments/push` queues one comment, or a whole thread, for the issue
+  its item mirrors, answering `202` with the job id and what the vault decided about each
+  comment — queued, skipped because it already carries a YouTrack reference, or failed. The
+  coalescing key is the **comment path**, not the item id, so a burst of edits to one comment
+  is one push while two comments of the same item stay two. An item mirroring no issue, and a
+  project with no usable connection, are both refused in this call rather than inside a job
+  nobody is watching. The settings card gained the `push_comments: manual | auto` toggle;
+  `auto` governs comments written from then on and never sends existing ones retroactively.
+
+- **The HTTP surface of knowledge-base synchronization** (`GIT-US-0090`, docs/07 §5.5):
+  `GET /api/v1/youtrack/kb/status`, `POST …/kb/publish` and `POST …/kb/pull`, mounted under
+  `/youtrack` and, from the same handlers, inside every `/kb` mount, so the per-project and
+  per-team spellings work and cannot drift. `remote` on the status route stays opt-in: it is
+  one article read per page.
+
+### Changed
+
+- **`field_map` no longer accepts `labels`, `due` or `sprint`.** All three were validated and
+  stored by earlier builds and read by no code at all, which is the worst of both worlds: a
+  person configures a mapping, the file keeps it, and no sync ever honours it. They are now
+  refused with a message saying why — labels travel as YouTrack tags rather than through a
+  custom field, and neither a due date nor a sprint is read from one. The accepted keys are
+  `status`, `priority`, `type`, `assignee`, `estimate` and `milestone`, which are exactly the
+  ones the importer translates. A `project.yaml` carrying a retired key now fails to load
+  until the entry is removed.
+
+- **A comment push writes through the vault.** `internal/server` no longer writes any
+  repository file directly: recording the remote comment id goes through the new
+  `comment.update` core method, which takes the same optimistic lock the hand-rolled version
+  took and upserts the reference by system, so a re-delivered job replaces its entry instead
+  of appending a second one. A pushed comment can now be *edited* upstream rather than
+  failing terminally, which is what makes a journal replay or a dead-letter retry harmless.
+
+- **A burst of writes to one comment or one page is one job.** The three job kinds whose
+  coalescing key is a path enqueue under a stable id, so three edits to one comment inside
+  the debounce window produce one push rather than one batch of three deliveries. The import
+  kind is deliberately excluded: its key is a query, and two imports of the same query a
+  minute apart are two things a person asked for.
+
+- **The background job engine actually runs YouTrack work: four job kinds, and the HTTP
+  surface that starts them** (GIT-US-0050, GIT-US-0054, GIT-US-0068, GIT-US-0087,
+  docs/07 §4.1, §5.5, §5.6). `internal/server` registers `youtrack.import`,
+  `youtrack.comment.push`, `youtrack.kb.publish` and `youtrack.kb.pull` with the engine
+  before the journal is replayed, and installs the two seams every mounted vault needs —
+  the provider that resolves a client and the enqueuer that hands a job to the queue — so a
+  write path decides a job is needed and never performs it inline.
+  **Import** pages issues with `$top`/`$skip` over a query that always carries
+  `order by: created asc` (without it a `$skip` walk over a live instance silently skips and
+  duplicates rows), imports in batches of 20 — one batch is one vault call and one commit —
+  publishes `sync.job.progress` with `{jobId, done, total, currentId}` per batch, accumulates
+  per-issue failures into the result instead of failing the job, and downloads attachments to
+  a `.part` file that is renamed only after the stream closed at the size YouTrack reported,
+  skipping a file already there. Cancellation is observed between batches and mid-download:
+  the batches already committed survive, the temporary file is removed, and the job ends
+  `cancelled` rather than being retried. **Comment push** posts a comment once and writes the
+  remote id into the comment's `external` block rev-guarded, so a retry, a journal replay or
+  a dead-letter retry edits that comment instead of leaving a second copy; the trailing
+  attribution line renders from a per-project `integrations.youtrack.comment_template`, with
+  the item id emitted bare because YouTrack auto-links what it recognises. A comment deleted
+  locally is **never** deleted remotely: no job is enqueued for it, by design.
+  **Knowledge base** publishes a page or a whole folder — one parent article per directory
+  through `parentArticle`, parents before children, ordering taken from creation order
+  because `ordinal` is read-only and is silently ignored when sent — and pulls articles back
+  through the vault so `WritePage` and its feedback pruning apply normally. Change detection
+  compares the fingerprint recorded in the page's `external.key` against both sides, never
+  raw bytes, so a local feedback note is not mistaken for an edit; when both sides moved the
+  incoming content is written to `<page>.conflict.md`, the page is left untouched and
+  `youtrack.kb.conflict` says so. There is no three-way merge and deliberately none.
+  Three routes make all of it reachable: `GET /api/v1/youtrack/issues` searches the instance
+  for the import picker with the five presets `epics`, `stories`, `tasks`, `versions` and
+  `unresolved`, bounded pages behind an opaque cursor and an `already imported` badge
+  resolved **locally** from the index by `(external.system, external.id)`;
+  `POST /api/v1/youtrack/import/preview` answers the plan synchronously; and
+  `POST /api/v1/youtrack/import` queues the job and answers `202` with its id. No response,
+  log line, event payload or journalled job payload carries the token.
+
+- **The configuration file has a `sync.engine` section, so an engine setting survives a
+  restart** (GIT-US-0084, docs/07 §3.2, §3.3, §4.1). `workers`, `batchSize`, `rate`,
+  `maxAttempts` and `retention` are read from `config.yaml`, validated against the same
+  ranges the running engine applies — an out-of-range value is refused with the dotted key
+  that carries it — and layered under the `GINTRACK_SYNC_*` variables and the four
+  `gintrack serve` flags, so the documented **flag > environment > file > default**
+  precedence now holds in full. `PATCH /api/v1/sync/settings` writes the section back and
+  reports `persisted: true`; a companion started without a configuration file still keeps
+  the change for the life of the process and answers `false`.
+
+- **The companion runs a background job engine, and it is inspectable over REST and
+  live on the WebSocket** (GIT-US-0074, GIT-US-0078, GIT-US-0084, docs/07 §4.1, §5.5, §5.6).
+  `internal/syncengine` now starts with `gintrack serve`, beside the watcher, the committer
+  and the tunnel, and stops on the same path: shutdown drains the queue for a bounded grace
+  period on a context **detached** from the shutdown itself — so a job halfway through a call
+  to a tracker is not cancelled by the very stop that is waiting for it — and journals
+  whatever is left for the next run. With no integration configured it starts **idle**: an
+  empty queue, nothing published, nothing measurable at start-up. Four flags configure it,
+  `--sync-workers`, `--sync-batch`, `--sync-rate` and `--sync-max-attempts`, with the
+  matching `GINTRACK_SYNC_*` environment variables and the shipped defaults of 2 workers,
+  batch 20, 5 req/s and 5 attempts; an out-of-range value fails the command **before the
+  listener opens**. Six endpoints make the queue visible and controllable without a restart:
+  `GET /api/v1/sync/jobs` (filter by state and kind, bounded page, cursor),
+  `GET /api/v1/sync/jobs/{id}`, `POST .../retry`, `POST .../cancel` and
+  `GET|PATCH /api/v1/sync/settings`, where a change to the worker count, the batch size or
+  the rate limit reaches the **running** engine at once. Five topics narrate it —
+  `sync.job.queued`, `.started`, `.progress`, `.done`, `.failed` — published by a thin
+  observer in `internal/server`, so the engine keeps no dependency on the transport. Progress
+  is coalesced to at most one frame every 500 ms per coalescing group and a terminal event is
+  never throttled; even so the hub drops a client that cannot keep up, so a client reconciles
+  from `GET /api/v1/sync/jobs` after a gap rather than trusting the stream. No response, log
+  line or event payload carries a job payload or a credential. The four job handlers that
+  run on it — the import, the comment push and the two knowledge-base directions — ship in
+  the entry above.
+
+- **The inbox is served: `GET /api/v1/inbox` and `POST /api/v1/items/{id}/triage`**
+  (GIT-US-0056, ADR-033, docs/07 §5.5). The queue the previous release modelled is now
+  reachable: a paginated listing whose `counts` and `pending` are computed over the whole
+  queue rather than the page — an expired snooze already counted as pending — and one
+  decision per row (`accept`, `reject`, `snooze`, `duplicate`) behind the ordinary `If-Match`
+  precondition, with a stale revision answering `412` and the current rev. A project that
+  declares no `triage` status has an empty inbox, and filing something into it is refused
+  with `no_triage_status` (409). Every triage, and every create that files an item straight
+  into the queue, publishes `inbox.changed` with the pending count, so a badge never needs a
+  second call. **A project created before this change has no triage status and therefore no
+  inbox** until one is added to its workflow — there is no migration, and nothing to undo for
+  a team that does not want a queue.
+
+- **Moving a sprint's unfinished work is a route of its own, and every close can preview
+  itself** (GIT-US-0085, docs/07 §5.5). `POST /api/v1/sprints/{id}/transfer` moves the
+  incomplete references of one sprint into another sprint or back to their project backlogs
+  without closing anything — `items` and `committed` come back untouched — and
+  `POST /api/v1/sprints/{id}/close` now accepts the same bulk `transfer` decision, which an
+  explicit per-item `carry` entry still overrides. Both accept `dryRun`, and **a dry run
+  writes nothing and publishes nothing**: no `sprint.changed`, no `item.changed`, no
+  commit-on-save, with `"dryRun": true` on the answer so a preview can never be mistaken for
+  a commitment. A per-item failure is still a `200` with an `error` on its own `carried`
+  line; a transfer aimed at a sprint that is already over is refused outright with
+  `sprint_target_completed` (409).
+
+- **A file can say where it came from: `external`** (ADR-031, docs/03 §12.5). Items, comments
+  and knowledge-base pages carry a list of `{system, id, url?, key?, synced_at?}`, and the
+  pair (`system`, `id`) is the identity of an entry — the idempotency key an importer matches
+  on, so re-running an import updates what it finds instead of duplicating it or guessing
+  from titles. `system` is deliberately **not an enumeration**: any
+  `[a-z0-9][a-z0-9._-]{0,31}` token round-trips untouched, so a file written by a tool this
+  project has never heard of survives a pass through an older binary. Writes are set
+  operations keyed on the pair, the discipline `labels` and `links` already use, so two
+  writers recording two different systems never clobber each other. The index keeps a map
+  from (`system`, `id`) to item id (`Index.ItemByExternal`), so the idempotence check an
+  importer performs a thousand times is one map read. The key sits between `links` and
+  `attachments` in the canonical order: it is a relation, just one that leaves the
+  repository. **Groundwork only so far** — the field parses, validates, round-trips and is
+  indexed in `internal/core`; no REST route, MCP tool or screen reads or writes it yet.
+
+- **The inbox: a reserved `triage` status category and an `inbox:` block** (ADR-033, docs/03
+  §6.4). Work that arrives from a form, an agent or an importer has to be real from the
+  moment it is submitted — a permanent id, a file, a git history, comments — and invisible to
+  planning until somebody accepts it. It is therefore an ordinary item whose `status` belongs
+  to a fifth reserved category, `triage`, carrying an `inbox:` block that records how it
+  arrived (`status`, `snoozed_until`, `duplicate_of`, `source`, `received`). **The category
+  is the truth and the block is metadata**, so no stored `is_inbox` boolean can disagree with
+  it, and accepting an item is one status change rather than an import step. Queries exclude
+  triage by default — `Filter.Inbox` is tri-state, so every filter written before the inbox
+  existed keeps its meaning — and board views, sprint views, sprint candidates and sprint
+  metrics exclude it unconditionally: a hand-edited sprint file naming a triage item reports
+  it as unresolved, not as work, so a thousand spam submissions change no burndown.
+  **Snoozing needs no scheduler**: a snoozed item whose `snoozed_until` has passed matches a
+  query for `pending`, compared against an instant the caller supplies, so a repository left
+  alone for a year answers correctly the moment somebody opens it. Two things to know: a
+  project that declares no status in the category simply has no inbox, with no error and no
+  warning, and every consumer that switches on a status category — including tools outside
+  this repository — now has a fifth case it did not have. **Groundwork only so far**: the
+  model, the parser and the query layer; there is no submission endpoint and no triage screen
+  yet.
+
+- **Sprint dates are optional, a sprint's status is derived from them, and closing one
+  freezes a snapshot** (ADR-034, docs/04 §8.2, §8.4, §12.1). `state` stays what it always
+  was, the record of the explicit start and close; what a reader is shown is now computed at
+  every read — `draft | upcoming | current | completed` — so the status on the board can no
+  longer disagree with the date on the wall, and a sprint becomes current on its start date
+  with nobody writing a file. `closed` always wins over the calendar. `start` and `end` are
+  given together or not at all, and a sprint with neither is a **draft**: a legal, listable
+  sprint with a goal and a scope and no place on the calendar yet, exempt from the no-overlap
+  rule — which is what finally makes it possible to plan three sprints ahead without
+  inventing date ranges that do not collide. The refusal a collision produces now names that
+  escape hatch. Closing a sprint writes a `snapshot` block — totals, the three distributions,
+  the observed burndown days and the provenance of the history they were frozen from — and it
+  is the one derived number this product stores, because after a close the items leave the
+  scope and the numbers stop being recomputable at all. It is written exactly once, never for
+  an open sprint, never recomputed, and honest about itself: a snapshot taken where no git
+  history could be read is marked approximate rather than passed off as a reconstruction. Two
+  prices are worth stating: "today" is a day in the **team timezone**, so clients that
+  disagree about it disagree about a sprint's status for a few hours around midnight, and a
+  closed sprint file grows by one burndown row per sprint day. **All of it is wired end to
+  end**: the derived status travels on every sprint payload, `sprint.create` and
+  `sprint.update` accept and park a dateless sprint, `sprint.close` freezes the snapshot
+  before a single carry decision rewrites an item out of the scope, and a closed sprint's
+  metrics are answered from the frozen block without touching git at all. `gintrack sprint`
+  and the cycles screens read the same derived status (docs/07 §4.16, docs/05 §8.6), and
+  `close_sprint` and `transfer_sprint_items` expose the close and the standalone transfer to
+  agents (docs/08 §4.14–§4.15). **Existing sprint files are unaffected**: they parse
+  unchanged, keep whatever dates they have, and gain a `snapshot` block only when they are
+  next closed — a sprint closed before this change simply has none, and its metrics keep
+  being reconstructed from git the way they always were.
+
+- **`internal/youtrack`, a typed client for the YouTrack REST API** (`GIT-US-0046`, docs/02
+  §6): issues with their links, comments and attachments, projects, the authenticated user,
+  custom-field settings, version bundles and the article endpoints, with a shared 5 req/s
+  limiter, retries that honour `Retry-After` in both its forms, paging that stabilises the
+  order first — YouTrack guarantees none, and a `$skip` walk without an `order by:` clause
+  silently skips and duplicates rows — and a token that appears in no error and no rendering
+  of the client. It is native-only (`net/http`), so it sits beside `internal/gitops` rather
+  than in `internal/core`, and it decodes into its own types and stops there — mapping an
+  issue onto an item is the caller's job. It is now imported by `internal/vault` (the import
+  and the knowledge-base methods), by `internal/server` (the connection, the discovery
+  endpoints and the four job handlers) and by `internal/youtrack/mapping`. Everything it
+  returns —
+  issue descriptions, comment text, article content — is untrusted third-party Markdown,
+  returned verbatim for the caller to sanitize.
+
+- **`internal/syncengine`, a persistent background job queue** (`GIT-US-0063`, `GIT-US-0067`,
+  `GIT-US-0070`, docs/02 §6): a worker pool with keyed batching, a retry ladder with backoff
+  and jitter, a dead-letter list, and a JSON journal under the cache directory that replays
+  on start, so work started by an HTTP request outlives the response and the process. It is
+  generic — it schedules, batches, rate-limits, retries and journals, and knows nothing about
+  any tracker — and its one contract on callers is that **handlers must be idempotent**,
+  because a job is replayed after a retryable error, after a crash mid-run, and when somebody
+  retries it from the dead-letter list. The journal is one file, `jobs.json`, inside the
+  configured `index.cacheDir`, written atomically and coalesced behind a 500 ms timer; it holds
+  bookkeeping — ids, kinds, coalescing keys, states, attempt counts, redacted errors — plus the
+  parameters the request carried, because replaying a job means running it with its own
+  arguments, and **never item content and never a credential**. A finished job is forgotten
+  after `sync.engine.retention` (a week by default). It is derived data and safe to delete at
+  any time — the only thing lost is queued work, never user data — and a corrupt or
+  unknown-version journal is moved aside rather than being fatal. docs/07 §4.1 documents the
+  location, the shape, the retention and the idempotence contract replay implies. It now runs the four YouTrack job kinds behind
+  `/api/v1/sync/jobs`, and `gintrack youtrack push-comments` and `kb push|pull` drive the
+  same engine in a companion that never binds a port.
+
+- **A project can be connected to a YouTrack project** (`GIT-US-0048`, `GIT-US-0052`,
+  `GIT-US-0058`, ADR-032, docs/03 §6.5, docs/07 §4.15). The connection is deliberately split
+  in two. The half that belongs to the team is committed: an `integrations.youtrack` block in
+  `project.yaml` naming the instance, the YouTrack project, the field map and whether
+  comments and knowledge-base pages sync. The half that belongs to one person on one machine
+  is not: the permanent token lives in the companion's `0600` configuration file, keyed by
+  project, overridable with `GINTRACK_YOUTRACK_TOKEN`, and it appears in no API response, no
+  event payload, no log line and no `gintrack config show` output. **This is the first
+  credential the product stores**, and ADR-032 records why the promise in docs/10 that it
+  stored none had to be revised rather than worked around. `/api/v1/youtrack/settings`,
+  `/test`, `/projects` and `/fields` serve the settings screen, and `gintrack youtrack
+  connect|status` does the same from a terminal. An upstream refusal is reported as `502`
+  with its own problem code, never by forwarding YouTrack's `401`, which would tell a browser
+  its own session had expired. Companion-only: the browser-only mode cannot reach a YouTrack
+  instance, and the capability flags say so.
+
+- **A mapping layer from YouTrack issues to backlog items** (`GIT-US-0045`,
+  `internal/youtrack/mapping`). A pure package: decoded YouTrack types in, `core.ItemDraft`
+  or a sparse `core.ItemPatch` out, plus the warnings a value the field map did not
+  understand produced — because an import that drops a field silently is worse than one that
+  says what it could not translate. The `Subtask` link type is read as the hierarchy and
+  everything else becomes a `links[]` entry of a kind the model accepts. Nothing that names
+  another item is written onto the draft: parents, milestones and link targets come back as
+  YouTrack ids for the importer to resolve, so a half-imported set cannot produce a file that
+  fails validation. It is reached through `internal/vault`'s import and through the issue
+  preview of `internal/server`, which is where a project's configured field and value
+  mappings are folded into the table it translates with.
+
+- **Inbox and sprint operations over the vault and MCP** (`GIT-US-0056`, `GIT-US-0085`,
+  docs/08 §4.11–§4.15). `inbox.list` and `inbox.triage` accept, reject, snooze and mark
+  duplicate in one rev-checked write, and `item.create` can drop work straight into triage.
+  Closing a sprint now transfers what is unfinished — to the next sprint, to a named one or
+  to the backlog — and both closing and transferring answer a dry run that reports the counts
+  without writing, which is what the confirmation dialog shows. Five MCP tools were added
+  (`create_inbox_item`, `list_inbox`, `triage_inbox_item`, `close_sprint`,
+  `transfer_sprint_items`), taking the surface to seven read-only and eighteen with
+  `--allow-write`. Accepting an item cannot change its type: an id encodes its type, so the
+  answer to "this should have been an epic" is a new item and a duplicate marker, not a
+  rewrite. **No REST route or screen yet** — the operations exist for agents and for the
+  wiring still to come.
+
+- **The screens: triage, cycles and knowledge-base sync** (`GIT-US-0060`, `GIT-US-0089`,
+  `GIT-US-0093`, `GIT-US-0076`, docs/05 §3.1, §8.6). An inbox route with a two-pane triage queue,
+  keyboard navigation and accept, reject, snooze and duplicate; accepting reuses the ordinary item
+  editor in a second mode rather than a form of its own, because accepting *is* editing, with a
+  different verb. The scrum board gained an active-cycle view, a sprint list grouped by the status
+  the dates imply, and a close dialog whose counts come from a dry run that writes nothing. A
+  knowledge-base page carries a sync badge and a toolbar, and a conflict is announced in the page
+  rather than resolved behind it. A comment and a feedback note can be sent to the linked issue from
+  where they were written. Where a metric was reconstructed from a frozen snapshot and the
+  cumulative-flow series was not part of it, the panel says so instead of drawing zeroes.
 
 - **Feedback mode on items and knowledge-base pages** (ADR-030, docs/05 §8.5, docs/03 §14.4).
   A **Feedback** button on the item view and the page viewer — or simply selecting text in
@@ -463,5 +812,6 @@ each, `Contents: read and write`. GHCR needs no secret. The release workflow ver
 tokens before it builds anything and fails with the fix in the message when either is
 missing. Full procedure: [docs/09](docs/09-ci-cd-and-releases.md) §9 and §10.
 
-[Unreleased]: https://github.com/digiogithub/git-in-track/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/digiogithub/git-in-track/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/digiogithub/git-in-track/compare/v1.3.0...v1.4.0
 [1.0.0]: https://github.com/digiogithub/git-in-track/releases/tag/v1.0.0

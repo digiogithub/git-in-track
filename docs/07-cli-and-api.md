@@ -247,11 +247,32 @@ index:
   watch: true            # let `gintrack serve` run the file watcher
   debounce: 250ms        # Go duration
 
+# The background job engine: the queue an import, a comment push or a
+# knowledge-base publish runs on, off the request that asked for it (§4.1).
+sync:
+  engine:
+    workers: 2           # size of the worker pool, 1-64
+    batchSize: 20        # jobs handed to one handler call, 1-500
+    rate: 5              # shared outbound requests per second; negative removes the limit
+    maxAttempts: 5       # attempts before a job is dead-lettered, 1-20
+    retention: 168h      # how long a finished job is remembered; Go duration
+
 mcp:
   enabled: false         # mount POST /mcp on `gintrack serve` (same as --mcp-http)
   allowWrite: false      # write tools stay off until this is true, for `gintrack mcp`
                          # (the Settings page writes this field; section 5.5)
                          # over stdio as well as for POST /mcp
+
+# The credentials of the external trackers this machine is linked to. It is the
+# only place git-in-track stores a secret it did not generate itself, which is
+# why the whole file is 0600 (ADR-032). The committed half of the connection —
+# instance URL, remote project, field map, sync modes — lives in the project's
+# project.yaml instead (doc 03 §6.1), so a clone knows where its items came from
+# without holding a credential.
+integrations:
+  youtrack:
+    DEMO:                        # the git-in-track project key
+      token: perm:…              # YouTrack permanent token, prefix included
 
 log:
   level: info            # debug | info | warn | error
@@ -265,8 +286,16 @@ rejected, so a file written by a newer binary still opens: the later phases add
 `index.maxFileSizeKB` and `log.file` to the same sections.
 
 `PATCH /api/v1/git/settings` writes the `git:` section back to this file, so a
-change made in the web UI survives a restart. It is the only route that edits
-the configuration; everything else remains a `gintrack config` operation.
+change made in the web UI survives a restart. `PATCH /api/v1/youtrack/settings`
+writes the `integrations.youtrack.<projectKey>.token` key the same way, and
+`PATCH /api/v1/sync/settings` writes `sync.engine`. Those three are the only
+routes that edit the configuration; everything else remains a `gintrack config`
+operation.
+
+The YouTrack token is never rendered back. It is excluded from the JSON encoding
+of the configuration, so `gintrack config show --json` omits it and
+`gintrack config show` prints it as `[redacted]`; no API response, problem
+document, log line or WebSocket payload carries it (ADR-032).
 
 ### 3.3 Precedence and environment variables
 
@@ -280,7 +309,12 @@ Effective value = flag > environment variable > config file > built-in default.
 | `GINTRACK_BIND`          | `server.bind`       |
 | `GINTRACK_TOKEN`         | `server.token`      |
 | `GINTRACK_GIT_BACKEND`   | `git.backend`       |
+| `GINTRACK_SYNC_WORKERS`  | `sync.engine.workers` |
+| `GINTRACK_SYNC_BATCH`    | `sync.engine.batchSize` |
+| `GINTRACK_SYNC_RATE`     | `sync.engine.rate`  |
+| `GINTRACK_SYNC_MAX_ATTEMPTS` | `sync.engine.maxAttempts` |
 | `GINTRACK_GIT_COMMIT_ON_SAVE` | `git.commitOnSave` |
+| `GINTRACK_YOUTRACK_TOKEN` | `integrations.youtrack.<key>.token`, for every project |
 | `GINTRACK_LOG_LEVEL`     | `log.level`         |
 | `GINTRACK_LOG_FORMAT`    | `log.format`        |
 | `NO_COLOR`               | disables ANSI color |
@@ -290,6 +324,15 @@ Global flags available on every command: `--config`, `--workspace/-w`,
 workspace that does not exist creates it. `--json` is declared by every command
 that has machine-readable output rather than globally, so that `gintrack --help`
 never offers it where it would mean nothing.
+
+`GINTRACK_YOUTRACK_TOKEN` is deliberately a name of its own: `GINTRACK_TOKEN`
+already means both the companion's bearer token and the HTTP password go-git
+authenticates a remote with, and a third meaning would make one leaked variable
+hand out three credentials. It overrides the stored token of *every* project,
+which is what a CI checkout with a single linked project wants; a machine
+serving two linked projects should use the file instead. The provenance of the
+effective token is reported — never its value — as `env`, `file`, `flag` or
+`none` by `gintrack youtrack status` and by `GET /api/v1/youtrack/settings`.
 
 ### 3.4 Git backend selection
 
@@ -350,7 +393,152 @@ gintrack serve [flags]
   --tunnel            Publish this server through a Cloudflare quick tunnel and print
                       the temporary public https URL (off by default; refused with
                       --token none). See the warning below before using it.
+  --sync-workers int  Background job workers (default 2)
+  --sync-batch int    Jobs handed to one handler call (default 20)
+  --sync-rate float   Shared outbound limit for background jobs, req/s (default 5)
+  --sync-max-attempts int
+                      Attempts a background job takes before it is dead-lettered
+                      (default 5)
 ```
+
+#### The background job engine
+
+The last four flags configure the companion's background job engine
+(`internal/syncengine`): the queue that an import, a comment push or a
+knowledge-base publish runs on, off the request that asked for it. It starts
+with the server and stops with it, and with no integration configured it starts
+**idle** — an empty queue, no goroutine doing anything, no event published.
+
+| Flag | Environment variable | Default | Range |
+| --- | --- | --- | --- |
+| `--sync-workers` | `GINTRACK_SYNC_WORKERS` | `2` | 1–64 |
+| `--sync-batch` | `GINTRACK_SYNC_BATCH` | `20` | 1–500 |
+| `--sync-rate` | `GINTRACK_SYNC_RATE` | `5` | > 0, at most 1000; a negative value removes the limit |
+| `--sync-max-attempts` | `GINTRACK_SYNC_MAX_ATTEMPTS` | `5` | 1–20 |
+
+Precedence is the full chain of §3.3 — flag, then environment variable, then the
+configuration file, then the default. A value outside its range fails the
+command **before the listener is opened**, naming the setting. The journal is
+written under the configured `index.cacheDir`; with no cache directory the queue
+lives in memory only and a restart starts empty.
+
+The file layer is the `sync.engine` section:
+
+```yaml
+sync:
+  engine:
+    workers: 2          # 1-64
+    batchSize: 20       # 1-500
+    rate: 5             # requests per second; a negative value removes the limit
+    maxAttempts: 5      # 1-20
+    retention: 168h     # how long a finished job is remembered
+```
+
+`retention` has no flag and no environment variable: it is a housekeeping
+setting, not something an operator tunes per run. An out-of-range value is
+refused by configuration validation with the dotted key that carries it, for
+example `sync.engine.workers: 0 is outside the range 1-64`.
+
+Because the section exists, a change made in the web app through
+`PATCH /api/v1/sync/settings` is written back to it and the response reports
+`persisted: true` — unless the companion was started without a configuration
+file (`serve --repo`, or a test), where the change lasts for the process only
+and `persisted` is `false`.
+
+The engine is a background component of the companion beside the watcher, the
+committer and the tunnel, and it is brought up and taken down on the same path
+as those (doc 02 §background components).
+
+Four job kinds are registered by `internal/server` before the journal is
+replayed, which is what lets a job queued by a previous run be dispatched after
+a restart:
+
+| Kind | What it does | Coalescing key |
+| --- | --- | --- |
+| `youtrack.import` | Imports a query result or an id list into a project backlog, in batches | the project key |
+| `youtrack.comment.push` | Posts one comment file to the issue its item mirrors, or edits the comment a previous push created | the comment path |
+| `youtrack.kb.publish` | Publishes a page or a folder as YouTrack articles | the selection |
+| `youtrack.kb.pull` | Writes a page or a folder back from its articles | the selection |
+
+The three kinds whose key is a **path** — the comment push and the two
+knowledge-base directions — also enqueue under a stable job id derived from that
+path, so a burst of writes to one comment or one page is one job rather than one
+batch of several. Without it the handler would be delivered the same comment
+three times and would create it, then edit it twice for nothing. `youtrack.import`
+is deliberately excluded: its key is a query, and two imports of the same query a
+minute apart are two things a person asked for.
+
+**Shutdown** is a bounded drain: `SIGINT`/`SIGTERM` gives the queue a grace
+period (5 s) to finish what is in flight, on a context detached from the
+shutdown itself so that a job halfway through a call to a tracker is not
+cancelled by the very stop that is waiting for it. Whatever has not finished by
+then is written to the journal and picked up on the next start.
+
+##### The journal (GIT-US-0070)
+
+The journal is what makes "queued" mean something across a restart: without it a
+job accepted by an HTTP request and not yet run would be lost the moment the
+companion stopped.
+
+**Where it is.** One file, `jobs.json`, directly inside the configured
+`index.cacheDir`. With no cache directory the queue lives in memory only, the
+journal is never opened, and a restart starts empty — which is exactly what a
+test or a `serve --repo` run wants. It is written atomically (a temporary file
+in the same directory, renamed over the target, the discipline `internal/core`
+uses for items) and **rarely**: state transitions are coalesced behind a 500 ms
+timer, so a thousand jobs finishing in a second produce one write and no worker
+ever blocks on disk.
+
+**What is in it.** A single JSON object:
+
+```json
+{
+  "version": 1,
+  "updatedAt": "2026-09-13T09:12:04Z",
+  "jobs": [
+    {"id":"job_000021","kind":"youtrack.import","key":"ACME","state":"queued",
+     "payload":{"repo":"acme-api","project":"ACME","params":{"query":"project: ACME #Unresolved"}},
+     "attempts":1,"createdAt":"2026-09-13T09:11:58Z","updatedAt":"2026-09-13T09:12:04Z",
+     "nextAttempt":"2026-09-13T09:12:20Z",
+     "lastError":{"attempt":1,"class":"retryable","message":"502 from the instance",
+                  "at":"2026-09-13T09:12:04Z","retryAfter":"16s"}}
+  ],
+  "deadLetter": ["job_000018"]
+}
+```
+
+`jobs` is the queue in enqueue order and `deadLetter` names, oldest first, the
+ids inside it that gave up. `version` is bumped whenever the on-disk shape
+changes; a file carrying an unknown version is treated exactly like a corrupt
+one — **moved aside**, logged, and the engine starts empty. A damaged journal is
+never fatal to `serve`.
+
+A job entry carries its bookkeeping — id, kind, coalescing key, state, attempt
+count, timestamps, the next attempt time and the last error with its class — and
+the **payload the request carried**, because replaying a job means running it
+with the arguments it was given. That payload is the request's own parameters: a
+repository id, a project key, a YouTrack query, a comment path. **No item
+content and no credential is ever written here.** A token lives in the `0600`
+companion configuration and is read at dispatch time from there (ADR-032), and
+error messages are redacted before they are recorded, so the journal cannot leak
+one either.
+
+**Retention and deletion.** A finished job is remembered for `sync.engine.retention`
+(default 168h, one week) and dropped on the way back in when it is older than
+that, which is what keeps the file from growing without bound in a companion
+that runs for months. The whole file is **derived data and safe to delete at any
+time**, with the companion running or stopped: the Markdown files remain the
+source of truth, and the only thing lost is work that was queued and had not
+run — no user data, no history, nothing that cannot be asked for again.
+
+**What replay demands of a handler.** A job that was running when the process
+died is re-queued with its attempt count intact, because the engine cannot know
+whether the handler finished. **Every handler must therefore be idempotent**:
+running it twice with the same payload must produce the same result as running
+it once. It is the same contract a retry and a dead-letter retry impose, stated
+in `internal/syncengine`'s package documentation, and it is why the four
+YouTrack handlers match on the `external` block rather than creating blindly
+(doc 03 §6.5).
 
 `--tunnel` opens a free Cloudflare **quick tunnel** (`*.trycloudflare.com`,
 ADR-027): no Cloudflare account, no DNS record and no inbound port. The same
@@ -728,9 +916,21 @@ as specified in the data model, so the CLI and the web app never disagree about 
 inverse relation is written on the counterpart item when both live in the same workspace;
 `--inverse=false` writes only the side that was named.
 
-### 4.6 `gintrack board …`
+### 4.6 `gintrack board …` and `gintrack retro …` — **not implemented**
 
-Team-repository boards (Phase 3).
+**Neither command exists.** `gintrack --help` lists no `board` and no `retro`
+subcommand, and typing one is an unknown-command error. This section is the
+planned shape, kept here so the design is not re-invented, and marked so that
+nobody writes a script against it. The sprint commands, which were once
+specified alongside these, **are** built and have a section of their own
+(§4.16).
+
+Boards and retrospectives are fully reachable today by the other two routes:
+over REST at `/api/v1/boards` and `/api/v1/retros` (§5.5), which is what the web
+app uses, and as Markdown files in the team repository (doc 04 §5 and §9). What
+is missing is only the terminal surface.
+
+The planned tree, when it is written:
 
 ```
 gintrack board list                       List boards in the team repo
@@ -739,31 +939,17 @@ gintrack board move <ref> <column>        Move a card; updates status via column
                                           and the `order:` list of the target column
       --position int                      Insert at index (default: end)
 gintrack board new <slug> --kind kanban|scrum
-gintrack sprint list | get <id> | new | close
 gintrack retro list | get <id> | new --sprint <id>
 ```
 
-```
-$ gintrack board get platform-kanban
-Board: Platform Kanban (kanban) — team repo ~/code/acme-team
-  Backlog (wip: —)      18 cards
-  Todo (wip: 10)         7 cards
-  In progress (wip: 5)   4 cards   ← at 4/5
-  In review (wip: 3)     3 cards   ← WIP LIMIT REACHED
-  Done                  62 cards
-remote references: 5 cards from AWEB (repo not cloned locally)
-
-$ gintrack board move ACME/ACME-T-0311 "In review" --position 0
-moved ACME-T-0311 -> In review (status: in_review), position 0
-warning: column "In review" is at its WIP limit (3/3)
-```
-
-Cards are `ref: <projectKey>/<itemId>` references, never copies. When the referenced
-project repo is not registered locally, the card is resolved from
-`.pmngr/index/<projectKey>.json` and marked `remote: true`, carrying `source: "snapshot"`,
-`snapshotAt`, `stale` and `remoteUrl`; `board move` on a remote card updates the board
-order but refuses to change the item status (exit 4 with a problem detail explaining the
-repo is not cloned). Refresh those snapshots with `gintrack snapshot` (§4.13).
+The behaviour it has to reproduce is the one the REST layer already implements.
+Cards are `ref: <projectKey>/<itemId>` references, never copies. When the
+referenced project repo is not registered locally, the card is resolved from
+`.pmngr/index/<projectKey>.json` and marked `remote: true`, carrying
+`source: "snapshot"`, `snapshotAt`, `stale` and `remoteUrl`; a move of a remote
+card updates the board order but refuses to change the item status, because the
+file holding that status is not on this machine. Refresh those snapshots with
+`gintrack snapshot` (§4.13), which **is** built.
 
 ### 4.7 `gintrack sync [--dry-run]`
 
@@ -893,27 +1079,39 @@ gintrack mcp [flags]
 ```
 
 ```
-$ gintrack mcp --list-tools
+$ gintrack mcp --list-tools --allow-write
 add_comment
+close_sprint
 create_epic
+create_inbox_item
+create_milestone
 create_story
 create_task
 get_item
 get_kb_page
+import_youtrack_issues
+list_inbox
 list_items
 list_kb_pages
 move_on_board
+publish_kb_page_to_youtrack
+push_comment_to_youtrack
 search_items
 search_kb
+sync_kb_page_from_youtrack
+transfer_sprint_items
+triage_inbox_item
 update_item
 
 $ gintrack mcp --agent claude-code
-gintrack mcp 0.4.0: workspace work, 2 repositories, 6 tools (read-only)
+gintrack mcp 0.4.0: workspace work, 2 repositories, 7 tools (read-only)
 ```
 
 Nothing but JSON-RPC frames is written to stdout; the startup line and every log go to
-stderr. Without writes enabled the six write tools are absent from `tools/list`, not merely
-refused.
+stderr. There are **twenty-two tools**: seven read-only — `list_items`, `search_items`,
+`get_item`, `list_inbox`, `list_kb_pages`, `get_kb_page` and `search_kb` — and fifteen
+writes. Without writes enabled the fifteen write tools are absent from `tools/list`, not
+merely refused.
 
 Writes are enabled by `--allow-write` or by `mcp.allowWrite: true` in the configuration file
 (section 3.2). The flag wins when it is typed — `--allow-write=false` turns the write tools
@@ -923,7 +1121,7 @@ what the companion's **Settings › Agent tools (MCP)** switch writes
 (`PATCH /api/v1/mcp/settings`, section 5.5), which is the way to enable writes without
 editing a file or teaching every agent runtime a flag.
 
-The **same twelve tools** are served over streamable HTTP at `POST /mcp` by
+The **same twenty-two tools** are served over streamable HTTP at `POST /mcp` by
 `gintrack serve --mcp-http` (section 4.1), which is what to use when the companion is already
 running: one index and one watcher, shared with the web UI.
 
@@ -1101,6 +1299,293 @@ backlog and no documentation folder:
   `gintrack add --team --key`, by `POST /repos/{id}/team` (§5.5) and by the add-repository
   wizard of the web app.
 
+### 4.15 `gintrack youtrack`
+
+```
+gintrack youtrack connect --url URL --project SHORTNAME [--project-key KEY]
+                          [--token TOKEN] [--push-comments manual|auto]
+                          [--kb-sync manual|on_write]
+                          [--kb-sync-direction push|pull|both] [--json]
+gintrack youtrack status  [--project-key KEY] [--offline] [--json]
+
+gintrack youtrack import <query | ID...> [--project-key KEY] [--depth N]
+                          [--comments] [--attachments] [--links]
+                          [--dry-run] [--json]
+gintrack youtrack push-comments <ITEM-ID> [--all | --comment PATH]
+                          [--project-key KEY] [--wait] [--json]
+gintrack youtrack kb push|pull <path> [--project-key KEY] [--recursive]
+                          [--wait] [--json]
+gintrack youtrack kb status [path] [--project-key KEY] [--recursive]
+                          [--remote] [--json]
+```
+
+`connect` and `status` configure the connection; `import`, `push-comments` and
+`kb` move content. The content commands hold no integration logic of their own:
+each dispatches exactly one core method — `youtrack.import.preview` /
+`youtrack.import.run`, `youtrack.comment.push`, `youtrack.kb.publish` /
+`youtrack.kb.pull` / `youtrack.kb.status` — the same ones the REST API and the
+MCP server call, so the idempotence rules and the git writes have a single
+implementation. They open a companion with no listener rather than requiring
+`gintrack serve` to be running.
+
+`connect` links one git-in-track project to one YouTrack project. It resolves the
+permanent token from `--token`, then `$GINTRACK_YOUTRACK_TOKEN`, then standard
+input when it is piped — there is no interactive prompt, so the command stays
+scriptable — validates it with `GET /api/users/me` and reads the remote project,
+and only then writes anything. On success the instance URL, the project short
+name and the sync modes are written into the project's `project.yaml`
+(doc 03 §6.1) and the token into this machine's `0600` configuration file
+(§3.2). `--project-key` names the git-in-track project when the workspace holds
+more than one. An existing `field_map` is kept: connect sets the connection, it
+does not reset the mapping.
+
+`status` prints the instance, the project mapping, whether a token is present and
+where it came from, and — unless `--offline` — the result of a live probe.
+
+Neither command ever prints the token, in either form. `--json` reports the
+provenance (`flag`, `env`, `stdin`, `file` or `none`) and never the value.
+
+Prefer the environment or a pipe to `--token`: a token on a command line lands in
+the shell history and in every process listing on the machine.
+
+```
+# From a provisioning script: the token comes from the environment.
+$ export GINTRACK_YOUTRACK_TOKEN="$(vault read -field=token secret/youtrack)"
+$ gintrack youtrack connect --url https://yt.example.com/youtrack --project ACME --json
+
+# Or piped in, when the token is not already in the environment.
+$ printf '%s' "$YT_TOKEN" | gintrack youtrack connect --url https://yt.example.com/youtrack --project ACME
+Connected DEMO to ACME on https://yt.example.com/youtrack as jose.
+  link:  demo:docs/.pmngr/project.yaml
+  token: /home/jose/.config/gintrack/config.yaml (read from the stdin, stored file)
+
+$ gintrack youtrack status
+project:  DEMO
+instance: https://yt.example.com/youtrack
+mapping:  DEMO -> ACME
+link:     demo:docs/.pmngr/project.yaml
+token:    present (file)
+probe:    ok as jose
+
+$ gintrack youtrack status --json
+{"projectKey":"DEMO","configured":true,"url":"https://yt.example.com/youtrack",
+ "project":"ACME","hasToken":true,"tokenSource":"file",
+ "projectPath":"demo:docs/.pmngr/project.yaml","probed":true,"ok":true,"login":"jose",
+ "fullName":"Jose F. Rives"}
+```
+
+Exit codes (§4 conventions): `0` when the connection works; `2` for a missing
+`--url`, `--project` or token; `3` when the connection would not be a valid
+`integrations.youtrack` block; `4` when the project is unknown or declares no
+connection; `1` when the probe fails — the message says whether YouTrack
+answered 401 (bad token), 403 (no permission) or 404 (the URL is missing its
+instance context path). A failed probe writes nothing at all.
+
+#### `import`
+
+One argument that is not a readable issue id is a YouTrack query; one or more
+arguments that are issue ids import exactly those issues. Give one or the other,
+never both — the vault refuses the combination with a field-level
+`invalid_request`. `--depth` bounds the subtask recursion from `0` (the selected
+issues only) to `5`.
+
+An import is **idempotent**: the pair `(system, id)` of an issue decides whether
+it becomes a new item or patches the one already mirroring it, so importing the
+same issue twice can never produce a second item.
+
+`--dry-run` calls the preview: what each issue would become, which item an
+update would patch, and what could not be resolved. Nothing is written.
+
+```
+$ gintrack youtrack import "project: ACME #Unresolved" --depth 1 --dry-run
+ISSUE    ACTION  ITEM          TYPE   TITLE
+ACME-42  create  —             story  Guest checkout
+ACME-58  update  DEMO-T-0031   task   Rate-limit the login endpoint
+2 issues would be imported into DEMO; nothing was written.
+
+$ gintrack youtrack import ACME-42 ACME-58 --comments
+ISSUE    ACTION  ITEM          ERROR
+ACME-42  create  DEMO-US-0044  —
+ACME-58  update  DEMO-T-0031   —
+2 created, 0 updated, 0 failed in DEMO.
+```
+
+A failure is recorded per issue and never aborts the batch: the other issues
+still land, the row carries the reason and the command exits `1`. Per-issue
+warnings — a field value that did not map, a parent outside the import set — go
+to stderr, so `--json | jq` stays safe.
+
+#### `push-comments`
+
+Queues the comments of one item for the issue it mirrors. Give `--all` for the
+whole thread or `--comment <path>` for one comment; one or the other, never
+neither and never both. A comment that already carries a YouTrack reference is
+**skipped** rather than posted twice.
+
+`pushed` means *queued*. Without `--wait` the command prints the job id and the
+table of what was selected; with `--wait` it follows the job and prints the
+remote comment id of each one, exiting non-zero when any comment failed.
+Interrupting a `--wait` stops the watching, not the job.
+
+An item that mirrors no issue is refused before anything is queued, with exit
+`3` and a message saying to import or link it first: it is not a failure another
+attempt would fix.
+
+**A local delete never deletes remotely.** There is no job for it and
+deliberately none — a repository is not the authority on an issue's
+conversation, and a mistaken `rm` must not erase a thread other people are
+reading. The divergence is permanent and intended.
+
+```
+$ gintrack youtrack push-comments DEMO-US-0001 --all --wait
+COMMENT                                                  REMOTE  RESULT   NOTE
+docs/.pmngr/comments/DEMO-US-0001/20260901T1045Z-marta.md  4-118   pushed
+docs/.pmngr/comments/DEMO-US-0001/20260902T0912Z-jose.md   4-103   skipped  the comment is already on the issue
+```
+
+When the project sets `integrations.youtrack.push_comments: auto`, this command
+is unnecessary: every comment written on a linked item is queued by the same
+seam, on every surface.
+
+#### `kb push` and `kb pull`
+
+`push` publishes knowledge-base pages as YouTrack articles; `pull` writes
+articles back into pages. A path naming a page selects that page; a path naming
+a folder selects its direct pages, or every page below it with `--recursive`.
+
+Both are background jobs. Without `--wait` the command prints the job id and the
+pages it selected; with `--wait` it follows the job and prints each page's
+resulting state.
+
+**The exit code is what a CI step relies on**: `0` when every page is in sync,
+`5` when any page conflicted, `1` when the job itself failed. A conflict is not
+an error — the page is left untouched and `<page>.conflict.md` holds the other
+side — but nobody has reconciled the two, so it must not read as success.
+
+```
+$ gintrack youtrack kb push docs --recursive --wait
+PAGE                            STATE     ARTICLE     NOTE
+docs/index.md                   in_sync   DEMO-A-1    —
+docs/architecture/overview.md   conflict  DEMO-A-2    —
+2 pages published in DEMO.
+1 page changed on both sides; <page>.conflict.md holds the other side.
+$ echo $?
+5
+```
+
+`kb status` reports the same states without changing anything:
+`unlinked`, `in_sync`, `local_ahead`, `remote_ahead` or `conflict`. It reads only
+the repository unless `--remote` is passed, which is **one article read per
+page** and therefore never the default.
+
+```
+$ gintrack youtrack kb status docs --recursive --json
+{"project":"DEMO","pages":[{"path":"docs/index.md","linked":true,"articleId":"DEMO-A-1",
+ "url":"https://yt.example.com/youtrack/articles/DEMO-A-1","state":"in_sync",
+ "syncedAt":"2026-09-13T12:00:00Z"}],"remote":false}
+```
+
+### 4.16 `gintrack sprint`
+
+```
+gintrack sprint list [--status draft|upcoming|current|completed]... [--board ID]
+                     [--team ID] [--json]
+gintrack sprint show <SPRINT-ID> [--team ID] [--json]
+gintrack sprint start <SPRINT-ID> [--force] [--team ID] [--json]
+gintrack sprint close <SPRINT-ID> [--transfer next|backlog|none] [--target SPRINT-ID]
+                     [--dry-run] [--team ID] [--json]
+gintrack sprint transfer <SPRINT-ID> --to SPRINT-ID [--dry-run] [--team ID] [--json]
+```
+
+Sprints live in the team repository and their items live in the project
+repositories, which is the fact every one of these commands is shaped by. The
+status a sprint is listed under is **derived** from its dates and today —
+`draft`, `upcoming`, `current` or `completed` — computed on every read and never
+written to the file, so a sprint becomes current because the calendar says so and
+not because somebody remembered to edit it (doc 04 §8).
+
+`close` and `transfer` never guess. They report, item by item, what they applied
+and what they refused: an item in a project this machine has not cloned is a
+`repo_not_cloned` refusal on its own line, not a silent skip and not a failure of
+the run. The exit code is `0` when anything at all could be applied and `1` only
+when nothing could — a partial run is a partial run, and a CI step that fails on
+one uncloned repository would be useless.
+
+`--dry-run` computes the whole report and writes nothing, which is what a job
+asking "is this sprint clean?" wants.
+
+```
+$ gintrack sprint list
+current
+  DEMO-TEAM-S-0001  Sprint 12  2026-09-01 → 2026-09-14  18 items, 34 points
+upcoming
+  DEMO-TEAM-S-0002  Sprint 13  2026-09-15 → 2026-09-28   4 items,  8 points
+
+$ gintrack sprint close DEMO-TEAM-S-0001 --transfer next --dry-run
+completed    14 items, 27 points
+incomplete    4 items,  7 points
+carried      DEMO-US-0044 -> DEMO-TEAM-S-0002
+refused      WEB/WEB-US-0031: the repository holding WEB is not cloned
+nothing was written (--dry-run)
+```
+
+### 4.17 `gintrack inbox`
+
+```
+gintrack inbox list [--status pending|snoozed|rejected|accepted|duplicate|all]
+                    [--project KEY] [--limit N] [--json]
+gintrack inbox add --title T [--project KEY] [--type epic|story|task|milestone]
+                   [--body B] [--source S] [--priority P] [--label L]... [--author A] [--json]
+gintrack inbox accept <id> [--status S] [--type T] [--parent ID] [--json]
+gintrack inbox reject <id> [--json]
+gintrack inbox snooze <id> --until DATE [--json]
+```
+
+An inbox item is an ordinary item whose status belongs to the reserved triage
+category; the `inbox:` block records how it arrived and what the triager decided
+(doc 03 §12, ADR-033). Accepting one moves it into the ordinary workflow,
+rejecting one cancels it, and snoozing one hides it until a date.
+
+Every decision goes through `inbox.triage`, the same core method the web
+application and the MCP tool `triage_inbox_item` call, quoting the `rev` the
+command read — so a row somebody triaged first is a conflict (exit `5`) and never
+an overwrite. `list` defaults to `--status pending`, which is the queue.
+
+`add` files a submission through `item.create` with an `inbox` block, which is
+what the MCP tool `create_inbox_item` calls too. It is deliberately thinner than
+`gintrack item new`: there is no `--status` and no `--parent`, because a
+submission has not been triaged yet and those are `accept`'s to choose. The
+defaults are `--type story` and `--source cli`; `--project` is required only when
+the workspace holds more than one project, and an omitted one is refused by the
+core naming how many it found (exit `2`). `--body -` reads the body from standard
+input, the same convention `item new` and `item comment` use. A project that
+declares no status in the triage category has no inbox and the command refuses
+with `no_triage_status`.
+
+```
+$ gintrack inbox list
+ID            TYPE   TITLE                        TRIAGE   SOURCE    RECEIVED
+DEMO-T-0090   task   Checkout times out on 3G     pending  web       2 days ago
+DEMO-T-0091   task   Add a dark theme             snoozed  youtrack  6 days ago
+
+$ gintrack inbox accept DEMO-T-0090 --status todo --parent DEMO-US-0001
+accepted DEMO-T-0090 into todo under DEMO-US-0001; 1 pending
+
+$ cat report.md | gintrack inbox add --title "Checkout hangs on Safari" --body -
+filed DEMO-US-0092  docs/.pmngr/stories/DEMO-US-0092-checkout-hangs-on-safari.md
+pending, source cli
+```
+
+The inbox REST surface is `GET /api/v1/inbox` and `POST /api/v1/items/{id}/triage`
+(§5.5). `integrations.youtrack.land_in_inbox` (doc 03 §6, R-INT-7) is the fourth
+entry point, and the importer honours it: an issue the import **creates** is
+written with the status `core.InboxLandingStatus` decides plus an `inbox:` block
+of `status: pending`, `source: youtrack`, while an issue it **updates** keeps
+the status it has — landing is a decision about arrival, not about every later
+sync. A project that sets the option and declares no triage status has no inbox,
+so the whole import is refused with `no_triage_status` before anything is
+written, preview included.
+
 ---
 
 ## 5. Local REST API
@@ -1272,7 +1757,10 @@ Catalog of `code` values: `unauthorized`, `forbidden`, `not_found`, `invalid_req
 `git_conflict`, `index_unavailable`, `rate_limited`, `not_implemented`, `internal`,
 and the CORS proxy's own: `cors_proxy_disabled`, `cors_proxy_forbidden`,
 `cors_proxy_bad_target`, `cors_proxy_host_not_allowed`, `cors_proxy_target_blocked`,
-`cors_proxy_too_large`, `cors_proxy_upstream_failed` (see the CORS proxy under §5.2).
+`cors_proxy_too_large`, `cors_proxy_upstream_failed` (see the CORS proxy under §5.2),
+and the YouTrack connection's own: `youtrack_not_configured`,
+`youtrack_unauthorized`, `youtrack_forbidden`, `youtrack_not_found`,
+`youtrack_unreachable` (see YouTrack under §5.5).
 
 `wip_limit_exceeded` (HTTP 409) is a *refusal the caller may repeat*: a board's WIP limit is
 advisory (doc 04 R-COL-5), so the move is declined once with the column and the limit in `detail`,
@@ -1340,6 +1828,8 @@ GET /api/v1/capabilities
     "search": "bleve",
     "renderer": "goldmark",
     "tunnel": true,
+    "youtrackSupported": true,
+    "youtrack": false,
     "write": true
   },
   "limits": { "maxUploadBytes": 5242880, "maxItemsPerPage": 500 },
@@ -1350,6 +1840,13 @@ GET /api/v1/capabilities
 
 The web app calls `/api/v1/capabilities` on load (with a 300 ms timeout) to decide between
 browser-only and companion mode; failure is a normal, silent fallback.
+
+`features.youtrackSupported` says this build can reach a tracker at all — only
+the companion can, because browser-only mode has neither the network reach nor
+the token — and `features.youtrack` says at least one served project actually
+declares an `integrations.youtrack` block. The settings card is shown on the
+first flag and filled from the second; browser-only mode reports neither and
+hides the whole feature (GIT-US-0048).
 
 #### Workspaces and repositories
 
@@ -1614,6 +2111,8 @@ DELETE /api/v1/items/{id}               If-Match: <rev>   ?hard=true removes the
 GET    /api/v1/items/{id}/references                      what still points at the item
 POST   /api/v1/items/{id}/tasks         If-Match: <rev>   {"line":34,"checked":true}
 POST   /api/v1/items/{id}/move          If-Match: <rev>   {"status":"in_review"}
+POST   /api/v1/items/{id}/triage        If-Match: <rev>   {"action":"accept|reject|snooze|duplicate", …}
+GET    /api/v1/inbox                                      the triage queue of a project
 GET    /api/v1/items/{id}/comments
 POST   /api/v1/items/{id}/comments   If-Match: <item rev> optional, honored when sent
 GET    /api/v1/items/{id}/links
@@ -1704,6 +2203,16 @@ POST /api/v1/items/ACME-T-0311/comments
   "created":"2026-09-03T10:40:12Z", "rev":"sha256:c41a…9f0" }
 ```
 
+There is no REST route that edits a comment, and there is deliberately none: a
+thread is a conversation, not a record the tool may quietly rewrite. The core
+method **`comment.update`** exists for the one caller that must — the YouTrack
+comment push, writing back the remote comment id it has just learned. It takes
+`{id, path, rev, body?, external?, setExternal?}` under the same optimistic lock
+as every other write (`rev`, with `"*"` as the deliberate wildcard), and
+`setExternal` upserts one entry per system, so a re-delivered push replaces its
+reference instead of appending a second one. It is the reason `internal/server`
+writes no repository file of its own.
+
 **Deleting.** `DELETE` soft-deletes by default (docs/03 §7.1): the file keeps its id, its
 path and its history and gains `deleted: true`, so the id is never reused, a merge cannot
 resurrect a stale copy, and everything that referenced it still resolves — to an item marked
@@ -1772,7 +2281,8 @@ GET  /api/v1/sprints/{id}                   scope, candidates and metrics; ETag:
 POST /api/v1/sprints                        create a sprint; the core allocates the id
 PATCH /api/v1/sprints/{id}                  If-Match (goal, dates, addItems, removeItems)
 POST /api/v1/sprints/{id}/start             If-Match; {force?} to run two at once
-POST /api/v1/sprints/{id}/close             If-Match; {carry:[{ref,action,sprint?,status?}]}
+POST /api/v1/sprints/{id}/close             If-Match; {carry:[…], transfer:{mode,target?}, dryRun?}
+POST /api/v1/sprints/{id}/transfer          If-Match; {mode,target?,carry:[…],dryRun?}
 GET  /api/v1/sprints/{id}/burndown          burndown, cumulative flow, flow times, provenance
 GET  /api/v1/retros                         ?sprint=&board=&state=; carries the open actions
 GET  /api/v1/retros/{id}                    notes, themes by votes, actions; ETag: <retro rev>
@@ -1981,6 +2491,42 @@ Notes on sprints:
   planned one when `sprint` is absent), and `backlog` writes the first `todo` status of that
   project's workflow into the item's own repository. A decision that could not be applied comes
   back with `error` on its `carried` entry, and the closing still goes through.
+- `POST /sprints/{id}/close` also accepts a **bulk** decision and a preview
+  (GIT-US-0085): `{"transfer":{"mode":"next|backlog|none","target":"TEAM-S-0009"}}`
+  expands into a carry decision for every unfinished reference the report grades,
+  and an explicit entry in `carry` always wins over it for the reference it names.
+  `mode` absent, or `none`, is exactly the behaviour above, so an existing caller
+  is unaffected. `{"dryRun":true}` computes the whole report and **writes
+  nothing**: the answer carries `"dryRun": true`, an empty `writes`, and no event
+  is published at all — no `sprint.changed`, no `item.changed`, no commit-on-save.
+- `POST /sprints/{id}/transfer` moves the unfinished references of one sprint
+  without closing anything: `{"mode":"next|backlog|none","target":"…","carry":[…],"dryRun":false}`,
+  `mode` defaulting to `next`. It never edits the source sprint — `items` and
+  `committed` come back untouched — which is what distinguishes it from a close.
+  It requires `If-Match` on the sprint, and a stale revision is `412` carrying
+  the current one.
+
+```json
+POST /api/v1/sprints/TEAM-S-0008/transfer   If-Match: sha256:a1b2…
+{"mode":"next","target":"TEAM-S-0009","carry":[{"ref":"ACME/ACME-US-0042","action":"backlog"}]}
+200
+{ "sprint":{ "sprint":{"id":"TEAM-S-0008","state":"active","items":["…"]} },
+  "report":{"incomplete":[{"ref":"ACME/ACME-US-0042"}],
+            "carried":[{"ref":"ACME/ACME-US-0042","action":"backlog","status":"todo"},
+                       {"ref":"AWEB/AWEB-T-0110","action":"next","sprint":"TEAM-S-0009"},
+                       {"ref":"OPS/OPS-T-0004","action":"backlog","error":"repo_not_cloned"}]},
+  "writes":[{"vaultId":"TEAM","written":[…]},{"vaultId":"ACME","written":[…]}],
+  "dryRun":false }
+```
+
+  A **per-item** failure is not an error: it comes back on its own
+  `report.carried[].error` line with a `200`, and `repo_not_cloned` — a project
+  this machine has not cloned — is the common one (doc 04 R-SPR-8). `writes` is
+  merged to one entry per repository, so a bulk transfer of ten items into one
+  sprint arrives as one entry for the team repository plus one per project clone.
+  A transfer aimed at a sprint whose derived status is `completed` is refused
+  outright with `sprint_target_completed` (409): moving work into a sprint that
+  is over would make its numbers lie.
 
 #### The public tunnel (GIT-US-0043, ADR-027)
 
@@ -2140,6 +2686,82 @@ knowledge-base page) plus the `vaultId` of the repository that answered, so a wo
 returns a row whose source is ambiguous (GIT-US-0016). With `?project=<KEY>`, only the repository
 exposing that key is searched, and an unknown key is a `404`.
 
+
+#### The inbox (GIT-US-0056, ADR-033)
+
+A project whose workflow declares a status in the reserved `triage` category has
+an inbox: a queue of submissions waiting for a decision. A project that declares
+none simply has no inbox — listing it answers an empty queue, and filing
+something into it is refused with `no_triage_status` (409), which the user fixes
+in `project.yaml` rather than by retrying.
+
+```json
+GET /api/v1/inbox?project=ACME&status=pending&limit=50
+200
+X-Total-Count: 12
+{
+  "items":[{"id":"ACME-US-0101","type":"story","title":"Checkout times out",
+            "status":"triage","inbox":{"status":"pending","source":"web",
+                                       "received":"2026-09-13T09:12:00Z"}, "rev":"sha256:…"}],
+  "nextCursor":"","total":12,
+  "counts":{"pending":9,"accepted":1,"rejected":1,"snoozed":1,"duplicate":0},
+  "pending":9
+}
+```
+
+Query parameters: `project`, `status` (repeatable), `type`, `label`, `assignee`,
+`q`/`text`, `sort`, `order`, `limit` (capped at 500), `cursor`, `fields`.
+`status` is the **triage** state — `pending`, `accepted`, `rejected`, `snoozed`,
+`duplicate` — and never a workflow status; anything else is `invalid_request`.
+`counts` and `pending` are computed over the **whole queue**, not the page, and a
+snoozed item whose date has arrived is counted as pending again, because that is
+what a reader sees.
+
+One decision empties one row:
+
+```json
+POST /api/v1/items/ACME-US-0101/triage    If-Match: sha256:…
+{"action":"accept","status":"backlog","parent":"ACME-EP-0007"}
+200
+ETag: "sha256:…"
+{"item":{"id":"ACME-US-0101","status":"backlog", …},"action":"accept",
+ "pending":8,"writes":{"written":[…]}}
+```
+
+`action` is `accept`, `reject`, `snooze` (with `snoozedUntil`, `YYYY-MM-DD`) or
+`duplicate` (with `duplicateOf`). The route requires `If-Match` on the item:
+without it, `precondition_required` (428); with a revision that is no longer
+current, `412` carrying `currentRev` and the conflicting fields. `If-Match: *`
+overwrites unconditionally, as everywhere else. A `duplicate` decision writes two
+files — the entry and the item it points at — in one write set.
+
+Every triage, and every create that files an item straight into the queue,
+publishes `inbox.changed` (§5.6).
+
+**What the exclusion covers, and what it does not.** A triage item is invisible
+to every *planning* surface: `GET /api/v1/items` excludes it by default, and
+board views, sprint views, sprint candidates and sprint metrics exclude it
+**unconditionally** — a hand-edited sprint file naming a triage item reports it
+as unresolved, never as work, so a busy inbox moves no burndown point and a
+board column that names the `triage` status still renders empty (ADR-033,
+`internal/core/triageexclusion_test.go`).
+
+**Search is deliberately not one of those surfaces.** `GET /api/v1/search` and
+the MCP `search_items` tool still find a triage item by text. The exclusion is a
+property of a `Filter`, and search takes none: excluding there would make a
+submission unfindable from every surface at once — the quick switcher included —
+which contradicts the rule that an item is real from the moment it is submitted
+and still readable by id. A search hit carries no estimate, no status category
+and no column, so nothing reaches a planning number through it.
+`TestSearchStillFindsATriageItem` pins that behaviour, and changing it means
+changing ADR-033 first.
+
+A project created before the inbox existed declares no `triage` status and
+therefore has no inbox at all: the listing is empty, the sidebar entry and the
+capture form render nothing, and filing into it is `no_triage_status` (409).
+There is no migration — adding a status in the `triage` category to
+`project.yaml` is the whole opt-in.
+
 #### Sync and git
 
 ```http
@@ -2159,8 +2781,561 @@ POST /api/v1/sync/conflicts/resolve         {"repo":"TEAM","path":"…",
                                              "content":"…","fields":{…},"hunks":{…},
                                              "hunkText":{…},"continue":true}
 POST /api/v1/sync/abort
+GET  /api/v1/sync/jobs                      ?state=&kind=&limit=&cursor=
+GET  /api/v1/sync/jobs/{id}                 one job, with its attempts and redacted error
+POST /api/v1/sync/jobs/{id}/retry           re-queue a failed or cancelled job
+POST /api/v1/sync/jobs/{id}/cancel          withdraw a queued or running job
+GET  /api/v1/sync/settings                  the git half and the engine half together
+PATCH /api/v1/sync/settings                 {"pullStrategy":"rebase","workers":4,"rate":10}
 GET  /api/v1/git/log?item=ACME-T-0311&limit=20
 ```
+
+
+#### Background jobs and the engine settings (GIT-US-0078)
+
+Six endpoints over the companion's job engine, inside the `/sync` subtree
+because it is the same feature area. All of them sit behind the bearer token.
+There is deliberately **no** endpoint that enqueues an arbitrary job: kinds are
+created by the feature that owns them (import, comment push, knowledge-base
+publish), and a generic enqueue would be an unauthenticated-by-shape way to
+drive this companion's outbound HTTP.
+
+```http
+GET /api/v1/sync/jobs?state=queued&kind=youtrack.import&limit=100&cursor=job_000021
+200
+{
+  "jobs":[
+    {"id":"job_000021","kind":"youtrack.import","key":"ACME","state":"queued",
+     "attempts":0,"createdAt":"2026-09-13T11:00:00Z","updatedAt":"2026-09-13T11:00:00Z"},
+    {"id":"job_000022","kind":"youtrack.import","key":"ACME","state":"failed",
+     "attempts":5,"createdAt":"2026-09-13T10:58:00Z","updatedAt":"2026-09-13T10:59:12Z",
+     "nextAttempt":"2026-09-13T11:01:00Z","deadLetter":true,
+     "lastError":{"attempt":5,"class":"terminal","message":"403 Forbidden",
+                  "at":"2026-09-13T10:59:12Z"}}
+  ],
+  "nextCursor":"job_000031","total":42,
+  "counts":{"queued":12,"running":2,"done":26,"failed":2,"cancelled":0},
+  "running":2,"deadLetter":2,"engine":true
+}
+```
+
+| Parameter | Meaning |
+| --- | --- |
+| `state` | Repeatable: `queued`, `running`, `done`, `failed`, `cancelled`. Any other value is `invalid_request`. |
+| `kind` | Repeatable; matches the job kind exactly. |
+| `limit` | Page size, default 100, capped at `maxItemsPerPage` (500). |
+| `cursor` | The `nextCursor` of the previous page — the id the next page starts at. |
+
+`counts` is the whole queue, not the page, and `X-Total-Count` carries the
+number of jobs that matched the filter. **A job's payload is never rendered**:
+it is the one field of a job this layer cannot vouch for, and nothing in the UI
+reads it. `lastError.message` is the message the engine recorded, with every
+credential it recognized already redacted.
+
+`GET /api/v1/sync/jobs/{id}` answers the same object for one job, or
+`sync_job_not_found` (404) — which is also what a job pruned after the retention
+window answers.
+
+**Retry and cancel** are the only two transitions a caller may ask for, and each
+is refused from a state it cannot be made from, with a problem document naming
+that state:
+
+| Endpoint | Allowed from | Refused with |
+| --- | --- | --- |
+| `POST /api/v1/sync/jobs/{id}/retry` | `failed`, `cancelled` | `sync_job_not_retryable` (409) |
+| `POST /api/v1/sync/jobs/{id}/cancel` | `queued`, `running` | `sync_job_not_retryable` (409) |
+
+A **failed** job is re-queued in place: it keeps its id, its history and its
+last error, and gets a fresh attempt budget. A **cancelled** job cannot be — the
+engine's state machine has no edge out of `cancelled`, by design — so it is
+re-queued as a *new* job with the same kind, key and payload, and the answer
+carries the new id. Both publish the matching `sync.job.*` event (§5.6).
+
+```http
+POST /api/v1/sync/jobs/job_000022/retry
+200
+{"id":"job_000022","kind":"youtrack.import","key":"ACME","state":"queued","attempts":0, …}
+
+POST /api/v1/sync/jobs/job_000021/cancel
+200
+{"id":"job_000021","kind":"youtrack.import","state":"cancelled","attempts":0, …}
+
+POST /api/v1/sync/jobs/job_000030/cancel
+409
+{"type":"https://git-in-track.dev/problems/sync-job-not-retryable",
+ "title":"Sync job not retryable","status":409,"code":"sync_job_not_retryable",
+ "detail":"Job job_000030 is done: only a queued or running job can be cancelled."}
+```
+
+**Settings.** `GET /api/v1/sync/settings` answers both halves of the sync
+configuration in one document — the git half of GIT-US-0021 and the engine half
+of GIT-US-0084 — and `PATCH` changes either:
+
+```http
+GET /api/v1/sync/settings
+200
+{ "pullStrategy":"rebase","pushOnSync":true,"maxPushRetries":3,"supported":true,
+  "engine":{"workers":2,"batchSize":20,"rate":5,"maxAttempts":5,
+            "retentionHours":168,"drainSeconds":5,"running":true},
+  "persisted":false }
+
+PATCH /api/v1/sync/settings   {"workers":4,"rate":10}
+200
+{ …, "engine":{"workers":4,"batchSize":20,"rate":10, …}, "persisted":true }
+```
+
+The four engine knobs may be sent flat, as above, or nested under `"engine"`;
+the nested form wins when both are present. `workers`, `batchSize` and `rate`
+**take effect on the running engine at once** — the pool is resized and the
+shared limiter re-rated without a restart. `maxAttempts` is fixed when the
+engine is built, so it is recorded and applies from the next start.
+
+Out-of-range values are refused with `invalid_request` (400) naming the field;
+the ranges are the table in §4.1. `persisted` follows the same contract as
+`PATCH /api/v1/git/settings`: it is `true` only when the change reached the
+configuration file, which for the engine half means the `sync.engine` section
+of §3.2. A companion started without a configuration file — `serve --repo`, or a
+test — keeps the change for the life of the process and answers `false`.
+
+| Code | Status | Meaning |
+| --- | --- | --- |
+| `sync_job_not_found` | 404 | No job of this queue has that id. |
+| `sync_job_not_retryable` | 409 | The job exists and is in a state the transition cannot be made from. |
+| `sync_engine_not_running` | 503 | The engine has been closed, or was never started. |
+
+#### YouTrack (GIT-US-0052, GIT-EP-0011, ADR-032)
+
+The browser never talks to YouTrack. It asks the companion, the companion holds
+the token and the companion makes the call, which is what keeps the credential
+on one machine and out of every devtools network log. There is no generic
+pass-through endpoint, for the same reason ADR-025 refuses to generalise the
+CORS proxy: only the calls the UI needs exist.
+
+```http
+GET   /api/v1/youtrack/settings?key=DEMO     the connection of one project, token excluded
+PATCH /api/v1/youtrack/settings?key=DEMO     sparse write of both halves
+POST  /api/v1/youtrack/test?key=DEMO         probe the connection, saved or typed
+GET   /api/v1/youtrack/projects?key=DEMO&q=  the instance's projects, for the autosuggest
+GET   /api/v1/youtrack/fields?key=DEMO&project=ACME   the remote project's custom fields
+GET   /api/v1/youtrack/issues?key=DEMO&q=&preset=&limit=&cursor=   search, for the import picker
+POST  /api/v1/youtrack/import/preview?key=DEMO   what an import would do; writes nothing
+POST  /api/v1/youtrack/import?key=DEMO           queue the import; answers a job id
+POST  /api/v1/youtrack/comments/push?key=DEMO    queue a comment push; answers a job id
+GET   /api/v1/youtrack/kb/status?key=DEMO&path=&recursive=&remote=   page sync states
+POST  /api/v1/youtrack/kb/publish?key=DEMO       queue a publish; answers a job id
+POST  /api/v1/youtrack/kb/pull?key=DEMO          queue a pull; answers a job id
+```
+
+`key` is the **git-in-track** project key and may be omitted when the companion
+serves exactly one project; with several it is required, and its absence is
+`400 invalid_request`. `project` on `/fields` is the **YouTrack** project, short
+name or internal id, and defaults to the linked one.
+
+```json
+GET /api/v1/youtrack/settings?key=DEMO
+200
+{ "projectKey": "DEMO", "configured": true,
+  "url": "https://yt.example.com/youtrack", "project": "ACME",
+  "fieldMap": { "status": { "field": "State",
+                           "values": { "In Progress": "in_progress", "Fixed": "done" } },
+                "priority": { "field": "Priority" } },
+  "pushComments": "manual", "kbSync": "manual", "kbSyncDirection": "push",
+  "hasToken": true, "tokenSource": "file", "persisted": false,
+  "repo": "acme-api", "projectPath": "docs/.pmngr/project.yaml" }
+```
+
+There is no `token` field and there never will be one: `hasToken` and
+`tokenSource` (`flag` | `env` | `file` | `none`) report everything a UI needs
+about the credential without rendering it.
+
+##### The shape of `fieldMap` (GIT-US-0065)
+
+A field map answers two questions, and it used to be able to answer only the
+first: *which* YouTrack custom field carries a git-in-track field, and *what*
+one of that field's values means here.
+
+Over the wire every entry is an object:
+
+```json
+"fieldMap": {
+  "status":   { "field": "State", "values": { "In Progress": "in_progress" } },
+  "priority": { "field": "Priority" }
+}
+```
+
+`field` is the YouTrack custom field **name** — not its id, which is
+instance-local. `values` maps a YouTrack value **name** onto the git-in-track
+value it means: a status id for `status`, one of the four core priorities for
+`priority`, an item type for `type`. The lookup is case-insensitive on the
+trimmed value, and a configured value map is *overlaid on* the shipped
+translations rather than replacing them, so mapping one unusual state does not
+forget what `Fixed` means.
+
+The whole block — the field names *and* the value maps — is what the companion
+hands to the importer, so the preview and the import that follows it read one
+table. A value map is therefore never preview-only: the status an issue is shown
+as landing on is the status it lands on.
+
+Only those three keys accept `values`. They are exactly the three the importer
+translates value by value; a `values` block on any other key is refused with
+`field_map.<key>.values` rather than stored and ignored. A `PATCH` may still send
+the flat string form — `{"status": "State"}` — and it means the same as
+`{"status": {"field": "State"}}`.
+
+In `project.yaml` the flat form is likewise still a bare scalar, and an entry
+with no value map is *written back* as one, so the file only grows nesting a
+project actually asked for:
+
+```yaml
+integrations:
+  youtrack:
+    field_map:
+      priority: Priority          # the flat form, unchanged
+      status:
+        field: State
+        values:
+          In Progress: in_progress
+          Fixed: done
+```
+
+The accepted keys are `status`, `priority`, `type`, `assignee`, `estimate` and
+`milestone`. `labels`, `due` and `sprint` were accepted by earlier builds and
+read by nothing: they are now refused with a message saying why — labels travel
+as YouTrack tags rather than through a custom field, and neither a due date nor a
+sprint is read from one.
+
+##### The issue search (GIT-US-0054)
+
+`GET /api/v1/youtrack/issues` is what the import dialog types into. It is a
+search and not a cache: nothing it returns is written to the index, and the
+instance stays the authority on what matches.
+
+| Parameter | Meaning |
+| --- | --- |
+| `q` | a YouTrack issue query, as the user typed it |
+| `preset` | one of `epics`, `stories`, `tasks`, `versions`, `unresolved`; anything else is `400 invalid_request` naming the field |
+| `limit` | page size, default 50, clamped to 200 |
+| `cursor` | opaque; the `nextCursor` of the previous page |
+
+The effective query is `project: {<shortName>}`, then `q`, then the preset
+clause, and it **always ends with `order by: created asc`**. The ordering is not
+a nicety: YouTrack is free to re-order between two requests, so a `$skip` walk
+over an unordered query silently skips and duplicates rows between keystrokes.
+The composed query is echoed in the answer so a user can see what their typing
+became; it carries no credential.
+
+```json
+GET /api/v1/youtrack/issues?key=DEMO&q=checkout&preset=stories&limit=2
+200
+{ "projectKey": "DEMO", "project": "ACME",
+  "query": "project: {ACME} checkout Type: {User Story} order by: created asc",
+  "preset": "stories", "limit": 2,
+  "items": [
+    { "id": "2-1041", "idReadable": "ACME-42", "summary": "Guest checkout",
+      "type": "User Story", "state": "In Progress", "assignee": "marta",
+      "updated": "2026-09-13T10:00:00Z",
+      "url": "https://yt.example.com/youtrack/issue/ACME-42",
+      "linked": { "itemId": "DEMO-US-0001", "type": "story",
+                  "status": "in_progress", "title": "Guest checkout" } },
+    { "id": "2-1042", "idReadable": "ACME-43", "summary": "Saved cards",
+      "type": "Task", "state": "Open", "assignee": "jose",
+      "updated": "2026-09-12T08:14:00Z",
+      "url": "https://yt.example.com/youtrack/issue/ACME-43",
+      "linked": null }
+  ],
+  "nextCursor": "Mg" }
+```
+
+`linked` is resolved **locally**, from the index, by the pair
+`(external.system, external.id)`: whether an issue has already been imported is
+a fact about this repository, so the picker gets its "already imported" badge
+without a second round trip. It is `null` when nothing claims the issue.
+
+The `versions` preset is not a query at all. A version is a value of the
+project's version bundle, resolved through the custom-field settings of the
+field the project's `field_map` names for `milestone` (default `Fix versions`),
+and the values are returned in the same envelope with `"type": "version"` so the
+picker renders one list:
+
+```json
+GET /api/v1/youtrack/issues?key=DEMO&preset=versions
+200
+{ …, "items": [
+    { "id": "v-1", "idReadable": "1.0", "summary": "1.0", "type": "version",
+      "released": true, "linked": null },
+    { "id": "v-2", "idReadable": "2.0", "summary": "2.0", "type": "version",
+      "releaseDate": "2026-01-01", "linked": null } ] }
+```
+
+Archived versions are left out unless `archived=true` is passed. Upstream
+failures map to the `youtrack_*` codes of the table below, and neither the token
+nor the `Authorization` header ever reaches a response, a problem document or a
+log line.
+
+##### Running an import (GIT-US-0047, GIT-US-0050)
+
+Both import routes take `internal/vault.YouTrackImportParams` as the body —
+`{query | ids[], depth, includeLinks, includeComments, includeAttachments}` —
+and the `?key=` of this subtree. They differ in who waits:
+
+`POST /api/v1/youtrack/import/preview` is **synchronous**. It writes nothing, so
+the dialog can wait for it, and the answer is the plan: what each issue would
+become, which item an update would patch and what could not be resolved.
+
+```json
+POST /api/v1/youtrack/import/preview?key=DEMO
+{"ids":["ACME-42"],"depth":1,"includeComments":true}
+200
+{ "project": "DEMO",
+  "issues": [ { "youtrackId": "ACME-42", "title": "Guest checkout",
+                "mappedType": "story", "action": "create", "depth": 0,
+                "comments": 3, "warnings": [] } ],
+  "warnings": [] }
+```
+
+`POST /api/v1/youtrack/import` **queues**. A hundred issues are a hundred
+requests against somebody else's rate limit, and holding an HTTP response open
+across that is exactly what the background engine exists to avoid, so the answer
+is `202 Accepted` with a job id:
+
+```json
+POST /api/v1/youtrack/import?key=DEMO
+{"query":"#Unresolved","includeAttachments":true}
+202
+{ "jobId": "job_000021", "projectKey": "DEMO", "repo": "acme-api", "queued": true }
+```
+
+From there the job narrates itself on `sync.job.*` (§5.6) and is inspectable at
+`GET /api/v1/sync/jobs/{id}` (§5.5). It imports in batches — one batch is one
+vault call and one commit — so a cancelled import keeps every batch that already
+landed and reports how far it got. **This route is always asynchronous.** There is no request that makes it answer
+a finished import, so a client needs no branch for one: the answer is always
+`202` with `{jobId, projectKey, repo, queued}` and `queued` is always `true`.
+The only synchronous half of an import is `/import/preview`, which writes
+nothing. `queued` is spelled out anyway so that a client reading either this
+shape or a `vault.YouTrackImportResult` from the MCP tool can tell them apart
+without inspecting which keys are present. A project with no usable connection is refused **here**,
+before anything is queued, rather than inside a job nobody is watching.
+
+##### Pushing a comment (GIT-US-0068, GIT-US-0076)
+
+`POST /api/v1/youtrack/comments/push` is what the **Send to YouTrack** action on
+a comment calls. Like every outbound write to a tracker it **queues**, and the
+answer is `202 Accepted` carrying the job id and what the vault decided about
+each comment:
+
+```json
+POST /api/v1/youtrack/comments/push?key=DEMO
+{"itemId":"DEMO-US-0001","commentPath":"docs/.pmngr/comments/DEMO-US-0001/20260901T104512Z-marta.md"}
+
+202
+{ "project": "DEMO", "itemId": "DEMO-US-0001", "jobId": "job_000032",
+  "pushed":  [ { "commentPath": "docs/.pmngr/comments/DEMO-US-0001/20260901T104512Z-marta.md" } ],
+  "skipped": [ { "commentPath": "docs/.pmngr/comments/DEMO-US-0001/20260902T091200Z-jose.md",
+                 "youtrackCommentId": "4-19",
+                 "url": "https://yt.example.com/youtrack/issue/DEMO-42#focus=Comments-4-19",
+                 "reason": "the comment is already on the issue" } ],
+  "failed":  [] }
+```
+
+Give `commentPath` for one comment or `all: true` for the whole thread — one or
+the other; neither and both are refused with a field-level `invalid_request`.
+
+Three things a client must not get wrong:
+
+- **`pushed` means *queued*.** It is not evidence the comment arrived. The
+  evidence is the comment's own `external` entry, which the job writes when the
+  post came back, and which `skipped` echoes for a comment that already had one.
+- **The coalescing key is the comment path, not the item id.** A burst of edits
+  to one comment is one push; two comments of the same item stay two.
+- **An item that mirrors no issue is refused here**, before anything is queued,
+  and non-retryably: there is nowhere to post, and no number of attempts creates
+  a link only a user can create. A project with no usable connection is likewise
+  refused in this call rather than inside a job nobody is watching, with the same
+  five `youtrack_*` problem codes as the rest of the subtree.
+
+A comment deleted locally is **never** deleted remotely: there is no job for it
+and deliberately none.
+
+With `integrations.youtrack.push_comments: auto` the route is unnecessary — every
+comment written on a linked item is queued by the same seam in the vault's
+`comment.add`, on every surface. Flipping the setting is not retroactive: it
+governs comments written from then on.
+
+##### Knowledge-base synchronization (GIT-US-0087, GIT-US-0090)
+
+Three routes over the three core methods `youtrack.kb.status`,
+`youtrack.kb.publish` and `youtrack.kb.pull`. The handlers hold no sync logic:
+status compares what the repository knows, publish and pull queue a background
+job, and the engine does the work.
+
+They are mounted under `/youtrack/kb/…` with the `?key=` convention of the rest
+of that subtree, and — from the same handlers — inside every `/kb` mount, so the
+scoped spellings work too and cannot drift from the flat one:
+
+```http
+GET  /api/v1/projects/{key}/kb/youtrack/status
+GET  /api/v1/teams/{key}/kb/youtrack/status
+GET  /api/v1/kb/youtrack/status?project=DEMO
+```
+
+A project with no `integrations.youtrack` block answers **404** on all three:
+the routes are gated on `features.youtrack`, which is false precisely when
+nothing is linked.
+
+```json
+GET /api/v1/youtrack/kb/status?key=DEMO&path=docs&recursive=true
+200
+{ "project": "DEMO",
+  "pages": [ { "path": "docs/index.md", "linked": true, "articleId": "DEMO-A-1",
+               "url": "https://yt.example.com/youtrack/articles/DEMO-A-1",
+               "state": "in_sync", "syncedAt": "2026-09-13T12:00:00Z" },
+             { "path": "docs/architecture/overview.md", "linked": false,
+               "state": "unlinked" } ],
+  "remote": false }
+```
+
+`state` is one of `unlinked`, `in_sync`, `local_ahead`, `remote_ahead` and
+`conflict`. `remote` asks the route to read each linked article and is **never
+defaulted on**: it is one request per page, and a tree view of a documentation
+folder would otherwise become hundreds of them against somebody else's rate
+limit. The answer repeats `remote` so a caller can tell "in sync as far as the
+repository knows" from "in sync, checked". A page whose article could not be read
+carries an `error` and does not fail the call: one unreachable article must not
+hide the state of every other page.
+
+```json
+POST /api/v1/youtrack/kb/publish?key=DEMO
+{"path":"docs","recursive":true}
+202
+{ "project": "DEMO", "jobId": "job_000031",
+  "pages": ["docs/index.md","docs/architecture/overview.md"] }
+```
+
+`POST /api/v1/youtrack/kb/pull` takes and answers the same shape. Both queue: the
+answer names the job and the pages it selected, and the job narrates itself on
+`sync.job.*` (§5.6). A host with no engine or no client is `unavailable`; a path
+that selects no page is `404`.
+
+A page **both sides changed** is never merged. The job writes
+`<page>.conflict.md` beside it, leaves the original untouched and reports the
+page as `conflict` — which is what makes `gintrack youtrack kb push --wait` exit
+`5` rather than claiming success (§4.15).
+
+```json
+PATCH /api/v1/youtrack/settings?key=DEMO
+{"url":"https://yt.example.com/youtrack","project":"ACME",
+ "fieldMap":{"status":"State"},"pushComments":"auto","token":"perm:…"}
+
+200
+{ …, "pushComments": "auto", "hasToken": true, "tokenSource": "file",
+  "persisted": true }
+```
+
+The body is sparse: an absent key is left alone, a present one is written. `url`,
+`project`, `fieldMap`, `pushComments`, `kbSync` and `kbSyncDirection` are the
+committed half and go into `project.yaml` through a surgical YAML edit that keeps
+every comment and every key the Go structs do not model. `token` is write-only
+and goes into the machine-local configuration file; an empty string forgets the
+stored credential. A settings change that would not load back is refused with
+`400 invalid_request` **before** anything is written, so `project.yaml` is never
+left half-edited.
+
+`persisted` follows the git-settings contract exactly: `false` means the running
+process took the token change but the server has no configuration file to write
+it to (`serve --repo`, or a test), so it will not survive a restart. It says
+nothing about the `project.yaml` half, which is written to a file by definition.
+
+```json
+POST /api/v1/youtrack/test?key=DEMO
+{}                                  // or {"url":"…","token":"…"} to test before saving
+
+200
+{ "ok": true, "baseUrl": "https://yt.example.com/youtrack", "login": "jose",
+  "fullName": "Jose F. Rives", "email": "jose@example.com", "project": "ACME" }
+```
+
+Testing with a body carries a URL and a token that have not been saved, which is
+what the settings card uses before the user presses save; nothing is written
+either way. Every failure is an RFC 7807 document whose `code` says which of
+them it was:
+
+| `code`                    | Status | Means                                                        |
+| ------------------------- | ------ | ------------------------------------------------------------ |
+| `youtrack_not_configured` | 409    | no `integrations.youtrack` block, or no stored token          |
+| `youtrack_unauthorized`   | 502    | YouTrack answered 401: the permanent token was rejected       |
+| `youtrack_forbidden`      | 502    | YouTrack answered 403: the account lacks permission           |
+| `youtrack_not_found`      | 502    | YouTrack answered 404: the URL is missing its context path    |
+| `youtrack_unreachable`    | 502    | transport failure, a 5xx after the retries, or a timeout      |
+| `rate_limited`            | 429    | the instance is throttling this client                        |
+
+An upstream failure is a **502**, not the status YouTrack returned: answering
+401 here would tell a browser that its own session had expired, which is exactly
+the wrong thing to believe. The `code` carries the distinction instead. No
+`detail` ever contains the token — `internal/youtrack` redacts it on every error
+path and the handler never renders an error's cause itself.
+
+```json
+GET /api/v1/youtrack/projects?key=DEMO&q=ac
+200
+{ "projects": [ { "id": "0-1", "shortName": "ACME", "name": "ACME API",
+                  "archived": false } ],
+  "total": 1, "limit": 100 }
+```
+
+```json
+GET /api/v1/youtrack/fields?key=DEMO&project=ACME
+200
+{ "project": "ACME",
+  "fields": [ { "id": "f1", "name": "State", "type": "state[1]",
+                "bundleId": "b1", "bundleType": "StateBundle",
+                "canBeEmpty": false, "bundled": true,
+                "values": [
+                  { "id": "v1", "name": "In Progress", "label": "In Progress",
+                    "ordinal": 1, "archived": false,
+                    "background": "#25a4d4", "foreground": "#ffffff",
+                    "isResolved": false },
+                  { "id": "v2", "name": "Fixed", "label": "Fixed",
+                    "ordinal": 2, "archived": false, "isResolved": true } ] },
+              { "id": "f3", "name": "Customer", "type": "string",
+                "canBeEmpty": true, "bundled": false,
+                "warnings": ["field \"Customer\" has no bundle, so it has no enumerable values"] } ],
+  "total": 2,
+  "gintrackFields": ["status","priority","type","assignee","estimate","milestone"],
+  "valueMappableFields": ["status","priority","type"] }
+```
+
+The endpoint resolves each field's **values** as well as its name, in one call,
+which is what makes a per-value mapping configurable at all. Read it this way:
+
+- `name` is the key a mapping is written against; `label` is what to display. A
+  localized name changes with the UI language and an id is instance-local, so
+  neither may be persisted.
+- `bundled` says whether the field's values are enumerable. It is `false` for a
+  text, date, integer or period field, and for a bundle kind this build cannot
+  read — and `values` is then empty **without that being a failure**. Nothing is
+  dropped silently: the field comes back in place with a `warnings` entry saying
+  why it is empty. Warnings are already token-redacted.
+- `isResolved` is **omitted** rather than `false` when the instance did not say.
+  An unknown flag must not read as "not done", because that is what a default
+  status proposal would act on.
+- `archived` marks a value that still exists on old issues but is no longer
+  offered: grey it out rather than hiding a mapping that is still in force.
+- `valueMappableFields` is the subset of `gintrackFields` whose values can be
+  mapped one by one. Render a value table only for those three.
+
+Only a rejected token (401) fails the whole call — nothing else would succeed
+either. A bundle that cannot be read for any other reason leaves its field in
+the answer with a warning.
+
+Both discovery endpoints are safe to call on a keystroke: the page is capped at
+`limit` server-side, the client is cached per project so every call shares one
+token-bucket limiter (five requests per second), and the UI debounces on top.
+`gintrackFields` is the left-hand side of a field mapping, so the settings card
+gets both halves from one call instead of hard-coding the list in the frontend.
+
+Each call is bounded by a 15 s timeout inside the router's 30 s one and honours
+request cancellation: closing the settings card cancels the call in flight.
 
 #### The CORS proxy (GIT-US-0042, docs/06 §6.3, ADR-025)
 
@@ -2434,6 +3609,66 @@ Event types and `data` schemas:
   "data": { "repo":"TEAM", "path":".pmngr/boards/platform-kanban.md",
             "resolution":"merged", "continued":true, "remaining":0 } }
 
+// inbox.changed — one triage decision, or one submission filed straight into
+// the queue. `pendingCount` is the whole queue, so a sidebar badge never needs
+// a second call (§5.5, ADR-033).
+{ "type":"inbox.changed",
+  "data": { "repo":"acme-api", "project":"ACME", "id":"ACME-US-0101",
+            "action":"created|accept|reject|snooze|duplicate",
+            "pendingCount":8, "origin":"api", "requestId":"…" } }
+
+// sprint.changed — a sprint whose scope moved: a close, or a transfer of its
+// unfinished work. One `item.changed` is published per reference that actually
+// moved, so a backlog view refreshes the items and not only the board. A dry
+// run publishes neither (§5.5, GIT-US-0085).
+{ "type":"sprint.changed",
+  "data": { "sprint":"TEAM-S-0008", "board":"platform-scrum", "state":"active",
+            "carried":3, "failed":1, "origin":"api", "requestId":"…" } }
+
+// sync.job.* — the companion's background job engine (GIT-US-0074). Five
+// topics share one payload shape:
+//
+//   sync.job.queued     a job entered the queue for the first time
+//   sync.job.started    a worker picked it up
+//   sync.job.progress   a coalesced count of how far a batch has got
+//   sync.job.done       it succeeded, or was cancelled (`state` says which)
+//   sync.job.failed     it exhausted its attempts or hit a terminal error
+{ "type":"sync.job.queued",
+  "data": { "id":"job_000021", "kind":"youtrack.import", "key":"ACME",
+            "state":"queued", "attempt":0, "processed":0, "total":20 } }
+
+{ "type":"sync.job.progress",
+  "data": { "id":"job_000021", "kind":"youtrack.import", "key":"ACME",
+            "state":"done", "attempt":1, "processed":7, "total":20 } }
+
+// A handler that knows how far it has got publishes the same topic with a
+// wider payload: `jobId`, `done`, `total` and `currentId` — the unit it has
+// just finished — plus `failed`, the per-unit failures it accumulated without
+// failing the job. `id` and `processed` repeat `jobId` and `done` under the
+// names the engine's own events use, so one client-side reader handles both
+// sources without branching on which produced the frame. It is published once
+// per batch (an import) or once per page (a knowledge-base job), never per
+// item.
+{ "type":"sync.job.progress",
+  "data": { "jobId":"job_000021", "id":"job_000021", "kind":"youtrack.import",
+            "key":"ACME", "state":"running", "done":40, "processed":40,
+            "total":120, "currentId":"ACME-57", "failed":1 } }
+
+// youtrack.kb.conflict — a knowledge-base page and the article it mirrors both
+// changed since the last synchronization (GIT-US-0087). The page is left
+// exactly as it is and the incoming content is written to `conflictPath`;
+// there is no three-way merge and there is deliberately none. `direction` is
+// the job that found it, `publish` or `pull`.
+{ "type":"youtrack.kb.conflict",
+  "data": { "project":"DEMO", "path":"docs/handbook/onboarding.md",
+            "conflictPath":"docs/handbook/onboarding.conflict.md",
+            "articleId":"ACME-A-3", "direction":"pull" } }
+
+{ "type":"sync.job.failed",
+  "data": { "id":"job_000022", "kind":"youtrack.import", "key":"ACME",
+            "state":"failed", "attempt":5, "processed":8, "total":20,
+            "error":"403 Forbidden", "errorClass":"terminal" } }
+
 // tunnel.changed — the public tunnel moved between states. `data` is exactly
 // the document GET /api/v1/tunnel returns, so a tab that was not the one to
 // open the tunnel stops showing this workspace as private.
@@ -2443,6 +3678,29 @@ Event types and `data` schemas:
             "connections":4, "since":"2026-09-06T09:12:49Z",
             "error":"", "tokenConfigured":true } }
 ```
+
+**`sync.job.*` payloads carry bookkeeping only** — ids, kinds, counts, a
+message the engine already redacted — and never the job's payload, for the same
+reason the queue journal does not: everything here reaches every connected
+browser. `processed` and `total` count the *coalescing group* the job belongs to
+(its kind and its key), which is the unit the engine hands to a handler as one
+batch and the unit a progress bar renders.
+
+`sync.job.progress` is **coalesced**: at most one every 500 ms per coalescing
+group, carrying the running counts rather than one frame per item. A terminal
+event — `done` or `failed` — is never throttled, so the last thing a client
+hears about a job is always the truth about it. `sync.job.started` is part of
+the contract and is published when the engine reports the queued → running
+transition.
+
+Even so, a client **may miss frames**. The hub's back-pressure policy is the one
+in §6.2: a client that lets its 256-event buffer fill up is sent
+`stream.overflow` and disconnected, and a long import can outrun a slow tab.
+The stream is therefore a live hint, never the source of truth: after a
+reconnect, or after any `stream.overflow` or `resume.gap`, a client
+**reconciles from `GET /api/v1/sync/jobs`**, which answers the engine's own
+consistent snapshot. A reconnect with `resume` is served the missed events from
+the replay ring when they are still in it, exactly as for every other topic.
 
 Client→server frames: `subscribe`, `unsubscribe`, `resume`, `ping`. The server sends a
 protocol-level ping every 30 s and closes idle connections after two missed pongs.

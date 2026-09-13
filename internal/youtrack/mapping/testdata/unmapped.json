@@ -1,0 +1,29 @@
+{
+  "id": "2-900",
+  "idReadable": "ACME-99",
+  "summary": "Spike: evaluate WebAuthn libraries",
+  "description": "",
+  "created": 1767240000000,
+  "updated": 1767240000000,
+  "resolved": null,
+  "project": { "id": "0-1", "name": "Acme Platform", "shortName": "ACME" },
+  "reporter": { "id": "1-3", "fullName": "Reporter Without Login" },
+  "customFields": [
+    { "id": "110-1", "name": "Type", "$type": "SingleEnumIssueCustomField", "value": { "id": "70-9", "name": "Spike", "$type": "EnumBundleElement" } },
+    { "id": "110-2", "name": "State", "$type": "StateIssueCustomField", "value": { "id": "71-9", "name": "Parked", "isResolved": false, "$type": "StateBundleElement" } },
+    { "id": "110-3", "name": "Priority", "$type": "SingleEnumIssueCustomField", "value": { "id": "72-9", "name": "Nice to have", "$type": "EnumBundleElement" } },
+    { "id": "110-5", "name": "Estimation", "$type": "PeriodIssueCustomField", "value": { "id": "0", "presentation": "about a fortnight", "$type": "PeriodValue" } },
+    { "id": "110-6", "name": "Effort", "$type": "SimpleIssueCustomField", "value": 13 },
+    { "id": "110-7", "name": "Empty", "$type": "SingleEnumIssueCustomField", "value": { "id": "", "$type": "EnumBundleElement" } }
+  ],
+  "links": [
+    { "id": "97-1s", "direction": "BOTH",
+      "linkType": { "id": "97-1", "name": "Subtask", "sourceToTarget": "parent for", "targetToSource": "subtask of", "directed": true, "aggregation": true },
+      "issues": [ { "id": "2-901", "idReadable": "ACME-100", "summary": "Ambiguous hierarchy" } ] },
+    { "id": "97-8b", "direction": "BOTH",
+      "linkType": { "id": "97-8", "name": "Follows", "sourceToTarget": "follows", "targetToSource": "is followed by", "directed": true },
+      "issues": [ { "id": "2-902", "idReadable": "ACME-101", "summary": "Unsupported type" } ] }
+  ],
+  "tags": [],
+  "$type": "Issue"
+}

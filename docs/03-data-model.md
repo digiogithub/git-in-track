@@ -191,11 +191,20 @@ Keys whose value is null/empty MUST be omitted rather than written as `null` or 
 id, type, title, status, priority, parent, epic, milestone, sprint,
 assignees, author, labels, estimate, effort, spent,
 created, updated, started, closed, due,
-links, blocks, depends_on, attachments, custom, deleted
+links, blocks, depends_on, external, attachments, custom, inbox, deleted
 ```
 
+Comments use the same order with their own keys in the region they belong to:
+`type, item, author, author_name, author_email, created, updated, in_reply_to, kind, reactions,
+external, attachments`.
+
 Rationale: identity first, then classification, then people, then numbers, then dates, then
-relations. Diffs of unrelated changes touch different regions of the block.
+relations, then the blocks. Diffs of unrelated changes touch different regions of the block.
+`external` sits with the relations because it is one — a relation to an artifact outside this
+repository ([§12.5](#125-external-references), [ADR-031](./adr/ADR-031-external-references.md)) —
+and `inbox` sits at the end, next to `deleted`, because like `deleted` it is lifecycle state that
+only a minority of files carry ([§6.4](#64-the-triage-category-and-the-inbox),
+[ADR-033](./adr/ADR-033-inbox-is-a-reserved-triage-status-category.md)).
 
 ### 3.3 Identifiers
 
@@ -298,7 +307,7 @@ Handles are declared in the team repository's `team.yaml` (doc 04, §3.2) and MA
 
 | Field | Allowed values |
 |---|---|
-| `type` | `epic`, `story`, `task`, `milestone`, `comment` (the `board`, `sprint` and `retro` types exist only in the team repo, and are specified in [doc 04](./04-team-repository.md) §§5, 8 and 9; all three round-trip through the same byte-stable emitter as an item, so an edit to one field is a one-line diff) |
+| `type` | `epic`, `story`, `task`, `milestone`, `comment` (the `board`, `sprint` and `retro` types exist only in the team repo, and are specified in [doc 04](./04-team-repository.md) §§5, 8 and 9; all three round-trip through the same byte-stable emitter as an item, so an edit to one field is a one-line diff). A sprint's stored `state` is `planned`, `active` or `closed`; the `draft`/`upcoming`/`current`/`completed` status a reader sees is derived from its dates and is never a stored value ([ADR-034](./adr/ADR-034-sprint-status-is-derived-from-dates.md)) |
 | `priority` | `critical`, `high`, `medium`, `low` |
 | `status` | any `id` declared in `project.yaml:workflow.statuses` |
 | relation kind | `blocks`, `blocked_by`, `relates_to`, `duplicates`, `duplicated_by` |
@@ -511,6 +520,7 @@ The only non-Markdown file in `.pmngr/`. Plain YAML, no front matter.
 | `people` | list of mappings | no | `[]` | Optional local mirror of team members. |
 | `team` | mapping | no | — | Back-pointer to the team repo (`repo`, `key`). |
 | `links` | mapping | no | — | Host info for building blob URLs (`host: github\|gitlab\|gitea\|bitbucket`, `web_url`). |
+| `integrations` | mapping | no | — | External trackers this backlog mirrors ([§6.5](#65-integrations)). Credentials never appear here. |
 
 `docs` sub-keys: `path` (relative to repo root, informational — the real path is where the file
 was found), `wikilinks` (bool, default `true`), `mermaid` (bool, default `true`), `math` (bool,
@@ -521,11 +531,13 @@ default `false`), `footnotes` (bool, default `true`), `callouts` (bool, default 
 
 - `statuses`: ordered list of `{id, name, category, wip?, color?, terminal?}`.
   - `id`: `[a-z][a-z0-9_]{0,31}`, unique.
-  - `category`: `todo | in_progress | done | cancelled` — the *coarse* bucket used by boards
+  - `category`: `todo | in_progress | done | cancelled | triage` — the *coarse* bucket used by boards
     (a board column maps `categories:` instead of `statuses:` when it must work for a project
     whose workflow the team has never seen — doc 04 R-COL-2),
     metrics, and agents that do not know a project's custom workflow. This field is what makes
-    heterogeneous projects comparable on a team board.
+    heterogeneous projects comparable on a team board. `triage` is the reserved inbox category
+    ([§6.4](#64-the-triage-category-and-the-inbox)); a project that declares no status in it simply
+    has no inbox.
   - `terminal`: bool; items in a terminal status are excluded from "open work" queries.
 - `initial`: status id used when creating an item (default: first status).
 - `transitions`: optional mapping `from → [to…]`. Absent or `null` means "any transition allowed".
@@ -555,6 +567,7 @@ docs:
 workflow:
   initial: backlog
   statuses:
+    - { id: triage,      name: Triage,      category: triage }
     - { id: backlog,     name: Backlog,     category: todo }
     - { id: todo,        name: To Do,       category: todo }
     - { id: in_progress, name: In Progress, category: in_progress, wip: 3 }
@@ -628,6 +641,17 @@ team:
 links:
   host: github
   web_url: https://github.com/acme/platform
+
+integrations:
+  youtrack:
+    url: https://yt.example.com/youtrack
+    project: ACME
+    field_map:
+      status: State
+      priority: Priority
+    push_comments: manual
+    kb_sync: manual
+    kb_sync_direction: push
 ```
 
 ### 6.3 Validation rules for `project.yaml`
@@ -643,8 +667,174 @@ links:
 - `W-PROJ-LABEL-DUP` — duplicate label name (case-insensitive).
 - `W-PROJ-COUNTER-STALE` — a counter is lower than the maximum scanned ID (informational; the scan
   wins and the counter is rewritten on the next allocation).
+- `E-PROJ-INTEGRATION` — an `integrations.<system>` block is present but unusable: a `url` that is
+  not an absolute `http`/`https` URL, an empty `project`, an unknown mode, or a `field_map` key that
+  is not a git-in-track field ([§6.5](#65-integrations)).
+
+### 6.4 The `triage` category and the inbox
+
+Incoming work that nobody has reviewed yet has to get an id, a file, a history and comments without
+polluting the backlog, the boards, the sprints or the metrics. It does that by being an **ordinary
+item in a status whose category is `triage`**, plus an `inbox:` front-matter block that records how
+it arrived and what the triager decided ([ADR-033](./adr/ADR-033-inbox-is-a-reserved-triage-status-category.md)).
+
+There is no inbox item type, no folder under `.pmngr/` and no stored `is_inbox` boolean: **the
+category is the truth and the block is the metadata.**
+
+```yaml
+status: triage
+inbox:
+  status: snoozed
+  snoozed_until: 2026-10-01
+  source: web
+  received: 2026-09-10T07:59:12Z
+```
+
+| Key | Type | Req. | Notes |
+|---|---|---|---|
+| `status` | `pending` \| `accepted` \| `rejected` \| `snoozed` \| `duplicate` | no | absent reads as `pending` |
+| `snoozed_until` | date | conditional | required for, and only allowed with, `status: snoozed` |
+| `duplicate_of` | item ID | conditional | required for `status: duplicate` |
+| `source` | string | no | free text: `web`, `mcp`, `youtrack`, a form name. Never an enumeration |
+| `received` | timestamp | no | when the submission arrived, which is not when the file was created |
+
+- **R-INBOX-1** An item is in the inbox when its `status` resolves to category `triage`, and at no
+  other time. The `inbox:` block on an item outside that category is preserved and reported as
+  `W-INBOX-CATEGORY`: it is history of how the item arrived, and it is ignored by the inbox.
+- **R-INBOX-2** A default query **excludes** triage items. `Filter.Inbox` is a tri-state —
+  `exclude` (the zero value), `only`, `include` — so every filter written before the inbox existed
+  keeps its meaning. Board views, sprint views, sprint candidates and sprint metrics exclude them
+  unconditionally.
+- **R-INBOX-3** A sprint file that names a triage reference reports it as **unresolved**, never as
+  work: it contributes no points and is never counted as done. The exclusion cannot be smuggled in
+  by hand-editing a sprint.
+- **R-INBOX-4** Snooze expiry is a **query-time comparison**, never a scheduler and never a
+  background job. A `snoozed` item whose `snoozed_until` is at or before the caller-supplied
+  `SnoozeAsOf` matches a query for `pending`. `internal/core` reads no clock — the caller passes the
+  instant, so results are reproducible and the package still compiles to WebAssembly.
+- **R-INBOX-5** Unknown keys **inside** the block are preserved on rewrite and re-emitted after the
+  known ones, sorted lexicographically, exactly as unknown top-level keys are (R-FMT-6).
+- **R-INBOX-6** Diagnostics: `E-INBOX-STATUS` (unknown triage state), `E-INBOX-SNOOZE`
+  (`snoozed_until` missing on a snoozed item, or present on any other), `E-INBOX-DUPLICATE`
+  (`duplicate_of` is not an item id, points at the item itself, or is missing on a `duplicate`),
+  `W-INBOX-CATEGORY` (block outside the triage category) and `W-INBOX-DUP-DEAD` (`duplicate_of`
+  resolves to nothing — a warning, because the target may arrive in a later merge).
+- **R-INBOX-7** A project scaffolded by `gintrack` declares `{id: triage, name: Triage, category:
+  triage}`, and it is neither the initial status nor the target of any declared transition, so
+  nothing ordinary lands there by accident.
 
 ---
+
+
+### 6.5 `integrations`
+
+`integrations.<system>` records **where this backlog's items also live**, so that a
+clone knows what it is mirroring without being told. Only `youtrack` exists today
+([ADR-032](./adr/ADR-032-local-integration-credential-storage.md), GIT-EP-0011); the
+key is the same `system` an item's `external:` entry carries ([§12.5](#125-external-references)),
+which is what ties a connection to the references it produced.
+
+```yaml
+integrations:
+  youtrack:
+    url: https://yt.example.com/youtrack   # instance URL, context path included
+    project: ACME                          # YouTrack project short name
+    field_map:                             # git-in-track field -> YouTrack custom field
+      status: State
+      priority: Priority
+    push_comments: manual                  # manual | auto
+    kb_sync: manual                        # manual | on_write
+    kb_sync_direction: push                # push | pull | both
+    comment_template: "\n\n---\n_{{.Author}} · git-in-track {{.ItemID}}_"
+    land_in_inbox: false                   # imported issues arrive in triage, not the backlog
+```
+
+| Key | Type | Req. | Default | Notes |
+|---|---|---|---|---|
+| `url` | absolute URL | yes | — | `http` or `https`, context path included; no query, no fragment. Trailing `/` is trimmed. |
+| `project` | string | yes | — | YouTrack project short name: the `ACME` of `ACME-42`. |
+| `field_map` | mapping | no | `{}` | Keys from `status`, `priority`, `type`, `assignee`, `estimate`, `milestone`. An entry is either a YouTrack custom-field name or a `{field, values}` block; see below. |
+| `push_comments` | `manual` \| `auto` | no | `manual` | When a comment written here is pushed to the linked issue. |
+| `kb_sync` | `manual` \| `on_write` | no | `manual` | When a knowledge-base page is synchronized with a YouTrack article. |
+| `kb_sync_direction` | `push` \| `pull` \| `both` | no | `push` | Which way that synchronization flows. |
+| `comment_template` | `text/template` | no | see R-INT-6 | The attribution line appended to a comment pushed upstream. |
+| `land_in_inbox` | boolean | no | `false` | Imported issues arrive in the project's triage queue instead of its backlog (R-INT-7, [§6.4](#64-the-triage-category-and-the-inbox), GIT-EP-0012). |
+
+`field_map` answers two different questions, and an entry says which one it is answering. Written as
+a plain string it renames a field: `status: State` tells the importer which custom field to read a
+status out of. Written as a block it also translates the values inside that field:
+
+```yaml
+field_map:
+  status:
+    field: State
+    values:
+      In Progress: in_progress
+      Fixed: done
+  priority: Priority
+```
+
+Both forms are read, both are valid, and the flat one is written back flat, so a file only grows the
+nesting it asked for. The keys are names on both sides — a YouTrack field name and a YouTrack value
+name — never ids, which are local to an instance, and never localized names, which change with the
+reader's language.
+
+Six keys name a field: `status` → `State`, `priority` → `Priority`, `type` → `Type`, `assignee` →
+`Assignee`, `estimate` → `Estimation`, `milestone` → `Fix versions`. Only three of them accept a
+`values` block — `status`, `priority` and `type` — because those are the fields whose vocabularies
+differ between the two systems; an estimate and an assignee are converted rather than looked up.
+[§12.6](#126-what-a-youtrack-issue-becomes) documents what the importer does with a field nobody
+mapped, defaults included.
+
+Earlier builds also accepted `labels`, `due` and `sprint`. They were stored, validated and then read
+by nothing, which is the worst outcome a configuration file can produce: the mapping is recorded and
+never honoured. They are now **refused at load time**, each with the reason it was never a mapping in
+the first place — labels travel as YouTrack tags rather than through a custom field, and neither a
+due date nor a sprint is read from one.
+
+- **R-INT-1 No credential is ever written here.** `project.yaml` is a committed file:
+  the permanent token lives on the machine running the companion, in its `0600`
+  configuration file, keyed by project key, overridable by `GINTRACK_YOUTRACK_TOKEN`
+  (doc 07 §3.2, ADR-032). A token found in a `project.yaml` is a leaked token, not a
+  configuration.
+- **R-INT-2 The block is written surgically.** A writer edits the YAML node tree in
+  place — the same mechanism the id allocator rewrites its counters with — so comments,
+  key order and every section no Go struct models survive. Re-serializing `project.yaml`
+  from a decoded struct would silently delete them, and is never done.
+- **R-INT-3 An unusable block is a load error, not a silent default.** A URL that is not
+  absolute, an empty project short name, an unknown mode or an unknown `field_map` key is
+  refused with `E-PROJ-INTEGRATION` naming the offending key, because a typo in a field map
+  is otherwise invisible until a sync writes the wrong field.
+- **R-INT-4 A block alone connects nothing.** Reaching the instance also needs a token on
+  this machine, and browser-only mode has neither the token nor the network reach: it hides
+  the feature entirely (doc 07, `features.youtrack`).
+- **R-INT-5 An unknown `field_map` key is refused, an unused one is not.** The nine keys above are
+  the whole vocabulary and a tenth is `E-PROJ-INTEGRATION` (R-INT-3), because the alternative —
+  ignoring what looks like a typo — is a field map that silently does nothing. A key that is legal
+  but not yet consumed is accepted in silence, which is the cost of keeping the vocabulary stable
+  while the importer grows into it.
+- **R-INT-6 The attribution line is a team decision, so it is committed.** `comment_template` is a
+  Go `text/template` rendered against `.Author`, `.AuthorName`, `.ItemID`, `.IssueID` and
+  `.CommentRef`, appended to every comment this project pushes upstream; empty means the shipped
+  default, `\n\n---\n_{{.Author}} · git-in-track {{.ItemID}}_`. It lives here rather than in the
+  machine-local file because a clone must sign what it publishes the same way the original does. The
+  item id is emitted bare on purpose: YouTrack auto-links anything shaped like one of *its* issue
+  ids, a git-in-track id is not one, and a Markdown link around it would be a dead link.
+- **R-INT-7 `land_in_inbox` decides where an import lands, and refuses rather than guesses.** With
+  it `false` — the default, and what every import did before the key existed — an imported issue is
+  written with the workflow's initial status. With it `true`, the issue is written with the
+  project's first `triage` status and an `inbox:` block of `status: pending`, `source: youtrack`,
+  so a large import is a queue to review rather than a backlog somebody has to un-commit. It
+  decides arrival only: an issue a later import *updates* keeps the status it has, because landing
+  is a decision about where work appears the first time and not about every sync ([§6.4](#64-the-triage-category-and-the-inbox), ADR-033). A project that
+  declares no triage status and sets the option to `true` is a configuration mistake and is
+  **refused**: landing a thousand issues in the backlog instead would be exactly the outcome the
+  option exists to prevent. The decision is one helper — `core.InboxLandingStatus` — which every
+  entry point that can file work shares, so an import, an agent's `create_inbox_item` and a web
+  submission cannot disagree about where a submission belongs. The key is read and never written:
+  a connection saved from the settings screen edits only the keys that screen owns (R-INT-2), so a
+  team that set this by hand keeps it.
+
 
 ## 7. Epics
 
@@ -672,8 +862,10 @@ its children.
 | `started` / `closed` | timestamp | no | set when leaving/entering a terminal category |
 | `due` | date | no | |
 | `links` | list of relations | no | [§12](#12-links-and-relations) |
+| `external` | list of external references | no | the same artifact in another system, [§12.5](#125-external-references) |
 | `attachments` | list of strings | no | filenames under `attachments/<ID>/` |
 | `custom` | mapping | no | declared custom fields |
+| `inbox` | mapping | no | triage metadata, only on items in the `triage` category, [§6.4](#64-the-triage-category-and-the-inbox) |
 | `deleted` | bool | no | soft delete, default `false` |
 
 An epic MUST NOT have `parent`. Stories point *up* to their epic; epics do not list their children
@@ -760,7 +952,7 @@ Everything an epic has, plus:
 | `type` | `story` | yes | |
 | `parent` | epic ID | no | the owning epic; `null` means an orphan story (valid) |
 | `milestone` | milestone ID | no | overrides the epic's milestone for planning |
-| `sprint` | sprint ID | no | `<TEAMKEY>-S-<NNNN>`, resolved in the team repo; soft reference |
+| `sprint` | sprint ID | no | `<TEAMKEY>-S-<NNNN>`, resolved in the team repo; soft reference. The sprint's own `start` and `end` are optional — both or neither — and its `draft`/`upcoming`/`current`/`completed` status is derived from them at read time and never stored; a closed sprint additionally carries a frozen `snapshot` block. See [doc 04](./04-team-repository.md) §8.2 and [ADR-034](./adr/ADR-034-sprint-status-is-derived-from-dates.md) |
 | `estimate` | number | no | story points; MUST be a member of `estimation.values` when the scale is `fibonacci` or `linear` |
 | `effort` | number | no | planned hours (requires `estimation.track_hours`) |
 | `spent` | number | no | consumed hours |
@@ -939,7 +1131,7 @@ team repo and is a team-level time box), a milestone is project-scoped and lives
 | `due` | date | no | the target date |
 | `closed` | timestamp | no | when it was actually reached |
 | `owner` | handle | no | single accountable person |
-| `labels`, `author`, `created`, `updated`, `links`, `attachments`, `custom`, `deleted` | as elsewhere | | |
+| `labels`, `author`, `created`, `updated`, `links`, `external`, `attachments`, `custom`, `deleted` | as elsewhere | | |
 
 Membership is expressed by the items (`milestone: ACME-M-0003`), never by a list inside the
 milestone. Same anti-conflict rationale as epics.
@@ -1020,6 +1212,7 @@ Example: `.pmngr/comments/ACME-US-0042/20260901T104512Z-jose.md`
 | `in_reply_to` | comment ref | no | `<ITEM-ID>#<file-stem>` |
 | `kind` | `comment` \| `status_change` \| `system` | no | default `comment` |
 | `reactions` | mapping emoji → list of handles | no | |
+| `external` | list of external references | no | the comment this one mirrors in another system, [§12.5](#125-external-references) |
 | `attachments` | list of strings | no | resolved under `attachments/<ITEM-ID>/` |
 
 `kind: system` marks machine-written entries (e.g. an agent recording an automated check). Systems
@@ -1029,6 +1222,24 @@ SHOULD write few, high-value system comments; the git log is the audit trail, no
   the item lives in (`user.name`, `user.email`, or the configured `git.authorName`/`authorEmail`
   overrides): `author` becomes the handle of `user.name`, and `author_name`/`author_email` carry the
   identity itself. Only when no identity resolves does the handle fall back to `unknown`.
+- **R-CMT-5** `external` on a comment is the same list, with the same set semantics, as on an item
+  ([§12.5](#125-external-references)); what differs is what it is *for*. On an item it answers "is
+  this issue already imported?"; on a comment it answers "is this remark already upstream?", one
+  remark at a time, which is what makes pushing a thread idempotent. A comment that carries no
+  entry for the system is **created** remotely and the id that comes back is written into the file;
+  a comment that already carries one is **edited** in place. That is not an optimisation — the job
+  engine re-delivers a job after a retry, after a journal replay and when somebody clicks retry in
+  the dead-letter list, and without the reference each delivery would leave another copy of the same
+  remark on the issue.
+- **R-CMT-6 A local delete never deletes remotely, and there is deliberately no way to make it.**
+  Removing a comment file, or removing its `external` entry, unlinks the record and stops there: no
+  job is queued, and none exists to queue. A repository is not the authority on a conversation that
+  other people are also having in the tracker, and a mistaken `rm` — or a branch that never had the
+  file — must not erase a thread. The asymmetry is the point, not an omission: writes propagate
+  outward, deletions do not ([ADR-031](./adr/ADR-031-external-references.md)). A comment that is
+  deleted upstream is likewise left alone locally. A comment whose `external` entry was removed and
+  which is then pushed again produces a **second** remote comment, because as far as both sides can
+  tell it is a new one.
 
 ### 11.3 Complete example
 
@@ -1112,6 +1323,162 @@ committed snapshot `.pmngr/index/WEB.json` in the team repo (doc 04, §6). Witho
 reference renders as inert text with the ID. This is by design: **backlogs never leave their project
 repository**.
 
+### 12.5 External references
+
+`external` is the first-class record of the same artifact in another system: the YouTrack issue an
+item was imported from, the comment a mirrored thread came from, the wiki page a knowledge-base
+article was copied out of. It is a **list**, because one item may be linked into more than one
+system, and it is a first-class front-matter key rather than a `custom:` entry or an `x-` key
+because importers depend on it being typed, validated and indexed
+([ADR-031](./adr/ADR-031-external-references.md)).
+
+```yaml
+external:
+  - { system: youtrack, id: PRJ-42, url: https://youtrack.example.com/issue/PRJ-42, key: PRJ, synced_at: 2026-09-02T10:29:00Z }
+  - { system: plane, id: 9f2b1c7d }
+```
+
+| Key | Type | Req. | Notes |
+|---|---|---|---|
+| `system` | short token | yes | `[a-z0-9][a-z0-9._-]{0,31}`, stored lower-case. **Not an enumeration** |
+| `id` | string (1..200) | yes | the identifier the external system uses |
+| `url` | string | no | an absolute `http`/`https` address a human can open |
+| `key` | string | no | the external project/space key, when the system has one |
+| `synced_at` | timestamp | no | when this reference was last reconciled |
+
+- **R-EXT-1** `system` and `id` are both required. An entry missing either is `E-EXT-FIELDS`.
+- **R-EXT-2** The pair **(`system`, `id`)** is the identity of an entry and the idempotency key of
+  every importer. It is compared with `system` lower-cased and `id` case-sensitive. A parser that
+  reads the same pair twice in one file keeps the first entry.
+- **R-EXT-3** `system` is never validated against a list of known systems. A file naming a system
+  this version has never heard of is valid and MUST round-trip untouched (R-EVO-5). Only the shape
+  of the token is checked, so that a system name can be a path segment or a map key unescaped.
+- **R-EXT-4** A `url` that is not `http`/`https` is `W-EXT-URL`, a warning: the reference is still
+  usable, it just cannot be opened.
+- **R-EXT-5** Writes use set semantics keyed on (`system`, `id`), like `labels` and `links`:
+  `addExternal` / `removeExternal`. Re-adding a pair that is already present **updates** `url`,
+  `key` and `synced_at` in place and never appends a second entry; fields the writer omits keep the
+  value somebody else recorded. A `removeExternal` entry with an empty `id` unlinks every reference
+  of that system. Two writers pushing different systems into the same item therefore never clobber
+  each other.
+- **R-EXT-6** The index keeps a lookup from (`system`, `id`) to item id, so an importer's
+  "have I already got this one?" check is a single map read and not a scan of the backlog. Two
+  items claiming the same pair is `W-EXT-DUP`; the first file in path order wins the lookup.
+- **R-EXT-7** Knowledge-base pages carry the same key in their (otherwise free-form) front matter.
+  Comments carry it too, which is what lets a mirrored discussion be reconciled comment by comment.
+
+### 12.6 What a YouTrack issue becomes
+
+`external` answers "have I seen this issue before?"; this section answers "what does it turn into
+the first time?". The translation lives in `internal/youtrack/mapping`, it is a pure function of the
+payload and the field map, and every surface that imports — the REST route, the background job, the
+MCP tool, the CLI — calls the same one, so an issue cannot become one thing in the web app and
+another on the command line.
+
+The table is written down here because it is a *data-model* decision rather than an implementation
+detail: it says which of this document's fields a foreign tracker is allowed to fill, and, just as
+importantly, which ones it is not.
+
+| YouTrack | git-in-track | Notes |
+|---|---|---|
+| `summary` | `title` | Trimmed. An empty summary is a warning and an item with no title |
+| `description` | body | Normalised, never sanitised — see below |
+| `reporter` | `author` | The login, or the full name when the instance sent no login |
+| `tags[]` | `labels[]` | Trimmed and deduplicated, in the order YouTrack returned them |
+| `idReadable` | `external[]` | `{system: youtrack, id, url, synced_at}` — the idempotency key (§12.5). An imported item records no `key`; only a published page does (§14.6) |
+| Type field | `type` | Default `Type`; a value out of a *version* bundle is a `milestone` whatever it is called |
+| State field | `status` | Default `State` |
+| Priority field | `priority` | Default `Priority` |
+| Estimation field | `estimate` | Default `Estimation`; a period divided by one working day |
+| Assignee field | `assignees[]` | Default `Assignee`; multi-valued, the login is the handle |
+| Milestone field | `milestone` | Default `Fix versions`; several versions keeps the first and warns |
+| `Subtask` link, inward | `parent` | More than one parent keeps the first and warns |
+| `Subtask` link, outward | children | The other half of the same hierarchy |
+| Other link types | `links[]` | `Depend`, `Duplicate` and `Relates`; see below |
+| `attachments[]` | `attachments[]` | Recorded as bare filenames, like every other writer (§13.4); the bytes arrive later — see R-YT-7 |
+| `comments[]` | comment files | One file per comment (§11), keeping the original author and time |
+
+Nothing fills `sprint`, `due`, `effort` or `spent`. Those are git-in-track's own planning fields;
+an import that guessed at them would overwrite a decision this team made with one YouTrack never
+took, and a re-import would do it again every time.
+
+**The six field names are configurable, the three value maps are not.** `integrations.youtrack.field_map`
+([§6.5](#65-integrations)) renames the custom fields a mapper reads; the *values* inside those
+fields are translated by the built-in tables below, which a project overrides in code rather than in
+`project.yaml`. That asymmetry is deliberate: a renamed field is a one-line configuration, whereas a
+state bundle with twenty entries is a decision nobody wants to express in YAML.
+
+**Types** — anything not listed becomes a `task`:
+
+| YouTrack `Type` | Item type |
+|---|---|
+| `Epic` | `epic` |
+| `User Story`, `Story`, `Feature` | `story` |
+| `Task`, `Bug`, `Usability Problem`, `Performance Problem`, `Cosmetics`, `Exception` | `task` |
+| `Milestone`, `Version`, or any value from a version bundle | `milestone` |
+
+**States** — anything not listed leaves `status` **unset**, so the project's own default status
+applies rather than a status this project may not even declare:
+
+| YouTrack `State` | Status |
+|---|---|
+| `Submitted`, `To be discussed` | `backlog` |
+| `Open`, `Reopened` | `todo` |
+| `In Progress` | `in_progress` |
+| `To Verify`, `In Review` | `in_review` |
+| `Fixed`, `Verified`, `Done` | `done` |
+| `Can't Reproduce`, `Duplicate`, `Won't fix`, `Obsolete`, `Incomplete` | `cancelled` |
+
+**Priorities** — anything not listed becomes `medium`:
+
+| YouTrack `Priority` | Priority |
+|---|---|
+| `Show-stopper`, `Critical`, `Blocker` | `critical` |
+| `Major`, `High` | `high` |
+| `Normal`, `Medium` | `medium` |
+| `Minor`, `Low` | `low` |
+
+**Link types.** `Relates` becomes `relates_to` in both directions. `Depend` is directed: its outward
+half ("is required for") is `blocks` and its inward half is `blocked_by`. `Duplicate` likewise gives
+`duplicates` outward and `duplicated_by` inward. A link type outside those three is a warning and no
+link — the five kinds of §12.1 are the whole vocabulary, and inventing a sixth to hold a YouTrack
+type would break every consumer of `links`.
+
+- **R-YT-1** All three lookups are case-insensitive on the trimmed value, so `In Progress`,
+  `in progress` and `  IN PROGRESS ` are one key.
+- **R-YT-2** **A value nobody understands is a warning, never an error and never a silent drop.** An
+  import of two hundred issues must finish and then say what it could not read; failing the batch on
+  one unknown enum value would make the feature unusable against any real instance.
+- **R-YT-3** An `Estimation` period is read from `minutes` when YouTrack sent it and from its
+  presentation (`1w 2d 3h`) otherwise, using a stock working week — 8 hours a day, 5 days a week —
+  and divided by one working day to give one story point, rounded to two decimals. A presentation
+  that does not parse cleanly yields **no** estimate and a warning: an estimate of `0` is a
+  statement, and guessing one is worse than leaving the field unset.
+- **R-YT-4** `parent`, `milestone` and `links[].target` are **not** written by the mapper. It returns
+  the YouTrack identifiers, and the importer resolves each one through the (`system`, `id`) index of
+  R-EXT-6 before writing anything; a target it cannot resolve is a warning and an omitted relation,
+  never an id of a foreign tracker sitting in a field this document says holds an item id.
+- **R-YT-5** A re-import **patches**, it does not replace. Only the fields YouTrack actually carried
+  are written, the item keeps the id it was allocated, `external` is merged rather than overwritten
+  (R-EXT-5), and a comment that already carries its YouTrack reference is not written twice.
+- **R-YT-6** Descriptions and comment bodies are **untrusted third-party Markdown**. The importer
+  normalises them structurally — attachment embeds become the `.pmngr/attachments/` paths the files
+  are downloaded to, and the YouTrack-only `{color:…}` and `{width=…}` extensions are dropped with a
+  warning, both exempt inside code fences and code spans — and does nothing else. It does not
+  escape, sanitise or rewrap; every renderer sanitises, and every agent treats the text as data
+  rather than as instructions (§17.5, docs/02 §10.5).
+- **R-YT-7** An imported `attachments[]` entry is a **bare filename**, exactly as §13.4 specifies
+  for every other writer: the folder is `.pmngr/attachments/<ITEM-ID>/` by convention, derived from
+  the item's own id, and repeating it inside each entry would only create a second place for it to
+  be wrong. Whatever the tracker calls a file, only the base name is recorded, so an entry can never
+  resolve outside the item's folder. Earlier builds recorded the full vault-relative path and this
+  rule documented the divergence; the divergence is now resolved in favour of the model, because
+  nothing ever read those paths — the download job builds the folder from the item id. What remains
+  true is the timing: only the background import job downloads the binaries, and the synchronous
+  `youtrack.import.run` records the names and leaves the files to the job, so an item imported over
+  MCP or over the CLI can legitimately list a file that is not on disk yet (`W-ATT-MISSING` until
+  the job runs).
+
 ---
 
 ## 13. Labels, custom fields, defaults, attachments
@@ -1159,6 +1526,8 @@ created through the UI/CLI/MCP. Defaults are materialised into the file at creat
 
 - Path: `<docs>/.pmngr/attachments/<ITEM-ID>/<filename>`.
 - Front matter `attachments: [sso-sequence.png]` lists *filenames*, resolved relative to that folder.
+  Every writer obeys this, importers included: the YouTrack import records bare filenames too
+  (R-YT-7), reduced to their base name so an entry can never point outside the folder.
 - **R-ATT-1** Filenames are sanitised to `[A-Za-z0-9._-]+`; spaces become `-`.
 - **R-ATT-2** Large binaries are the user's problem (git LFS is out of scope); the UI warns above
   1 MiB and refuses above 10 MiB by default (`attachments_max_bytes` is not configurable in Phase 1).
@@ -1260,6 +1629,91 @@ Which migration? There are two in this release.
 Feedback on a backlog item is not written into the item: it is posted as an ordinary comment
 (§11), with the quoted text and the note in its body.
 
+### 14.5 Publishing a page as a YouTrack article
+
+A knowledge-base page and a YouTrack article are the same document written twice, and the transform
+between them lives in `internal/youtrack/mapping` beside the issue mapper. It matters to this
+document rather than to the API reference because it decides what of a page's *stored form* crosses
+the boundary and what stays here — and everything that stays here is something a reader of the
+Markdown can see and a merge can conflict on.
+
+Five rules decide it, once, so that publishing and pulling cannot drift apart:
+
+- **R-KB-1 The title lives in exactly one place.** YouTrack keeps it in the article's `summary`, and
+  the article body never carries it as an H1. Going up, a leading H1 is removed; coming down, the
+  summary is written to the page's `title` front-matter key and nothing is prepended to the body. A
+  round trip therefore cannot end with the title twice, which is what happens to every naive copy.
+  A page with neither a title nor a leading H1 produces an empty summary and a warning saying that
+  YouTrack will not create an article without one; an H1 that *disagrees* with the title publishes
+  the title, drops the H1 and warns.
+- **R-KB-2 The `## Feedback` block never leaves the repository.** It is local review commentary
+  (§14.4, ADR-030), it is stripped from every outgoing payload, and it is put back unchanged on the
+  way down. Because R-FB-4 rewrites the block on every write, its absence upstream is never evidence
+  of a remote change — which is exactly the trap a byte comparison falls into.
+- **R-KB-3 Front matter is stripped going up and rebuilt coming down.** What YouTrack stores is
+  Markdown only. The page's front matter is the local side's business and is carried over key for
+  key, with `title` refreshed from the summary and this system's `external` entry refreshed in
+  place; every other key, including another system's `external` entry, survives untouched.
+- **R-KB-4 A wikilink becomes an article link only when its target is already published.** Anything
+  else degrades to the text the link displayed, with a warning. A published article must not carry a
+  link that resolves nowhere, and a `[[…]]` means nothing outside this vault.
+- **R-KB-5 An attachment is addressed by file name.** YouTrack resolves an image or a link target
+  against the article's own attachments rather than against a URL, so local references become bare
+  file names on the way up and are put back to the paths the page used on the way down. A base name
+  that two different local references share is ambiguous and is left alone, so a pull never moves a
+  file.
+
+The YouTrack Markdown extensions `{color:red}…{color}` and `{width=300px}` are **passed through**
+here, and preserved with a warning coming back, so that a round trip is byte-stable. That is the
+opposite of what an issue description gets (R-YT-6, which strips both), and the reason is the
+lifecycle rather than the syntax: an issue description is imported once and then belongs to us, while
+a page is round-tripped and still belongs to both sides.
+
+### 14.6 Deciding who changed
+
+Publishing and pulling are the same problem in two directions — *who edited since we last agreed?* —
+and both answer it the same way, from the page's own `external` entry:
+
+- `key` holds the **fingerprint of the content that was last synchronized**, and `synced_at` when
+  that was. This is the one place the model uses `key` for something other than §12.5's external
+  project key; a page has no project key to record, and a fingerprint that travels beside the
+  article id is a fingerprint that cannot be separated from it.
+- The fingerprint is taken over what actually crosses the boundary — front matter stripped, feedback
+  block stripped, title in the summary — never over the file's bytes. Comparing bytes would report a
+  remote edit every time somebody adds a local note (R-FB-4, R-KB-2), and "out of date" would become
+  permanent.
+- Both sides are compared against the recorded fingerprint rather than against each other. That is
+  what makes *both changed* distinguishable from *one changed* at all.
+
+| State | Meaning |
+|---|---|
+| `unlinked` | the page carries no `external` entry for this system |
+| `in_sync` | content and summary match the article |
+| `local_ahead` | the page moved since the recorded fingerprint |
+| `remote_ahead` | the article moved. Only ever reported when the remote was actually read |
+| `conflict` | both moved, or the two differ with no evidence of which one did |
+
+- **R-KB-6** A page published before the fingerprint existed, or linked by hand, has no `key` to
+  pivot on and falls back to comparing `updated` timestamps — which is all there is, and is weaker.
+- **R-KB-7 Last writer wins per direction; both-changed writes a file and merges nothing.** A
+  `conflict` leaves the page **exactly** as it is and writes the incoming content to
+  `<page>.conflict.md` beside it, carrying a `conflict_of` front-matter key naming the original. A
+  three-way merge of two documents nobody can diff meaningfully is worse than two files a person can
+  read side by side, and a silent merge is the worst answer of all. The `youtrack.kb.conflict` event
+  announces it (doc 07 §5.6); resolving it is a human editing two files and deleting one.
+- **R-KB-8 Asking for status is cheap unless you ask for the remote.** A documentation tree is
+  hundreds of pages, so the remote side is read only when the caller opts in; without it the answer
+  comes from the page's own `external` entry and the content the page would publish, and no request
+  leaves the process.
+
+Publishing and pulling are always **queued**, never performed in the call that asked for them: a
+handbook is hundreds of articles, and the retry ladder, the shared rate limit and the journal all
+live in the companion's job engine (docs/02 §3.2). Asking for status is the exception — it is a read,
+and it answers inline. All three are core-API methods (`youtrack.kb.status`, `.publish`, `.pull`) and
+are exposed as the MCP tools `publish_kb_page_to_youtrack` and `sync_kb_page_from_youtrack`; doc 07
+§5.5 is the normative reference for their HTTP surface. There is **no web-app screen** for either
+direction yet: the only thing the UI shows of them is their jobs passing through the sync queue.
+
 ---
 
 ## 15. The derived index (`index.json`)
@@ -1340,6 +1794,10 @@ Severity: **E** = error (blocks writes to the affected item; `doctor` exits non-
 | `E-CF-TYPE` | E | Custom field value has the wrong declared type |
 | `E-CMT-ITEM-MISMATCH` | E | Comment `item` ≠ containing folder name |
 | `E-ENUM` | E | `priority` or a custom enum has a value outside its allowed set |
+| `E-EXT-FIELDS` | E | An `external` entry is missing `system` or `id`, or `system` is not a short token ([§12.5](#125-external-references)) |
+| `E-INBOX-STATUS` | E | `inbox.status` is not one of the five triage states ([§6.4](#64-the-triage-category-and-the-inbox)) |
+| `E-INBOX-SNOOZE` | E | `inbox.snoozed_until` missing on a snoozed item, or present on any other |
+| `E-INBOX-DUPLICATE` | E | `inbox.duplicate_of` is not an item id, names the item itself, or is missing on a `duplicate` |
 | `W-SLUG-STALE` | W | Filename slug ≠ slug(title) |
 | `W-REF-DANGLING` | W | `parent`/`milestone`/`links.target` points at an unknown ID |
 | `W-REF-CYCLE-BLOCK` | W | Cycle in `blocks`/`blocked_by` |
@@ -1353,6 +1811,10 @@ Severity: **E** = error (blocks writes to the affected item; `doctor` exits non-
 | `W-LAYOUT-NESTED` / `W-LAYOUT-STRAY` | W | Files where the layout does not expect them |
 | `W-ESTIMATE-SCALE` | W | `estimate` not in `estimation.values` |
 | `W-PROJ-COUNTER-STALE` | W | Counter below scanned max |
+| `W-EXT-URL` | W | An `external` entry has a `url` that is not `http`/`https` |
+| `W-EXT-DUP` | W | The same `(system, id)` pair appears twice, in one file or across two |
+| `W-INBOX-CATEGORY` | W | An `inbox` block on an item whose status is not in the `triage` category |
+| `W-INBOX-DUP-DEAD` | W | `inbox.duplicate_of` points at an unknown item |
 
 The `E-TEAM-*` / `W-TEAM-*` codes belong to `team.yaml` and are catalogued in
 [`04-team-repository.md`](./04-team-repository.md) §3.5. They share this catalog's namespace and
@@ -1481,10 +1943,38 @@ Outline of the shared definitions:
         "target": { "$ref": "common.defs.json#/$defs/qualifiedId" },
         "note":   { "type": "string", "maxLength": 200 }
       }
+    },
+    "external": {
+      "type": "object",
+      "required": ["system", "id"],
+      "additionalProperties": false,
+      "properties": {
+        "system":    { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,31}$" },
+        "id":        { "type": "string", "minLength": 1, "maxLength": 200 },
+        "url":       { "type": "string", "pattern": "^https?://" },
+        "key":       { "type": "string", "maxLength": 64 },
+        "synced_at": { "$ref": "common.defs.json#/$defs/timestamp" }
+      }
+    },
+    "inbox": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "status":        { "enum": ["pending", "accepted", "rejected", "snoozed", "duplicate"] },
+        "snoozed_until": { "$ref": "common.defs.json#/$defs/date" },
+        "duplicate_of":  { "$ref": "common.defs.json#/$defs/id" },
+        "source":        { "type": "string", "maxLength": 64 },
+        "received":      { "$ref": "common.defs.json#/$defs/timestamp" }
+      }
     }
   }
 }
 ```
+
+`external` and `inbox` are the only two `$defs` whose value objects are not closed the same way:
+`external` is `additionalProperties: false` because the shape is fixed, while `inbox` is open
+because unknown keys inside the block are preserved on rewrite exactly as unknown top-level keys
+are (R-FMT-6, R-EVO-5).
 
 Outline of `story.schema.json` (the other item schemas differ only in `type`, allowed parent, and a
 couple of fields):
@@ -1515,14 +2005,49 @@ couple of fields):
     "closed":    { "$ref": "common.defs.json#/$defs/timestamp" },
     "due":       { "$ref": "common.defs.json#/$defs/date" },
     "links":     { "type": "array", "items": { "$ref": "common.defs.json#/$defs/link" } },
+    "external":  { "type": "array", "items": { "$ref": "common.defs.json#/$defs/external" } },
     "attachments": { "type": "array", "items": { "type": "string" } },
     "custom":    { "type": "object" },
+    "inbox":     { "$ref": "common.defs.json#/$defs/inbox" },
     "deleted":   { "type": "boolean" }
   },
   "patternProperties": { "^x-": true },
   "additionalProperties": false
 }
 ```
+
+Outline of `comment.schema.json`. It is the smallest of the item schemas and the only one whose
+`external` list is not about an item at all — it addresses one remark inside a thread (R-CMT-5), so
+its `id` is the external system's *comment* identifier, not the issue's:
+
+```jsonc
+{
+  "$id": "https://git-in-track.dev/schema/comment.schema.json",
+  "type": "object",
+  "required": ["type", "item", "author", "created"],
+  "properties": {
+    "type":         { "const": "comment" },
+    "item":         { "$ref": "common.defs.json#/$defs/id" },
+    "author":       { "$ref": "common.defs.json#/$defs/handle" },
+    "author_name":  { "type": "string" },
+    "author_email": { "type": "string" },
+    "created":      { "$ref": "common.defs.json#/$defs/timestamp" },
+    "updated":      { "$ref": "common.defs.json#/$defs/timestamp" },
+    "in_reply_to":  { "type": "string" },
+    "kind":         { "enum": ["comment", "status_change", "system"] },
+    "reactions":    { "type": "object", "additionalProperties": {
+                        "type": "array", "items": { "$ref": "common.defs.json#/$defs/handle" } } },
+    "external":     { "type": "array", "items": { "$ref": "common.defs.json#/$defs/external" } },
+    "attachments":  { "type": "array", "items": { "type": "string" } }
+  },
+  "patternProperties": { "^x-": true },
+  "additionalProperties": false
+}
+```
+
+`external` reuses the shared `$def` unchanged. Nothing in the schema distinguishes a comment
+reference from an item reference, and nothing should: the shape is identical, and which artifact an
+entry names is decided by the file it sits in.
 
 Note that `status` values, label membership, and custom-field types cannot be expressed in a static
 schema (they depend on `project.yaml`); those checks are performed by the Go validator after schema

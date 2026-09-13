@@ -16,6 +16,16 @@
  */
 
 import type {
+  CommentPushResult,
+  InboxDraft,
+  InboxFilter,
+  InboxPage,
+  InboxTriageInput,
+  InboxTriageResult,
+  KbSyncJobResult,
+  KbSyncStatusResult,
+  SprintCloseInput,
+  SprintTransferInput,
   BatchResult,
   BoardMoveResult,
   BoardDraft,
@@ -61,7 +71,6 @@ import type {
   RetroResult,
   RetroFilter,
   RetroView,
-  SprintCarry,
   SprintDraft,
   SprintFilter,
   SprintPatch,
@@ -86,6 +95,15 @@ import type {
   SyncSettingsPatch,
   SyncStatus,
   TunnelStatus,
+  YouTrackFieldList,
+  YouTrackImportPreviewResult,
+  YouTrackImportRun,
+  YouTrackIssuePage,
+  SyncJob,
+  SyncJobPage,
+  YouTrackProject,
+  YouTrackSettings,
+  YouTrackTestResult,
 } from '@/api/provider';
 import { ProviderError, teamScope } from '@/api/provider';
 import { hydrateOrBuild } from '@/cache/index-cache';
@@ -136,6 +154,24 @@ const BROWSER_MCP_REASON =
 const BROWSER_TUNNEL_REASON =
   'Browser-only mode runs entirely in this tab, so there is no server to publish. Run `gintrack serve` to share a workspace over a tunnel.';
 
+/**
+ * Why browser-only mode can never reach YouTrack. A tab cannot hold the
+ * credential — it would have to live in storage a script can read — and it
+ * cannot reach a YouTrack instance without a CORS proxy that sees that
+ * credential in every request. The companion keeps both on the user's machine.
+ */
+const BROWSER_YOUTRACK_REASON =
+  'YouTrack is not available in browser-only mode: there is no process to hold the credential and no way to reach the instance from a tab. Run `gintrack serve` to connect a project.';
+
+/**
+ * Why browser-only mode has no background job queue. The engine is a worker
+ * pool with a journal on disk, owned by the companion process; a tab has
+ * neither, and an empty table would claim a queue exists and happens to be
+ * empty.
+ */
+const BROWSER_SYNC_ENGINE_REASON =
+  'The background job queue is not available in browser-only mode: the engine runs inside the companion. Run `gintrack serve` to see it.';
+
 /** One conflicted path browser mode is holding for the resolver. */
 type PendingConflict = BrowserConflict & { resolved?: string };
 
@@ -166,6 +202,10 @@ const CORE_ERROR_CODES: Record<string, ProviderError['code']> = {
   stale_revision: 'stale_revision',
   wip_limit_exceeded: 'wip_limit_exceeded',
   repo_not_cloned: 'repo_not_cloned',
+  sprint_overlap: 'sprint_overlap',
+  sprint_already_active: 'sprint_already_active',
+  sprint_target_completed: 'sprint_target_completed',
+  no_triage_status: 'no_triage_status',
   project_exists: 'project_exists',
   team_exists: 'team_exists',
   team_project_exists: 'team_project_exists',
@@ -254,6 +294,8 @@ export class BrowserProvider implements DataProvider {
       mcp: false,
       openInEditor: false,
       maxBatchWrite: write ? 50 : 0,
+      youtrackSupported: false,
+      youtrack: false,
     };
     return this.#capabilities;
   }
@@ -670,6 +712,49 @@ export class BrowserProvider implements DataProvider {
     return comment;
   }
 
+  // --------------------------------------------------------------------- inbox
+
+  /**
+   * The triage queue, straight out of the core. There is no companion here, so
+   * the clock the vault resolves an expired snooze against is this tab's — the
+   * same rule, evaluated in the same Go code, which is the point of compiling
+   * the core twice.
+   */
+  async listInbox(filter: InboxFilter = {}): Promise<InboxPage> {
+    await this.#ensureActive();
+    return this.#call('inbox.list', filter);
+  }
+
+  async createInboxItem(draft: InboxDraft): Promise<Item> {
+    const { source, received, ...rest } = draft;
+    return this.createItem({
+      ...rest,
+      inbox: {
+        ...(source === undefined ? {} : { source }),
+        ...(received === undefined ? {} : { received }),
+      },
+    });
+  }
+
+  async triageInboxItem(input: InboxTriageInput): Promise<InboxTriageResult> {
+    const mount = this.#mountForItem(input.id, await this.#ensureWritable());
+    const result = await this.#call('inbox.triage', input);
+    if (result.writes) await this.#persist(mount, result.writes);
+    this.#emit({ kind: 'items', repoId: mount.id, ids: [input.id] });
+    // There is no WebSocket in this mode, so the queue's own event is raised
+    // here: an open inbox pane and the sidebar badge subscribe to the same
+    // `inbox` event in both runtimes and need no second code path.
+    this.#emit({
+      kind: 'inbox',
+      repoId: mount.id,
+      project: input.id.split('-')[0] ?? '',
+      id: input.id,
+      action: input.action,
+      pending: result.pending,
+    });
+    return result;
+  }
+
   async addPageFeedback(
     scope: KbScope,
     path: string,
@@ -881,21 +966,53 @@ export class BrowserProvider implements DataProvider {
     );
   }
 
-  async closeSprint(
-    id: string,
-    carry?: SprintCarry[],
-    rev?: string,
-    team?: string,
-  ): Promise<SprintResult> {
+  /**
+   * A dry run writes nothing, so it needs no writable vault and produces no
+   * write set to persist: it is a read that happens to compute a report.
+   */
+  async closeSprint(id: string, input: SprintCloseInput = {}, team?: string): Promise<SprintResult> {
+    if (input.dryRun === true) {
+      await this.#ensureActive();
+      return this.#call('sprint.close', {
+        id,
+        dryRun: true,
+        ...(input.carry === undefined ? {} : { carry: input.carry }),
+        ...(input.transfer === undefined ? {} : { transfer: input.transfer }),
+        ...(input.rev === undefined ? {} : { rev: input.rev }),
+        ...teamScope(team),
+      });
+    }
     await this.#ensureWritable();
     return this.#persistSprint(
       await this.#call('sprint.close', {
         id,
-        ...(carry === undefined ? {} : { carry }),
-        ...(rev === undefined ? {} : { rev }),
+        ...(input.carry === undefined ? {} : { carry: input.carry }),
+        ...(input.transfer === undefined ? {} : { transfer: input.transfer }),
+        ...(input.rev === undefined ? {} : { rev: input.rev }),
         ...teamScope(team),
       }),
     );
+  }
+
+  async transferSprintItems(
+    id: string,
+    input: SprintTransferInput = {},
+    team?: string,
+  ): Promise<SprintResult> {
+    const params = {
+      id,
+      ...(input.mode === undefined ? {} : { mode: input.mode }),
+      ...(input.target === undefined ? {} : { target: input.target }),
+      ...(input.carry === undefined ? {} : { carry: input.carry }),
+      ...(input.rev === undefined ? {} : { rev: input.rev }),
+      ...teamScope(team),
+    };
+    if (input.dryRun === true) {
+      await this.#ensureActive();
+      return this.#call('sprint.transfer', { ...params, dryRun: true });
+    }
+    await this.#ensureWritable();
+    return this.#persistSprint(await this.#call('sprint.transfer', params));
   }
 
   // ------------------------------------------------------------------- retros
@@ -1110,6 +1227,100 @@ export class BrowserProvider implements DataProvider {
 
   setTunnel(): Promise<TunnelStatus> {
     return Promise.reject(new ProviderError('read_only', BROWSER_TUNNEL_REASON));
+  }
+
+  // ---------------------------------------------------------------- youtrack
+
+  /**
+   * Every YouTrack call fails the same way in this mode, loudly rather than
+   * silently: the card is gated on the `youtrackSupported` capability, so a
+   * call arriving here is a bug in the caller and says so.
+   */
+  getYouTrackSettings(): Promise<YouTrackSettings> {
+    return Promise.reject(new ProviderError('read_only', BROWSER_YOUTRACK_REASON));
+  }
+
+  updateYouTrackSettings(): Promise<YouTrackSettings> {
+    return Promise.reject(new ProviderError('read_only', BROWSER_YOUTRACK_REASON));
+  }
+
+  testYouTrackConnection(): Promise<YouTrackTestResult> {
+    return Promise.reject(new ProviderError('read_only', BROWSER_YOUTRACK_REASON));
+  }
+
+  listYouTrackProjects(): Promise<YouTrackProject[]> {
+    return Promise.reject(new ProviderError('read_only', BROWSER_YOUTRACK_REASON));
+  }
+
+  listYouTrackFields(): Promise<YouTrackFieldList> {
+    return Promise.reject(new ProviderError('read_only', BROWSER_YOUTRACK_REASON));
+  }
+
+  /**
+   * Importing needs the same credential the connection needs, so it fails the
+   * same way and for the same reason. The import dialog is gated on the
+   * YouTrack capability, which is false here, so a call arriving at any of
+   * these three is a bug in the caller — and says so rather than producing a
+   * network error the user would read as a broken instance.
+   */
+  searchYouTrackIssues(): Promise<YouTrackIssuePage> {
+    return Promise.reject(new ProviderError('read_only', BROWSER_YOUTRACK_REASON));
+  }
+
+  previewYouTrackImport(): Promise<YouTrackImportPreviewResult> {
+    return Promise.reject(new ProviderError('read_only', BROWSER_YOUTRACK_REASON));
+  }
+
+  runYouTrackImport(): Promise<YouTrackImportRun> {
+    return Promise.reject(new ProviderError('read_only', BROWSER_YOUTRACK_REASON));
+  }
+
+  /**
+   * Knowledge-base synchronization and the comment push need the credential and
+   * the job engine, neither of which exists in a tab. They fail loudly for the
+   * same reason as the rest of the group: the toolbar and the comment action
+   * are gated on `capabilities.youtrack`, which is false here, so a call
+   * arriving at one of these four is a bug in the caller and says so.
+   */
+  kbSyncStatus(): Promise<KbSyncStatusResult> {
+    return Promise.reject(new ProviderError('read_only', BROWSER_YOUTRACK_REASON));
+  }
+
+  publishKbPage(): Promise<KbSyncJobResult> {
+    return Promise.reject(new ProviderError('read_only', BROWSER_YOUTRACK_REASON));
+  }
+
+  pullKbPage(): Promise<KbSyncJobResult> {
+    return Promise.reject(new ProviderError('read_only', BROWSER_YOUTRACK_REASON));
+  }
+
+  pushCommentToYoutrack(): Promise<CommentPushResult> {
+    return Promise.reject(new ProviderError('read_only', BROWSER_YOUTRACK_REASON));
+  }
+
+  // ----------------------------------------------------- background jobs
+
+  /**
+   * There is no background job engine in a tab: the queue, its journal and its
+   * worker pool all belong to the companion process. The settings card is
+   * gated on the engine half of the sync settings being present, which it is
+   * not here, so these four fail loudly rather than pretending the queue is
+   * simply empty — an empty queue and no queue at all are different facts.
+   */
+  listSyncJobs(): Promise<SyncJobPage> {
+    return Promise.reject(new ProviderError('read_only', BROWSER_SYNC_ENGINE_REASON));
+  }
+
+  getSyncJob(): Promise<SyncJob> {
+    return Promise.reject(new ProviderError('read_only', BROWSER_SYNC_ENGINE_REASON));
+  }
+
+  retrySyncJob(): Promise<SyncJob> {
+    return Promise.reject(new ProviderError('read_only', BROWSER_SYNC_ENGINE_REASON));
+  }
+
+  cancelSyncJob(): Promise<SyncJob> {
+    return Promise.reject(new ProviderError('read_only', BROWSER_SYNC_ENGINE_REASON));
   }
 
   // --------------------------------------------------------------- git sync

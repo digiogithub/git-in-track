@@ -34,6 +34,14 @@ const (
 	EnvGitCommitOnSave = "GINTRACK_GIT_COMMIT_ON_SAVE"
 	EnvLogLevel        = "GINTRACK_LOG_LEVEL"
 	EnvLogFormat       = "GINTRACK_LOG_FORMAT"
+
+	// The `sync.engine` overrides. They are declared here, with the rest of
+	// the environment layer, so that `gintrack serve` and this package cannot
+	// disagree about what a variable is called.
+	EnvSyncWorkers     = "GINTRACK_SYNC_WORKERS"
+	EnvSyncBatch       = "GINTRACK_SYNC_BATCH"
+	EnvSyncRate        = "GINTRACK_SYNC_RATE"
+	EnvSyncMaxAttempts = "GINTRACK_SYNC_MAX_ATTEMPTS"
 )
 
 // Env returns a Reader over the process environment.
@@ -124,6 +132,16 @@ type Flags struct {
 	GitBackend string
 	LogLevel   string
 	LogFormat  string
+	// YouTrackToken is the permanent token a command was given on the command
+	// line. It beats the environment and the file and is never written back.
+	YouTrackToken string
+
+	// The `sync.engine` overrides of `gintrack serve`. A zero field means the
+	// flag was not given, which is what keeps the file layer underneath it.
+	SyncWorkers     int
+	SyncBatch       int
+	SyncRate        float64
+	SyncMaxAttempts int
 }
 
 // Resolution is the outcome of Resolve: the effective configuration and where
@@ -211,11 +229,49 @@ func applyEnv(c *Config, env Reader) error {
 		}
 		c.Git.CommitOnSave = on
 	}
+	if v := strings.TrimSpace(env(EnvYouTrackToken)); v != "" {
+		c.SetYouTrackTokenOverride(v, TokenSourceEnv)
+	}
 	if v := strings.TrimSpace(env(EnvLogLevel)); v != "" {
 		c.Log.Level = v
 	}
 	if v := strings.TrimSpace(env(EnvLogFormat)); v != "" {
 		c.Log.Format = v
+	}
+	return applySyncEnv(c, env)
+}
+
+// applySyncEnv layers the four GINTRACK_SYNC_* variables on top of the
+// `sync.engine` section. A value that is not a number is refused here rather
+// than silently ignored: an operator who exported a typo wants to be told.
+func applySyncEnv(c *Config, env Reader) error {
+	if v := strings.TrimSpace(env(EnvSyncWorkers)); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return FieldErrors{{Field: EnvSyncWorkers, Message: fmt.Sprintf("%q is not a whole number", v)}}
+		}
+		c.Sync.Engine.Workers = n
+	}
+	if v := strings.TrimSpace(env(EnvSyncBatch)); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return FieldErrors{{Field: EnvSyncBatch, Message: fmt.Sprintf("%q is not a whole number", v)}}
+		}
+		c.Sync.Engine.BatchSize = n
+	}
+	if v := strings.TrimSpace(env(EnvSyncRate)); v != "" {
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			return FieldErrors{{Field: EnvSyncRate, Message: fmt.Sprintf("%q is not a number", v)}}
+		}
+		c.Sync.Engine.Rate = f
+	}
+	if v := strings.TrimSpace(env(EnvSyncMaxAttempts)); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return FieldErrors{{Field: EnvSyncMaxAttempts, Message: fmt.Sprintf("%q is not a whole number", v)}}
+		}
+		c.Sync.Engine.MaxAttempts = n
 	}
 	return nil
 }
@@ -238,10 +294,25 @@ func applyFlags(c *Config, flags Flags) {
 	if flags.GitBackend != "" {
 		c.Git.Backend = Backend(flags.GitBackend)
 	}
+	if flags.YouTrackToken != "" {
+		c.SetYouTrackTokenOverride(flags.YouTrackToken, TokenSourceFlag)
+	}
 	if flags.LogLevel != "" {
 		c.Log.Level = flags.LogLevel
 	}
 	if flags.LogFormat != "" {
 		c.Log.Format = flags.LogFormat
+	}
+	if flags.SyncWorkers != 0 {
+		c.Sync.Engine.Workers = flags.SyncWorkers
+	}
+	if flags.SyncBatch != 0 {
+		c.Sync.Engine.BatchSize = flags.SyncBatch
+	}
+	if flags.SyncRate != 0 {
+		c.Sync.Engine.Rate = flags.SyncRate
+	}
+	if flags.SyncMaxAttempts != 0 {
+		c.Sync.Engine.MaxAttempts = flags.SyncMaxAttempts
 	}
 }

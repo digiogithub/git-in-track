@@ -50,6 +50,29 @@ type Filter struct {
 	// excluded by default.
 	IncludeDeleted bool `json:"include_deleted,omitempty"`
 
+	// ExternalSystem keeps only items carrying a reference to that system, and
+	// ExternalID narrows it to one external identifier. ExternalID without a
+	// system matches the id in any system. Matching is case-insensitive on the
+	// system and exact on the id, which is how NewExternalRef normalises them.
+	ExternalSystem string `json:"external_system,omitempty"`
+	ExternalID     string `json:"external_id,omitempty"`
+
+	// Inbox decides what the filter does with items whose status is in the
+	// reserved triage category. The zero value excludes them, so a filter
+	// written before the inbox existed keeps returning exactly what it used to
+	// (ADR-033).
+	Inbox InboxScope `json:"inbox,omitempty"`
+	// InboxStatuses keeps only the triage states named, compared against the
+	// effective state: a snoozed item whose snoozed_until has arrived counts as
+	// pending. It is ignored when Inbox is InboxExclude, which returns no triage
+	// item at all.
+	InboxStatuses []InboxStatus `json:"inbox_status,omitempty"`
+	// SnoozeAsOf is the instant snooze expiry is evaluated against. The caller
+	// supplies it because internal/core never reads a clock: it compiles to
+	// WebAssembly and its results have to be reproducible. A zero value expires
+	// nothing.
+	SnoozeAsOf Timestamp `json:"snooze_as_of,omitempty"`
+
 	// Sort is a comma-separated list of keys, each optionally prefixed with "-"
 	// for descending order. Supported keys: updated, created, priority, id,
 	// title, status. The default is "-updated".
@@ -218,7 +241,67 @@ func (ix *Index) matches(it *Item, f Filter) bool {
 	if f.Text != "" && !matchesText(it, f.Text) {
 		return false
 	}
+	if !matchExternal(it.External, f) {
+		return false
+	}
+	if !ix.matchInbox(it, f) {
+		return false
+	}
 	return true
+}
+
+// matchExternal implements the external_system and external_id filters. The two
+// are AND-ed on the same entry: asking for system youtrack and id PRJ-42 must
+// not be satisfied by a youtrack reference plus an unrelated jira PRJ-42.
+func matchExternal(list []External, f Filter) bool {
+	if f.ExternalSystem == "" && f.ExternalID == "" {
+		return true
+	}
+	want := NewExternalRef(f.ExternalSystem, f.ExternalID)
+	for _, e := range list {
+		ref := e.Ref()
+		if want.System != "" && ref.System != want.System {
+			continue
+		}
+		if want.ID != "" && ref.ID != want.ID {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// matchInbox applies the triage scope and the inbox-status filter. It resolves
+// the category through the project workflow rather than trusting a field on the
+// item, so a project that declares no triage status simply has no inbox and
+// nothing is ever hidden from it.
+func (ix *Index) matchInbox(it *Item, f Filter) bool {
+	triage := ix.categoryOf(it) == CategoryTriage
+	switch f.Inbox {
+	case InboxOnly:
+		if !triage {
+			return false
+		}
+	case InboxInclude:
+		// Both sides are wanted; the status filter below still applies.
+	default:
+		return !triage
+	}
+	if len(f.InboxStatuses) == 0 {
+		return true
+	}
+	if !triage {
+		// An inbox-status filter is meaningless outside triage, and an item that
+		// is not in triage has no triage state to match.
+		return false
+	}
+	effective := it.Inbox.EffectiveStatus(f.SnoozeAsOf)
+	for _, want := range f.InboxStatuses {
+		if want == effective {
+			return true
+		}
+	}
+	return false
 }
 
 // matchesText is the case-insensitive substring search of item_list's `text`
@@ -483,6 +566,7 @@ func (ix *Index) Page(p string) (*KBPage, bool) {
 	out.Headings = append([]Heading(nil), page.Headings...)
 	out.Links = append([]Wikilink(nil), page.Links...)
 	out.External = append([]string(nil), page.External...)
+	out.ExternalRefs = cloneExternals(page.ExternalRefs)
 	return &out, true
 }
 
@@ -817,6 +901,8 @@ func cloneItem(it *Item) Item {
 	out.Assignees = append([]string(nil), it.Assignees...)
 	out.Labels = append([]string(nil), it.Labels...)
 	out.Links = append([]Link(nil), it.Links...)
+	out.External = cloneExternals(it.External)
+	out.Inbox = it.Inbox.Clone()
 	out.Attachments = append([]string(nil), it.Attachments...)
 	out.Custom = cloneMap(it.Custom)
 	out.Extra = cloneMap(it.Extra)
@@ -829,6 +915,7 @@ func cloneItem(it *Item) Item {
 func cloneComment(c *Comment) Comment {
 	out := *c
 	out.Attachments = append([]string(nil), c.Attachments...)
+	out.External = cloneExternals(c.External)
 	out.Extra = cloneMap(c.Extra)
 	if c.Reactions != nil {
 		out.Reactions = make(map[string][]string, len(c.Reactions))

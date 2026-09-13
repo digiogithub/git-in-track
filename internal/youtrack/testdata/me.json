@@ -1,0 +1,8 @@
+{
+  "id": "1-1",
+  "login": "jose",
+  "fullName": "Jose F. Rives",
+  "email": "jose@example.com",
+  "avatarUrl": "/hub/api/rest/avatar/1-1",
+  "$type": "Me"
+}

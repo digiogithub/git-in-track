@@ -48,10 +48,16 @@ web/
     features/
       kb/                      # knowledge base viewer (project docs + team knowledge/)
       backlog/                 # epics, stories, tasks, milestones, comments
-      boards/                  # kanban + scrum boards, sprint planning
+      boards/                  # kanban + scrum boards, sprint planning, active cycle
+      editor/                  # item editor and create pages (§8)
+      feedback/                # feedback notes on items and KB pages (ADR-030)
+      inbox/                   # the triage queue and the accept flow (ADR-033)
+      metrics/                 # sprint metrics and charts
       retros/                  # retrospectives and improvement actions
-      sync/                    # sync panel, conflicts, credentials, git log
-      settings/                # workspace, repos, appearance, agents/MCP status
+      sync/                    # sync panel, conflicts, credentials, git log, job queue
+      settings/                # workspace, repos, appearance, agents/MCP status, YouTrack
+      workspace/               # the landing surface and the add-repository wizard
+      youtrack/                # the import dialog and its query bar
     core-bridge/               # WASM worker client (browser-only mode)
       worker.ts                # the Web Worker entry point
       client.ts                # typed RPC client with request ids
@@ -133,6 +139,8 @@ state is shareable by URL and survives reloads.
   /p/$projectKey/items                      ItemTable (list view, filters in search params)
   /p/$projectKey/items/$itemId              ItemDetail
   /p/$projectKey/items/$itemId/edit         ItemEditor
+  /p/$projectKey/inbox                      InboxPage     (as built, ?filter= &id=)
+  /p/$projectKey/inbox/$itemId/accept       ItemEditor in `accept` mode
   /p/$projectKey/epics                      EpicTree
   /p/$projectKey/milestones                 MilestoneList
   /p/$projectKey/milestones/$milestoneId    MilestoneDetail
@@ -253,6 +261,48 @@ path (Phase 4). A right rail shows file path, last commit, and "Open in editor"
 (companion mode only, via a server endpoint that shells out to `$EDITOR`).
 
 **ItemEditor (`/p/$projectKey/items/$itemId/edit`)** — §8.
+
+**InboxPage (`/p/$projectKey/inbox`, as built, story GIT-US-0060, ADR-033)** — The triage queue: a
+list of submissions on the left, the submission under triage on the right, and four decisions —
+**accept**, **reject**, **snooze**, **duplicate of**. The route exists only for a project that
+declares a status in the reserved `triage` category; a project without one has no inbox, so the
+sidebar entry is absent rather than empty, and the sidebar shows the pending count beside it.
+
+The filter and the row being shown live in the **search params** (`?filter=&id=`), so a half-finished
+pass is a link: a person can hand the queue to someone else, or come back to it after a reload,
+without losing their place. The pass is keyboard-driven — `j`/`k` walk, `a`/`r`/`s` decide — and the
+keys are ignored while the focus is in a field or a dialog, because someone typing a snooze date into
+the picker is not asking to reject the row behind it. After a decision the pane moves to the **next**
+row, computed *before* the write: afterwards the row is gone from the list and there is nothing left
+to compute a neighbour from.
+
+**Add to inbox (`AddToInboxButton`, as built, story GIT-US-0066)** — the capture form, in the items
+page header beside *New item* and in the Inbox header itself. It is the only create surface in the
+app that asks **no type, no parent and no status question**: a title, optionally what happened, and
+nothing else. That restraint is the point. Everything else that creates an item asks a person to
+place the work in the plan before it exists, and a report is not a plan — it arrives, it is real
+from that moment, and a triager decides the rest. The item is filed with the project's triage
+status and `inbox.source: web`, and the dialog then swaps to a confirmation naming the id that was
+allocated and linking to the queue, because "somebody will look at this" is the only thing the
+person submitting wants confirmed. Like the sidebar entry, the control renders **nothing at all**
+for a project that declares no triage status: a button leading to an explanation of why a
+submission cannot be made is worse than no button.
+
+The submission's comment thread is rendered **read-only** here. A triage pane answers one question —
+does this belong in the backlog — and accepting opens the item itself, which is where the
+conversation about it belongs; the composer is deliberately not lifted into the pane, where it would
+turn the triage keys off for as long as someone was typing.
+
+**Accepting (`/p/$projectKey/inbox/$itemId/accept`)** — the ordinary item editor with a different
+verb. It is literally `ItemEditorPage` in `accept` mode (§8), not a second form: the same front
+matter form and the same body editor, with the status arriving defaulted to the workflow's initial
+non-triage status, a save that commits the acceptance itself rather than a plain patch — so a person
+cannot half-accept an item by editing it and walking away — and a return to the queue when it lands.
+The editor's session affordances are absent in this mode: no autosave, and no recovered draft,
+because accepting is one write reached from the queue rather than a surface a half-written edit is
+left open on. Neither mode offers a type picker and neither ever will: an id encodes its type for
+life (R-ID-3), so a submission filed as a task that should have been an epic is answered by creating
+the epic and marking this one a duplicate of it.
 
 **EpicTree (`/p/$projectKey/epics`)** — Three-level tree (epic → story → task)
 with lazy expansion, per-node rollups (done/total, points sum, % complete), inline
@@ -412,6 +462,156 @@ tunnel that never settles says so instead of polling forever.
 Nothing here is cached or persisted. A **new hostname is minted on every enable**, so the
 card reads the status rather than remembering one, and turning the tunnel off invalidates
 every link already shared.
+
+**YouTrack connection (`features/settings/YouTrackCard.tsx`, stories GIT-US-0055 and
+GIT-US-0065).** Connecting a project to a YouTrack instance is three facts — an instance, a
+credential and a remote project — and the card exists so that the user finds out whether they are
+right *before* anything is written: **Test connection** probes the URL and token currently in the
+form, saved or not, and names the YouTrack user it resolved.
+
+The credential decides the shape of the screen. The API is write-only about it — a read returns
+`hasToken` and `tokenSource`, never the token (doc 07 §5.5, [ADR-032](./adr/ADR-032-local-integration-credential-storage.md))
+— so the field is **never** pre-filled, not even with a masked placeholder, which a save would
+happily write back as the literal string of asterisks. Instead the card says that a token is stored
+and where it came from: the companion's configuration file, its environment, or its command line. A
+token that arrived in the environment or on the command line belongs to whoever started the
+companion, and the card reports it rather than pretending it can clear it.
+
+The **YouTrack project** field is an autosuggest over the instance's own projects rather than a text
+box, and it degrades to a text box when the instance cannot be listed, because a short name typed
+from memory is the single most common way this connection is wrong. Three selects carry the rest of
+the committed block of doc 03 §6.5: push comments (`manual` / `auto`), knowledge base sync
+(`manual` / `on_write`) and sync direction (`push` / `pull` / `both`).
+
+Everything the instance says about itself arrives as a distinct problem code — a rejected token, a
+token without the permission, a base URL missing its context path, an unreachable host — and each is
+rendered as its own sentence with its own fix, never collapsed into one "failed" line. The companion
+answers `502` for all of them on purpose, so that a browser never mistakes YouTrack refusing a token
+for its own session expiring.
+
+The card shows whenever `youtrackSupported` is true — that is, in companion mode — and **not** only
+when a project is already linked: a card that appeared only once a project was connected could never
+connect the first one. That is the opposite gate from the import entry below, and the two are
+deliberately different questions (doc 02 §2).
+
+**The field map (`features/settings/YouTrackFieldMap.tsx`).** A table of the git-in-track fields of
+doc 03 §6.5 against the YouTrack custom fields that carry them. Neither list is hard-coded in the
+browser: the git-in-track side comes from the companion's own `FieldMapKeys` and the YouTrack side is
+discovered from the instance, so neither can drift from what the importer will actually read.
+
+The table answers two questions, not one. *Which* YouTrack field carries a git-in-track field — the
+field called "State" carries `status` — and *what* one of that field's values means here — the value
+"In Progress" is the local status `in_progress`. `GET /api/v1/youtrack/fields` answers each
+bundle-backed field with its allowed values and names the three git-in-track fields whose values may
+be mapped at all (`valueMappableFields`: `status`, `priority`, `type`), so the value tables appear
+for exactly those three and only when the field they point at has a bundle behind it. The local half
+of a value mapping is this project's own vocabulary: its workflow statuses, its declared priorities,
+the four item types an issue can be imported as.
+
+Three rules make the table honest rather than convenient. **A default is proposed, never applied
+silently:** on first open every unmapped row — field or value — is matched case-insensitively
+against the instance's real names and marked as a proposal, so what gets saved is what somebody
+looked at. **An unknown flag proposes nothing:** a state value carries `isResolved` only when the
+instance actually declared it, absent rather than `false`, and an absent flag must not propose a done
+status — silence is not a claim that a value closes an issue. A `isResolved: true` is the one
+fallback when no name matches. And **a mapping pointing at something that no longer exists is a
+warning, not a deletion:** it stays selected and clearing it is an explicit act, because a rename in
+YouTrack must not quietly unmap a field here and turn every later import into a silent default. An
+archived value is listed rather than hidden, for the same reason: it is no longer offered on new
+issues but it is still on the old ones, which are exactly the issues an import reads.
+
+Over the wire an entry is always an object, `{"status": {"field": "State", "values": {"In Progress":
+"in_progress"}}}`. A field with no value mapping is written without a `values` key, which is what
+keeps a hand-written `project.yaml` as readable as it was found (doc 03 §6.5).
+
+**Import from YouTrack (`features/youtrack/`, story GIT-US-0059).** The entry is a button in the
+backlog toolbar, and it needs **both** capability flags: `youtrackSupported`, because a browser-only
+tab has no process to hold a token, and `youtrack`, because importing from an instance nothing is
+linked to is meaningless. Without both, the button is absent rather than disabled.
+
+The dialog is one linear flow — **pick**, **preview**, **run**, **summary**, the first two being one
+screen — and it is linear because an import writes items into a git repository, and the step that
+makes that safe is the one where the user sees what would be written before anything is.
+
+*Pick* is a typeahead over the linked project plus five saved queries, because the alternative is
+asking a person to remember a query language to answer "which of my issues do I want here". The
+preset chips are the common questions and the text box is the escape hatch; the two compose.
+Selection is multiple and additive with a running count always on screen — an import is a batch, and
+its size is the thing to know before pressing preview. A result a previous import already created is
+marked with the git-in-track id it became and **stays selectable**: that is not an edge case but the
+normal second import, and the preview will say `update` rather than `create`.
+
+The options are a subtask-depth stepper from 0 to 5 — 0 means the selected issues and nothing else,
+and the recursion is a number rather than a checkbox because "these three issues" and "these three
+issues and everything under them" are wildly different amounts of writing — plus three switches:
+include linked issues (non-hierarchy relations become `links[]`), include comments (one comment file
+each, keeping the original author and time), and include attachments (paths recorded on the item,
+files fetched by the job engine). A fifth control, *land in Inbox*, is present and **disabled on
+purpose**: it is the shape the Inbox epic gives an import, and a visibly unavailable control says so
+far better than a missing one, which reads as an option nobody thought of.
+
+**Preview and run are the same call with the same options object**, which is what stops "what the
+preview showed me" and "what the run did" from drifting. Preview is synchronous and writes nothing:
+it answers, per issue, what it would become, whether it is a `create` or an `update`, which item an
+update would patch, how deep the recursion found it, how many comments it would write, and every
+value the field map could not read. Run is never inline: `POST /api/v1/youtrack/import` always
+queues and always answers `202` with a job id, because an import is a hundred issues and a hundred
+requests against somebody else's rate limit. The progress strip is fed by the `sync.job.*` events —
+coalesced server-side to one frame per 500 ms per group, terminal frames never throttled — so the
+component adds no throttling of its own and treats a jump in the counts as normal.
+
+The summary therefore says what the queue knows: how many issues were processed, or, when the job
+failed outright, the message the engine recorded — already redacted, rendered as plain text, with a
+pointer to the queue in Settings, which holds the job, its attempts and its last error. The events
+carry counts and never the per-issue outcome, and no second call answers one, so the dialog does not
+pretend to have it.
+
+The dialog writes nothing itself. It calls the import operations and lets the vault do the writing,
+which is what keeps one implementation of "import an issue" behind REST, MCP and the CLI alike.
+
+**Send to YouTrack on a comment (`features/backlog/ItemDetail.tsx`, story GIT-US-0076).** A comment
+thread on an item that carries a YouTrack `external` reference offers a per-comment push, gated on
+all three facts at once: `capabilities.features.youtrack`, a linked project, and that reference. The
+state of a pushed comment is **derived, never held in the component** — from the comment's own
+`external` field plus the `sync.job.*` frames for its path — so a reload shows the truth rather than
+a spinner that outlived its page: pending while the job is queued or running, sent with the remote
+comment id and a link to it, failed with the error and a retry.
+
+The project setting `push_comments` decides whether the action is there at all. Under `manual` every
+comment is pushed by hand; under `auto` the per-comment action collapses into the state badge alone,
+because everything is going anyway. The settings card spells out the consequence rather than naming
+the mode: `auto` sends **every comment written from then on**, and never sends existing ones
+retroactively. Feedback notes are comments (ADR-030), so the feedback panel needs one control and
+not a second sink: a "send to YouTrack after saving" checkbox, remembered per project in the
+feedback store.
+
+**Knowledge-base sync (`features/kb/KbSyncToolbar.tsx`, story GIT-US-0093).** The KB viewer carries
+a toolbar group — *Publish to YouTrack*, *Publish folder…*, *Sync now*, a status badge and *Check the
+article* — rendered only when the runtime supports YouTrack and the project is linked. Publishing one
+page is a click; publishing a **folder** is a click plus a confirmation that says how many pages it
+will touch, because "publish" over a handbook is hundreds of articles and a person is entitled to
+know that before it starts. The `## Feedback` block is never part of what is published: it stays in
+the repository (ADR-030), and the confirmation says so.
+
+Nothing here happens inline. Both directions queue a job and return, and the job reports itself over
+the `sync.job.*` stream the viewer already listens to, so the toasts say *queued* and never
+*published* — the second would be a lie the moment an instance is slow. The badge renders the five
+states the KB status operation answers (unlinked, in sync, out of date locally, out of date
+remotely, conflict) with the article id and a link to the article when known, and it appears per node
+in the tree so a folder summarises its children. Reading the *local* state costs no request: it comes
+from each page's own `external` entry and the content it would publish, which is what makes asking
+about a whole tree affordable. *Check the article* is the one action that actually reads the remote
+article, which is why it is a button rather than something the screen does on its own. A conflict —
+both sides changed since the last sync — renders an inline notice linking to the generated
+`<page>.conflict.md` and stating that the page itself was left untouched.
+
+The toolbar **reads the project's `kb_sync` setting rather than assuming it**. Under `on_write` a
+save already enqueues a publish, so a button labelled "Publish to YouTrack" would be describing the
+setting's work as its own: it relabels to *Publish now*, and the toolbar says where publishing
+actually comes from. It is not disabled — publishing this page this instant is still a thing to
+want, most obviously when the last automatic job failed. The direction matters to that reading: an
+`on_write` project whose direction is `pull` publishes nothing on save, so the manual wording stays.
+The setting itself, and its direction, are edited in the YouTrack settings card above.
 
 **SettingsLayout (`/settings/*`)** — Workspace (mounted repos, remove/repair,
 re-index, clear caches), per-repo (docs folder, project key, default branch,
@@ -1096,6 +1296,31 @@ panel, where it can be edited or removed before it is saved.
   browser-only mode reads the repository's own `.git/config`, then the author of
   Settings → Sync. Comments show the name, with the email as its tooltip.
 
+### 8.6 One editor, two modes (as built, GIT-US-0060)
+
+`ItemEditorPage` takes a `mode` of `edit` or `accept`, and there is no second
+page behind the second mode. Accepting a submission into the backlog *is* the
+ordinary editor with a different verb, so the alternative — a duplicated page
+shell — would only have guaranteed that the two drift: a field added to the
+front matter form would reach the editor and quietly not reach triage.
+
+What the mode changes is exactly what the two flows disagree about:
+
+| | `edit` | `accept` |
+|---|---|---|
+| Title and primary action | *Edit `<title>`* / Save | *Accept into the backlog* / Accept |
+| Initial status | the item's own | the workflow's initial non-triage status |
+| What the save writes | a rev-checked patch | the acceptance, then the rest of the form against the revision it produced |
+| Cancel goes to | the item | the queue |
+| Autosave, drafts, leave-guard | yes | no |
+
+Everything else — the form, the body editor, the validation, the conflict dialog
+— is one implementation. The status default is applied as part of *loading* the
+item rather than as a later patch, so a project list that arrives after the item
+still lands the right status in the form; and an acceptance is always a write,
+even when nobody touched the form, because clearing the triage state is the point
+of pressing the button.
+
 ---
 
 ## 9. Boards UX
@@ -1164,6 +1389,19 @@ Code: `features/boards/` — `BoardList`, `BoardView` (the route plus the
   sprint's scope; the `backlog_column` also offers the candidates the sprint
   does not list, and each card says which it is (doc 04 R-SCRUM-1 to R-SCRUM-3).
   Dragging a candidate out of the backlog commits it to the sprint.
+- **The active cycle, as built** (`features/boards/ActiveCycle.tsx`, story GIT-US-0089): inside
+  `SprintPanel`, above the columns, so "where does the sprint stand" is answered without leaving
+  the board. It shows the derived status and the date range, the progress of the commitment, and
+  the burndown. Two rules shape what it may say. **The status is derived, never stored**
+  ([ADR-034](./adr/ADR-034-sprint-status-is-derived-from-dates.md)): it comes from the core, computed from the
+  dates against the host's day, so the component never recomputes any of it — and a sprint with no
+  dates is a *draft*, which is given a planning state rather than a progress bar at zero, because a
+  bar at zero over a sprint nobody has scheduled reads as "no work done" instead of "no sprint yet".
+  **A chart is never shown without its provenance** (ADR-017): the note above the burndown is
+  printed always, and a closed sprint reads its stored snapshot and says so — after the close the
+  items have left the scope, so the frozen block is the only truthful answer (doc 04 R-MET-12).
+  The panel's chips and the cycle's chips are deliberately different things: one is what somebody
+  did, the other is what the dates make of it.
 - **Planning:** "Plan sprint" opens two lists — the scope and the candidates —
   with Add and Remove on each row. Both write the sprint file in the team
   repository and nothing else, so a card whose project nobody cloned moves in

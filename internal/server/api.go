@@ -71,6 +71,10 @@ func (s *Server) mountAPI(api chi.Router) {
 
 		// Items.
 		p.Route("/items", s.mountItems)
+		// The triage queue of a project (GIT-US-0056). The decision that
+		// empties a row from it is POST /items/{id}/triage, which lives with
+		// the other item writes.
+		p.Get("/inbox", s.handleInboxList)
 
 		p.Get("/search", s.handleSearch)
 		p.Post("/validate", s.handleValidate)
@@ -93,6 +97,11 @@ func (s *Server) mountAPI(api chi.Router) {
 		// CLI flag (docs/08-mcp-server.md section 7.1).
 		p.Route("/mcp", s.mountMCPSettings)
 		p.Route("/git", s.mountGit)
+		// The YouTrack connection: its settings, the connection test and the
+		// two discovery calls the settings UI needs (GIT-US-0052). The browser
+		// never talks to YouTrack; it asks the companion, which holds the
+		// token.
+		p.Route("/youtrack", s.mountYouTrack)
 		p.Route("/sync", s.mountSync)
 	})
 

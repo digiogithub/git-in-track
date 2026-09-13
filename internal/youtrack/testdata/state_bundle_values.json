@@ -1,0 +1,5 @@
+[
+  { "id": "72-0", "name": "Open", "ordinal": 0, "archived": false, "isResolved": false, "color": { "id": "0", "background": "#FFFFFF", "foreground": "#000000" }, "$type": "StateBundleElement" },
+  { "id": "72-1", "name": "In Progress", "ordinal": 1, "archived": false, "isResolved": false, "$type": "StateBundleElement" },
+  { "id": "72-2", "name": "Fixed", "ordinal": 2, "archived": false, "isResolved": true, "$type": "StateBundleElement" }
+]

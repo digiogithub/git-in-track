@@ -1,5 +1,5 @@
 import { Link, useParams } from '@tanstack/react-router';
-import { Info, TriangleAlert } from 'lucide-react';
+import { Info, Snowflake, TriangleAlert } from 'lucide-react';
 
 import type { MetricsProvenance, MetricStat, SprintMetricsView } from '@/api/provider';
 import { Badge } from '@/components/ui/badge';
@@ -52,13 +52,23 @@ export function SprintMetricsBody({ view }: { view: SprintMetricsView }) {
   const bands = bandsInUse(flow);
   const observed = burndown.points.filter((point) => point.observed);
   const latest = observed.at(-1);
+  /**
+   * A closed sprint answers from the snapshot frozen into its file, and only
+   * the burndown was frozen: the cumulative-flow series and the flow
+   * statistics are not recomputable once the items have left the scope
+   * (R-MET-12, ADR-034). They come back empty, and an empty series must be
+   * *said*, never drawn — a flat line at zero reads as "no work flowed"
+   * instead of "this was never recorded".
+   */
+  const frozen = provenance.source === 'snapshot';
 
   return (
     <div className="space-y-6">
       <header className="space-y-1">
         <h1 className="page-title">{sprint.title} — metrics</h1>
         <p className="text-sm text-muted-foreground">
-          {sprint.start} to {sprint.end} · {sprint.metrics.items} items · board {sprint.board}
+          {sprint.start && sprint.end ? `${sprint.start} to ${sprint.end}` : 'No dates yet'} ·{' '}
+          {sprint.metrics.items} items · board {sprint.board}
         </p>
       </header>
 
@@ -77,16 +87,24 @@ export function SprintMetricsBody({ view }: { view: SprintMetricsView }) {
         />
         <StatTile
           label="Throughput"
-          value={String(stats.throughput)}
-          hint={`${formatNumber(stats.throughputPerWeek)} items per week`}
+          value={frozen ? '—' : String(stats.throughput)}
+          hint={
+            frozen
+              ? 'not frozen when this sprint closed'
+              : `${formatNumber(stats.throughputPerWeek)} items per week`
+          }
         />
         <StatTile
           label="Cycle time"
-          value={stats.cycleTime.count > 0 ? `${formatNumber(stats.cycleTime.median)} d` : '—'}
+          value={
+            frozen || stats.cycleTime.count === 0 ? '—' : `${formatNumber(stats.cycleTime.median)} d`
+          }
           hint={
-            stats.cycleTime.count > 0
-              ? `median of ${stats.cycleTime.count}; 85th percentile ${formatNumber(stats.cycleTime.p85)} d`
-              : 'no item has a measurable start and finish'
+            frozen
+              ? 'not frozen when this sprint closed'
+              : stats.cycleTime.count > 0
+                ? `median of ${stats.cycleTime.count}; 85th percentile ${formatNumber(stats.cycleTime.p85)} d`
+                : 'no item has a measurable start and finish'
           }
         />
       </section>
@@ -146,87 +164,118 @@ export function SprintMetricsBody({ view }: { view: SprintMetricsView }) {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Cumulative flow</CardTitle>
-          <CardDescription>
-            How many items stood in each status at the end of each day. Finished work stacks at the
-            bottom, so the top edge of the shape is the scope.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <CumulativeFlowChart flow={flow} />
-          <details>
-            <summary className="cursor-pointer text-sm text-muted-foreground">
-              Cumulative flow as a table
-            </summary>
-            <Table>
-              <TableCaption>Item counts by status for every measured day.</TableCaption>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Date</TableHead>
-                  {bands.map((band) => (
-                    <TableHead key={band}>{BAND_LABELS[band]}</TableHead>
-                  ))}
-                  <TableHead>Total</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {flow.days
-                  .filter((day) => day.observed)
-                  .map((day) => (
-                    <TableRow key={day.date}>
-                      <TableCell>{day.date}</TableCell>
+      {frozen ? (
+        <NotFrozen
+          title="Cumulative flow and flow statistics"
+          detail="Only the burndown is frozen into a sprint file when it closes. The cumulative-flow series and the cycle, lead and throughput samples are reconstructed from the item histories, and after a close the items have left the scope — so there is nothing left to reconstruct them from. They are left out rather than drawn as zeros, which would read as a sprint where nothing ever moved."
+        />
+      ) : (
+        <>
+          <Card>
+            <CardHeader>
+              <CardTitle>Cumulative flow</CardTitle>
+              <CardDescription>
+                How many items stood in each status at the end of each day. Finished work stacks at
+                the bottom, so the top edge of the shape is the scope.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <CumulativeFlowChart flow={flow} />
+              <details>
+                <summary className="cursor-pointer text-sm text-muted-foreground">
+                  Cumulative flow as a table
+                </summary>
+                <Table>
+                  <TableCaption>Item counts by status for every measured day.</TableCaption>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Date</TableHead>
                       {bands.map((band) => (
-                        <TableCell key={band} className="tabular-nums">
-                          {day.counts[band] ?? 0}
-                        </TableCell>
+                        <TableHead key={band}>{BAND_LABELS[band]}</TableHead>
                       ))}
-                      <TableCell className="tabular-nums">{day.total}</TableCell>
+                      <TableHead>Total</TableHead>
                     </TableRow>
-                  ))}
-              </TableBody>
-            </Table>
-          </details>
-        </CardContent>
-      </Card>
+                  </TableHeader>
+                  <TableBody>
+                    {flow.days
+                      .filter((day) => day.observed)
+                      .map((day) => (
+                        <TableRow key={day.date}>
+                          <TableCell>{day.date}</TableCell>
+                          {bands.map((band) => (
+                            <TableCell key={band} className="tabular-nums">
+                              {day.counts[band] ?? 0}
+                            </TableCell>
+                          ))}
+                          <TableCell className="tabular-nums">{day.total}</TableCell>
+                        </TableRow>
+                      ))}
+                  </TableBody>
+                </Table>
+              </details>
+            </CardContent>
+          </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Flow</CardTitle>
-          <CardDescription>
-            Cycle time is the wait from an item first moving into progress to it first reaching a
-            terminal status. Lead time starts at the item's creation instead, so it needs a complete
-            history and is empty without one. Throughput counts the items that finished inside this
-            sprint.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Measure</TableHead>
-                <TableHead>Samples</TableHead>
-                <TableHead>Median</TableHead>
-                <TableHead>Mean</TableHead>
-                <TableHead>85th pct</TableHead>
-                <TableHead>Range</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              <StatRow label="Cycle time (days)" stat={stats.cycleTime} />
-              <StatRow label="Lead time (days)" stat={stats.leadTime} />
-            </TableBody>
-          </Table>
-          {stats.excluded > 0 && (
-            <p className="text-sm text-muted-foreground">
-              {stats.excluded} finished item(s) were left out: their history does not reach back to
-              the transition being measured.
-            </p>
-          )}
-        </CardContent>
-      </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle>Flow</CardTitle>
+              <CardDescription>
+                Cycle time is the wait from an item first moving into progress to it first reaching
+                a terminal status. Lead time starts at the item's creation instead, so it needs a
+                complete history and is empty without one. Throughput counts the items that finished
+                inside this sprint.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Measure</TableHead>
+                    <TableHead>Samples</TableHead>
+                    <TableHead>Median</TableHead>
+                    <TableHead>Mean</TableHead>
+                    <TableHead>85th pct</TableHead>
+                    <TableHead>Range</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  <StatRow label="Cycle time (days)" stat={stats.cycleTime} />
+                  <StatRow label="Lead time (days)" stat={stats.leadTime} />
+                </TableBody>
+              </Table>
+              {stats.excluded > 0 && (
+                <p className="text-sm text-muted-foreground">
+                  {stats.excluded} finished item(s) were left out: their history does not reach back
+                  to the transition being measured.
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        </>
+      )}
+
     </div>
+  );
+}
+
+/**
+ * What a stored snapshot does not contain.
+ *
+ * It is a card rather than a silence: a reader who knows this page usually
+ * shows a cumulative flow diagram has to be told why this one does not, or the
+ * absence reads as a bug.
+ */
+function NotFrozen({ title, detail }: { title: string; detail: string }) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Snowflake aria-hidden="true" className="h-4 w-4 text-muted-foreground" />
+          {title} were not recorded
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="text-sm text-muted-foreground">{detail}</CardContent>
+    </Card>
   );
 }
 
@@ -274,7 +323,11 @@ function StatRow({ label, stat }: { label: string; stat: MetricStat }) {
  */
 export function ProvenanceBanner({ provenance }: { provenance: MetricsProvenance }) {
   const approximate = provenance.approximate;
-  const Icon = approximate ? TriangleAlert : Info;
+  // A snapshot is neither an approximation nor a reconstruction made now: it is
+  // a reading of numbers that were frozen at the close, and it has to say so or
+  // a reader will assume the charts move when the items do.
+  const frozen = provenance.source === 'snapshot';
+  const Icon = frozen ? Snowflake : approximate ? TriangleAlert : Info;
   const partial = provenance.covered < provenance.items;
   return (
     <div
@@ -288,7 +341,11 @@ export function ProvenanceBanner({ provenance }: { provenance: MetricsProvenance
       <Icon aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
       <div className="space-y-1">
         <p className="flex flex-wrap items-center gap-2 font-medium text-foreground">
-          {approximate ? 'These numbers are an approximation' : 'Reconstructed from git history'}
+          {frozen
+            ? 'Frozen when this sprint was closed'
+            : approximate
+              ? 'These numbers are an approximation'
+              : 'Reconstructed from git history'}
           <Badge variant="outline">{provenance.source}</Badge>
         </p>
         <p className="text-muted-foreground">{provenance.note}</p>
@@ -335,7 +392,10 @@ export function MetricsIndex() {
                 <span>
                   <span className="font-medium">{sprint.title}</span>
                   <span className="block text-xs text-muted-foreground">
-                    {sprint.start} to {sprint.end} · {sprint.state}
+                    {sprint.start && sprint.end
+                      ? `${sprint.start} to ${sprint.end}`
+                      : 'No dates yet'}{' '}
+                    · {sprint.status}
                   </span>
                 </span>
                 <Badge variant="outline">{formatNumber(sprint.metrics.points)} pts</Badge>

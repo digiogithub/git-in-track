@@ -282,7 +282,7 @@ func (w *Watcher) AddRepo(key, root string) error {
 // vault indexes: a source tree of ten thousand directories costs ten thousand
 // inotify watches, exhausts the budget of DefaultMaxWatches and silently leaves
 // another repository with no live updates at all. Nil scopes keep the whole-tree
-// behaviour of AddRepo.
+// behavior of AddRepo.
 func (w *Watcher) AddRepoScoped(key, root string, scopes []string) error {
 	if key == "" {
 		return errors.New("watcher: repository key must not be empty")

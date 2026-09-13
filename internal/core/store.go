@@ -135,10 +135,16 @@ type ItemDraft struct {
 	Start Date `json:"start,omitempty"`
 	Due   Date `json:"due,omitempty"`
 
-	Links       []Link         `json:"links,omitempty"`
+	Links []Link `json:"links,omitempty"`
+	// External carries the full list of external references at creation. An
+	// importer supplies it so that the very first write is already matchable by
+	// (system, id) and a retried import updates instead of duplicating.
+	External    []External     `json:"external,omitempty"`
 	Attachments []string       `json:"attachments,omitempty"`
 	Custom      map[string]any `json:"custom,omitempty"`
-	Extra       map[string]any `json:"extra,omitempty"`
+	// Inbox is the triage block a submission arrives with.
+	Inbox *ItemInbox     `json:"inbox,omitempty"`
+	Extra map[string]any `json:"extra,omitempty"`
 
 	Body string `json:"body,omitempty"`
 
@@ -179,6 +185,20 @@ type ItemPatch struct {
 	AddLinks       []Link   `json:"addLinks,omitempty"`
 	RemoveLinks    []Link   `json:"removeLinks,omitempty"`
 	AddAttachments []string `json:"addAttachments,omitempty"`
+
+	// External replaces the whole list; AddExternal and RemoveExternal are set
+	// operations keyed on the (system, id) pair, so two importers pushing
+	// different systems into the same item never clobber each other. Adding a
+	// pair that is already there refreshes its url, key and synced_at in place
+	// instead of appending a second entry. A RemoveExternal entry with an empty
+	// id unlinks every reference of that system.
+	External       *[]External `json:"external,omitempty"`
+	AddExternal    []External  `json:"addExternal,omitempty"`
+	RemoveExternal []External  `json:"removeExternal,omitempty"`
+
+	// Inbox replaces the triage block; a nil pointer leaves it alone and
+	// unset: ["inbox"] removes it.
+	Inbox *ItemInbox `json:"inbox,omitempty"`
 
 	// Custom merges into the custom mapping; a nil value removes a key.
 	Custom map[string]any `json:"custom,omitempty"`
@@ -377,8 +397,10 @@ func (s *FileStore) Create(ctx context.Context, draft ItemDraft) (*Item, error) 
 		Start:       draft.Start,
 		Due:         draft.Due,
 		Links:       draft.Links,
+		External:    dedupeExternals(normalizeExternals(draft.External)),
 		Attachments: draft.Attachments,
 		Custom:      draft.Custom,
+		Inbox:       draft.Inbox.Clone(),
 		Extra:       draft.Extra,
 		Body:        draft.Body,
 		Path:        path.Join(s.backlog, dir, FileName(id, draft.Title)),
@@ -797,6 +819,18 @@ func applyPatch(it *Item, p ItemPatch) error {
 	}
 	it.Links = addLinks(it.Links, p.AddLinks)
 	it.Links = removeLinks(it.Links, p.RemoveLinks)
+	if p.External != nil {
+		it.External = dedupeExternals(normalizeExternals(*p.External))
+	}
+	it.External = addExternals(it.External, p.AddExternal)
+	it.External = removeExternals(it.External, p.RemoveExternal)
+	if p.Inbox != nil {
+		if p.Inbox.IsEmpty() {
+			it.Inbox = nil
+		} else {
+			it.Inbox = p.Inbox.Clone()
+		}
+	}
 	it.Attachments = addStrings(it.Attachments, p.AddAttachments)
 	if len(p.Custom) > 0 {
 		if it.Custom == nil {
@@ -880,6 +914,10 @@ func unsetField(it *Item, field string) error {
 		it.Due = Date{}
 	case "links":
 		it.Links = nil
+	case "external":
+		it.External = nil
+	case "inbox":
+		it.Inbox = nil
 	case "attachments":
 		it.Attachments = nil
 	case "custom":

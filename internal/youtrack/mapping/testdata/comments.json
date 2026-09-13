@@ -1,0 +1,10 @@
+[
+  { "id": "4-88", "text": "Reproduced on 17.4. See ![trace](trace.png) for the stack.", "created": 1767230000000, "updated": null,
+    "author": { "id": "1-7", "login": "ana", "fullName": "Ana Ruiz", "email": "ana@example.com" }, "$type": "IssueComment" },
+  { "id": "4-90", "text": "Fixed in `1.5.0`.", "created": 1767330000000, "updated": 1767331000000,
+    "author": { "id": "1-1", "login": "jose", "fullName": "Jose F. Rives", "email": "jose@digio.es" }, "$type": "IssueComment" },
+  { "id": "4-89", "text": "   ", "created": 1767300000000, "updated": null,
+    "author": { "id": "1-1", "login": "jose", "fullName": "Jose F. Rives" }, "$type": "IssueComment" },
+  { "id": "4-91", "text": "Removed by its author.", "created": 1767340000000, "updated": null, "deleted": true,
+    "author": { "id": "1-1", "login": "jose", "fullName": "Jose F. Rives" }, "$type": "IssueComment" }
+]

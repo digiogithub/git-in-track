@@ -164,3 +164,105 @@ func TestWorkspaceSprintMetrics(t *testing.T) {
 		})
 	})
 }
+
+// refusingHistory is a HistorySource that fails the test if it is ever asked:
+// a sprint that carries a snapshot must answer from the frozen block and walk
+// no history at all (R-MET-12).
+type refusingHistory struct{ t *testing.T }
+
+func (r refusingHistory) FileHistory(context.Context, string, []string) (RepoHistory, error) {
+	r.t.Helper()
+	r.t.Fatal("a snapshot-backed sprint must not touch the history source")
+	return RepoHistory{}, nil
+}
+
+// TestSprintCloseFreezesTheSnapshot covers R-SPR-11 and R-MET-12 end to end:
+// the close writes the block once, a re-close leaves it alone, and the metrics
+// read it back instead of reconstructing anything.
+func TestSprintCloseFreezesTheSnapshot(t *testing.T) {
+	writableModes(t, func(t *testing.T, w *Workspace) {
+		t.Run("a dry run freezes nothing", func(t *testing.T) {
+			view := sprintOf(t, w, "DEMO-TEAM-S-0001")
+			result := decode[SprintResult](t, wsCall(t, w, "sprint.close", map[string]any{
+				"id": "DEMO-TEAM-S-0001", "rev": string(view.Sprint.Rev), "dryRun": true,
+			}))
+			if !result.DryRun || result.Sprint.Sprint.Snapshot != nil {
+				t.Fatalf("a dry run writes nothing: %+v", result.Sprint.Sprint.Snapshot)
+			}
+			if again := sprintOf(t, w, "DEMO-TEAM-S-0001"); again.Sprint.Snapshot != nil {
+				t.Fatal("the sprint file gained a snapshot from a preview")
+			}
+		})
+
+		var closedAt core.Timestamp
+		t.Run("closing writes the snapshot with the state", func(t *testing.T) {
+			view := sprintOf(t, w, "DEMO-TEAM-S-0001")
+			result := decode[SprintResult](t, wsCall(t, w, "sprint.close", map[string]any{
+				"id": "DEMO-TEAM-S-0001", "rev": string(view.Sprint.Rev),
+			}))
+			snap := result.Sprint.Sprint.Snapshot
+			if result.Sprint.Sprint.State != core.SprintClosed || snap == nil {
+				t.Fatalf("close = %+v", result.Sprint.Sprint)
+			}
+			if snap.ClosedAt.IsZero() || snap.Totals.Items != 3 {
+				t.Fatalf("snapshot = %+v", snap)
+			}
+			// No history source is installed in either mode here, which is
+			// browser-only mode: the frozen numbers say they are approximate.
+			if !snap.Provenance.Approximate {
+				t.Fatalf("provenance = %+v, want approximate", snap.Provenance)
+			}
+			closedAt = snap.ClosedAt
+			// It survives the round-trip through the file.
+			stored := sprintOf(t, w, "DEMO-TEAM-S-0001")
+			if stored.Sprint.Snapshot == nil || stored.Sprint.Snapshot.ClosedAt != closedAt {
+				t.Fatalf("stored snapshot = %+v", stored.Sprint.Snapshot)
+			}
+		})
+
+		t.Run("closing again never recomputes it", func(t *testing.T) {
+			view := sprintOf(t, w, "DEMO-TEAM-S-0001")
+			result := decode[SprintResult](t, wsCall(t, w, "sprint.close", map[string]any{
+				"id": "DEMO-TEAM-S-0001", "rev": string(view.Sprint.Rev),
+			}))
+			snap := result.Sprint.Sprint.Snapshot
+			if snap == nil || snap.ClosedAt != closedAt {
+				t.Fatalf("the snapshot was recomputed: %+v", snap)
+			}
+		})
+
+		t.Run("the metrics read the frozen block and walk no history", func(t *testing.T) {
+			w.SetHistorySource(refusingHistory{t: t})
+			defer w.SetHistorySource(nil)
+
+			view := decode[core.SprintMetricsView](t, wsCall(t, w, "sprint.metrics",
+				map[string]any{"id": "DEMO-TEAM-S-0001"}))
+			if view.Provenance.Source != core.MetricsSourceSnapshot {
+				t.Fatalf("source = %q, want %q", view.Provenance.Source, core.MetricsSourceSnapshot)
+			}
+			if !strings.Contains(view.Provenance.Note, "frozen") {
+				t.Fatalf("note = %q: it must say the numbers were frozen", view.Provenance.Note)
+			}
+		})
+
+		t.Run("an open sprint still reconstructs its series", func(t *testing.T) {
+			wsCall(t, w, "sprint.create", map[string]any{
+				"board": "demo-scrum", "title": "Open", "start": "2031-02-03", "end": "2031-02-16",
+			})
+			open := decode[SprintListResult](t, wsCall(t, w, "sprint.list", map[string]any{"board": "demo-scrum"}))
+			var id string
+			for _, s := range open.Sprints {
+				if s.Title == "Open" {
+					id = s.ID
+				}
+			}
+			if id == "" {
+				t.Fatalf("sprints = %+v", open.Sprints)
+			}
+			view := decode[core.SprintMetricsView](t, wsCall(t, w, "sprint.metrics", map[string]any{"id": id}))
+			if view.Provenance.Source != core.MetricsSourceUpdated {
+				t.Fatalf("source = %q, want the live approximation", view.Provenance.Source)
+			}
+		})
+	})
+}

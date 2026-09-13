@@ -72,6 +72,14 @@ export function renderWithRouter(options: RenderWithRouterOptions): RenderResult
       path: '/p/$project/items/$id',
       component: Placeholder,
     }),
+    // The triage queue. Every surface that links back to it — the accept form,
+    // the sidebar count, a toast after a triage action — needs the target to
+    // resolve, or the link renders as a dead one in the test tree only.
+    createRoute({
+      getParentRoute: () => rootRoute,
+      path: '/p/$project/inbox',
+      component: Placeholder,
+    }),
     createRoute({ getParentRoute: () => rootRoute, path: '/boards', component: Placeholder }),
     createRoute({ getParentRoute: () => rootRoute, path: '/boards/$slug', component: Placeholder }),
     createRoute({ getParentRoute: () => rootRoute, path: '/settings', component: Placeholder }),

@@ -1,0 +1,22 @@
+# Fixture project with an inbox: it declares a status in the reserved triage
+# category, which is what gives a project a triage queue (ADR-033).
+schema: 1
+key: INBX
+name: Inbox Fixture
+description: Fixture project for the inbox tools of the MCP server.
+timezone: UTC
+
+docs:
+  path: docs
+
+workflow:
+  initial: backlog
+  statuses:
+    - { id: triage,      name: Triage,      category: triage }
+    - { id: backlog,     name: Backlog,     category: todo }
+    - { id: todo,        name: To Do,       category: todo }
+    - { id: in_progress, name: In Progress, category: in_progress }
+    - { id: done,        name: Done,        category: done, terminal: true }
+    - { id: cancelled,   name: Cancelled,   category: cancelled, terminal: true }
+
+priorities: [critical, high, medium, low]

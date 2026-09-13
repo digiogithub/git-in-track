@@ -20,6 +20,42 @@ export type Severity = 'error' | 'warning' | 'info';
 
 export type Link = { kind: LinkKind; target: string; note?: string };
 
+/**
+ * One entry of an item's or a comment's `external:` list: the system it
+ * mirrors, the identifier there and, when it is known, the URL a reader
+ * follows (ADR-031). `key` is a fingerprint the last synchronization recorded,
+ * and `syncedAt` is when it did.
+ */
+export type External = {
+  system: string;
+  id: string;
+  url?: string;
+  key?: string;
+  syncedAt?: string;
+};
+
+/** The triage state of an item sitting in the inbox (ADR-033). */
+export type InboxStatus = 'pending' | 'accepted' | 'rejected' | 'snoozed' | 'duplicate';
+
+/**
+ * The `inbox:` front-matter block of an item in triage.
+ *
+ * A snooze expires by comparison, not by a scheduler: a listing resolves
+ * `snoozedUntil` against the host's clock, so an item whose date has arrived
+ * already reads as pending in `counts` and under the `pending` filter.
+ */
+export type ItemInbox = {
+  status?: InboxStatus;
+  /** `YYYY-MM-DD`; required for, and only for, `snoozed`. */
+  snoozedUntil?: string;
+  /** The item this one repeats; required for `duplicate`. */
+  duplicateOf?: string;
+  /** Free text: `web`, `mcp`, `youtrack`, the name of a form. */
+  source?: string;
+  received?: string;
+  extra?: Record<string, unknown>;
+};
+
 export type Item = {
   id: string;
   type: ItemType;
@@ -44,8 +80,13 @@ export type Item = {
   start?: string;
   due?: string;
   links?: Link[];
+  /** Bare file names, resolved against the item's own attachments folder. */
   attachments?: string[];
   custom?: Record<string, unknown>;
+  /** The trackers this item mirrors (ADR-031). */
+  external?: External[];
+  /** Present only while the item sits in the triage queue (ADR-033). */
+  inbox?: ItemInbox;
   deleted?: boolean;
   extra?: Record<string, unknown>;
   /** Markdown body after the front matter. Omitted by list calls unless `fields` asks for it. */
@@ -68,6 +109,12 @@ export type Comment = {
   updated?: string;
   inReplyTo?: string;
   kind?: string;
+  /**
+   * The trackers this comment reached. A YouTrack entry is written by the push
+   * job once the remote comment exists, which is how a reader tells a comment
+   * that was sent from one that was only written (GIT-US-0068).
+   */
+  external?: External[];
   body: string;
   path: string;
   rev: string;
@@ -148,6 +195,71 @@ export type ItemFilter = {
 
 export type ItemPage = { items: Item[]; nextCursor?: string; total: number };
 
+/**
+ * The triage queue as `inbox.list` answers it (ADR-033).
+ *
+ * `counts` and `pending` are computed over the whole queue rather than over the
+ * page, and an expired snooze is already counted as pending, so a sidebar badge
+ * never needs a second call and can never disagree with the list.
+ */
+export type InboxPage = {
+  items: Item[];
+  nextCursor?: string;
+  total: number;
+  counts: Partial<Record<InboxStatus, number>>;
+  pending: number;
+};
+
+/** What a triage filter asks for. `status` is the triage state, not a workflow status. */
+export type InboxFilter = {
+  project?: string;
+  status?: InboxStatus[];
+  type?: ItemType[];
+  label?: string[];
+  assignee?: string;
+  text?: string;
+  sort?: string;
+  order?: 'asc' | 'desc';
+  limit?: number;
+  cursor?: string;
+  fields?: string[];
+};
+
+/** The four triage outcomes (ADR-033). */
+export type InboxTriageAction = 'accept' | 'reject' | 'snooze' | 'duplicate';
+
+/**
+ * One triage decision.
+ *
+ * There is deliberately no type field a caller may change: an item id encodes
+ * its type for life (R-ID-3), so "this should have been an epic" is answered by
+ * creating the right item and marking this one a duplicate of it.
+ */
+export type InboxTriageInput = {
+  id: string;
+  rev?: string;
+  action: InboxTriageAction;
+  /** The workflow status `accept` moves the item to; empty picks the initial one. */
+  status?: string;
+  /** The epic or story `accept` files the item under. */
+  parent?: string;
+  /** `YYYY-MM-DD`, for `snooze`. */
+  snoozedUntil?: string;
+  /** The item a `duplicate` repeats. */
+  duplicateOf?: string;
+};
+
+/** The answer of one triage decision; `pending` is the queue after it. */
+export type InboxTriageResult = {
+  item: Item;
+  action: InboxTriageAction;
+  pending: number;
+  writes?: WriteSet;
+};
+
+/** An inbox draft: an ordinary item filed straight into the queue. */
+export type InboxDraftOptions = { source?: string; received?: string };
+
 export type ItemDraft = {
   project: string;
   type: Exclude<ItemType, 'comment'>;
@@ -164,6 +276,8 @@ export type ItemDraft = {
   links?: Link[];
   custom?: Record<string, unknown>;
   body?: string;
+  /** Files the draft straight into the triage queue instead of the backlog. */
+  inbox?: InboxDraftOptions;
 };
 
 export type ItemPatch = {
@@ -188,6 +302,95 @@ export type KbPage = {
   rev: string;
   outgoing: string[];
   backlinks: string[];
+};
+
+/**
+ * The synchronization state of one knowledge-base page against the YouTrack
+ * article it mirrors (GIT-US-0090).
+ *
+ * `remote_ahead` and `conflict` can only ever be reported when the remote side
+ * was actually read: without `remote`, the answer speaks for the local side
+ * alone.
+ */
+export type KbSyncState = 'unlinked' | 'in_sync' | 'local_ahead' | 'remote_ahead' | 'conflict';
+
+/** What a KB status call says about one page. */
+export type KbPageSyncStatus = {
+  path: string;
+  /** An `external` entry for this system exists, whatever the state. */
+  linked: boolean;
+  articleId?: string;
+  url?: string;
+  state: KbSyncState;
+  syncedAt?: string;
+  /**
+   * Why the remote side could not be consulted for this page. It never fails
+   * the call: one unreachable article must not hide every other page's state.
+   */
+  error?: string;
+};
+
+/** The answer of a KB status call: one row per selected page. */
+export type KbSyncStatusResult = {
+  project: string;
+  pages: KbPageSyncStatus[];
+  /**
+   * Whether the remote side was consulted, so a caller can tell "in sync as far
+   * as the local side knows" from "in sync, checked".
+   */
+  remote: boolean;
+};
+
+/** The answer of a KB publish or pull: the job queued and the pages it selected. */
+export type KbSyncJobResult = {
+  project: string;
+  jobId: string;
+  pages: string[];
+};
+
+/** What a KB status, publish or pull call selects. */
+export type KbSyncSelector = {
+  project?: string;
+  /** Vault-relative path of a page or a folder; empty means the whole folder. */
+  path?: string;
+  recursive?: boolean;
+  /** Status only: read each linked article instead of answering locally. */
+  remote?: boolean;
+};
+
+/** One comment of a push answer. */
+export type CommentPushEntry = {
+  commentPath: string;
+  /** Filled for a comment an earlier push already placed upstream. */
+  youtrackCommentId?: string;
+  url?: string;
+  /** Why a comment was skipped, or why one could not be queued. */
+  reason?: string;
+  error?: string;
+};
+
+/**
+ * The answer of a comment push (GIT-US-0079).
+ *
+ * `pushed` is what was *queued* for the tracker, not what has arrived there:
+ * the work happens in the job named by `jobId` and reports its own outcome
+ * through `sync.job.*`.
+ */
+export type CommentPushResult = {
+  project: string;
+  itemId: string;
+  jobId?: string;
+  pushed: CommentPushEntry[];
+  skipped: CommentPushEntry[];
+  failed: CommentPushEntry[];
+};
+
+/** What a comment push selects: one comment by path, or every unpushed one. */
+export type CommentPushInput = {
+  project?: string;
+  itemId: string;
+  commentPath?: string;
+  all?: boolean;
 };
 
 /**
@@ -411,12 +614,66 @@ export type SprintMetrics = {
   unresolved: number;
 };
 
+/**
+ * The status a reader sees, derived from the sprint's dates and today's date
+ * and never stored in the file (ADR-034). A sprint with no dates is a draft:
+ * adding dates is what schedules it.
+ */
+export type SprintStatus = 'draft' | 'upcoming' | 'current' | 'completed';
+
+/** The scope as it stood at the close. */
+export type SprintSnapshotTotals = {
+  items: number;
+  resolved: number;
+  done: number;
+  unresolved: number;
+  points: number;
+  committedPoints: number;
+  donePoints: number;
+};
+
+/** One row of the per-assignee and per-label distributions of a snapshot. */
+export type SprintSnapshotBucket = { total: number; done: number; points: number };
+
+/** One frozen day of a burndown. Only observed days are frozen. */
+export type SprintSnapshotPoint = {
+  date: string;
+  remaining: number;
+  remainingPoints: number;
+  ideal: number;
+  completed: number;
+  /** References whose state that day the history could not state. */
+  unknown: number;
+};
+
+/**
+ * The progress frozen into the sprint file when it was closed (GIT-US-0080).
+ *
+ * Only the burndown is frozen. The cumulative-flow series and the flow
+ * statistics are not, so a snapshot-backed metrics answer comes back with an
+ * empty `flow` and an empty `stats` — panels for them must be hidden or
+ * labelled, never rendered as zeros.
+ */
+export type SprintSnapshot = {
+  version: number;
+  closedAt?: string;
+  totals: SprintSnapshotTotals;
+  byStatus?: Record<string, number>;
+  byAssignee?: Record<string, SprintSnapshotBucket>;
+  byLabel?: Record<string, SprintSnapshotBucket>;
+  burndown?: SprintSnapshotPoint[];
+  provenance: MetricsProvenance;
+  extra?: Record<string, unknown>;
+};
+
 /** A sprint as the UI reads it: the file plus the numbers it resolves to. */
 export type SprintSummary = {
   id: string;
   title: string;
   board: string;
   state: SprintState;
+  /** Derived from the dates on every read; never written to the file. */
+  status: SprintStatus;
   start?: string;
   end?: string;
   goal?: string;
@@ -430,6 +687,8 @@ export type SprintSummary = {
   totalDays: number;
   remainingDays: number;
   metrics: SprintMetrics;
+  /** The progress frozen at the close; absent while the sprint is open. */
+  snapshot?: SprintSnapshot;
   body?: string;
   path?: string;
   rev?: string;
@@ -454,7 +713,7 @@ export type SprintView = {
  * `updated` stamp, and nothing is claimed about the time before that. `none`
  * is no history at all.
  */
-export type MetricsSource = 'git' | 'updated' | 'none';
+export type MetricsSource = 'git' | 'updated' | 'snapshot' | 'none';
 
 /** The honesty half of a metric: where it came from and what it may not be asked. */
 export type MetricsProvenance = {
@@ -582,6 +841,20 @@ export type SprintCloseReport = {
   carried: SprintCarryResult[];
 };
 
+/** Where a bulk transfer sends the unfinished work of a sprint. */
+export type SprintTransferMode = 'next' | 'backlog' | 'none';
+
+/**
+ * The bulk form of the closing decisions: one destination for every unfinished
+ * reference. An explicit per-item `carry` always wins over it, so a dialog can
+ * offer "move everything to the next sprint, except these three".
+ */
+export type SprintTransfer = {
+  mode: SprintTransferMode;
+  /** The sprint `next` carries into; empty picks the earliest planned one. */
+  target?: string;
+};
+
 /** The answer of every sprint call that writes. */
 export type SprintResult = {
   sprint: SprintView;
@@ -590,6 +863,11 @@ export type SprintResult = {
   /** Present when the sprint was closed. */
   report?: SprintCloseReport;
   writes: VaultWriteSet[];
+  /**
+   * True for a report computed without writing anything, so that a caller can
+   * never mistake a preview for a commitment.
+   */
+  dryRun?: boolean;
 };
 
 /** The facilitation stage of a retro (docs/04 §9.2). */
@@ -1412,9 +1690,35 @@ export type CoreApi = {
     params: { id: string; rev?: string; force?: boolean } & TeamScoped;
     result: SprintResult;
   };
-  /** Close a sprint and apply one explicit decision per unfinished item. */
+  /**
+   * Close a sprint and apply one explicit decision per unfinished item, or one
+   * bulk `transfer` for all of them. `dryRun` computes the whole report and
+   * writes nothing — it is what the confirmation dialog renders.
+   */
   'sprint.close': {
-    params: { id: string; rev?: string; carry?: SprintCarry[] } & TeamScoped;
+    params: {
+      id: string;
+      rev?: string;
+      carry?: SprintCarry[];
+      transfer?: SprintTransfer;
+      dryRun?: boolean;
+    } & TeamScoped;
+    result: SprintResult;
+  };
+  /**
+   * Move the unfinished references of one sprint into another sprint or back
+   * to their project backlogs, without closing anything. A per-item failure is
+   * not an error: it comes back on its own `report.carried[].error` line.
+   */
+  'sprint.transfer': {
+    params: {
+      id: string;
+      rev?: string;
+      mode?: SprintTransferMode;
+      target?: string;
+      carry?: SprintCarry[];
+      dryRun?: boolean;
+    } & TeamScoped;
     result: SprintResult;
   };
   /**
@@ -1515,6 +1819,18 @@ export type CoreApi = {
     params: { id: string; line: number; checked: boolean; rev: string };
     result: { item: Item; writes: WriteSet };
   };
+  /**
+   * The triage queue of a project (ADR-033). `counts` and `pending` are over
+   * the whole queue, and an expired snooze already counts as pending.
+   */
+  'inbox.list': { params: InboxFilter | undefined; result: InboxPage };
+  /**
+   * One triage decision. Accepting clears triage and moves the item into the
+   * ordinary workflow; it cannot change the item's type, because an item id
+   * encodes its type for life (R-ID-3).
+   */
+  'inbox.triage': { params: InboxTriageInput; result: InboxTriageResult };
+
   'item.validate': { params: { id?: string; text?: string; path?: string }; result: Diagnostic[] };
   'item.parse': { params: { path: string; text: string }; result: Item };
   'item.serialize': { params: { item: Item }; result: { text: string } };
@@ -1528,6 +1844,37 @@ export type CoreApi = {
       authorEmail?: string;
       body: string;
       inReplyTo?: string;
+    };
+    result: { comment: Comment; writes: WriteSet };
+  };
+  /**
+   * A sparse patch to one comment file that already exists (GIT-US-0068).
+   *
+   * A comment has no id of its own — the file name is its identity, which is
+   * what keeps two concurrent replies from ever conflicting in git — so the
+   * patch addresses `path`. `rev` is the revision of the bytes the caller read
+   * and is required: a blind write to a file somebody else may have edited is
+   * the failure mode this method exists to prevent, and `"*"` is the explicit
+   * write against whatever the file holds now. `id`, when given, is checked
+   * against the comment's own `item`, so a caller working from a stale path
+   * cannot write into the wrong thread.
+   *
+   * `body` replaces the text and is what stamps `updated`; `external` replaces
+   * the whole reference list, an empty list being how a comment is unlinked;
+   * `setExternal` upserts one entry **per system**, which is the shape a
+   * tracker push wants — a second push of the same comment must update the
+   * reference it wrote the first time rather than grow the list by one entry
+   * per attempt. There is deliberately no delete: a comment leaves a thread by
+   * having its file removed.
+   */
+  'comment.update': {
+    params: {
+      path: string;
+      id?: string;
+      rev: string;
+      body?: string;
+      external?: External[];
+      setExternal?: External[];
     };
     result: { comment: Comment; writes: WriteSet };
   };

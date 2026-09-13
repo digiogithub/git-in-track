@@ -1,7 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { BrowserProvider } from '@/api/browser-provider';
-import { ProviderError, type ChangeEvent, type Item, type ProjectSummary } from '@/api/provider';
+import {
+  ProviderError,
+  type ChangeEvent,
+  type DataProvider,
+  type Item,
+  type ProjectSummary,
+} from '@/api/provider';
 import type { CoreMethodName } from '@/core-bridge/api';
 import type { CoreClient } from '@/core-bridge/client';
 import {
@@ -697,5 +703,75 @@ describe('BrowserProvider team projects', () => {
     await expect(provider.removeTeamProject('WEB')).rejects.toMatchObject({
       code: 'team_project_referenced',
     });
+  });
+});
+
+describe('BrowserProvider — what a tab cannot do (GIT-EP-0012, GIT-EP-0015)', () => {
+  it('refuses every YouTrack import call with the reason, not a network error', async () => {
+    const { provider: browser } = await mount();
+    // Through the interface, because that is how a feature reaches it: the
+    // implementation takes no arguments precisely because it uses none.
+    const provider: DataProvider = browser;
+
+    const calls = [
+      provider.searchYouTrackIssues({ q: 'anything' }),
+      provider.previewYouTrackImport({
+        ids: ['ACME-42'],
+        depth: 0,
+        includeLinks: false,
+        includeComments: false,
+        includeAttachments: false,
+      }),
+      provider.runYouTrackImport({
+        ids: ['ACME-42'],
+        depth: 0,
+        includeLinks: false,
+        includeComments: false,
+        includeAttachments: false,
+      }),
+    ];
+
+    for (const call of calls) {
+      await expect(call).rejects.toMatchObject({ code: 'read_only' });
+      await expect(call).rejects.toThrow(/companion|gintrack serve/i);
+    }
+    // The capability the dialog is gated on is false, so none of this should
+    // ever be reached in the first place.
+    expect(provider.capabilities.youtrackSupported).toBe(false);
+    expect(provider.capabilities.youtrack).toBe(false);
+  });
+
+  it('refuses knowledge-base sync and the comment push with the reason', async () => {
+    const { provider: browser } = await mount();
+    const provider: DataProvider = browser;
+
+    const calls = [
+      provider.kbSyncStatus({ project: 'ACME' }),
+      provider.publishKbPage({ project: 'ACME', path: 'docs/handbook' }),
+      provider.pullKbPage({ project: 'ACME', path: 'docs/handbook/onboarding.md' }),
+      provider.pushCommentToYoutrack({ itemId: 'ACME-US-0042', all: true }),
+    ];
+
+    for (const call of calls) {
+      // Loudly, not silently: the toolbar and the comment action are gated on
+      // `capabilities.youtrack`, so a call arriving here is a bug in the caller.
+      await expect(call).rejects.toMatchObject({ code: 'read_only' });
+      await expect(call).rejects.toThrow(/companion|gintrack serve/i);
+    }
+  });
+
+  it('refuses every job-queue call rather than pretending the queue is empty', async () => {
+    const { provider: browser } = await mount();
+    const provider: DataProvider = browser;
+
+    await expect(provider.listSyncJobs()).rejects.toMatchObject({ code: 'read_only' });
+    await expect(provider.getSyncJob('job_1')).rejects.toThrow(/gintrack serve/);
+    await expect(provider.retrySyncJob('job_1')).rejects.toMatchObject({ code: 'read_only' });
+    await expect(provider.cancelSyncJob('job_1')).rejects.toMatchObject({ code: 'read_only' });
+
+    // No engine half means no card: an empty table would claim there is a
+    // queue that happens to be empty.
+    const settings = await provider.getSyncSettings();
+    expect(settings.engine).toBeUndefined();
   });
 });

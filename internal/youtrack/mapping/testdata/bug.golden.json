@@ -1,0 +1,57 @@
+{
+  "draft": {
+    "type": "task",
+    "title": "Avatar upload corrupts PNGs",
+    "status": "done",
+    "priority": "low",
+    "assignees": [
+      "ana",
+      "Contractor Without Login"
+    ],
+    "author": "ana",
+    "labels": [
+      "media"
+    ],
+    "estimate": 0.19,
+    "start": null,
+    "due": null,
+    "external": [
+      {
+        "system": "youtrack",
+        "id": "ACME-77",
+        "url": "https://yt.example.com/youtrack/issue/ACME-77",
+        "syncedAt": null
+      }
+    ],
+    "body": "The thumbnailer rewrites the alpha channel.\n\n![before](.pmngr/attachments/ACME-T-0077/before.png)\n![after](.pmngr/attachments/ACME-T-0077/after.png \"after the fix\")\n![remote](https://cdn.example.com/after.png)\n![nested](docs/after.png)\n"
+  },
+  "relations": {
+    "milestone": "1.5.0"
+  },
+  "warnings": [
+    "Assignee: Contractor Without Login: the assignee \"Contractor Without Login\" came back without a login, so its display name was used as the handle",
+    "Fix versions: 1.4.3: the issue is assigned to several versions; \"1.5.0\" was kept as the milestone and \"1.4.3\" ignored"
+  ],
+  "patch": {
+    "title": "Avatar upload corrupts PNGs",
+    "status": "done",
+    "priority": "low",
+    "assignees": [
+      "ana",
+      "Contractor Without Login"
+    ],
+    "labels": [
+      "media"
+    ],
+    "estimate": 0.19,
+    "addExternal": [
+      {
+        "system": "youtrack",
+        "id": "ACME-77",
+        "url": "https://yt.example.com/youtrack/issue/ACME-77",
+        "syncedAt": null
+      }
+    ],
+    "body": "The thumbnailer rewrites the alpha channel.\n\n![before](.pmngr/attachments/ACME-T-0077/before.png)\n![after](.pmngr/attachments/ACME-T-0077/after.png \"after the fix\")\n![remote](https://cdn.example.com/after.png)\n![nested](docs/after.png)\n"
+  }
+}

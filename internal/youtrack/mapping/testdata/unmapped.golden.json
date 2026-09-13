@@ -1,0 +1,39 @@
+{
+  "draft": {
+    "type": "task",
+    "title": "Spike: evaluate WebAuthn libraries",
+    "priority": "medium",
+    "author": "Reporter Without Login",
+    "start": null,
+    "due": null,
+    "external": [
+      {
+        "system": "youtrack",
+        "id": "ACME-99",
+        "url": "https://yt.example.com/youtrack/issue/ACME-99",
+        "syncedAt": null
+      }
+    ]
+  },
+  "relations": {},
+  "warnings": [
+    "Estimation: about a fortnight: the estimation \"about a fortnight\" is neither a minutes count nor a period this importer can read, so no estimate was set",
+    "Priority: Nice to have: the priority \"Nice to have\" is not in the field map",
+    "State: Parked: the state \"Parked\" is not in the field map",
+    "Type: Spike: the issue type \"Spike\" is not in the field map",
+    "links: Follows: the link type \"Follows\" has no equivalent among the five git-in-track link kinds and was not imported",
+    "links: Subtask: the hierarchy link type \"Subtask\" came back with direction \"BOTH\", which names neither a parent nor a child, and was skipped"
+  ],
+  "patch": {
+    "title": "Spike: evaluate WebAuthn libraries",
+    "priority": "medium",
+    "addExternal": [
+      {
+        "system": "youtrack",
+        "id": "ACME-99",
+        "url": "https://yt.example.com/youtrack/issue/ACME-99",
+        "syncedAt": null
+      }
+    ]
+  }
+}

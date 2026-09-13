@@ -21,6 +21,13 @@ const (
 	// "private" badge for a workspace that is published.
 	eventTunnelChanged  = "tunnel.changed"
 	eventStreamOverflow = "stream.overflow"
+	// eventInboxChanged carries one triage decision, or one submission filed
+	// into the queue, with the number of submissions still pending
+	// (GIT-US-0056, ADR-033).
+	eventInboxChanged = "inbox.changed"
+	// eventSprintChanged carries one sprint whose scope moved: a close, or a
+	// transfer of its unfinished work (GIT-US-0085).
+	eventSprintChanged = "sprint.changed"
 )
 
 // ringCapacity is how many events the hub keeps for `resume` (docs/07 §6.2).

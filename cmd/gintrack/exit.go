@@ -102,6 +102,16 @@ func rangeArgs(minArgs, maxArgs int) cobra.PositionalArgs {
 	}
 }
 
+// minArgs is cobra.MinimumNArgs with the usage exit code attached.
+func minArgs(n int) cobra.PositionalArgs {
+	return func(_ *cobra.Command, args []string) error {
+		if len(args) < n {
+			return usagef("accepts at least %d argument(s), received %d", n, len(args))
+		}
+		return nil
+	}
+}
+
 // noArgs is cobra.NoArgs with the usage exit code attached.
 func noArgs(_ *cobra.Command, args []string) error {
 	if len(args) > 0 {

@@ -1,0 +1,4 @@
+[
+  { "id": "0-1", "shortName": "ACME", "name": "Acme Platform", "description": "The platform", "archived": false, "$type": "Project" },
+  { "id": "0-4", "shortName": "KB", "name": "Handbook", "description": "", "archived": true, "$type": "Project" }
+]

@@ -9,17 +9,35 @@
 import { ChevronDown, ChevronRight, FileText } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
-import type { KbNode } from '@/api/provider';
+import type { KbNode, KbSyncState } from '@/api/provider';
 import { Input } from '@/components/ui/input';
 import { kbHref } from '@/features/kb/kb-links';
+import { summariseKbSync } from '@/features/kb/kb-sync';
 import { RouterLink } from '@/features/kb/KbLink';
+import { KbSyncChip } from '@/features/kb/KbSyncBadge';
 import { cn } from '@/lib/cn';
 
 export type KbTreeProps = {
   project: string;
   nodes: KbNode[];
   currentPath: string;
+  /**
+   * The synchronization state of every page, by path. Absent — the normal case
+   * in browser-only mode, and while the first answer is in flight — means the
+   * tree renders exactly as it always did: this is a decoration on a
+   * navigation aid, never a reason to hold it back.
+   */
+  syncStates?: Map<string, KbSyncState>;
 };
+
+/** Every page path at or below a node, so a folder can summarise its children. */
+function pageStates(node: KbNode, states: Map<string, KbSyncState>): KbSyncState[] {
+  if (node.kind === 'page') {
+    const state = states.get(node.path);
+    return state === undefined ? [] : [state];
+  }
+  return (node.children ?? []).flatMap((child) => pageStates(child, states));
+}
 
 function matches(node: KbNode, needle: string): boolean {
   if (!needle) return true;
@@ -36,7 +54,7 @@ function ancestors(path: string): string[] {
   return out;
 }
 
-export function KbTree({ project, nodes, currentPath }: KbTreeProps) {
+export function KbTree({ project, nodes, currentPath, syncStates }: KbTreeProps) {
   const [filter, setFilter] = useState('');
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(ancestors(currentPath)));
   const needle = filter.trim().toLowerCase();
@@ -83,6 +101,7 @@ export function KbTree({ project, nodes, currentPath }: KbTreeProps) {
                     <ChevronRight className="size-3.5 shrink-0" aria-hidden="true" />
                   )}
                   <span className="truncate font-medium">{node.name}</span>
+                  <KbNodeBadge node={node} syncStates={syncStates} />
                 </button>
                 {isOpen(node.path) ? renderNodes(node.children ?? [], depth + 1) : null}
               </>
@@ -98,6 +117,7 @@ export function KbTree({ project, nodes, currentPath }: KbTreeProps) {
               >
                 <FileText className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
                 <span className="truncate">{node.title ?? node.name}</span>
+                <KbNodeBadge node={node} syncStates={syncStates} />
               </RouterLink>
             )}
           </li>
@@ -121,5 +141,35 @@ export function KbTree({ project, nodes, currentPath }: KbTreeProps) {
         renderNodes(nodes, 0)
       )}
     </nav>
+  );
+}
+
+/**
+ * The compact state chip on one tree row.
+ *
+ * A page shows its own state; a folder shows the worst state under it and how
+ * many of its pages hold it, because the reason to summarise a folder is to
+ * find the page that needs looking at. A row with nothing to say — no state
+ * known, or a folder whose pages are all unpublished — shows nothing, so the
+ * tree stays a tree.
+ */
+function KbNodeBadge({
+  node,
+  syncStates,
+}: {
+  node: KbNode;
+  syncStates: Map<string, KbSyncState> | undefined;
+}) {
+  if (!syncStates || syncStates.size === 0) return null;
+  const summary = summariseKbSync(pageStates(node, syncStates));
+  if (!summary || summary.state === 'unlinked') return null;
+  const isFolder = node.kind === 'dir';
+  return (
+    <KbSyncChip
+      status={{ path: node.path, linked: true, state: summary.state }}
+      {...(isFolder ? { detail: String(summary.count) } : {})}
+      className="ml-auto shrink-0"
+      size="sm"
+    />
   );
 }

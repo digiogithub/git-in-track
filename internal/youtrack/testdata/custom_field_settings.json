@@ -1,0 +1,4 @@
+[
+  { "id": "110-0", "field": { "id": "58-1", "name": "Type", "fieldType": { "id": "enum[1]" } }, "bundle": { "id": "70-0", "$type": "EnumBundle" }, "canBeEmpty": false, "emptyFieldText": "No type", "$type": "EnumProjectCustomField" },
+  { "id": "110-9", "field": { "id": "58-9", "name": "Fix versions", "fieldType": { "id": "version[*]" } }, "bundle": { "id": "75-2", "$type": "VersionBundle" }, "canBeEmpty": true, "emptyFieldText": "Unscheduled", "$type": "VersionProjectCustomField" }
+]

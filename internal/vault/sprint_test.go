@@ -461,3 +461,122 @@ func cardIn(view core.BoardView, ref string) (core.BoardCard, bool) {
 	}
 	return core.BoardCard{}, false
 }
+
+// TestWorkspaceSprintDrafts covers R-SPR-9 at the write boundary: a sprint with
+// no dates is a legal draft, whatever the calendar already holds, and exactly
+// one date is still refused.
+func TestWorkspaceSprintDrafts(t *testing.T) {
+	writableModes(t, func(t *testing.T, w *Workspace) {
+		t.Run("a dateless create is accepted even under an existing range", func(t *testing.T) {
+			result := decode[SprintResult](t, wsCall(t, w, "sprint.create", map[string]any{
+				"board": "demo-scrum", "title": "Someday", "goal": "Refunds",
+			}))
+			s := result.Sprint.Sprint
+			if s.ID == "" || !s.Start.IsZero() || !s.End.IsZero() {
+				t.Fatalf("draft = %+v", s)
+			}
+			if s.Status != core.SprintStatusDraft {
+				t.Fatalf("status = %q, want draft", s.Status)
+			}
+		})
+
+		t.Run("removing the dates parks a sprint as a draft", func(t *testing.T) {
+			view := sprintOf(t, w, "DEMO-TEAM-S-0001")
+			result := decode[SprintResult](t, wsCall(t, w, "sprint.update", map[string]any{
+				"id":  "DEMO-TEAM-S-0001",
+				"rev": string(view.Sprint.Rev),
+				"patch": map[string]any{
+					"start": "", "end": "",
+				},
+			}))
+			if !result.Sprint.Sprint.Start.IsZero() || !result.Sprint.Sprint.End.IsZero() {
+				t.Fatalf("sprint = %+v", result.Sprint.Sprint)
+			}
+		})
+
+		t.Run("exactly one date is refused and names the escape hatch", func(t *testing.T) {
+			code, message := wsFail(t, w, "sprint.create", map[string]any{
+				"board": "demo-scrum", "start": "2027-03-01",
+			})
+			if code != "invalid_request" {
+				t.Fatalf("code = %q", code)
+			}
+			if !strings.Contains(message, "draft") {
+				t.Fatalf("message = %q", message)
+			}
+		})
+
+		t.Run("a dated overlap is still refused with the other sprint named", func(t *testing.T) {
+			wsCall(t, w, "sprint.create", map[string]any{
+				"board": "demo-scrum", "title": "Dated", "start": "2027-04-05", "end": "2027-04-18",
+			})
+			code, message := wsFail(t, w, "sprint.create", map[string]any{
+				"board": "demo-scrum", "start": "2027-04-12", "end": "2027-04-25",
+			})
+			if code != SprintOverlapCode {
+				t.Fatalf("code = %q", code)
+			}
+			if !strings.Contains(message, "2027-04-05") || !strings.Contains(message, "draft") {
+				t.Fatalf("message = %q", message)
+			}
+		})
+	})
+}
+
+// TestWorkspaceSprintListByDerivedStatus covers R-SPR-10: "sprint.list" filters
+// on the derived status and defaults to current, upcoming, draft, completed.
+func TestWorkspaceSprintListByDerivedStatus(t *testing.T) {
+	writableModes(t, func(t *testing.T, w *Workspace) {
+		wsCall(t, w, "sprint.create", map[string]any{
+			"board": "demo-scrum", "title": "Someday",
+		})
+		wsCall(t, w, "sprint.create", map[string]any{
+			"board": "demo-scrum", "title": "Far ahead",
+			"start": "2030-01-07", "end": "2030-01-20",
+		})
+
+		t.Run("an unknown status is refused", func(t *testing.T) {
+			code, _ := wsFail(t, w, "sprint.list", map[string]any{"status": []string{"running"}})
+			if code != "invalid_request" {
+				t.Fatalf("code = %q", code)
+			}
+		})
+
+		t.Run("the filter keeps only the requested statuses", func(t *testing.T) {
+			drafts := decode[SprintListResult](t, wsCall(t, w, "sprint.list",
+				map[string]any{"status": []string{"Draft"}}))
+			if len(drafts.Sprints) != 1 || drafts.Sprints[0].Title != "Someday" {
+				t.Fatalf("drafts = %+v", drafts.Sprints)
+			}
+			upcoming := decode[SprintListResult](t, wsCall(t, w, "sprint.list",
+				map[string]any{"status": []string{"upcoming"}}))
+			found := false
+			for _, s := range upcoming.Sprints {
+				if s.Status != core.SprintStatusUpcoming {
+					t.Fatalf("status = %q", s.Status)
+				}
+				if s.Title == "Far ahead" {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("upcoming = %+v", upcoming.Sprints)
+			}
+		})
+
+		t.Run("an empty filter keeps everything, ordered by status", func(t *testing.T) {
+			all := decode[SprintListResult](t, wsCall(t, w, "sprint.list", nil))
+			if len(all.Sprints) != 3 {
+				t.Fatalf("sprints = %+v", all.Sprints)
+			}
+			previous := -1
+			for _, s := range all.Sprints {
+				rank := s.Status.Rank()
+				if rank < previous {
+					t.Fatalf("out of order: %+v", all.Sprints)
+				}
+				previous = rank
+			}
+		})
+	})
+}

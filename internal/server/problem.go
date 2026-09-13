@@ -29,6 +29,40 @@ const (
 	// codeTunnelFailed reports that the tunnel provider could not be reached or
 	// died while being started or stopped.
 	codeTunnelFailed = "tunnel_failed"
+
+	// The YouTrack connection (GIT-US-0052). An upstream failure is reported as
+	// a gateway failure of this API — the request itself was well formed and
+	// this companion could not complete it — and the `code` says which of the
+	// four distinguishable causes it was. None of their details ever carries
+	// the token.
+	//
+	// codeYouTrackNotConfigured means the project declares no connection, or
+	// has no stored credential: the user fixes it in the settings, not by
+	// retrying.
+	codeYouTrackNotConfigured = "youtrack_not_configured"
+	// codeYouTrackUnauthorized is a 401 from YouTrack: the permanent token was
+	// rejected.
+	codeYouTrackUnauthorized = "youtrack_unauthorized"
+	// codeYouTrackForbidden is a 403: the token authenticates but the account
+	// lacks permission.
+	codeYouTrackForbidden = "youtrack_forbidden"
+	// codeYouTrackNotFound is a 404 on an /api path, which almost always means
+	// the base URL is missing its instance context path.
+	codeYouTrackNotFound = "youtrack_not_found"
+	// codeYouTrackUnreachable is a transport failure or a timeout.
+	codeYouTrackUnreachable = "youtrack_unreachable"
+
+	// The background job engine (GIT-US-0078).
+	//
+	// codeSyncJobNotFound means the id does not name a job this engine
+	// remembers; a job pruned after its retention window reads the same way.
+	codeSyncJobNotFound = "sync_job_not_found"
+	// codeSyncJobNotRetryable means the job exists and is in a state the
+	// requested transition cannot be made from. The detail names that state.
+	codeSyncJobNotRetryable = "sync_job_not_retryable"
+	// codeSyncEngineNotRunning means the engine has been closed, or was never
+	// started, so the queue cannot take the request.
+	codeSyncEngineNotRunning = "sync_engine_not_running"
 )
 
 // problemField is one per-field validation failure of a problem document.
@@ -64,7 +98,7 @@ func statusForCode(code string) int {
 	switch code {
 	case "stale_revision", "conflict":
 		return http.StatusPreconditionFailed
-	case codeNotFound, "unknown_method", codeRepoNotRegistered, "repo_not_cloned":
+	case codeNotFound, "unknown_method", codeRepoNotRegistered, "repo_not_cloned", codeSyncJobNotFound:
 		return http.StatusNotFound
 	case "validation_failed", "workflow_transition_denied", "invalid_front_matter",
 		core.TaskListItemMismatchCode:
@@ -74,7 +108,8 @@ func statusForCode(code string) int {
 	case "duplicate_id", "wip_limit_exceeded", "sprint_overlap", "sprint_already_active", "board_in_use",
 		"project_exists", "team_exists",
 		vault.TeamProjectExistsCode, vault.TeamProjectReferencedCode,
-		codeTunnelRequiresToken:
+		codeTunnelRequiresToken, codeYouTrackNotConfigured, codeSyncJobNotRetryable,
+		vault.NoTriageStatusCode, vault.SprintTargetCompletedCode:
 		// A WIP limit is advisory: the move is refused once, and the caller may
 		// repeat it with `force` (docs/04 R-COL-5). Two sprints of one board
 		// sharing a day, and a second active sprint, are the same shape of
@@ -82,7 +117,11 @@ func statusForCode(code string) int {
 		// board or a sprint still references (docs/04 section 3.9). Opening a
 		// tunnel over a server that has no token is the same shape again: the
 		// request is well formed and refused by the state of the server, which
-		// the user changes by restarting it with a token.
+		// the user changes by restarting it with a token. A project that
+		// declares no triage status simply has no inbox (ADR-033), and a
+		// transfer aimed at a sprint that is already over is refused outright
+		// rather than per item: both are the state of the repository refusing a
+		// well-formed request, not a malformed one.
 		return http.StatusConflict
 	case "read_only", "forbidden":
 		return http.StatusForbidden
@@ -94,8 +133,13 @@ func statusForCode(code string) int {
 		return http.StatusPreconditionRequired
 	case codeNotImplemented:
 		return http.StatusNotImplemented
-	case codeIndexUnavailable:
+	case codeIndexUnavailable, codeSyncEngineNotRunning:
 		return http.StatusServiceUnavailable
+	case codeYouTrackUnauthorized, codeYouTrackForbidden, codeYouTrackNotFound, codeYouTrackUnreachable:
+		// The caller's own credentials were fine: it is the hop to YouTrack
+		// that failed. Answering 401 here would tell a browser its session had
+		// expired, which is exactly the wrong thing to believe.
+		return http.StatusBadGateway
 	case "rate_limited":
 		return http.StatusTooManyRequests
 	default:

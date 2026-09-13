@@ -104,6 +104,57 @@ func (w *Workspace) Dispatch(ctx context.Context, method string, raw []byte) (an
 			return nil, err
 		}
 		return w.ResolveRef(ref), nil
+	case "youtrack.import.preview", "youtrack.import.run":
+		// The import writes into one project repository, named by "project" and
+		// routed like any other project call, but it is answered here so that
+		// its parameters are decoded once and both methods share one entry
+		// point (GIT-US-0047).
+		p, err := decodeParams[YouTrackImportParams](raw)
+		if err != nil {
+			return nil, err
+		}
+		target, err := w.route(method, raw)
+		if err != nil {
+			return nil, err
+		}
+		if method == "youtrack.import.preview" {
+			return target.Vault.YouTrackImportPreview(ctx, p)
+		}
+		return target.Vault.YouTrackImportRun(ctx, p)
+	case "youtrack.kb.status", "youtrack.kb.publish", "youtrack.kb.pull":
+		// The knowledge-base methods address one project repository, named by
+		// "project" and routed like any other project call, but their
+		// parameters are decoded once here so that the three share one entry
+		// point (GIT-US-0090).
+		p, err := decodeParams[YouTrackKBParams](raw)
+		if err != nil {
+			return nil, err
+		}
+		target, err := w.route(method, raw)
+		if err != nil {
+			return nil, err
+		}
+		switch method {
+		case "youtrack.kb.status":
+			return target.Vault.YouTrackKBStatus(ctx, p)
+		case "youtrack.kb.publish":
+			return target.Vault.YouTrackKBPublish(ctx, p)
+		default:
+			return target.Vault.YouTrackKBPull(ctx, p)
+		}
+	case "youtrack.comment.push":
+		// Routed by the project key inside the item id, which is what routeParams
+		// reads from "id"; "itemId" is spelled out here because the comment push
+		// names its item that way (GIT-US-0079).
+		p, err := decodeParams[YouTrackCommentPushParams](raw)
+		if err != nil {
+			return nil, err
+		}
+		target, err := w.routeItem(method, raw, p.Project, core.ItemID(p.ItemID))
+		if err != nil {
+			return nil, err
+		}
+		return target.Vault.YouTrackCommentPush(ctx, p)
 	case "item.references":
 		p, err := decodeParams[ItemReferencesParams](raw)
 		if err != nil {
@@ -188,6 +239,12 @@ func (w *Workspace) Dispatch(ctx context.Context, method string, raw []byte) (an
 			return nil, err
 		}
 		return w.CloseSprint(ctx, p)
+	case "sprint.transfer":
+		p, err := decodeParams[SprintTransferParams](raw)
+		if err != nil {
+			return nil, err
+		}
+		return w.TransferSprintItems(ctx, p)
 	case "retro.list":
 		p, err := decodeParams[RetroListParams](raw)
 		if err != nil {
@@ -312,6 +369,26 @@ func (w *Workspace) route(method string, raw []byte) (*Mount, error) {
 		return nil, failf("not_found", "no repository is open")
 	}
 	return mounts[0], nil
+}
+
+// routeItem picks the repository that answers a method addressing one item by a
+// field route does not read, such as the "itemId" of a comment push. An
+// explicit project wins, then the project key inside the item id, then whatever
+// route would have chosen on its own.
+func (w *Workspace) routeItem(
+	method string, raw []byte, project string, item core.ItemID,
+) (*Mount, error) {
+	if project != "" {
+		if m, ok := w.MountForProject(core.ProjectKey(project)); ok {
+			return m, nil
+		}
+	}
+	if key, _, _, err := core.ParseItemID(string(item)); err == nil {
+		if m, ok := w.MountForProject(key); ok {
+			return m, nil
+		}
+	}
+	return w.route(method, raw)
 }
 
 // clock returns the clock new vaults are built with.

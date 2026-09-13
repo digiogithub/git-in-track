@@ -94,7 +94,7 @@ GINTRACK_* variables over the file over the built-in defaults.`,
 			if p.JSONMode() {
 				return render(p.JSON(res.Config))
 			}
-			data, err := yaml.Marshal(res.Config)
+			data, err := yaml.Marshal(redactedConfig(res.Config))
 			if err != nil {
 				return fmt.Errorf("encode the configuration: %w", err)
 			}
@@ -134,4 +134,24 @@ unless --force says so.`,
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "replace an existing file")
 	return cmd
+}
+
+// redactedTokenPlaceholder is what `gintrack config show` prints instead of a
+// stored integration credential.
+const redactedTokenPlaceholder = "[redacted]"
+
+// redactedConfig returns a copy of the configuration with every external-tracker
+// credential replaced by a placeholder.
+//
+// `config show` is what a user pastes into a bug report, so the one secret this
+// tool did not generate itself must not be in it (ADR-032). The companion's own
+// bearer token stays visible: it is generated per run, it is what a user needs
+// in order to call the local API by hand, and rotating it is a restart.
+func redactedConfig(cfg *config.Config) *config.Config {
+	out := cfg.Clone()
+	for key, cred := range out.Integrations.YouTrack {
+		cred.Token = redactedTokenPlaceholder
+		out.Integrations.YouTrack[key] = cred
+	}
+	return out
 }

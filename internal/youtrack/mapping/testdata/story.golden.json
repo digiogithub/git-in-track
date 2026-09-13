@@ -1,0 +1,76 @@
+{
+  "draft": {
+    "type": "story",
+    "title": "Login fails on Safari",
+    "status": "todo",
+    "priority": "high",
+    "assignees": [
+      "ana"
+    ],
+    "author": "jose",
+    "labels": [
+      "browser"
+    ],
+    "estimate": 3.5,
+    "start": null,
+    "due": null,
+    "external": [
+      {
+        "system": "youtrack",
+        "id": "ACME-42",
+        "url": "https://yt.example.com/youtrack/issue/ACME-42",
+        "syncedAt": null
+      }
+    ],
+    "body": "Steps to reproduce...\n\n- [ ] confirm on 17.4\n\nBlocks the release.\n\n```\n{color:red}not an extension in here{color}\n```\n\nInline `{width=1px}` stays too.\n"
+  },
+  "relations": {
+    "parent": "ACME-30",
+    "children": [
+      "ACME-60"
+    ],
+    "links": [
+      {
+        "kind": "blocked_by",
+        "target": "ACME-52"
+      },
+      {
+        "kind": "blocks",
+        "target": "ACME-51"
+      },
+      {
+        "kind": "duplicated_by",
+        "target": "ACME-55"
+      },
+      {
+        "kind": "relates_to",
+        "target": "ACME-47"
+      }
+    ]
+  },
+  "warnings": [
+    "description: {color:…}: the YouTrack {color:…} extension is not portable Markdown; the markers were removed and the text kept",
+    "links: Mentions: the link type \"Mentions\" has no equivalent among the five git-in-track link kinds and was not imported"
+  ],
+  "patch": {
+    "title": "Login fails on Safari",
+    "status": "todo",
+    "priority": "high",
+    "assignees": [
+      "ana"
+    ],
+    "labels": [
+      "browser"
+    ],
+    "estimate": 3.5,
+    "addExternal": [
+      {
+        "system": "youtrack",
+        "id": "ACME-42",
+        "url": "https://yt.example.com/youtrack/issue/ACME-42",
+        "syncedAt": null
+      }
+    ],
+    "body": "Steps to reproduce...\n\n- [ ] confirm on 17.4\n\nBlocks the release.\n\n```\n{color:red}not an extension in here{color}\n```\n\nInline `{width=1px}` stays too.\n"
+  }
+}

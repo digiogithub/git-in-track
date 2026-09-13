@@ -1,11 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
 import { X } from 'lucide-react';
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 
-import type { ItemFilter, ItemType } from '@/api/provider';
+import type { Item, ItemFilter, ItemType } from '@/api/provider';
 import { useProvider } from '@/api/provider-context';
-import { Input } from '@/components/ui/input';
-import { cn } from '@/lib/cn';
+import { Combobox } from '@/components/ui/combobox';
 
 export type ItemPickerProps = {
   id: string;
@@ -20,11 +19,13 @@ export type ItemPickerProps = {
   className?: string;
 };
 
-const debounceMs = 200;
-
 /**
  * Typeahead over the index: type an id directly or pick one from the list.
  * The value is always an item id, never a title.
+ *
+ * The interaction — ARIA roles, debounce, keyboard and blur grace — lives in
+ * `components/ui/combobox`; what stays here is what makes this picker an
+ * *item* picker: the query, the filter and the id-shaped value.
  */
 export function ItemPicker({
   id,
@@ -41,28 +42,10 @@ export function ItemPicker({
   const [text, setText] = useState(value ?? '');
   const [search, setSearch] = useState('');
   const [open, setOpen] = useState(false);
-  const listId = useId();
-  const blurTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     setText(value ?? '');
   }, [value]);
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setSearch(text.trim());
-    }, debounceMs);
-    return () => {
-      clearTimeout(timer);
-    };
-  }, [text]);
-
-  useEffect(
-    () => () => {
-      if (blurTimer.current !== null) clearTimeout(blurTimer.current);
-    },
-    [],
-  );
 
   const firstType = types[0];
   const filter: ItemFilter = {
@@ -83,38 +66,34 @@ export function ItemPicker({
   const options = data?.items ?? [];
 
   return (
-    <div className={cn('relative', className)}>
-      <div className="flex items-center gap-1">
-        <Input
-          id={id}
-          role="combobox"
-          aria-expanded={open}
-          aria-controls={listId}
-          aria-autocomplete="list"
-          aria-label={label}
-          autoComplete="off"
-          value={text}
-          disabled={disabled}
-          placeholder={placeholder ?? 'Search by id or title'}
-          onChange={(event) => {
-            const next = event.target.value;
-            setText(next);
-            setOpen(true);
-            onChange(next.trim() === '' ? null : next.trim());
-          }}
-          onFocus={() => {
-            setOpen(true);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === 'Escape') setOpen(false);
-          }}
-          onBlur={() => {
-            blurTimer.current = setTimeout(() => {
-              setOpen(false);
-            }, 150);
-          }}
-        />
-        {value ? (
+    <Combobox<Item>
+      id={id}
+      label={label}
+      value={text}
+      onValueChange={(next) => {
+        setText(next);
+        onChange(next.trim() === '' ? null : next.trim());
+      }}
+      onSearchChange={setSearch}
+      onOpenChange={setOpen}
+      options={options}
+      getOptionKey={(option) => option.id}
+      isOptionSelected={(option) => option.id === value}
+      renderOption={(option) => (
+        <>
+          <span className="font-mono text-xs text-muted-foreground">{option.id}</span>{' '}
+          {option.title}
+        </>
+      )}
+      onSelect={(option) => {
+        setText(option.id);
+        onChange(option.id);
+      }}
+      placeholder={placeholder ?? 'Search by id or title'}
+      disabled={disabled}
+      {...(className === undefined ? {} : { className })}
+      trailing={
+        value ? (
           <button
             type="button"
             aria-label={`Clear ${label}`}
@@ -127,37 +106,8 @@ export function ItemPicker({
           >
             <X aria-hidden="true" className="h-4 w-4" />
           </button>
-        ) : null}
-      </div>
-
-      {open && options.length > 0 ? (
-        <ul
-          id={listId}
-          role="listbox"
-          aria-label={`${label} suggestions`}
-          className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border border-border bg-popover p-1 shadow-pop"
-        >
-          {options.map((option) => (
-            <li key={option.id} role="option" aria-selected={option.id === value}>
-              <button
-                type="button"
-                className="w-full rounded px-2 py-1 text-left text-sm hover:bg-secondary"
-                onMouseDown={(event) => {
-                  event.preventDefault();
-                }}
-                onClick={() => {
-                  setText(option.id);
-                  onChange(option.id);
-                  setOpen(false);
-                }}
-              >
-                <span className="font-mono text-xs text-muted-foreground">{option.id}</span>{' '}
-                {option.title}
-              </button>
-            </li>
-          ))}
-        </ul>
-      ) : null}
-    </div>
+        ) : null
+      }
+    />
   );
 }

@@ -111,6 +111,13 @@ type Options struct {
 	// this process only, which is what a test and `serve --repo` want.
 	ConfigPath string
 
+	// YouTrack are the machine-local YouTrack credentials, resolved by the
+	// precedence chain of internal/config: a flag, then
+	// GINTRACK_YOUTRACK_TOKEN, then the configuration file (ADR-032). The
+	// snapshot carries no exported field and no marshaler, so it cannot reach a
+	// response or a log line by accident.
+	YouTrack config.YouTrackTokens
+
 	// MCPHTTP mounts the Model Context Protocol server at POST /mcp, behind the
 	// same bearer token as the REST API (docs/08-mcp-server.md section 2.2).
 	MCPHTTP bool
@@ -120,6 +127,12 @@ type Options struct {
 	// MCPAgent is the name agent-authored comments are attributed to. Empty
 	// means the default the MCP package picks.
 	MCPAgent string
+
+	// SyncEngine configures the background job engine: the worker pool, the
+	// batch size, the shared outbound rate limit, the retry budget and the
+	// grace period a shutdown drains for (GIT-US-0084). The zero value is the
+	// documented default and starts an idle engine that costs nothing.
+	SyncEngine SyncEngine
 
 	// Tunnel is the `server.tunnel` section: the provider and whether a tunnel
 	// is opened as soon as the listener has an address. Enabling it publishes
@@ -155,6 +168,14 @@ type Server struct {
 	proxy *corsProxy
 	// tunnel owns the public tunnel toggled at /api/v1/tunnel.
 	tunnel *tunnelState
+	// sync owns the background job engine and the observer that publishes its
+	// `sync.job.*` events (GIT-US-0074, GIT-US-0084). It exists from New so
+	// that a handler can be registered before Start replays the journal.
+	sync *syncState
+	// youtrack owns the YouTrack connection of every mounted project: the
+	// committed link in project.yaml, the machine-local token and the clients
+	// built from the two (GIT-US-0052).
+	youtrack *youtrackState
 
 	// mu guards addr, which changes once when the listener resolves a
 	// wildcard port and is read concurrently by callers printing the URL.
@@ -219,6 +240,7 @@ func New(opts Options) (*Server, error) {
 		s.refreshOnRead(m)
 	}
 	s.git = newGitState(opts, s.repos, s.log, s.publishCommit)
+	s.youtrack = newYouTrackState(opts, s.repos)
 	// The metrics of GIT-US-0028 reconstruct their series from the git history
 	// of the item files. Only the companion can read it, so only the companion
 	// installs the reader (ADR-017).
@@ -229,6 +251,22 @@ func New(opts Options) (*Server, error) {
 		}
 	}
 	s.mcp = s.newMCPState(opts)
+	// The job engine is built here and started in Start: a handler has to be
+	// registered before the journal is replayed, and New is the only moment a
+	// caller holds the server and nothing is running yet.
+	jobs, err := newSyncState(opts, newSyncObserver(s.hub, now))
+	if err != nil {
+		return nil, fmt.Errorf("sync engine: %w", err)
+	}
+	s.sync = jobs
+	// The job handlers this package owns, and the two seams the vaults reach
+	// the engine and the tracker through. Both happen here rather than in Start
+	// because Start replays the journal: a replayed job whose kind has no
+	// handler can never be dispatched.
+	if err := s.registerYouTrackJobs(); err != nil {
+		return nil, err
+	}
+	s.installYouTrackSeams()
 	s.proxy = newCORSProxy(s)
 	s.tunnel = newTunnelState(opts)
 	s.router = s.routes()
@@ -303,6 +341,12 @@ func (s *Server) Start(ctx context.Context) error {
 	// published workspace outlives the server.
 	s.startTunnel(ctx)
 	defer s.stopTunnel(context.WithoutCancel(ctx))
+	// The background job engine. Its context is detached on the way out for the
+	// same reason the committer's is: a job that is halfway through a call to a
+	// tracker must be allowed to finish, and the very shutdown that is waiting
+	// for it must not be what cancels it.
+	s.startSyncEngine(ctx)
+	defer s.stopSyncEngine(context.WithoutCancel(ctx))
 	// A shutdown must not drop an edit that was still inside the debounce
 	// window, so the committer is flushed before the listener closes.
 	defer s.git.close(context.WithoutCancel(ctx))
@@ -428,6 +472,12 @@ func (s *Server) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 			// The CORS proxy that makes browser-only git reach a host at all
 			// (GIT-US-0042, docs/06 section 6.3).
 			"corsProxy": s.proxy.enabled(),
+			// YouTrack (GIT-EP-0011). `youtrackSupported` says this build can
+			// reach a tracker at all — only the companion can, browser-only
+			// mode has neither the network reach nor the token — and
+			// `youtrack` says at least one served project is actually linked.
+			"youtrackSupported": s.opts.Mode == modeCompanion,
+			"youtrack":          s.opts.Mode == modeCompanion && s.youtrack.configured(),
 			// The public tunnel of /api/v1/tunnel: whether this build can open
 			// one at all, not whether one is running.
 			"tunnel": s.tunnelSupported(),

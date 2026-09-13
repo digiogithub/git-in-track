@@ -1,0 +1,4 @@
+[
+  { "id": "4-88", "text": "Reproduced on 17.4.", "created": 1767230000000, "updated": null, "author": { "id": "1-7", "login": "ana", "fullName": "Ana Ruiz", "email": "ana@example.com" }, "$type": "IssueComment" },
+  { "id": "4-89", "text": "Fixed in **1.4.0**.", "created": 1767240000000, "updated": 1767241000000, "author": { "id": "1-1", "login": "jose", "fullName": "Jose F. Rives", "email": "jose@example.com" }, "$type": "IssueComment" }
+]

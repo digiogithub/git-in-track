@@ -29,7 +29,7 @@ var canonicalKeyOrder = []string{
 	"estimate", "effort", "spent",
 	"created", "updated", "started", "closed", "start", "due",
 	"links", "blocks", "depends_on", "in_reply_to", "kind", "reactions",
-	"attachments", "custom", "deleted",
+	"external", "attachments", "custom", "inbox", "deleted",
 }
 
 // knownKeys is the set of front-matter keys this version understands. Everything
@@ -272,8 +272,10 @@ func ParseItem(path string, data []byte) (*Item, error) {
 	it.Links = p.links("links")
 	it.Links = append(it.Links, p.aliasLinks("blocks", LinkBlocks)...)
 	it.Links = append(it.Links, p.aliasLinks("depends_on", LinkBlockedBy)...)
+	it.External = p.externals("external")
 	it.Attachments = p.strList("attachments")
 	it.Custom = p.mapping("custom")
+	it.Inbox = p.inbox("inbox")
 	it.Deleted = p.boolean("deleted")
 	it.Extra = p.extra()
 
@@ -328,6 +330,7 @@ func ParseComment(path string, data []byte) (*Comment, error) {
 		p.fail("kind", CodeEnum, fmt.Sprintf("unknown comment kind %q", c.Kind))
 	}
 	c.Reactions = p.reactions("reactions")
+	c.External = p.externals("external")
 	c.Attachments = p.strList("attachments")
 	c.Extra = p.extra()
 	// The identity keys are comment-only; they are read above, not preserved.
@@ -387,8 +390,12 @@ func SerializeItem(it *Item) ([]byte, error) {
 	w.date("start", it.Start)
 	w.date("due", it.Due)
 	w.links("links", it.Links)
+	w.externals("external", it.External)
 	w.stringList("attachments", it.Attachments)
 	if err := w.mapping("custom", it.Custom); err != nil {
+		return nil, fmt.Errorf("serialize item %s: %w", it.Path, err)
+	}
+	if err := w.inbox("inbox", it.Inbox); err != nil {
 		return nil, fmt.Errorf("serialize item %s: %w", it.Path, err)
 	}
 	if it.Deleted {
@@ -428,6 +435,7 @@ func SerializeComment(c *Comment) ([]byte, error) {
 			return nil, fmt.Errorf("serialize comment %s: %w", c.Path, err)
 		}
 	}
+	w.externals("external", c.External)
 	w.stringList("attachments", c.Attachments)
 	if err := w.extra(c.Extra); err != nil {
 		return nil, fmt.Errorf("serialize comment %s: %w", c.Path, err)
@@ -662,6 +670,98 @@ func (p *fieldReader) aliasLinks(key string, kind LinkKind) []Link {
 		out = append(out, Link{Kind: kind, Target: t})
 	}
 	return out
+}
+
+// externals reads the `external:` list. An entry without a system or without an
+// id is refused (E-EXT-FIELDS): the pair is the idempotency key every importer
+// matches on, so a half-written entry is worse than none. The system itself is
+// never checked against a list of known systems, so a file written by a tool
+// this version has never heard of round-trips untouched.
+func (p *fieldReader) externals(key string) []External {
+	v, ok := p.value(key)
+	if !ok {
+		return nil
+	}
+	list, isList := v.([]any)
+	if !isList {
+		p.fail(key, CodeFieldType, fmt.Sprintf("want a list of external references, got %T", v))
+		return nil
+	}
+	out := make([]External, 0, len(list))
+	for _, e := range list {
+		m, isMap := e.(map[string]any)
+		if !isMap {
+			p.fail(key, CodeFieldType, fmt.Sprintf("want {system, id}, got %T", e))
+			continue
+		}
+		ref := NormalizeExternal(External{
+			System: stringOf(m["system"]),
+			ID:     stringOf(m["id"]),
+			URL:    stringOf(m["url"]),
+			Key:    stringOf(m["key"]),
+		})
+		if raw, has := m["synced_at"]; has && raw != nil {
+			ts, err := ParseTimestamp(stringOf(raw))
+			if err != nil {
+				p.fail(key, CodeDateFormat, fmt.Sprintf("synced_at %q is not an ISO 8601 UTC timestamp (%s)", stringOf(raw), TimestampLayout))
+				continue
+			}
+			ref.SyncedAt = ts
+		}
+		if !ref.Valid() {
+			p.fail(key, CodeExternalFields, "an external reference needs both system and id")
+			continue
+		}
+		out = append(out, ref)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return dedupeExternals(out)
+}
+
+// inbox reads the `inbox:` triage block. Keys inside the block this version does
+// not know are preserved in ItemInbox.Extra and written back after the known
+// ones, mirroring what Item.Extra does for the top level (R-FMT-6).
+func (p *fieldReader) inbox(key string) *ItemInbox {
+	m := p.mapping(key)
+	if m == nil {
+		return nil
+	}
+	in := &ItemInbox{
+		Status:      InboxStatus(strings.TrimSpace(stringOf(m["status"]))),
+		DuplicateOf: ItemID(strings.TrimSpace(stringOf(m["duplicate_of"]))),
+		Source:      strings.TrimSpace(stringOf(m["source"])),
+	}
+	if in.Status != "" && !in.Status.Valid() {
+		p.fail(key, CodeInboxStatus, fmt.Sprintf("unknown inbox status %q", in.Status))
+	}
+	if raw, has := m["snoozed_until"]; has && raw != nil {
+		d, err := ParseDate(stringOf(raw))
+		if err != nil {
+			p.fail(key, CodeDateFormat, fmt.Sprintf("snoozed_until %q is not a date (%s)", stringOf(raw), DateLayout))
+		} else {
+			in.SnoozedUntil = d
+		}
+	}
+	if raw, has := m["received"]; has && raw != nil {
+		ts, err := ParseTimestamp(stringOf(raw))
+		if err != nil {
+			p.fail(key, CodeDateFormat, fmt.Sprintf("received %q is not an ISO 8601 UTC timestamp (%s)", stringOf(raw), TimestampLayout))
+		} else {
+			in.Received = ts
+		}
+	}
+	for k, v := range m {
+		if inboxKnownKeys[k] || v == nil {
+			continue
+		}
+		if in.Extra == nil {
+			in.Extra = make(map[string]any)
+		}
+		in.Extra[k] = v
+	}
+	return in
 }
 
 func (p *fieldReader) mapping(key string) map[string]any {

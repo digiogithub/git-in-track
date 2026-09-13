@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -23,6 +24,10 @@ func (s *Server) mountSprints(r chi.Router) {
 	r.Patch("/{id}", s.handleSprintUpdate)
 	r.Post("/{id}/start", s.handleSprintStart)
 	r.Post("/{id}/close", s.handleSprintClose)
+	// Moving the unfinished work of a sprint without closing either sprint
+	// (GIT-US-0085). It is a separate route because it is a separate decision:
+	// a close grades a sprint, a transfer only moves scope.
+	r.Post("/{id}/transfer", s.handleSprintTransfer)
 	r.Get("/{id}/burndown", s.handleSprintMetrics)
 }
 
@@ -159,7 +164,9 @@ func (s *Server) handleSprintClose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Carry []vault.SprintCarry `json:"carry,omitempty"`
+		Carry    []vault.SprintCarry   `json:"carry,omitempty"`
+		Transfer *vault.SprintTransfer `json:"transfer,omitempty"`
+		DryRun   bool                  `json:"dryRun,omitempty"`
 	}
 	if r.ContentLength > 0 && !decodeBody(w, r, &body) {
 		return
@@ -167,8 +174,45 @@ func (s *Server) handleSprintClose(w http.ResponseWriter, r *http.Request) {
 	params := vault.SprintCloseParams{
 		TeamScope: vault.TeamScope{Team: teamOf(r)},
 		ID:        chi.URLParam(r, "id"), Rev: rev, Carry: body.Carry,
+		Transfer: body.Transfer, DryRun: body.DryRun,
 	}
 	result, err := s.repos.workspace().Dispatch(r.Context(), "sprint.close", mustJSON(params))
+	if err != nil {
+		writeVaultError(w, r, err)
+		return
+	}
+	s.publishSprintWrite(r, result)
+	writeJSON(w, r, http.StatusOK, result)
+}
+
+// handleSprintTransfer serves POST /api/v1/sprints/{id}/transfer: move the
+// unfinished references of one sprint into another sprint or back to their
+// project backlogs, without closing anything.
+//
+// `mode` defaults to `next`, and `carry` overrides it for the references it
+// names. A per-item failure is not an error: it comes back on its own
+// `report.carried[].error` line with a 200, because the rest of the transfer
+// still happened (docs/04 R-SPR-8).
+func (s *Server) handleSprintTransfer(w http.ResponseWriter, r *http.Request) {
+	rev, ok := requireIfMatch(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Mode   string              `json:"mode,omitempty"`
+		Target string              `json:"target,omitempty"`
+		Carry  []vault.SprintCarry `json:"carry,omitempty"`
+		DryRun bool                `json:"dryRun,omitempty"`
+	}
+	if r.ContentLength > 0 && !decodeBody(w, r, &body) {
+		return
+	}
+	params := vault.SprintTransferParams{
+		TeamScope: vault.TeamScope{Team: teamOf(r)},
+		ID:        chi.URLParam(r, "id"), Rev: rev,
+		Mode: body.Mode, Target: body.Target, Carry: body.Carry, DryRun: body.DryRun,
+	}
+	result, err := s.repos.workspace().Dispatch(r.Context(), "sprint.transfer", mustJSON(params))
 	if err != nil {
 		writeVaultError(w, r, err)
 		return
@@ -209,9 +253,76 @@ func (s *Server) handleBoardUpdate(w http.ResponseWriter, r *http.Request) {
 
 // publishSprintWrite announces the files a sprint call wrote, so that every
 // connected UI reloads the board and the items behind it.
+//
+// A dry run publishes nothing at all — no file event, no commit, no
+// `sprint.changed`, no `item.changed`. The gate is `!DryRun` rather than "the
+// write set is empty" on purpose: a preview that happened to write nothing and
+// a commitment that happened to write nothing are different things, and only
+// the flag says which one this was (R-SPR-3).
 func (s *Server) publishSprintWrite(r *http.Request, result any) {
-	if written, ok := result.(vault.SprintResult); ok {
-		s.publishWriteSets(r, written.Writes)
-		s.commitWriteSets(r.Context(), written.Writes, sprintFields(written.Sprint.Sprint.ID, "sprint", gitops.ActionUpdate))
+	written, ok := result.(vault.SprintResult)
+	if !ok {
+		return
 	}
+	if written.DryRun {
+		return
+	}
+	s.publishWriteSets(r, written.Writes)
+	s.commitWriteSets(r.Context(), written.Writes, sprintFields(written.Sprint.Sprint.ID, "sprint", gitops.ActionUpdate))
+	s.publishSprintChanged(r, written)
+}
+
+// sprintChangedData is the payload of a `sprint.changed` event: which sprint
+// moved, on which board, and what its close or transfer did to the scope.
+type sprintChangedData struct {
+	Sprint string `json:"sprint"`
+	Board  string `json:"board"`
+	State  string `json:"state"`
+	// Carried is how many references were moved, and Failed how many decisions
+	// could not be applied — a project this machine has not cloned is the
+	// common one (R-SPR-8).
+	Carried   int    `json:"carried"`
+	Failed    int    `json:"failed"`
+	Origin    string `json:"origin"`
+	RequestID string `json:"requestId,omitempty"`
+}
+
+// publishSprintChanged announces a sprint whose scope moved, and one
+// `item.changed` per reference that actually moved, so that a backlog view open
+// in another tab refreshes the items and not only the board.
+func (s *Server) publishSprintChanged(r *http.Request, written vault.SprintResult) {
+	requestID := requestIDOf(r)
+	data := sprintChangedData{
+		Sprint: written.Sprint.Sprint.ID, Board: written.Sprint.Sprint.Board,
+		State: string(written.Sprint.Sprint.State), Origin: "api", RequestID: requestID,
+	}
+	if report := written.Report; report != nil {
+		for _, carried := range report.Carried {
+			if carried.Error != "" {
+				data.Failed++
+				continue
+			}
+			data.Carried++
+			s.publishCarriedItem(carried.Ref, requestID)
+		}
+	}
+	s.hub.Publish(eventSprintChanged, data)
+}
+
+// publishCarriedItem announces one item a transfer moved. A reference names the
+// project it belongs to, so the event can say which repository changed; a
+// reference whose project this machine has not cloned is skipped, because there
+// is no local item to refresh.
+func (s *Server) publishCarriedItem(ref, requestID string) {
+	project, id, found := strings.Cut(ref, "/")
+	if !found {
+		project, id = "", ref
+	}
+	m, ok := s.repos.forProject(project)
+	if !ok {
+		return
+	}
+	s.hub.Publish(eventItemChanged, itemChangedData{
+		Repo: m.id, ID: id, Op: "updated", Origin: "api", RequestID: requestID,
+	})
 }

@@ -42,8 +42,9 @@ type NewProject struct {
 	Timezone string
 }
 
-// DefaultWorkflow returns the status machine a new project starts with: the six
-// statuses of docs/03 section 6.2, with `backlog` as the initial one.
+// DefaultWorkflow returns the status machine a new project starts with: the
+// seven statuses of docs/03 section 6.2, with `backlog` as the initial one and
+// `triage` as the inbox (ADR-033).
 //
 // It is deliberately the same list the shipped project.yaml of this repository
 // uses, so that a project created by the tool and a project written by hand
@@ -52,6 +53,10 @@ func DefaultWorkflow() Workflow {
 	return Workflow{
 		Initial: "backlog",
 		Statuses: []StatusDef{
+			// The inbox. It is deliberately not a target of any declared
+			// transition: work leaves triage by being accepted, which moves it to
+			// the initial status, and nothing ordinary moves back into it.
+			{ID: "triage", Name: "Triage", Category: CategoryTriage},
 			{ID: "backlog", Name: "Backlog", Category: CategoryTodo},
 			{ID: "todo", Name: "To Do", Category: CategoryTodo},
 			{ID: "in_progress", Name: "In Progress", Category: CategoryInProgress},

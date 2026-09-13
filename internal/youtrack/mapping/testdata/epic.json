@@ -1,0 +1,32 @@
+{
+  "id": "2-300",
+  "idReadable": "ACME-30",
+  "summary": "Authentication overhaul",
+  "description": "Bring every sign-in path onto one provider.\n\nSee ACME-42 for the Safari regression that started this.\n\n![architecture](auth-overview.png){width=640px}\n",
+  "created": 1767225600000,
+  "updated": 1767312000000,
+  "resolved": null,
+  "project": { "id": "0-1", "name": "Acme Platform", "shortName": "ACME" },
+  "reporter": { "id": "1-1", "login": "jose", "fullName": "Jose F. Rives", "email": "jose@digio.es" },
+  "customFields": [
+    { "id": "110-1", "name": "Type", "$type": "SingleEnumIssueCustomField", "value": { "id": "70-4", "name": "Epic", "$type": "EnumBundleElement" } },
+    { "id": "110-2", "name": "State", "$type": "StateIssueCustomField", "value": { "id": "71-2", "name": "In Progress", "isResolved": false, "$type": "StateBundleElement" } },
+    { "id": "110-3", "name": "Priority", "$type": "SingleEnumIssueCustomField", "value": { "id": "72-1", "name": "Show-stopper", "$type": "EnumBundleElement" } },
+    { "id": "110-4", "name": "Assignee", "$type": "SingleUserIssueCustomField", "value": null },
+    { "id": "110-5", "name": "Estimation", "$type": "PeriodIssueCustomField", "value": { "id": "0", "presentation": "2w", "minutes": 4800, "$type": "PeriodValue" } },
+    { "id": "110-8", "name": "Fix versions", "$type": "MultiVersionIssueCustomField", "value": [ { "id": "113-1", "name": "1.5.0", "$type": "VersionBundleElement" } ] }
+  ],
+  "links": [
+    { "id": "97-1s", "direction": "OUTWARD",
+      "linkType": { "id": "97-1", "name": "Subtask", "sourceToTarget": "parent for", "targetToSource": "subtask of", "directed": true, "aggregation": true },
+      "issues": [ { "id": "2-345", "idReadable": "ACME-42", "summary": "Login fails on Safari" }, { "id": "2-346", "idReadable": "ACME-43", "summary": "Rotate signing keys" } ] },
+    { "id": "97-1t", "direction": "INWARD",
+      "linkType": { "id": "97-1", "name": "Subtask", "sourceToTarget": "parent for", "targetToSource": "subtask of", "directed": true, "aggregation": true },
+      "issues": [] },
+    { "id": "97-2b", "direction": "BOTH",
+      "linkType": { "id": "97-2", "name": "Relates", "sourceToTarget": "relates to", "targetToSource": "relates to", "directed": false },
+      "issues": [] }
+  ],
+  "tags": [ { "id": "5-1", "name": "security" }, { "id": "5-2", "name": "agent-ok" } ],
+  "$type": "Issue"
+}

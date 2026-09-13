@@ -11,10 +11,11 @@ This document is the **sequencing** authority. The backlog under `docs/.pmngr/` 
 with the tool we are building, from the first story onwards.
 
 - Project key: `GIT`
-- Epics: `GIT-EP-0001` … `GIT-EP-0007` (one per phase)
-- Milestones: `GIT-M-0001` … `GIT-M-0007`
-- Stories: `GIT-US-0001` … `GIT-US-0030`
-- Total estimated: **171 story points**
+- Epics: `GIT-EP-0001` … `GIT-EP-0007` (one per phase); `GIT-EP-0011` … `GIT-EP-0019` for
+  the post-1.0 phases 7–9 (§7)
+- Milestones: `GIT-M-0001` … `GIT-M-0007`; `GIT-M-0011` … `GIT-M-0013` (§7)
+- Stories: `GIT-US-0001` … `GIT-US-0030`; `GIT-US-0044` … `GIT-US-0094` (§7)
+- Total estimated: **171 story points** for phases 0–6, **330** for phases 7–9
 
 ---
 
@@ -657,3 +658,282 @@ a plain list view). Each iteration: a short planning pass on the next stories, c
 delivery to `main`, and a retrospective recorded in the team repository from Phase 6. The
 first retrospective the tool ever stores will be our own — and if writing it is unpleasant,
 that is a bug report.
+
+---
+
+## 7. Post-1.0: Phases 7–9 — integrations, triage and agents
+
+Three phases planned in September 2026, after the 1.0 line and the workspace and Jujutsu
+epics (`GIT-EP-0008` … `GIT-EP-0010`). They turn git-in-track from a self-contained tool into
+one that talks to the systems around it: JetBrains YouTrack for issues and knowledge base,
+Plane-style triage and cycles for the way work flows, and Pando for a conversational agent
+and semantic search. Sections 1–6 above are unchanged; this section follows the same shape.
+
+The analysis behind the plan came from four code reviews: `youtrack-cli` for the YouTrack
+REST surface, Plane (`apps/api` intake and cycle models, importer contract), Pando
+(`internal/agui`, `internal/rag`, the TypeScript SDK) and git-in-track itself. The decisions
+they produced are recorded in the epics and stories, and the ones that change the data model
+or a documented promise get an ADR in their story.
+
+### 7.1 Decisions taken up front
+
+- **`external` is a first-class front-matter field** on items, comments and KB pages:
+  `external: [{system, id, url, key, synced_at}]`. It is the idempotency key for every
+  import and sync, and it is the shape a second system (Plane, Jira) would reuse. ADR-031.
+- **The YouTrack token lives on the machine running the companion**, in the `0600` config
+  file keyed by project, with a `GINTRACK_YOUTRACK_TOKEN` override. It is never written to a
+  repository, never echoed by an API and never logged. This revises the "no credentials
+  stored" promise in `docs/10-development-guidelines.md`; ADR-032 records why.
+- **Per-project integration settings are committed** in `project.yaml` under
+  `integrations.youtrack` (instance URL, project key, field map, push and sync modes), so a
+  clone knows where its items came from without knowing the token.
+- **Sync semantics are deliberately one-directional per flow** in Phase 7: import issues
+  (re-import updates in place), push comments and feedback, publish and pull KB pages. No
+  bidirectional status sync; conflicts on KB pages produce a conflict page, not a merge.
+- **Background work gets a real engine** (`internal/syncengine`): persistent queue, worker
+  pool, batches, shared rate limiter, retry with backoff, progress on the WebSocket hub, JSON
+  journal in the cache directory. No embedded database.
+- **Everything external is companion-only.** Browser-only mode cannot reach YouTrack (the
+  CORS proxy is a git proxy, ADR-025) or Pando, so each feature sits behind a capability
+  (`features.youtrack`, `features.agent`, `fullTextSearch: 'pando'`) and hides when absent.
+- **Cycles extend sprints**; no new entity. **Inbox items are ordinary items** in a
+  reserved `triage` status category with an `inbox` front-matter block.
+- **The agent interface speaks AG-UI directly** with `@ag-ui/client` and the shadcn design
+  system, through a companion proxy that injects the Pando token. Pando does not implement
+  the CopilotKit runtime, so CopilotKit would have meant a Node sidecar; rejected.
+- **Semantic search is an optional native accelerator** behind the existing `core/search`
+  contract, exactly as `docs/02-architecture.md` §8 prescribes for bleve. The companion
+  exports items and pages to a corpus Pando indexes and queries Pando over MCP; the core
+  matcher stays the fallback.
+
+### 7.2 Milestones at a glance
+
+| Milestone     | Phase | Epics                          | Theme                                   | Points |
+| ------------- | ----- | ------------------------------ | --------------------------------------- | ------ |
+| `GIT-M-0011` | 7     | `GIT-EP-0011` … `GIT-EP-0015` | YouTrack integration and sync engine    | 188    |
+| `GIT-M-0012` | 8     | `GIT-EP-0016`, `GIT-EP-0017`  | Inbox and cycles                        | 69     |
+| `GIT-M-0013` | 9     | `GIT-EP-0018`, `GIT-EP-0019`  | Agentic interface and semantic search   | 73     |
+
+The milestones carry planning due dates in the backlog (mid November 2026, mid December
+2026, end of January 2027). They are estimates for a single maintainer plus agents, not
+commitments; the order is what matters.
+
+### 7.3 Milestones in detail
+
+#### Milestone 11 — YouTrack integration (`GIT-M-0011`, Phase 7)
+
+**Goal.** Link a project to a YouTrack project and move work in both directions without
+leaving git-in-track, on top of a sync engine every later integration reuses.
+
+**Deliverables**
+
+- `internal/youtrack`: a native REST client with rate limiting, retries and stable paging.
+- The `external` field, the local token store and the `integrations.youtrack` block.
+- Settings card with connection test and an autosuggest project picker (a generic
+  `Combobox` extracted from `ItemPicker`).
+- "Import from YouTrack" in the backlog: query presets, autosuggest, subtasks, links,
+  comments, attachments, preview, idempotent re-import, optional landing in the inbox.
+- "Send to YouTrack" on comments and feedback notes; automatic push per project.
+- KB publish and pull against YouTrack articles, folder trees, conflict pages.
+- `internal/syncengine` with its REST API, WebSocket events and settings card.
+- MCP tools and `gintrack youtrack …` commands for every flow.
+
+**Exit criteria**
+
+- A YouTrack epic with subtasks and comments imports into a fixture project, re-imports
+  without duplicates, and a comment written locally appears on the issue.
+- A KB folder publishes as an article tree and a remote edit pulls back without touching the
+  local feedback block.
+- The engine survives a restart mid-batch and resumes from its journal; `go test -race`
+  passes with the fake clock tests.
+- The token appears in no repository file, API response, event payload or log line.
+
+#### Milestone 12 — Inbox and cycles (`GIT-M-0012`, Phase 8)
+
+**Goal.** Give incoming work a waiting room and give sprints the date discipline and
+history Plane's cycles have.
+
+**Deliverables**
+
+- `triage` status category, `inbox` block, index exclusion from backlog, boards and metrics.
+- Inbox route with accept (opens the edit form), reject, snooze until, duplicate of.
+- Entry points: quick create, MCP `create_inbox_item`, YouTrack import landing, CLI.
+- Sprints: optional dates make a draft, derived status, no overlap per board, a progress
+  snapshot frozen on close, transfer of incomplete items, active cycle view.
+
+**Exit criteria**
+
+- An item created into the inbox is invisible to every board, sprint and metric until
+  accepted, proven by tests.
+- Closing a sprint writes a snapshot that the burndown reads back identically to the live
+  computation for a fixture sprint.
+
+#### Milestone 13 — Agentic interface and semantic search (`GIT-M-0013`, Phase 9)
+
+**Goal.** Talk to the backlog, and let the agent find things the substring matcher cannot.
+
+**Deliverables**
+
+- Companion proxy to Pando AG-UI, `@ag-ui/client` store, chat route, tool-call cards,
+  human-in-the-loop dialogs, shared-state panel, frontend tools that drive the UI.
+- Pando configuration template, `backlog-assistant` persona and routing skill;
+  `docs/20-agent-interface.md`.
+- Corpus exporter, MCP client to `pando mcp-server`, `pando` search backend, semantic results
+  in the search UI, `search_semantic` MCP tool, Pando settings card.
+
+**Exit criteria**
+
+- "Which stories touch the watcher?" answered in the chat with item cards, using
+  git-in-track's MCP tools and Pando search, with a permission prompt rendered and answered
+  in the browser.
+- Search falls back to the core matcher, with a visible notice, when Pando is down.
+
+### 7.4 Epics and user stories
+
+Each story has 3–6 tasks in `docs/.pmngr/tasks/`, ordered core → server → web → MCP/CLI →
+docs, most of them labelled `agent-ok`. Counts are shown per story.
+
+#### `GIT-EP-0011` — YouTrack connection, credentials and project link (milestone `GIT-M-0011`, 45 SP)
+
+| ID            | Title                                                                    | SP | Priority | Tasks |
+| ------------- | ------------------------------------------------------------------------ | -- | -------- | ----- |
+| `GIT-US-0044` | First-class `external` reference on items, comments and KB pages         | 8  | high     | 5     |
+| `GIT-US-0046` | Native YouTrack REST client in `internal/youtrack`                       | 13 | high     | 6     |
+| `GIT-US-0048` | Store the YouTrack token locally and the project link in `project.yaml`  | 8  | high     | 5     |
+| `GIT-US-0052` | REST endpoints for YouTrack settings and connection test                 | 5  | high     | 5     |
+| `GIT-US-0055` | Settings card to connect a project to YouTrack, with project autosuggest | 8  | medium   | 4     |
+| `GIT-US-0058` | CLI: `gintrack youtrack connect` and `status`                            | 3  | medium   | 4     |
+
+#### `GIT-EP-0012` — Import YouTrack issues into the backlog (milestone `GIT-M-0011`, 49 SP)
+
+| ID            | Title                                                             | SP | Priority | Tasks |
+| ------------- | ----------------------------------------------------------------- | -- | -------- | ----- |
+| `GIT-US-0045` | YouTrack issue to item mapping layer                              | 8  | high     | 6     |
+| `GIT-US-0047` | Vault operations `youtrack.import.preview` and `youtrack.import.run` | 8 | high  | 5     |
+| `GIT-US-0050` | Import job kind in the sync engine                                | 5  | high     | 4     |
+| `GIT-US-0054` | YouTrack issue search and autosuggest endpoint                    | 5  | high     | 4     |
+| `GIT-US-0059` | Backlog "Import from YouTrack" dialog                             | 13 | high     | 5     |
+| `GIT-US-0062` | MCP tool and CLI command for YouTrack import                      | 5  | medium   | 4     |
+| `GIT-US-0065` | Field map configuration in the YouTrack settings card             | 5  | medium   | 4     |
+
+#### `GIT-EP-0013` — Push comments and feedback to YouTrack (milestone `GIT-M-0011`, 21 SP)
+
+| ID            | Title                                                          | SP | Priority | Tasks |
+| ------------- | -------------------------------------------------------------- | -- | -------- | ----- |
+| `GIT-US-0068` | External references on comments and the comment push job kind  | 8  | medium   | 4     |
+| `GIT-US-0072` | Automatic push seams on comment writes                         | 5  | medium   | 4     |
+| `GIT-US-0076` | "Send to YouTrack" action on comments and feedback notes       | 5  | medium   | 4     |
+| `GIT-US-0079` | MCP tool and CLI command for pushing comments                  | 3  | medium   | 4     |
+
+#### `GIT-EP-0014` — Knowledge base sync with YouTrack articles (milestone `GIT-M-0011`, 29 SP)
+
+| ID            | Title                                                          | SP | Priority | Tasks |
+| ------------- | -------------------------------------------------------------- | -- | -------- | ----- |
+| `GIT-US-0083` | KB page and YouTrack article content transform                 | 8  | medium   | 5     |
+| `GIT-US-0087` | KB publish and pull job kinds with conflict handling           | 8  | medium   | 4     |
+| `GIT-US-0090` | Vault and REST operations for KB sync status, publish and pull | 5  | medium   | 4     |
+| `GIT-US-0093` | KB view sync toolbar, status badge and project settings        | 5  | medium   | 4     |
+| `GIT-US-0094` | MCP tools and CLI commands for KB sync                         | 3  | medium   | 4     |
+
+#### `GIT-EP-0015` — Sync engine: queue, workers, batches and settings (milestone `GIT-M-0011`, 44 SP)
+
+| ID            | Title                                                             | SP | Priority | Tasks |
+| ------------- | ----------------------------------------------------------------- | -- | -------- | ----- |
+| `GIT-US-0063` | Core sync engine: queue, worker pool and keyed batching           | 13 | high     | 5     |
+| `GIT-US-0067` | Retry policy, backoff and failure handling in the sync engine     | 5  | high     | 3     |
+| `GIT-US-0070` | JSON job journal in the cache directory with replay and pruning   | 5  | medium   | 4     |
+| `GIT-US-0074` | Sync job progress events on the WebSocket hub                     | 5  | high     | 4     |
+| `GIT-US-0078` | REST API for sync jobs and engine settings                        | 5  | medium   | 4     |
+| `GIT-US-0081` | Sync engine settings card with a live queue table                 | 8  | medium   | 4     |
+| `GIT-US-0084` | Wire the sync engine into the server lifecycle and `gintrack serve` | 3 | high    | 4     |
+
+#### `GIT-EP-0016` — Inbox: triage incoming work before it enters the backlog (milestone `GIT-M-0012`, 32 SP)
+
+| ID            | Title                                                                          | SP | Priority | Tasks |
+| ------------- | ------------------------------------------------------------------------------ | -- | -------- | ----- |
+| `GIT-US-0051` | Inbox data model: reserved triage category and the inbox front-matter block    | 8  | high     | 5     |
+| `GIT-US-0056` | Inbox operations: create, list and triage over the vault, REST and MCP         | 8  | high     | 4     |
+| `GIT-US-0060` | Inbox web route: two-pane triage queue with accept, reject, snooze and duplicate | 8 | medium | 4     |
+| `GIT-US-0066` | Inbox entry points: quick create, agent submissions, YouTrack landing and CLI  | 5  | medium   | 4     |
+| `GIT-US-0071` | Prove and document that triage work never reaches boards, sprints or metrics   | 3  | medium   | 3     |
+
+#### `GIT-EP-0017` — Cycles: date-driven sprints with snapshots and transfer (milestone `GIT-M-0012`, 37 SP)
+
+| ID            | Title                                                                         | SP | Priority | Tasks |
+| ------------- | ----------------------------------------------------------------------------- | -- | -------- | ----- |
+| `GIT-US-0075` | Sprint dates become optional and status becomes derived from them             | 8  | high     | 5     |
+| `GIT-US-0080` | Closing a sprint freezes a progress snapshot into its file                    | 8  | high     | 5     |
+| `GIT-US-0085` | Transfer incomplete items to another sprint or the backlog in one operation   | 8  | high     | 4     |
+| `GIT-US-0089` | Active cycle view, close dialog and status-grouped sprint list in the web app | 8  | medium   | 4     |
+| `GIT-US-0092` | Sprint CLI commands and the cycles documentation pass                         | 5  | medium   | 4     |
+
+#### `GIT-EP-0018` — Conversational agent interface over Pando AG-UI (milestone `GIT-M-0013`, 39 SP)
+
+| ID            | Title                                                                | SP | Priority | Tasks |
+| ------------- | -------------------------------------------------------------------- | -- | -------- | ----- |
+| `GIT-US-0049` | Companion agent proxy to Pando AG-UI                                 | 8  | high     | 5     |
+| `GIT-US-0053` | AG-UI client layer and agent store in the web app                    | 8  | high     | 5     |
+| `GIT-US-0057` | Chat route and message UI in the shadcn design system                | 8  | high     | 5     |
+| `GIT-US-0061` | Human in the loop dialogs and shared-state panel                     | 5  | medium   | 4     |
+| `GIT-US-0064` | Frontend tools registry so the agent can drive the UI                | 5  | medium   | 5     |
+| `GIT-US-0069` | Pando side configuration, persona and agent interface documentation  | 5  | medium   | 5     |
+
+#### `GIT-EP-0019` — Semantic search with Pando (milestone `GIT-M-0013`, 34 SP)
+
+| ID            | Title                                                             | SP | Priority | Tasks |
+| ------------- | ----------------------------------------------------------------- | -- | -------- | ----- |
+| `GIT-US-0073` | Corpus exporter that keeps a Pando-indexable copy of the backlog  | 8  | high     | 5     |
+| `GIT-US-0077` | Companion MCP client to the Pando search tools                    | 5  | high     | 4     |
+| `GIT-US-0082` | Pando search backend behind the core search contract              | 8  | high     | 5     |
+| `GIT-US-0086` | Semantic results in the search UI                                 | 5  | medium   | 4     |
+| `GIT-US-0088` | Semantic search as an agent tool and a routing skill              | 5  | medium   | 4     |
+| `GIT-US-0091` | Pando settings card with index status and reindex                 | 3  | medium   | 4     |
+
+### 7.5 Dependencies
+
+```mermaid
+graph TD
+  EP11["GIT-EP-0011<br/>YouTrack connection<br/>45 SP"]
+  EP15["GIT-EP-0015<br/>Sync engine<br/>44 SP"]
+  EP12["GIT-EP-0012<br/>Import issues<br/>49 SP"]
+  EP13["GIT-EP-0013<br/>Push comments<br/>21 SP"]
+  EP14["GIT-EP-0014<br/>KB sync<br/>29 SP"]
+  EP16["GIT-EP-0016<br/>Inbox<br/>32 SP"]
+  EP17["GIT-EP-0017<br/>Cycles<br/>37 SP"]
+  EP18["GIT-EP-0018<br/>Agent interface<br/>39 SP"]
+  EP19["GIT-EP-0019<br/>Semantic search<br/>34 SP"]
+
+  EP11 --> EP12
+  EP11 --> EP13
+  EP11 --> EP14
+  EP15 --> EP12
+  EP15 --> EP13
+  EP15 --> EP14
+  EP12 -. "land in inbox" .-> EP16
+  EP19 --> EP18
+  EP11 -. "capability pattern" .-> EP18
+```
+
+Inside Phase 7, `GIT-US-0044` (the `external` field) and `GIT-US-0063` (the engine core) are
+the two roots: everything else in the milestone reads one of them. `GIT-EP-0011` and
+`GIT-EP-0015` can be worked in parallel; the three flow epics start once both have landed
+their first stories. Phase 8 has no dependency on Phase 7 except the optional "land in inbox"
+import option, so it can be pulled forward if YouTrack work stalls. In Phase 9 the search
+epic is sequenced first: the agent's value depends on the search tools it can call.
+
+### 7.6 Risks specific to these phases
+
+- **R10 — Credential storage changes the security story.** A stored YouTrack token makes
+  the companion config file a secret. Mitigation: `0600`, never echoed, env override for CI,
+  ADR-032, and a standing warning in the tunnel settings card while a token is configured,
+  since a public URL then exposes a companion that can write to YouTrack.
+- **R11 — YouTrack instances differ.** Custom field names, link types and Markdown dialect
+  vary per instance. Mitigation: field discovery endpoint, per-project field map, golden
+  tests from real exports, warnings instead of failures on unknown values.
+- **R12 — The sync engine becomes a second git.** A queue that persists state next to the
+  repository is a step away from "git is the only sync" (ADR-002). Mitigation: the journal
+  holds only job bookkeeping, never content; every effect is a normal commit.
+- **R13 — Pando coupling.** Pando is per-project, has no REST search API, no auth on its
+  MCP HTTP transport and a single `KBPath`. Mitigation: loopback only, feature flags,
+  core fallback, and a short list of Pando changes we would upstream (REST search, KB
+  reindex trigger, per-agent tool allow-list).

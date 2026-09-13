@@ -25,6 +25,25 @@
 
 import { resolveCompanionBaseUrl } from '@/api/detect';
 import type {
+  CommentPushEntry,
+  CommentPushInput,
+  CommentPushResult,
+  External,
+  InboxDraft,
+  InboxFilter,
+  InboxPage,
+  InboxStatus,
+  InboxTriageAction,
+  InboxTriageInput,
+  InboxTriageResult,
+  ItemInbox,
+  KbPageSyncStatus,
+  KbSyncJobResult,
+  KbSyncSelector,
+  KbSyncState,
+  KbSyncStatusResult,
+  SprintCloseInput,
+  SprintTransferInput,
   BatchResult,
   BoardMoveResult,
   BoardSummary,
@@ -77,7 +96,6 @@ import type {
   RetroPromotion,
   RetroResult,
   RetroView,
-  SprintCarry,
   SprintDraft,
   SprintFilter,
   SprintPatch,
@@ -88,6 +106,15 @@ import type {
   SyncOptions,
   SyncRepoStatus,
   SyncResult,
+  SyncEngineSettings,
+  SyncJob,
+  SyncJobCounts,
+  SyncJobError,
+  SyncJobEvent,
+  SyncJobEventPhase,
+  SyncJobFilter,
+  SyncJobPage,
+  SyncJobState,
   SyncSettings,
   SyncSettingsPatch,
   TeamProjectDraft,
@@ -98,6 +125,27 @@ import type {
   TunnelStatus,
   Unsubscribe,
   UpdateOp,
+  YouTrackField,
+  YouTrackFieldMapping,
+  YouTrackFieldValue,
+  YouTrackFieldList,
+  YouTrackImportOptions,
+  YouTrackImportPlanItem,
+  YouTrackImportPreviewResult,
+  YouTrackImportRun,
+  YouTrackImportWarning,
+  YouTrackIssue,
+  YouTrackIssuePage,
+  YouTrackIssueQuery,
+  YouTrackKbSync,
+  YouTrackKbSyncDirection,
+  YouTrackProject,
+  YouTrackPushComments,
+  YouTrackScope,
+  YouTrackSettings,
+  YouTrackSettingsPatch,
+  YouTrackTestResult,
+  YouTrackTokenSource,
 } from '@/api/provider';
 import { ProviderError } from '@/api/provider';
 import { authorizationHeader, clearToken, hasToken, withTokenQuery } from '@/api/token';
@@ -126,7 +174,33 @@ const SUBSCRIBE_TOPICS = [
   'item.changed',
   'sync.progress',
   'conflict.detected',
+  // The background job engine (GIT-US-0074). The five topics are the contract;
+  // `sync.job.started` is subscribed to even though the engine does not report
+  // the queued -> running transition through its seam yet.
+  'sync.job.queued',
+  'sync.job.started',
+  'sync.job.progress',
+  'sync.job.done',
+  'sync.job.failed',
+  // The triage queue (ADR-033): one frame per decision, carrying the whole
+  // queue's pending count so a sidebar badge never needs a second call.
+  'inbox.changed',
+  // A sprint whose scope moved, by a close or by a transfer. A dry run
+  // publishes none (GIT-US-0085).
+  'sprint.changed',
+  // A knowledge-base page and its article both changed; the page was left
+  // untouched and the incoming content went to `<page>.conflict.md`.
+  'youtrack.kb.conflict',
 ];
+
+/** The `sync.job.*` topics, by the phase each one carries. */
+const SYNC_JOB_PHASES: Record<string, SyncJobEventPhase> = {
+  'sync.job.queued': 'queued',
+  'sync.job.started': 'started',
+  'sync.job.progress': 'progress',
+  'sync.job.done': 'done',
+  'sync.job.failed': 'failed',
+};
 
 /** What the companion can do before `GET /capabilities` answers. */
 export const companionCapabilities: Capabilities = {
@@ -138,6 +212,8 @@ export const companionCapabilities: Capabilities = {
   mcp: false,
   openInEditor: true,
   maxBatchWrite: 50,
+  youtrackSupported: true,
+  youtrack: false,
 };
 
 /** State of the event socket, surfaced in Settings. */
@@ -224,6 +300,12 @@ const PROBLEM_CODES: Record<string, ProviderErrorCode> = {
   git_auth_failed: 'git_auth_failed',
   repo_not_cloned: 'repo_not_cloned',
   wip_limit_exceeded: 'wip_limit_exceeded',
+  sprint_overlap: 'sprint_overlap',
+  sprint_already_active: 'sprint_already_active',
+  // A transfer aimed at a sprint that is already over (GIT-US-0085).
+  sprint_target_completed: 'sprint_target_completed',
+  // A project with no triage status simply has no inbox (ADR-033).
+  no_triage_status: 'no_triage_status',
   project_exists: 'project_exists',
   team_exists: 'team_exists',
   team_project_exists: 'team_project_exists',
@@ -231,6 +313,20 @@ const PROBLEM_CODES: Record<string, ProviderErrorCode> = {
   // Opening a tunnel over a companion started without authentication is
   // refused, not failed: the UI explains it instead of offering a retry.
   tunnel_requires_token: 'tunnel_requires_token',
+  // The YouTrack side. The companion answers 502 for every remote failure so a
+  // browser never mistakes the instance refusing a token for its own session
+  // expiring; the code is what tells the card which message to render.
+  youtrack_not_configured: 'youtrack_not_configured',
+  youtrack_unauthorized: 'youtrack_unauthorized',
+  youtrack_forbidden: 'youtrack_forbidden',
+  youtrack_not_found: 'youtrack_not_found',
+  youtrack_unreachable: 'youtrack_unreachable',
+  // The background job engine (GIT-US-0078). Each of the three is a different
+  // thing for the queue table to say: a job that is gone, a transition the
+  // job's state does not allow, and an engine that is not running at all.
+  sync_job_not_found: 'sync_job_not_found',
+  sync_job_not_retryable: 'sync_job_not_retryable',
+  sync_engine_not_running: 'sync_engine_not_running',
   index_unavailable: 'internal',
   rate_limited: 'internal',
   internal: 'internal',
@@ -422,6 +518,168 @@ function malformed(what: string): ProviderError {
   return new ProviderError('internal', `The companion returned a malformed ${what}.`);
 }
 
+/**
+ * The two REST groups of the outbound YouTrack integration, in one place.
+ *
+ * They sit beside the rest of the `/youtrack` group the settings card and the
+ * import dialog already use. Keeping the two prefixes here — rather than
+ * spelled out at each call site — is what makes a change to either a one-line
+ * change in this file.
+ */
+const YOUTRACK_KB_PATH = `${API_PREFIX}/youtrack/kb`;
+const YOUTRACK_COMMENTS_PATH = `${API_PREFIX}/youtrack/comments`;
+
+/** The five states a knowledge-base page can be in against its article. */
+const KB_SYNC_STATES: KbSyncState[] = [
+  'unlinked',
+  'in_sync',
+  'local_ahead',
+  'remote_ahead',
+  'conflict',
+];
+
+function toKbPageSyncStatus(value: unknown): KbPageSyncStatus {
+  const record = asRecord(value) ?? {};
+  const state = asString(record['state']);
+  const row: KbPageSyncStatus = {
+    path: asString(record['path']) ?? '',
+    linked: asBoolean(record['linked']) ?? false,
+    state: KB_SYNC_STATES.includes(state as KbSyncState) ? (state as KbSyncState) : 'unlinked',
+  };
+  put(row, 'articleId', asString(record['articleId']));
+  put(row, 'url', asString(record['url']));
+  put(row, 'syncedAt', asString(record['syncedAt']));
+  put(row, 'error', asString(record['error']));
+  return row;
+}
+
+export function toKbSyncStatusResult(
+  value: unknown,
+  selector: KbSyncSelector,
+): KbSyncStatusResult {
+  const record = asRecord(value) ?? {};
+  return {
+    project: asString(record['project']) ?? selector.project ?? '',
+    pages: asArray(record['pages']).map(toKbPageSyncStatus),
+    remote: asBoolean(record['remote']) ?? false,
+  };
+}
+
+export function toKbSyncJobResult(value: unknown, selector: KbSyncSelector): KbSyncJobResult {
+  const record = asRecord(value) ?? {};
+  return {
+    project: asString(record['project']) ?? selector.project ?? '',
+    jobId: asString(record['jobId']) ?? '',
+    pages: asStringArray(record['pages']) ?? [],
+  };
+}
+
+function toCommentPushEntry(value: unknown): CommentPushEntry {
+  const record = asRecord(value) ?? {};
+  const entry: CommentPushEntry = { commentPath: asString(record['commentPath']) ?? '' };
+  put(entry, 'youtrackCommentId', asString(record['youtrackCommentId']));
+  put(entry, 'url', asString(record['url']));
+  put(entry, 'reason', asString(record['reason']));
+  put(entry, 'error', asString(record['error']));
+  return entry;
+}
+
+export function toCommentPushResult(value: unknown, input: CommentPushInput): CommentPushResult {
+  const record = asRecord(value) ?? {};
+  const result: CommentPushResult = {
+    project: asString(record['project']) ?? input.project ?? '',
+    itemId: asString(record['itemId']) ?? input.itemId,
+    pushed: asArray(record['pushed']).map(toCommentPushEntry),
+    skipped: asArray(record['skipped']).map(toCommentPushEntry),
+    failed: asArray(record['failed']).map(toCommentPushEntry),
+  };
+  put(result, 'jobId', asString(record['jobId']));
+  return result;
+}
+
+/** The five triage states, in the order a filter chip row reads them (ADR-033). */
+export const INBOX_STATUSES: InboxStatus[] = [
+  'pending',
+  'accepted',
+  'rejected',
+  'snoozed',
+  'duplicate',
+];
+
+/**
+ * `GET /api/v1/inbox` → one page of the queue.
+ *
+ * `counts` and `pending` are whole-queue numbers the server computed against
+ * its own clock, so an expired snooze already counts as pending here. They are
+ * read straight through rather than recomputed: a client cannot resolve an
+ * expiry it has no clock agreement on.
+ */
+export function toInboxPage(value: unknown): InboxPage {
+  const record = asRecord(value);
+  const items = (record ? asArray(record['items']) : asArray(value)).map(toItem);
+  const counts: Partial<Record<InboxStatus, number>> = {};
+  const rawCounts = record ? (asRecord(record['counts']) ?? {}) : {};
+  for (const status of INBOX_STATUSES) {
+    const n = asNumber(rawCounts[status]);
+    if (n !== undefined) counts[status] = n;
+  }
+  const page: InboxPage = {
+    items,
+    total: (record ? asNumber(record['total']) : undefined) ?? items.length,
+    counts,
+    pending: (record ? asNumber(record['pending']) : undefined) ?? (counts.pending ?? 0),
+  };
+  const cursor = record ? asString(record['nextCursor']) : undefined;
+  if (cursor !== undefined && cursor !== '') page.nextCursor = cursor;
+  return page;
+}
+
+/** `POST /api/v1/items/{id}/triage` → the item and the queue behind it. */
+export function toInboxTriageResult(value: unknown, fallback: InboxTriageInput): InboxTriageResult {
+  const record = asRecord(value) ?? {};
+  const action = asString(record['action']);
+  return {
+    item: toItem(record['item'] ?? record),
+    action: (action as InboxTriageAction | undefined) ?? fallback.action,
+    pending: asNumber(record['pending']) ?? 0,
+  };
+}
+
+/** One `external:` entry as the API sends it. An entry without both halves is dropped. */
+function toExternal(value: unknown): External | undefined {
+  const record = asRecord(value);
+  if (!record) return undefined;
+  const system = asString(record['system']);
+  const id = asString(record['id']);
+  if (system === undefined || id === undefined) return undefined;
+  const entry: External = { system, id };
+  put(entry, 'url', asString(record['url']));
+  put(entry, 'key', asString(record['key']));
+  put(entry, 'syncedAt', asString(record['syncedAt']));
+  return entry;
+}
+
+export function toExternalList(value: unknown): External[] | undefined {
+  const entries = asArray(value).map(toExternal).filter((e): e is External => e !== undefined);
+  return entries.length === 0 ? undefined : entries;
+}
+
+/** The `inbox:` block of an item in triage; absent for everything else. */
+function toItemInbox(value: unknown): ItemInbox | undefined {
+  const record = asRecord(value);
+  if (!record) return undefined;
+  const inbox: ItemInbox = {};
+  const status = asString(record['status']);
+  if (status !== undefined && INBOX_STATUSES.includes(status as InboxStatus)) {
+    inbox.status = status as InboxStatus;
+  }
+  put(inbox, 'snoozedUntil', asString(record['snoozedUntil']));
+  put(inbox, 'duplicateOf', asString(record['duplicateOf']));
+  put(inbox, 'source', asString(record['source']));
+  put(inbox, 'received', asString(record['received']));
+  return inbox;
+}
+
 export function toItem(value: unknown): Item {
   const record = asRecord(value);
   const id = record ? asString(record['id']) : undefined;
@@ -459,6 +717,8 @@ export function toItem(value: unknown): Item {
   put(item, 'links', toLinks(record['links']));
   put(item, 'attachments', asStringArray(record['attachments']));
   put(item, 'custom', asRecord(record['custom']) ?? undefined);
+  put(item, 'external', toExternalList(record['external']));
+  put(item, 'inbox', toItemInbox(record['inbox']));
   put(item, 'deleted', asBoolean(record['deleted']));
   return item;
 }
@@ -497,6 +757,7 @@ export function toComment(
   put(comment, 'updated', asString(record['updated']));
   put(comment, 'inReplyTo', asString(record['inReplyTo']));
   put(comment, 'kind', asString(record['kind']));
+  put(comment, 'external', toExternalList(record['external']));
   return comment;
 }
 
@@ -762,6 +1023,361 @@ export function toCapabilities(value: unknown): Capabilities {
     mcp: asBoolean(features['mcpHttp']) ?? false,
     openInEditor: asBoolean(features['openInEditor']) ?? companionCapabilities.openInEditor,
     maxBatchWrite: asNumber(limits['maxBatchWrite']) ?? companionCapabilities.maxBatchWrite,
+    // `youtrackSupported` says the build can speak to YouTrack at all and is
+    // what gates the settings card; `youtrack` says a project is already
+    // connected, which is a fact about the workspace, not a permission.
+    youtrackSupported:
+      asBoolean(features['youtrackSupported']) ?? companionCapabilities.youtrackSupported,
+    youtrack: asBoolean(features['youtrack']) ?? companionCapabilities.youtrack,
+  };
+}
+
+// ---------------------------------------------------------------- youtrack
+
+/** `GET|PATCH /youtrack/settings` → the connection the settings card shows. */
+export function toYouTrackSettings(value: unknown): YouTrackSettings {
+  const record = asRecord(value) ?? {};
+  const fieldMap: Record<string, YouTrackFieldMapping> = {};
+  for (const [key, entry] of Object.entries(asRecord(record['fieldMap']) ?? {})) {
+    const mapping = toYouTrackFieldMapping(entry);
+    if (mapping !== undefined) fieldMap[key] = mapping;
+  }
+  return {
+    projectKey: asString(record['projectKey']) ?? '',
+    configured: asBoolean(record['configured']) ?? false,
+    url: asString(record['url']) ?? '',
+    project: asString(record['project']) ?? '',
+    fieldMap,
+    pushComments: (asString(record['pushComments']) ?? '') as YouTrackPushComments,
+    kbSync: (asString(record['kbSync']) ?? '') as YouTrackKbSync,
+    kbSyncDirection: (asString(record['kbSyncDirection']) ?? '') as YouTrackKbSyncDirection,
+    hasToken: asBoolean(record['hasToken']) ?? false,
+    tokenSource: (asString(record['tokenSource']) ?? '') as YouTrackTokenSource,
+    persisted: asBoolean(record['persisted']) ?? false,
+    projectPath: asString(record['projectPath']) ?? '',
+    repo: asString(record['repo']) ?? '',
+  };
+}
+
+/**
+ * One entry of the field map.
+ *
+ * The companion always writes the object form, `{field, values}`. The scalar
+ * form is still read because a project.yaml may spell an entry as a bare field
+ * name and an older companion answered it that way; both mean the same thing.
+ */
+function toYouTrackFieldMapping(value: unknown): YouTrackFieldMapping | undefined {
+  const name = asString(value);
+  if (name !== undefined) return { field: name };
+  const record = asRecord(value);
+  if (!record) return undefined;
+  const values: Record<string, string> = {};
+  for (const [from, to] of Object.entries(asRecord(record['values']) ?? {})) {
+    const target = asString(to);
+    if (target !== undefined && target !== '') values[from] = target;
+  }
+  return {
+    field: asString(record['field']) ?? '',
+    ...(Object.keys(values).length === 0 ? {} : { values }),
+  };
+}
+
+/** `POST /youtrack/test` → who the credential authenticates as. */
+export function toYouTrackTestResult(value: unknown): YouTrackTestResult {
+  const record = asRecord(value) ?? {};
+  return {
+    ok: asBoolean(record['ok']) ?? false,
+    baseUrl: asString(record['baseUrl']) ?? '',
+    login: asString(record['login']) ?? '',
+    fullName: asString(record['fullName']) ?? '',
+    email: asString(record['email']) ?? '',
+    project: asString(record['project']) ?? '',
+  };
+}
+
+function toYouTrackProject(value: unknown): YouTrackProject {
+  const record = asRecord(value) ?? {};
+  return {
+    id: asString(record['id']) ?? '',
+    shortName: asString(record['shortName']) ?? '',
+    name: asString(record['name']) ?? '',
+    archived: asBoolean(record['archived']) ?? false,
+  };
+}
+
+/**
+ * One allowed value of a bundle-backed field.
+ *
+ * `isResolved` is copied only when the instance actually declared it: the
+ * companion omits the key rather than sending `false` for a value it knows
+ * nothing about, and reading an absent flag as `false` would turn "unknown"
+ * into "this value does not close an issue", which is a claim nobody made.
+ */
+function toYouTrackFieldValue(value: unknown): YouTrackFieldValue {
+  const record = asRecord(value) ?? {};
+  const name = asString(record['name']) ?? '';
+  const resolved = asBoolean(record['isResolved']);
+  return {
+    id: asString(record['id']) ?? '',
+    name,
+    label: asString(record['label']) ?? name,
+    ...(asString(record['description']) === undefined
+      ? {}
+      : { description: asString(record['description']) ?? '' }),
+    ordinal: asNumber(record['ordinal']) ?? 0,
+    archived: asBoolean(record['archived']) ?? false,
+    ...(resolved === undefined ? {} : { isResolved: resolved }),
+  };
+}
+
+function toYouTrackField(value: unknown): YouTrackField {
+  const record = asRecord(value) ?? {};
+  return {
+    id: asString(record['id']) ?? '',
+    name: asString(record['name']) ?? '',
+    type: asString(record['type']) ?? '',
+    bundleId: asString(record['bundleId']) ?? '',
+    bundleType: asString(record['bundleType']) ?? '',
+    canBeEmpty: asBoolean(record['canBeEmpty']) ?? false,
+    ...(asString(record['emptyFieldText']) === undefined
+      ? {}
+      : { emptyFieldText: asString(record['emptyFieldText']) ?? '' }),
+    bundled: asBoolean(record['bundled']) ?? false,
+    values: asArray(record['values']).map(toYouTrackFieldValue),
+    warnings: asStringArray(record['warnings']) ?? [],
+  };
+}
+
+/** `GET /youtrack/fields` → both halves of the mapping vocabulary. */
+export function toYouTrackFieldList(value: unknown): YouTrackFieldList {
+  const record = asRecord(value) ?? {};
+  const fields = asArray(record['fields']).map(toYouTrackField);
+  return {
+    project: asString(record['project']) ?? '',
+    fields,
+    total: asNumber(record['total']) ?? fields.length,
+    gintrackFields: asStringArray(record['gintrackFields']) ?? [],
+    valueMappableFields: asStringArray(record['valueMappableFields']) ?? [],
+  };
+}
+
+// ------------------------------------------------------- youtrack import
+
+/** One row of `GET /youtrack/issues`. */
+function toYouTrackIssue(value: unknown): YouTrackIssue {
+  const record = asRecord(value) ?? {};
+  const linked = asRecord(record['linked']);
+  const itemId = linked ? asString(linked['itemId']) : undefined;
+  return {
+    id: asString(record['id']) ?? '',
+    idReadable: asString(record['idReadable']) ?? '',
+    summary: asString(record['summary']) ?? '',
+    type: asString(record['type']) ?? '',
+    state: asString(record['state']) ?? '',
+    assignee: asString(record['assignee']) ?? '',
+    updated: asString(record['updated']) ?? '',
+    url: asString(record['url']) ?? '',
+    linked: itemId === undefined || itemId === '' ? null : { itemId },
+  };
+}
+
+/** `GET /youtrack/issues` → one page of the autosuggest. */
+export function toYouTrackIssuePage(value: unknown): YouTrackIssuePage {
+  const record = asRecord(value) ?? {};
+  return {
+    items: asArray(record['items']).map(toYouTrackIssue),
+    nextCursor: asString(record['nextCursor']) ?? '',
+  };
+}
+
+/** One mapper finding; every field is third-party text and stays text. */
+function toImportWarning(value: unknown): YouTrackImportWarning {
+  const record = asRecord(value) ?? {};
+  return {
+    field: asString(record['field']) ?? '',
+    ...(asString(record['value']) === undefined ? {} : { value: asString(record['value']) ?? '' }),
+    ...(asString(record['fallback']) === undefined
+      ? {}
+      : { fallback: asString(record['fallback']) ?? '' }),
+    reason: asString(record['reason']) ?? '',
+  };
+}
+
+function toImportWarnings(value: unknown): YouTrackImportWarning[] {
+  return asArray(value).map(toImportWarning);
+}
+
+/** An action the API did not name is read as a create: it is the safe default. */
+function toImportAction(value: unknown): 'create' | 'update' {
+  return asString(value) === 'update' ? 'update' : 'create';
+}
+
+function toImportPlanItem(value: unknown): YouTrackImportPlanItem {
+  const record = asRecord(value) ?? {};
+  return {
+    youtrackId: asString(record['youtrackId']) ?? '',
+    title: asString(record['title']) ?? '',
+    mappedType: asString(record['mappedType']) ?? '',
+    action: toImportAction(record['action']),
+    ...(asString(record['targetId']) === undefined
+      ? {}
+      : { targetId: asString(record['targetId']) ?? '' }),
+    ...(asString(record['parent']) === undefined
+      ? {}
+      : { parent: asString(record['parent']) ?? '' }),
+    ...(asString(record['milestone']) === undefined
+      ? {}
+      : { milestone: asString(record['milestone']) ?? '' }),
+    depth: asNumber(record['depth']) ?? 0,
+    comments: asNumber(record['comments']) ?? 0,
+    warnings: toImportWarnings(record['warnings']),
+  };
+}
+
+/** The preview operation → the plan, with nothing written. */
+export function toYouTrackImportPreview(value: unknown): YouTrackImportPreviewResult {
+  const record = asRecord(value) ?? {};
+  return {
+    project: asString(record['project']) ?? '',
+    issues: asArray(record['issues']).map(toImportPlanItem),
+    warnings: toImportWarnings(record['warnings']),
+  };
+}
+
+/**
+ * `POST /youtrack/import` → the job the import runs as.
+ *
+ * The route always queues and always answers `{jobId, projectKey, repo,
+ * queued}`; there is no synchronous result to read, so there is nothing else
+ * worth keeping here. What each issue produced is the job's business, and
+ * `GET /sync/jobs/{id}` is where it is read back from.
+ */
+export function toYouTrackImportRun(value: unknown): YouTrackImportRun {
+  const record = asRecord(value) ?? {};
+  return { jobId: asString(record['jobId']) ?? asString(record['id']) ?? '' };
+}
+
+// --------------------------------------------------------- background jobs
+
+const SYNC_JOB_STATES = new Set<string>(['queued', 'running', 'done', 'failed', 'cancelled']);
+
+function toSyncJobState(value: unknown): SyncJobState {
+  const state = asString(value) ?? '';
+  return SYNC_JOB_STATES.has(state) ? (state as SyncJobState) : 'queued';
+}
+
+/** The last failure of a job. `message` is redacted third-party text. */
+function toSyncJobError(value: unknown): SyncJobError | undefined {
+  const record = asRecord(value);
+  if (!record) return undefined;
+  return {
+    attempt: asNumber(record['attempt']) ?? 0,
+    class: asString(record['class']) ?? '',
+    message: asString(record['message']) ?? '',
+    at: asString(record['at']) ?? '',
+    ...(asNumber(record['retryAfter']) === undefined
+      ? {}
+      : { retryAfter: asNumber(record['retryAfter']) ?? 0 }),
+  };
+}
+
+/** One job of `GET /sync/jobs`; the payload is never part of this shape. */
+export function toSyncJob(value: unknown): SyncJob {
+  const record = asRecord(value) ?? {};
+  const lastError = toSyncJobError(record['lastError']);
+  const nextAttempt = asString(record['nextAttempt']);
+  return {
+    id: asString(record['id']) ?? '',
+    kind: asString(record['kind']) ?? '',
+    key: asString(record['key']) ?? '',
+    state: toSyncJobState(record['state']),
+    attempts: asNumber(record['attempts']) ?? 0,
+    createdAt: asString(record['createdAt']) ?? '',
+    updatedAt: asString(record['updatedAt']) ?? '',
+    ...(nextAttempt === undefined ? {} : { nextAttempt }),
+    ...(lastError === undefined ? {} : { lastError }),
+    ...(asBoolean(record['deadLetter']) === true ? { deadLetter: true } : {}),
+  };
+}
+
+function toSyncJobCounts(value: unknown): SyncJobCounts {
+  const record = asRecord(value) ?? {};
+  return {
+    queued: asNumber(record['queued']) ?? 0,
+    running: asNumber(record['running']) ?? 0,
+    done: asNumber(record['done']) ?? 0,
+    failed: asNumber(record['failed']) ?? 0,
+    cancelled: asNumber(record['cancelled']) ?? 0,
+  };
+}
+
+/** `GET /sync/jobs` → one page plus the whole queue's summary. */
+export function toSyncJobPage(value: unknown): SyncJobPage {
+  const record = asRecord(value) ?? {};
+  const jobs = asArray(record['jobs']).map(toSyncJob);
+  return {
+    jobs,
+    nextCursor: asString(record['nextCursor']) ?? '',
+    total: asNumber(record['total']) ?? jobs.length,
+    counts: toSyncJobCounts(record['counts']),
+    running: asNumber(record['running']) ?? 0,
+    deadLetter: asNumber(record['deadLetter']) ?? 0,
+    // An engine that is up but idle is still `true`; only an explicit `false`
+    // means there is no pool.
+    engine: asBoolean(record['engine']) ?? false,
+  };
+}
+
+/** The engine half of the sync settings; absent on a runtime without one. */
+function toSyncEngineSettings(value: unknown): SyncEngineSettings | undefined {
+  const record = asRecord(value);
+  if (!record) return undefined;
+  return {
+    workers: asNumber(record['workers']) ?? 0,
+    batchSize: asNumber(record['batchSize']) ?? 0,
+    rate: asNumber(record['rate']) ?? 0,
+    maxAttempts: asNumber(record['maxAttempts']) ?? 0,
+    retentionHours: asNumber(record['retentionHours']) ?? 0,
+    drainSeconds: asNumber(record['drainSeconds']) ?? 0,
+    running: asBoolean(record['running']) ?? false,
+  };
+}
+
+/** `GET|PATCH /sync/settings` → the git half and the engine half together. */
+export function toSyncSettings(value: unknown): SyncSettings {
+  const record = asRecord(value) ?? {};
+  const engine = toSyncEngineSettings(record['engine']);
+  const persisted = asBoolean(record['persisted']);
+  return {
+    pullStrategy: (asString(record['pullStrategy']) as 'rebase' | 'merge' | undefined) ?? 'rebase',
+    pushOnSync: record['pushOnSync'] !== false,
+    maxPushRetries: asNumber(record['maxPushRetries']) ?? 3,
+    supported: record['supported'] !== false,
+    ...(asString(record['reason']) === undefined
+      ? {}
+      : { reason: asString(record['reason']) ?? '' }),
+    ...(engine === undefined ? {} : { engine }),
+    ...(persisted === undefined ? {} : { persisted }),
+  };
+}
+
+/**
+ * A `sync.job.*` frame. `phase` is the topic's last segment, so a topic this
+ * build does not know is dropped rather than rendered as a job state.
+ */
+export function toSyncJobEvent(phase: SyncJobEventPhase, payload: unknown): SyncJobEvent {
+  const record = asRecord(payload) ?? {};
+  return {
+    phase,
+    id: asString(record['id']) ?? '',
+    kind: asString(record['kind']) ?? '',
+    key: asString(record['key']) ?? '',
+    state: (asString(record['state']) ?? '') as SyncJobState | '',
+    attempt: asNumber(record['attempt']) ?? 0,
+    processed: asNumber(record['processed']) ?? 0,
+    total: asNumber(record['total']) ?? 0,
+    error: asString(record['error']) ?? '',
+    errorClass: asString(record['errorClass']) ?? '',
   };
 }
 
@@ -776,6 +1392,34 @@ type QueryValue = string | number | boolean | string[] | undefined;
  */
 function teamQuery(team?: string): string {
   return team === undefined || team === '' ? '' : `?team=${encodeURIComponent(team)}`;
+}
+
+/**
+ * `?key=` for a YouTrack route. It is omitted when the caller names no project,
+ * which the companion reads as "the only one you serve" — and refuses with
+ * `invalid_request` when it serves several.
+ */
+function youtrackQuery(scope: YouTrackScope): string {
+  return buildQuery({ key: scope.projectKey });
+}
+
+/**
+ * The import options as `internal/vault`'s `YouTrackImportParams`. An option the
+ * caller left out is left out of the body too, so the vault's own defaults
+ * apply rather than a second set of defaults living here.
+ */
+function importBody(options: YouTrackImportOptions): Record<string, unknown> {
+  return {
+    ...(options.project === undefined || options.project === ''
+      ? {}
+      : { project: options.project }),
+    ...(options.ids === undefined || options.ids.length === 0 ? {} : { ids: options.ids }),
+    ...(options.query === undefined || options.query === '' ? {} : { query: options.query }),
+    depth: options.depth,
+    includeLinks: options.includeLinks,
+    includeComments: options.includeComments,
+    includeAttachments: options.includeAttachments,
+  };
 }
 
 function buildQuery(params: Record<string, QueryValue>): string {
@@ -1423,18 +2067,44 @@ export class CompanionProvider implements DataProvider {
     )) as SprintResult;
   }
 
-  async closeSprint(
-    id: string,
-    carry?: SprintCarry[],
-    rev?: string,
-    team?: string,
-  ): Promise<SprintResult> {
+  /**
+   * `POST /api/v1/sprints/{id}/close`.
+   *
+   * A `dryRun` computes the whole report and writes nothing, not even a write
+   * set: it is what the confirmation dialog renders before anything moves.
+   */
+  async closeSprint(id: string, input: SprintCloseInput = {}, team?: string): Promise<SprintResult> {
     return (await this.#json(
       `${API_PREFIX}/sprints/${encodeURIComponent(id)}/close${teamQuery(team)}`,
       {
         method: 'POST',
-        rev: rev ?? '*',
-        body: { carry: carry ?? [] },
+        rev: input.rev ?? '*',
+        body: {
+          carry: input.carry ?? [],
+          ...(input.transfer === undefined ? {} : { transfer: input.transfer }),
+          ...(input.dryRun === undefined ? {} : { dryRun: input.dryRun }),
+        },
+      },
+    )) as SprintResult;
+  }
+
+  /** `POST /api/v1/sprints/{id}/transfer`: move scope without closing anything. */
+  async transferSprintItems(
+    id: string,
+    input: SprintTransferInput = {},
+    team?: string,
+  ): Promise<SprintResult> {
+    return (await this.#json(
+      `${API_PREFIX}/sprints/${encodeURIComponent(id)}/transfer${teamQuery(team)}`,
+      {
+        method: 'POST',
+        rev: input.rev ?? '*',
+        body: {
+          ...(input.mode === undefined ? {} : { mode: input.mode }),
+          ...(input.target === undefined ? {} : { target: input.target }),
+          ...(input.carry === undefined ? {} : { carry: input.carry }),
+          ...(input.dryRun === undefined ? {} : { dryRun: input.dryRun }),
+        },
       },
     )) as SprintResult;
   }
@@ -1500,6 +2170,71 @@ export class CompanionProvider implements DataProvider {
       body: author ? { body, author } : { body },
     });
     return toComment(answer, { item: id, author: author ?? '', body });
+  }
+
+  // --------------------------------------------------------------------- inbox
+
+  /**
+   * `GET /api/v1/inbox?project=&status=&…`.
+   *
+   * The filter's `status` is the *triage* state, never a workflow status:
+   * every item this route can answer with is in a triage status by
+   * construction (ADR-033).
+   */
+  async listInbox(filter: InboxFilter = {}): Promise<InboxPage> {
+    const sort =
+      filter.sort === undefined ? undefined : `${filter.order === 'desc' ? '-' : ''}${filter.sort}`;
+    const query = buildQuery({
+      project: filter.project,
+      status: filter.status,
+      type: filter.type,
+      label: filter.label,
+      assignee: filter.assignee,
+      q: filter.text,
+      sort,
+      limit: filter.limit,
+      cursor: filter.cursor === '' ? undefined : filter.cursor,
+      fields: filter.fields?.join(','),
+    });
+    return toInboxPage(await this.#json(`${API_PREFIX}/inbox${query}`));
+  }
+
+  /** `POST /api/v1/items` with the `inbox` option: a submission, not a backlog item. */
+  async createInboxItem(draft: InboxDraft): Promise<Item> {
+    const { source, received, ...rest } = draft;
+    const body = await this.#json(`${API_PREFIX}/items`, {
+      method: 'POST',
+      body: {
+        ...rest,
+        inbox: {
+          ...(source === undefined ? {} : { source }),
+          ...(received === undefined ? {} : { received }),
+        },
+      },
+    });
+    return this.#hydrate(body);
+  }
+
+  /**
+   * `POST /api/v1/items/{id}/triage`. The revision travels in `If-Match`, never
+   * in the body, so one write cannot claim two different preconditions.
+   */
+  async triageInboxItem(input: InboxTriageInput): Promise<InboxTriageResult> {
+    const answer = await this.#json(
+      `${API_PREFIX}/items/${encodeURIComponent(input.id)}/triage`,
+      {
+        method: 'POST',
+        rev: input.rev ?? '*',
+        body: {
+          action: input.action,
+          ...(input.status === undefined ? {} : { status: input.status }),
+          ...(input.parent === undefined ? {} : { parent: input.parent }),
+          ...(input.snoozedUntil === undefined ? {} : { snoozedUntil: input.snoozedUntil }),
+          ...(input.duplicateOf === undefined ? {} : { duplicateOf: input.duplicateOf }),
+        },
+      },
+    );
+    return toInboxTriageResult(answer, input);
   }
 
   async addPageFeedback(
@@ -1594,6 +2329,238 @@ export class CompanionProvider implements DataProvider {
     );
   }
 
+  // ---------------------------------------------------------------- youtrack
+
+  /** `GET /api/v1/youtrack/settings`. */
+  async getYouTrackSettings(scope: YouTrackScope = {}): Promise<YouTrackSettings> {
+    return toYouTrackSettings(
+      await this.#json(`${API_PREFIX}/youtrack/settings${youtrackQuery(scope)}`),
+    );
+  }
+
+  /**
+   * `PATCH /api/v1/youtrack/settings`. The body is passed through as given:
+   * a key the caller omitted is left alone and one set to `''` is cleared, so
+   * forgetting a token is `{token: ''}` and disconnecting a project is
+   * `{url: '', project: ''}`.
+   */
+  async updateYouTrackSettings(
+    patch: YouTrackSettingsPatch,
+    scope: YouTrackScope = {},
+  ): Promise<YouTrackSettings> {
+    return toYouTrackSettings(
+      await this.#json(`${API_PREFIX}/youtrack/settings${youtrackQuery(scope)}`, {
+        method: 'PATCH',
+        body: patch,
+      }),
+    );
+  }
+
+  /**
+   * `POST /api/v1/youtrack/test`. An empty probe tests the saved connection;
+   * a probe carrying a URL and a token tests one that has not been saved, which
+   * is what lets the card refuse to write a credential that does not work.
+   */
+  async testYouTrackConnection(
+    probe: { url?: string; token?: string } = {},
+    scope: YouTrackScope = {},
+  ): Promise<YouTrackTestResult> {
+    return toYouTrackTestResult(
+      await this.#json(`${API_PREFIX}/youtrack/test${youtrackQuery(scope)}`, {
+        method: 'POST',
+        body: {
+          ...(probe.url === undefined ? {} : { url: probe.url }),
+          ...(probe.token === undefined ? {} : { token: probe.token }),
+        },
+      }),
+    );
+  }
+
+  /** `GET /api/v1/youtrack/projects?q=`. */
+  async listYouTrackProjects(q?: string, scope: YouTrackScope = {}): Promise<YouTrackProject[]> {
+    const query = buildQuery({ key: scope.projectKey, q: q === '' ? undefined : q });
+    const body = await this.#json(`${API_PREFIX}/youtrack/projects${query}`);
+    const record = asRecord(body);
+    return asArray(record ? record['projects'] : body).map(toYouTrackProject);
+  }
+
+  /** `GET /api/v1/youtrack/fields?project=`. */
+  async listYouTrackFields(
+    project?: string,
+    scope: YouTrackScope = {},
+  ): Promise<YouTrackFieldList> {
+    const query = buildQuery({
+      key: scope.projectKey,
+      project: project === '' ? undefined : project,
+    });
+    return toYouTrackFieldList(await this.#json(`${API_PREFIX}/youtrack/fields${query}`));
+  }
+
+  // --------------------------------------------------- youtrack import
+
+  /**
+   * `GET /api/v1/youtrack/issues?key=&q=&preset=&limit=&cursor=`
+   * (story GIT-US-0054).
+   */
+  async searchYouTrackIssues(
+    query: YouTrackIssueQuery,
+    scope: YouTrackScope = {},
+  ): Promise<YouTrackIssuePage> {
+    const search = buildQuery({
+      key: scope.projectKey,
+      q: query.q === '' ? undefined : query.q,
+      preset: query.preset === '' ? undefined : query.preset,
+      limit: query.limit,
+      cursor: query.cursor === '' ? undefined : query.cursor,
+    });
+    return toYouTrackIssuePage(await this.#json(`${API_PREFIX}/youtrack/issues${search}`));
+  }
+
+  /**
+   * The preview operation of story GIT-US-0047, over REST.
+   *
+   * The vault method `youtrack.import.preview` exists and is what this calls;
+   * the HTTP route in front of it is owned by the server side of this epic.
+   * The body is the vault's `YouTrackImportParams` verbatim, so the two cannot
+   * drift.
+   */
+  async previewYouTrackImport(
+    options: YouTrackImportOptions,
+    scope: YouTrackScope = {},
+  ): Promise<YouTrackImportPreviewResult> {
+    return toYouTrackImportPreview(
+      await this.#json(`${API_PREFIX}/youtrack/import/preview${youtrackQuery(scope)}`, {
+        method: 'POST',
+        body: importBody(options),
+      }),
+    );
+  }
+
+  /**
+   * The run operation of story GIT-US-0047, over REST. The companion enqueues
+   * the import on its job engine and answers `202` with the job id; the caller
+   * follows it over the `sync.job.*` events.
+   */
+  async runYouTrackImport(
+    options: YouTrackImportOptions,
+    scope: YouTrackScope = {},
+  ): Promise<YouTrackImportRun> {
+    return toYouTrackImportRun(
+      await this.#json(`${API_PREFIX}/youtrack/import${youtrackQuery(scope)}`, {
+        method: 'POST',
+        body: importBody(options),
+      }),
+    );
+  }
+
+  // ------------------------------------------------- youtrack knowledge base
+
+  /**
+   * `GET /api/v1/youtrack/kb/status?key=&path=&recursive=&remote=`.
+   *
+   * Without `remote` nothing leaves the companion: the state comes from each
+   * page's own `external` entry and the content it would publish, which is what
+   * makes asking about a whole tree affordable.
+   */
+  async kbSyncStatus(selector: KbSyncSelector = {}): Promise<KbSyncStatusResult> {
+    const query = buildQuery({
+      key: selector.project,
+      path: selector.path,
+      recursive: selector.recursive,
+      remote: selector.remote,
+    });
+    return toKbSyncStatusResult(await this.#json(`${YOUTRACK_KB_PATH}/status${query}`), selector);
+  }
+
+  /**
+   * `POST /api/v1/youtrack/kb/publish`. It queues a job and returns: a handbook
+   * is hundreds of articles, so the work happens where retries and rate
+   * limiting already live. The `## Feedback` block is never part of it — it
+   * stays in the repository (ADR-030).
+   */
+  async publishKbPage(selector: KbSyncSelector): Promise<KbSyncJobResult> {
+    return this.#kbSyncJob('publish', selector);
+  }
+
+  /** `POST /api/v1/youtrack/kb/pull`. */
+  async pullKbPage(selector: KbSyncSelector): Promise<KbSyncJobResult> {
+    return this.#kbSyncJob('pull', selector);
+  }
+
+  async #kbSyncJob(
+    direction: 'publish' | 'pull',
+    selector: KbSyncSelector,
+  ): Promise<KbSyncJobResult> {
+    const answer = await this.#json(
+      `${YOUTRACK_KB_PATH}/${direction}${buildQuery({ key: selector.project })}`,
+      {
+        method: 'POST',
+        body: {
+          ...(selector.path === undefined ? {} : { path: selector.path }),
+          ...(selector.recursive === undefined ? {} : { recursive: selector.recursive }),
+        },
+      },
+    );
+    return toKbSyncJobResult(answer, selector);
+  }
+
+  /**
+   * `POST /api/v1/youtrack/comments/push`.
+   *
+   * The answer says what was *queued*, never what arrived: the comment's own
+   * `external` entry, written by the job, is the evidence a reader trusts.
+   */
+  async pushCommentToYoutrack(input: CommentPushInput): Promise<CommentPushResult> {
+    const answer = await this.#json(
+      `${YOUTRACK_COMMENTS_PATH}/push${buildQuery({ key: input.project })}`,
+      {
+        method: 'POST',
+        body: {
+          itemId: input.itemId,
+          ...(input.commentPath === undefined ? {} : { commentPath: input.commentPath }),
+          ...(input.all === undefined ? {} : { all: input.all }),
+        },
+      },
+    );
+    return toCommentPushResult(answer, input);
+  }
+
+  // ----------------------------------------------------- background jobs
+
+  /** `GET /api/v1/sync/jobs?state=&kind=&limit=&cursor=`. */
+  async listSyncJobs(filter: SyncJobFilter = {}): Promise<SyncJobPage> {
+    const query = buildQuery({
+      state: filter.state,
+      kind: filter.kind,
+      limit: filter.limit,
+      cursor: filter.cursor === '' ? undefined : filter.cursor,
+    });
+    return toSyncJobPage(await this.#json(`${API_PREFIX}/sync/jobs${query}`));
+  }
+
+  /** `GET /api/v1/sync/jobs/{id}`. */
+  async getSyncJob(id: string): Promise<SyncJob> {
+    return toSyncJob(await this.#json(`${API_PREFIX}/sync/jobs/${encodeURIComponent(id)}`));
+  }
+
+  /** `POST /api/v1/sync/jobs/{id}/retry`. */
+  async retrySyncJob(id: string): Promise<SyncJob> {
+    return toSyncJob(
+      await this.#json(`${API_PREFIX}/sync/jobs/${encodeURIComponent(id)}/retry`, {
+        method: 'POST',
+      }),
+    );
+  }
+
+  /** `POST /api/v1/sync/jobs/{id}/cancel`. */
+  async cancelSyncJob(id: string): Promise<SyncJob> {
+    return toSyncJob(
+      await this.#json(`${API_PREFIX}/sync/jobs/${encodeURIComponent(id)}/cancel`, {
+        method: 'POST',
+      }),
+    );
+  }
+
   /** `POST /api/v1/git/commit`; with no paths it flushes the batched edits. */
   async commitNow(
     input: { repoId?: string; paths?: string[]; message?: string } = {},
@@ -1620,32 +2587,22 @@ export class CompanionProvider implements DataProvider {
     return asArray(body ? body['repos'] : []) as SyncRepoStatus[];
   }
 
-  /** The sync half of `GET /api/v1/sync/status`. */
+  /**
+   * `GET /api/v1/sync/settings` — the git half of GIT-US-0021 and the engine
+   * half of GIT-US-0084 in one document.
+   */
   async getSyncSettings(): Promise<SyncSettings> {
-    const body = asRecord(await this.#json(`${API_PREFIX}/sync/status`));
-    const settings = asRecord(body ? body['settings'] : null);
-    return {
-      pullStrategy: (settings?.['pullStrategy'] as 'rebase' | 'merge') ?? 'rebase',
-      pushOnSync: settings?.['pushOnSync'] !== false,
-      maxPushRetries:
-        typeof settings?.['maxPushRetries'] === 'number' ? settings['maxPushRetries'] : 3,
-      supported: settings?.['supported'] !== false,
-      ...(typeof settings?.['reason'] === 'string' ? { reason: settings['reason'] } : {}),
-    };
+    return toSyncSettings(await this.#json(`${API_PREFIX}/sync/settings`));
   }
 
-  /** `PATCH /api/v1/sync/settings`. */
+  /**
+   * `PATCH /api/v1/sync/settings`. The engine knobs go nested under `engine`,
+   * which is the form that wins when a companion is sent both.
+   */
   async updateSyncSettings(patch: SyncSettingsPatch): Promise<SyncSettings> {
-    const settings = asRecord(
+    return toSyncSettings(
       await this.#json(`${API_PREFIX}/sync/settings`, { method: 'PATCH', body: patch }),
     );
-    return {
-      pullStrategy: (settings?.['pullStrategy'] as 'rebase' | 'merge') ?? 'rebase',
-      pushOnSync: settings?.['pushOnSync'] !== false,
-      maxPushRetries:
-        typeof settings?.['maxPushRetries'] === 'number' ? settings['maxPushRetries'] : 3,
-      supported: settings?.['supported'] !== false,
-    };
   }
 
   /**
@@ -1832,6 +2789,33 @@ export class CompanionProvider implements DataProvider {
   #emitRefresh(repoId = ''): void {
     this.#emit({ kind: 'repo', repoId });
     this.#emit({ kind: 'kb', repoId, paths: [] });
+    this.#emitSyncJobResync();
+  }
+
+  /**
+   * "The job stream lost its place, reconcile from `GET /sync/jobs`."
+   *
+   * A client may miss frames — the hub disconnects one that fills its
+   * 256-event buffer — so a reconnect, a `stream.overflow` and a `resume.gap`
+   * all mean the live counts are no longer trustworthy. The listing is the
+   * engine's own consistent snapshot and is the only thing that is.
+   */
+  #emitSyncJobResync(): void {
+    this.#emit({
+      kind: 'syncJob',
+      job: {
+        phase: 'resync',
+        id: '',
+        kind: '',
+        key: '',
+        state: '',
+        attempt: 0,
+        processed: 0,
+        total: 0,
+        error: '',
+        errorClass: '',
+      },
+    });
   }
 
   #eventsUrl(): string {
@@ -1859,6 +2843,7 @@ export class CompanionProvider implements DataProvider {
     this.#socket = socket;
 
     socket.onopen = () => {
+      const reconnected = this.#attempts > 0;
       this.#attempts = 0;
       this.#stopPolling();
       this.#setConnection('open');
@@ -1867,6 +2852,9 @@ export class CompanionProvider implements DataProvider {
       if (this.#lastSeq !== null) {
         socket.send(JSON.stringify({ op: 'resume', seq: this.#lastSeq }));
       }
+      // The replay ring may no longer hold our position, and a job can have
+      // finished while the socket was down. Reconcile rather than trust it.
+      if (reconnected) this.#emitSyncJobResync();
     };
     socket.onmessage = (event) => {
       this.#receive(event.data);
@@ -1897,8 +2885,9 @@ export class CompanionProvider implements DataProvider {
 
     const type = asString(frame['type']);
     if (type === undefined) return;
-    if (type === 'resume.gap') {
-      // The ring buffer no longer holds our position: refetch everything.
+    if (type === 'resume.gap' || type === 'stream.overflow') {
+      // The ring buffer no longer holds our position, or this client fell
+      // behind and was cut off: refetch everything.
       this.#lastSeq = null;
       this.#emitRefresh();
       return;
@@ -1907,7 +2896,53 @@ export class CompanionProvider implements DataProvider {
     const payload = asRecord(frame['data']) ?? {};
     const repoId = asString(payload['repo']) ?? '';
 
+    const phase = SYNC_JOB_PHASES[type];
+    if (phase !== undefined) {
+      // Progress is already coalesced server-side to one frame per 500 ms per
+      // group, and a terminal frame is never throttled, so this layer adds no
+      // throttling of its own and treats a missing intermediate frame as
+      // normal.
+      this.#emit({ kind: 'syncJob', job: toSyncJobEvent(phase, payload) });
+      return;
+    }
+
     switch (type) {
+      case 'inbox.changed': {
+        this.#emit({
+          kind: 'inbox',
+          repoId,
+          project: asString(payload['project']) ?? '',
+          id: asString(payload['id']) ?? '',
+          action: asString(payload['action']) ?? '',
+          pending: asNumber(payload['pendingCount']) ?? 0,
+        });
+        return;
+      }
+      case 'sprint.changed': {
+        this.#emit({
+          kind: 'sprint',
+          sprint: asString(payload['sprint']) ?? '',
+          board: asString(payload['board']) ?? '',
+          state: asString(payload['state']) ?? '',
+          carried: asNumber(payload['carried']) ?? 0,
+          failed: asNumber(payload['failed']) ?? 0,
+        });
+        return;
+      }
+      case 'youtrack.kb.conflict': {
+        const path = asString(payload['path']) ?? '';
+        const event: Extract<ChangeEvent, { kind: 'kbConflict' }> = {
+          kind: 'kbConflict',
+          project: asString(payload['project']) ?? '',
+          path,
+          conflictPath: asString(payload['conflictPath']) ?? '',
+          direction: asString(payload['direction']) === 'publish' ? 'publish' : 'pull',
+        };
+        const articleId = asString(payload['articleId']);
+        if (articleId !== undefined) event.articleId = articleId;
+        this.#emit(event);
+        return;
+      }
       case 'item.changed': {
         const id = asString(payload['id']);
         if (id !== undefined) this.#emit({ kind: 'items', repoId, ids: [id] });

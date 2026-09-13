@@ -21,6 +21,7 @@ function view(overrides: Partial<SprintMetricsView> = {}): SprintMetricsView {
       title: 'Sprint 1',
       board: 'demo-scrum',
       state: 'active',
+  status: 'current',
       start: '2026-03-02',
       end: '2026-03-04',
       items: ['DEMO/DEMO-US-0001', 'DEMO/DEMO-US-0002'],
@@ -211,6 +212,45 @@ describe('the sprint metrics page', () => {
     render(<SprintMetricsBody view={view()} />);
 
     expect(screen.getByText('No item in this sprint has a measurable one.')).toBeInTheDocument();
+  });
+
+  it('leaves out what a stored snapshot never froze, instead of drawing zeros', () => {
+    // A closed sprint answers from the snapshot in its file. Only the burndown
+    // was frozen: the cumulative-flow series and the flow samples are not
+    // recomputable once the items have left the scope (R-MET-12, ADR-034).
+    const frozen = view();
+    frozen.provenance = {
+      ...frozen.provenance,
+      source: 'snapshot',
+      note: "Read from the sprint's stored snapshot: these numbers were frozen when the sprint was closed on 2026-03-05, not reconstructed now.",
+    };
+    frozen.flow = { ...frozen.flow, days: [] };
+    frozen.stats = {
+      throughput: 0,
+      throughputPerWeek: 0,
+      cycleTime: { count: 0, mean: 0, median: 0, p85: 0, min: 0, max: 0 },
+      leadTime: { count: 0, mean: 0, median: 0, p85: 0, min: 0, max: 0 },
+      excluded: 0,
+    };
+    render(<SprintMetricsBody view={frozen} />);
+
+    // The banner says where the numbers came from, and it is not a git
+    // reconstruction made now.
+    expect(screen.getByRole('note')).toHaveTextContent('Frozen when this sprint was closed');
+
+    // The burndown is still real, because it *was* frozen.
+    expect(screen.getByRole('img', { name: /Burndown of DEMO-TEAM-S-0001/ })).toBeInTheDocument();
+
+    // The rest is said, not drawn.
+    expect(
+      screen.getByText(/Cumulative flow and flow statistics were not recorded/),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('img', { name: /Cumulative flow/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('table', { name: /Item counts by status/ })).not.toBeInTheDocument();
+
+    // And a zero throughput is never shown as a measurement.
+    expect(screen.getByText('Throughput').nextSibling).toHaveTextContent('—');
+    expect(screen.getAllByText('not frozen when this sprint closed')).toHaveLength(2);
   });
 
   it('plots nothing for a sprint that has no days', () => {

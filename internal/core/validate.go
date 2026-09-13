@@ -106,6 +106,8 @@ func ValidateItem(item *Item, cfg *ProjectConfig) []Diagnostic {
 	validatePeople(d, item, cfg)
 	validateLabels(d, item, cfg)
 	validateCustom(d, item, cfg)
+	validateExternal(d, "external", item.External)
+	validateInbox(d, item, cfg)
 	orderDiagnostics(d.out)
 	return d.out
 }

@@ -1,0 +1,46 @@
+=== front matter ===
+external:
+    - id: ACME-A-7
+      system: youtrack
+      url: https://yt.example.com/youtrack/article/ACME-A-7
+    - id: 41f0c8
+      system: notion
+tags:
+    - process
+title: Release handbook, revised
+=== body ===
+Rewritten upstream by someone using the YouTrack editor.
+
+See [[architecture/overview|the architecture overview]]
+and [[operations/runbook#Rollback|rollback]].
+
+{color:red}This warning is red in YouTrack.{color}
+
+![The release train](./images/train.png){width=300px}
+
+![A chart nobody uploaded from here](chart.svg)
+
+Issue ACME-42 stays a bare id.
+
+<!-- gintrack:feedback:begin -->
+
+---
+
+## Feedback
+
+<!-- gintrack:feedback:note id="fb-1a2b3c4d" anchor="sha256:1111111111111111" lines="3-3" author="Jose F. Rives Lirola" created="2026-09-13T10:00:00Z" -->
+### Jose F. Rives Lirola feedback: fb-1a2b3c4d
+
+> Line 3:
+>
+> How we ship, in order. See [[architecture/overview]] and
+
+Selected: “How we ship, in order”
+
+This paragraph should name the release manager.
+
+<!-- gintrack:feedback:end -->
+=== warnings ===
+attachments: chart.svg: the article references an attachment the page does not, so the reference was kept as a bare file name
+content: {color:…}: the body uses the YouTrack {color:…} extension, which is not portable Markdown; it was preserved so that the round trip is stable, and will render literally outside YouTrack
+content: {width=…}: the body uses the YouTrack {width=…} image sizing extension, which is not portable Markdown; it was preserved so that the round trip is stable, and will render literally outside YouTrack

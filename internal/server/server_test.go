@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -325,10 +326,29 @@ func TestGenerateToken(t *testing.T) {
 	}
 }
 
+// freeLoopbackPort reserves a port from the ephemeral range and releases it, so
+// a test can name a port nobody is using. Options.Port zero means DefaultPort,
+// not "pick one for me", and hard-coding that default makes this test fail on a
+// machine where somebody is running `gintrack serve` for real.
+func freeLoopbackPort(t *testing.T) int {
+	t.Helper()
+
+	var lc net.ListenConfig
+	ln, err := lc.Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve a port: %v", err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	if err := ln.Close(); err != nil {
+		t.Fatalf("release the reserved port: %v", err)
+	}
+	return port
+}
+
 func TestStartAndShutdown(t *testing.T) {
 	t.Parallel()
 
-	s, err := New(Options{Bind: "127.0.0.1", Port: 0, Token: "test-token"})
+	s, err := New(Options{Bind: "127.0.0.1", Port: freeLoopbackPort(t), Token: "test-token"})
 	if err != nil {
 		t.Fatalf("New(): %v", err)
 	}

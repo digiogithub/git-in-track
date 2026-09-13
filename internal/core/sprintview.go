@@ -38,27 +38,34 @@ type SprintMetrics struct {
 // SprintSummary is a sprint as the UI reads it: the file's own fields plus the
 // numbers derived from the cards it currently resolves to.
 type SprintSummary struct {
-	ID             string      `json:"id"`
-	Title          string      `json:"title"`
-	Board          string      `json:"board"`
-	State          SprintState `json:"state"`
-	Start          Date        `json:"start,omitempty"`
-	End            Date        `json:"end,omitempty"`
-	Goal           string      `json:"goal,omitempty"`
-	CapacityHours  *float64    `json:"capacityHours,omitempty"`
-	VelocityTarget *float64    `json:"velocityTarget,omitempty"`
-	Participants   []string    `json:"participants,omitempty"`
-	Retro          string      `json:"retro,omitempty"`
-	Items          []string    `json:"items"`
-	Committed      []string    `json:"committed,omitempty"`
+	ID    string      `json:"id"`
+	Title string      `json:"title"`
+	Board string      `json:"board"`
+	State SprintState `json:"state"`
+	// Status is the derived status of the sprint at the `now` the caller passed
+	// in: draft, upcoming, current or completed. It is computed on every read
+	// and never written to the file (ADR-034).
+	Status         SprintStatus `json:"status"`
+	Start          Date         `json:"start,omitempty"`
+	End            Date         `json:"end,omitempty"`
+	Goal           string       `json:"goal,omitempty"`
+	CapacityHours  *float64     `json:"capacityHours,omitempty"`
+	VelocityTarget *float64     `json:"velocityTarget,omitempty"`
+	Participants   []string     `json:"participants,omitempty"`
+	Retro          string       `json:"retro,omitempty"`
+	Items          []string     `json:"items"`
+	Committed      []string     `json:"committed,omitempty"`
 	// TotalDays and RemainingDays are both ends inclusive; RemainingDays is 0
 	// once the end date has passed.
 	TotalDays     int           `json:"totalDays"`
 	RemainingDays int           `json:"remainingDays"`
 	Metrics       SprintMetrics `json:"metrics"`
-	Body          string        `json:"body,omitempty"`
-	Path          string        `json:"path,omitempty"`
-	Rev           Rev           `json:"rev,omitempty"`
+	// Snapshot is the progress frozen into the file when the sprint was closed,
+	// nil for a sprint that is still open (GIT-US-0080).
+	Snapshot *SprintSnapshot `json:"snapshot,omitempty"`
+	Body     string          `json:"body,omitempty"`
+	Path     string          `json:"path,omitempty"`
+	Rev      Rev             `json:"rev,omitempty"`
 }
 
 // SummarizeSprint builds the header of a sprint over the cards a board — or a
@@ -67,7 +74,9 @@ type SprintSummary struct {
 func SummarizeSprint(s *Sprint, cards []BoardCard, now time.Time) SprintSummary {
 	out := SprintSummary{
 		ID: s.ID, Title: s.DisplayTitle(), Board: s.Board, State: s.State,
-		Start: s.Start, End: s.End, Goal: s.Goal,
+		Status: s.DerivedStatus(now),
+		Start:  s.Start, End: s.End, Goal: s.Goal,
+		Snapshot:      s.Snapshot,
 		CapacityHours: clonePtr(s.CapacityHours), VelocityTarget: clonePtr(s.VelocityTarget),
 		Participants: append([]string(nil), s.Participants...),
 		Retro:        s.Retro,

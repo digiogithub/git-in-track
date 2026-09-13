@@ -14,6 +14,31 @@
  */
 
 import type {
+  CommentPushEntry,
+  CommentPushInput,
+  CommentPushResult,
+  External,
+  InboxDraftOptions,
+  InboxFilter,
+  InboxPage,
+  InboxStatus,
+  InboxTriageAction,
+  InboxTriageInput,
+  InboxTriageResult,
+  ItemInbox,
+  KbPageSyncStatus,
+  KbSyncJobResult,
+  KbSyncSelector,
+  KbSyncState,
+  KbSyncStatusResult,
+  SprintSnapshot,
+  SprintSnapshotBucket,
+  SprintSnapshotPoint,
+  SprintSnapshotTotals,
+  SprintStatus,
+  SprintTransfer,
+  SprintTransferMode,
+  WriteSet,
   BoardCard,
   BoardColumnPatch,
   BoardColumnView,
@@ -97,6 +122,31 @@ import type {
 } from '@/core-bridge/api';
 
 export type {
+  CommentPushEntry,
+  CommentPushInput,
+  CommentPushResult,
+  External,
+  InboxDraftOptions,
+  InboxFilter,
+  InboxPage,
+  InboxStatus,
+  InboxTriageAction,
+  InboxTriageInput,
+  InboxTriageResult,
+  ItemInbox,
+  KbPageSyncStatus,
+  KbSyncJobResult,
+  KbSyncSelector,
+  KbSyncState,
+  KbSyncStatusResult,
+  SprintSnapshot,
+  SprintSnapshotBucket,
+  SprintSnapshotPoint,
+  SprintSnapshotTotals,
+  SprintStatus,
+  SprintTransfer,
+  SprintTransferMode,
+  WriteSet,
   KbFeedbackNoteDraft,
   KbFeedbackNoteRef,
   BoardCard,
@@ -294,6 +344,292 @@ export type McpSettings = {
   configPath: string;
   /** The tools the endpoint of this process advertises. */
   tools: string[];
+};
+
+/**
+ * Where the YouTrack credential of a project came from (`tokenSource`).
+ *
+ * It decides what the settings card may offer: a token that arrived in the
+ * environment or on the command line is owned by whoever started the
+ * companion, so this screen can report it but must not pretend to clear it.
+ * `''` and `none` both mean there is none.
+ */
+export type YouTrackTokenSource = '' | 'none' | 'file' | 'config' | 'env' | 'flag';
+
+/** When a comment reaches the linked issue. */
+export type YouTrackPushComments = '' | 'manual' | 'auto';
+
+/** When a knowledge-base page is synchronized, and which way. */
+export type YouTrackKbSync = '' | 'manual' | 'on_write';
+export type YouTrackKbSyncDirection = '' | 'push' | 'pull' | 'both';
+
+/**
+ * One project's YouTrack connection (`GET /api/v1/youtrack/settings`).
+ *
+ * It deliberately carries no token: the credential is write-only, and this
+ * shape reports only that one resolves (`hasToken`) and where it came from.
+ * Anything that renders a stored token, placeholder included, is a leak the
+ * user could save back as a literal value.
+ */
+export type YouTrackSettings = {
+  /** The git-in-track project this connection belongs to. */
+  projectKey: string;
+  /** Whether `project.yaml` holds an `integrations.youtrack` block at all. */
+  configured: boolean;
+  /** The instance URL, context path included. */
+  url: string;
+  /** The YouTrack project short name, the "ACME" of ACME-42. */
+  project: string;
+  /** git-in-track field → the YouTrack field carrying it and its value map. */
+  fieldMap: Record<string, YouTrackFieldMapping>;
+  pushComments: YouTrackPushComments;
+  kbSync: YouTrackKbSync;
+  kbSyncDirection: YouTrackKbSyncDirection;
+  /** Whether a credential resolves for this project. Never the credential. */
+  hasToken: boolean;
+  tokenSource: YouTrackTokenSource;
+  /** Whether the last change reached the configuration file. */
+  persisted: boolean;
+  /** The `project.yaml` the committed half lives in, relative to the repository. */
+  projectPath: string;
+  /** The mounted repository holding that file. */
+  repo: string;
+};
+
+/**
+ * A sparse change to the connection. An absent key is left alone and a present
+ * one is applied, so an empty string clears a value rather than being
+ * indistinguishable from "not mentioned" — which is what makes disconnecting a
+ * project, or forgetting a token, expressible at all.
+ */
+export type YouTrackSettingsPatch = {
+  url?: string;
+  project?: string;
+  fieldMap?: Record<string, YouTrackFieldMapping>;
+  pushComments?: YouTrackPushComments;
+  kbSync?: YouTrackKbSync;
+  kbSyncDirection?: YouTrackKbSyncDirection;
+  /** Write-only: it is never read back, and `''` forgets the stored one. */
+  token?: string;
+};
+
+/** What a successful probe reports (`POST /api/v1/youtrack/test`). */
+export type YouTrackTestResult = {
+  ok: boolean;
+  baseUrl: string;
+  login: string;
+  fullName: string;
+  email: string;
+  /** The linked YouTrack project, when one is configured and readable. */
+  project: string;
+};
+
+/** One row of `GET /api/v1/youtrack/projects`. */
+export type YouTrackProject = {
+  id: string;
+  shortName: string;
+  name: string;
+  archived: boolean;
+};
+
+/**
+ * One allowed value of a bundle-backed YouTrack field.
+ *
+ * `name` is the key a mapping is written against — it is stable, where the id
+ * is instance-local and the localized name changes with the UI language — and
+ * `label` is what to show.
+ *
+ * The instance also declares a colour per value. It is deliberately not carried
+ * here: a colour in a component is a bug (docs/13 §1), and a value table that
+ * painted itself in YouTrack's palette would be exactly that.
+ */
+export type YouTrackFieldValue = {
+  id: string;
+  /** The stable value name; the key a value mapping is written against. */
+  name: string;
+  /** What to render: the localized name when the instance declares one. */
+  label: string;
+  description?: string;
+  /** The position the instance lists the value at. */
+  ordinal: number;
+  /** Still on old issues, no longer offered. Shown, never hidden. */
+  archived: boolean;
+  /**
+   * Whether a state value marks an issue as done. Absent — not `false` — when
+   * the instance never said, which is why it must not propose a done status.
+   */
+  isResolved?: boolean;
+};
+
+/** One custom field of the remote project (`GET /api/v1/youtrack/fields`). */
+export type YouTrackField = {
+  id: string;
+  name: string;
+  type: string;
+  bundleId: string;
+  bundleType: string;
+  canBeEmpty: boolean;
+  /** What the instance shows for an unset value, when it declares one. */
+  emptyFieldText?: string;
+  /**
+   * Whether this field's values are enumerable at all: false for a text, date,
+   * integer or period field, and for a bundle kind the companion does not know.
+   * `values` is then empty without that being a failure.
+   */
+  bundled: boolean;
+  values: YouTrackFieldValue[];
+  /** Why the values could not be read; already redacted by the companion. */
+  warnings: string[];
+};
+
+/**
+ * One entry of the field map: which YouTrack custom field carries a
+ * git-in-track field, and what its values mean here.
+ *
+ * `values` maps a YouTrack value *name* onto the git-in-track value it means —
+ * a status id for `status`, a priority for `priority`, an item type for
+ * `type` — and the companion accepts it on those three keys only
+ * (`valueMappableFields`). An entry with no value map leaves the importer's
+ * defaults in force.
+ */
+export type YouTrackFieldMapping = {
+  field: string;
+  values?: Record<string, string>;
+};
+
+/**
+ * The field-mapping vocabulary: the YouTrack half discovered from the instance
+ * and the git-in-track half the companion declares, so the UI offers both sides
+ * from one call instead of hard-coding a list that would drift.
+ */
+export type YouTrackFieldList = {
+  project: string;
+  fields: YouTrackField[];
+  total: number;
+  gintrackFields: string[];
+  /**
+   * The subset of `gintrackFields` whose *values* can be mapped one by one. A
+   * settings screen renders a value table only for these; the others take a
+   * field name and nothing else.
+   */
+  valueMappableFields: string[];
+};
+
+/**
+ * Which YouTrack connection a call addresses. The key is optional because a
+ * companion serving exactly one project defaults to it; one serving several
+ * refuses an unnamed call rather than guessing.
+ */
+export type YouTrackScope = { projectKey?: string };
+
+// ------------------------------------------------ YouTrack import (GIT-EP-0012)
+
+/**
+ * The saved queries the import dialog offers instead of the YouTrack query
+ * language. `''` means "whatever the user typed, and nothing else".
+ */
+export type YouTrackIssuePreset = '' | 'epics' | 'stories' | 'tasks' | 'versions' | 'unresolved';
+
+/**
+ * One row of the issue autosuggest (`GET /api/v1/youtrack/issues`, GIT-US-0054).
+ *
+ * `linked` is resolved by the companion from its own index, by the
+ * `(external.system, external.id)` pair, so the picker can say "already
+ * imported" and offer the row as an update without a second round trip.
+ */
+export type YouTrackIssue = {
+  id: string;
+  idReadable: string;
+  summary: string;
+  type: string;
+  state: string;
+  assignee: string;
+  updated: string;
+  url: string;
+  /** The git-in-track item a previous import created for this issue. */
+  linked: { itemId: string } | null;
+};
+
+/** One page of the autosuggest; `nextCursor` is empty on the last one. */
+export type YouTrackIssuePage = {
+  items: YouTrackIssue[];
+  nextCursor: string;
+};
+
+/** What the autosuggest asks for. */
+export type YouTrackIssueQuery = {
+  q?: string;
+  preset?: YouTrackIssuePreset;
+  limit?: number;
+  cursor?: string;
+};
+
+/**
+ * The import options, as `internal/vault`'s `YouTrackImportParams` models them
+ * (story GIT-US-0047). Preview and run take exactly the same shape, which is
+ * what makes "what preview showed me is what run does" true by construction.
+ */
+export type YouTrackImportOptions = {
+  /** The git-in-track project to import into; the only one when omitted. */
+  project?: string;
+  /** Readable issue ids. Exactly one of `ids` and `query` is given. */
+  ids?: string[];
+  query?: string;
+  /** Subtask recursion: 0 imports the selected issues only. */
+  depth: number;
+  includeLinks: boolean;
+  includeComments: boolean;
+  includeAttachments: boolean;
+};
+
+/**
+ * One finding of the mapper (`internal/youtrack/mapping`.Warning). `reason` is
+ * a complete English sentence and is the only part a surface renders as prose —
+ * as **plain text**, because every field here is third-party content.
+ */
+export type YouTrackImportWarning = {
+  field: string;
+  value?: string;
+  fallback?: string;
+  reason: string;
+};
+
+/** What an import would do to one issue, before anything is written. */
+export type YouTrackImportPlanItem = {
+  youtrackId: string;
+  title: string;
+  mappedType: string;
+  action: 'create' | 'update';
+  /** The item an update would patch; empty for a create. */
+  targetId?: string;
+  parent?: string;
+  milestone?: string;
+  depth: number;
+  comments: number;
+  warnings?: YouTrackImportWarning[];
+};
+
+/** The answer of the preview operation: a plan, and nothing written. */
+export type YouTrackImportPreviewResult = {
+  project: string;
+  issues: YouTrackImportPlanItem[];
+  /** Findings about the import as a whole rather than about one issue. */
+  warnings?: YouTrackImportWarning[];
+};
+
+/**
+ * What asking for an import answers: the id of the job that runs it.
+ *
+ * `POST /api/v1/youtrack/import` always queues. An import is a hundred issues
+ * and a hundred requests against somebody else's rate limit, so it answers
+ * `202` with a job id and nothing that could go stale — the work happens off
+ * the request, the browser follows it over the `sync.job.*` events and reads
+ * the failure, if any, back from `getSyncJob(jobId)`. There is deliberately no
+ * synchronous shape to handle: the preview is the operation that answers
+ * inline, and it answers a plan rather than a result.
+ */
+export type YouTrackImportRun = {
+  jobId: string;
 };
 
 /** One repository's git state (`GET /api/v1/git/status`). */
@@ -540,6 +876,18 @@ export type SyncSettings = {
    * (docs/06 §6.3, GIT-US-0042).
    */
   proxySource?: 'configured' | 'companion' | 'none';
+  /**
+   * The background job engine's half of the same settings (GIT-US-0084).
+   * Absent on a runtime that has no engine, which is what the settings card
+   * gates on.
+   */
+  engine?: SyncEngineSettings;
+  /**
+   * Whether the last change reached the configuration file. It is `false` for
+   * any change touching the engine today: the configuration file has no
+   * `sync.engine` section yet, so a knob is process-only until a restart.
+   */
+  persisted?: boolean;
 };
 
 /**
@@ -673,6 +1021,148 @@ export type SyncSettingsPatch = {
   maxPushRetries?: number;
   /** Browser-only mode: the proxy that makes git over HTTPS possible at all. */
   corsProxy?: string;
+  /** The engine knobs; they are sent nested, which is the form that wins. */
+  engine?: SyncEngineSettingsPatch;
+};
+
+// ------------------------------------------- background job engine (GIT-EP-0015)
+
+/** Where a job is in the engine's state machine. */
+export type SyncJobState = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
+
+/**
+ * The last failure of a job, as the engine recorded it.
+ *
+ * `message` is third-party text — a tracker's error body, with the credentials
+ * the engine recognized already redacted. It is rendered as **plain text**,
+ * never as Markdown and never as HTML.
+ */
+export type SyncJobError = {
+  /** 1-based attempt this error came from. */
+  attempt: number;
+  /** How the engine classified it: `terminal`, `transient`, `rate_limited`, … */
+  class: string;
+  message: string;
+  at: string;
+  /** Nanoseconds the error itself asked to wait, absent when it asked for none. */
+  retryAfter?: number;
+};
+
+/**
+ * One job of the queue (`GET /api/v1/sync/jobs`). The job's *payload* is
+ * deliberately absent from this shape: it is the one part the API cannot vouch
+ * for, and nothing in the UI reads it.
+ */
+export type SyncJob = {
+  id: string;
+  /** `youtrack.import`, `youtrack.comment.push`, … */
+  kind: string;
+  /** What the job is keyed on — the project, usually. */
+  key: string;
+  state: SyncJobState;
+  attempts: number;
+  createdAt: string;
+  updatedAt: string;
+  /** When the next attempt is due; absent when none is scheduled. */
+  nextAttempt?: string;
+  lastError?: SyncJobError;
+  /** The job gave up and is waiting to be retried or cleared. */
+  deadLetter?: boolean;
+};
+
+/** How many jobs the whole queue holds in each state — never just the page. */
+export type SyncJobCounts = {
+  queued: number;
+  running: number;
+  done: number;
+  failed: number;
+  cancelled: number;
+};
+
+/** The filter `GET /api/v1/sync/jobs` accepts; `state` and `kind` are OR-ed. */
+export type SyncJobFilter = {
+  state?: SyncJobState[];
+  kind?: string[];
+  limit?: number;
+  cursor?: string;
+};
+
+/** One page of the queue, plus the whole queue's summary. */
+export type SyncJobPage = {
+  jobs: SyncJob[];
+  /** The id the next page starts at; empty on the last page. */
+  nextCursor: string;
+  /** How many jobs matched the filter, before paging. */
+  total: number;
+  counts: SyncJobCounts;
+  /** How many batches are inside a handler right now. */
+  running: number;
+  deadLetter: number;
+  /** Whether the worker pool is up. An idle engine is still `true`. */
+  engine: boolean;
+};
+
+/** The engine half of `GET|PATCH /api/v1/sync/settings`. */
+export type SyncEngineSettings = {
+  workers: number;
+  batchSize: number;
+  rate: number;
+  maxAttempts: number;
+  retentionHours: number;
+  drainSeconds: number;
+  running: boolean;
+};
+
+/**
+ * A sparse change to the knobs. `workers`, `batchSize` and `rate` take effect on
+ * the running pool at once; `maxAttempts` is fixed when the engine is built, so
+ * it is recorded and applies from the next start.
+ */
+export type SyncEngineSettingsPatch = {
+  workers?: number;
+  batchSize?: number;
+  rate?: number;
+  maxAttempts?: number;
+};
+
+/**
+ * The ranges the companion enforces (docs/07-cli-and-api.md §4.1). They are
+ * checked in the browser too, so a value that cannot work is refused before a
+ * request rather than after one.
+ */
+export const SYNC_ENGINE_RANGES = {
+  workers: { min: 1, max: 64 },
+  batchSize: { min: 1, max: 500 },
+  rate: { min: 0, max: 1000 },
+  maxAttempts: { min: 1, max: 20 },
+} as const;
+
+/**
+ * A `sync.job.*` frame, normalized. `phase` is the topic that carried it; the
+ * synthetic `resync` phase is what a reconnect, a `stream.overflow` or a
+ * `resume.gap` raises, and means "the stream lost its place, reconcile from
+ * `GET /api/v1/sync/jobs`" — it carries no job.
+ *
+ * `processed` and `total` count the *coalescing group* (the job's kind plus its
+ * key), which is the unit the engine batches by and the unit a progress bar
+ * renders. Progress is coalesced server-side to one frame per 500 ms per group
+ * and terminal frames are never throttled, so a consumer must not add a second
+ * layer of throttling and must treat a missing intermediate frame as normal.
+ */
+export type SyncJobEventPhase = 'queued' | 'started' | 'progress' | 'done' | 'failed' | 'resync';
+
+export type SyncJobEvent = {
+  phase: SyncJobEventPhase;
+  id: string;
+  kind: string;
+  key: string;
+  /** `done` on a terminal frame is `done` *or* `cancelled`; both end the row. */
+  state: SyncJobState | '';
+  attempt: number;
+  processed: number;
+  total: number;
+  error: string;
+  errorClass: string;
 };
 
 /** Statuses are configured per project in `project.yaml`; the UI never hardcodes them. */
@@ -690,6 +1180,15 @@ export type Capabilities = {
   mcp: boolean;
   openInEditor: boolean;
   maxBatchWrite: number;
+  /**
+   * This runtime can talk to YouTrack at all — companion mode. It is what
+   * decides whether the settings card is rendered, because a card that only
+   * appears once a project is already connected can never connect the first
+   * one.
+   */
+  youtrackSupported: boolean;
+  /** At least one mounted project declares an `integrations.youtrack` block. */
+  youtrack: boolean;
 };
 
 export type RepoKind = 'project' | 'team';
@@ -822,6 +1321,17 @@ export type ProviderErrorCode =
   | 'wip_limit_exceeded'
   /** Two sprints of one board would share a day (docs/04 §8.4). */
   | 'sprint_overlap'
+  /**
+   * Work was aimed at a sprint whose derived status is `completed`. Moving it
+   * there would make that sprint's numbers lie, so it is refused outright
+   * rather than per item.
+   */
+  | 'sprint_target_completed'
+  /**
+   * The project declares no status in the `triage` category, which is simply a
+   * project without an inbox (ADR-033). It is a state to explain, not an error.
+   */
+  | 'no_triage_status'
   /** The board already runs a sprint; confirm to run two at once. */
   | 'sprint_already_active'
   /** The improvement action already became a task (docs/04 R-RETRO-2). */
@@ -848,13 +1358,56 @@ export type ProviderErrorCode =
    * explain, not an error to retry.
    */
   | 'tunnel_requires_token'
+  /**
+   * The YouTrack side, kept apart from the companion's own failures. In
+   * particular, an instance that refuses the credential is reported as
+   * `youtrack_unauthorized` over a `502` and never as a `401`, which a browser
+   * would read as its own session expiring (GIT-EP-0011).
+   */
+  | 'youtrack_not_configured'
+  | 'youtrack_unauthorized'
+  | 'youtrack_forbidden'
+  | 'youtrack_not_found'
+  | 'youtrack_unreachable'
+  /** No job of the queue has that id — a pruned job answers this too. */
+  | 'sync_job_not_found'
+  /** The job exists and is in a state the transition cannot be made from. */
+  | 'sync_job_not_retryable'
+  /** The engine has been closed, or was never started. */
+  | 'sync_engine_not_running'
   | 'internal';
 
 export type ChangeEvent =
   | { kind: 'items'; repoId: string; ids: string[] }
   | { kind: 'kb'; repoId: string; paths: string[] }
   | { kind: 'repo'; repoId: string }
-  | { kind: 'index'; repoId: string; stats: IndexStats };
+  | { kind: 'index'; repoId: string; stats: IndexStats }
+  /** A `sync.job.*` frame, or the `resync` phase that asks for a reconcile. */
+  | { kind: 'syncJob'; job: SyncJobEvent }
+  /**
+   * An `inbox.changed` frame: one triage decision, or one submission filed
+   * straight into the queue. `pending` is the whole queue, so a sidebar badge
+   * never needs a second call (ADR-033).
+   */
+  | { kind: 'inbox'; repoId: string; project: string; id: string; action: string; pending: number }
+  /**
+   * A `sprint.changed` frame: a sprint whose scope moved, by a close or by a
+   * transfer. A dry run publishes none.
+   */
+  | { kind: 'sprint'; sprint: string; board: string; state: string; carried: number; failed: number }
+  /**
+   * A `youtrack.kb.conflict` frame: a page and the article it mirrors both
+   * changed. The page was left exactly as it is and the incoming content went
+   * to `conflictPath`.
+   */
+  | {
+      kind: 'kbConflict';
+      project: string;
+      path: string;
+      conflictPath: string;
+      articleId?: string;
+      direction: 'publish' | 'pull';
+    };
 
 export type Unsubscribe = () => void;
 
@@ -972,6 +1525,24 @@ export interface DataProvider {
    * lives in; a handle is derived from the name for the file name.
    */
   addComment(id: string, body: string, author?: string): Promise<Comment>;
+
+  // inbox (ADR-033, docs/07 §5.3)
+  /**
+   * One page of a project's triage queue. `counts` and `pending` are over the
+   * whole queue rather than over the page, and a snoozed item whose date has
+   * arrived is already counted — and listed — as pending, because that is what
+   * a reader sees.
+   */
+  listInbox(filter?: InboxFilter): Promise<InboxPage>;
+  /** Files an ordinary draft straight into the triage queue instead of the backlog. */
+  createInboxItem(draft: InboxDraft): Promise<Item>;
+  /**
+   * One triage decision. `accept` clears triage and moves the item into the
+   * ordinary workflow — it can never change the item's type, because an item id
+   * encodes its type for life (R-ID-3), so "this should have been an epic" is
+   * answered by creating the right item and marking this one a duplicate.
+   */
+  triageInboxItem(input: InboxTriageInput): Promise<InboxTriageResult>;
   writePage(scope: KbScope, path: string, content: string, rev?: string): Promise<KbPage>;
   /**
    * Appends feedback notes to the feedback block at the end of a page, as the
@@ -1044,10 +1615,16 @@ export interface DataProvider {
    * modifies no item by itself: `carry` carries one explicit decision per
    * unfinished item (R-SPR-3).
    */
-  closeSprint(
+  closeSprint(id: string, input?: SprintCloseInput, team?: string): Promise<SprintResult>;
+  /**
+   * Moves the unfinished references of one sprint into another sprint or back
+   * to their project backlogs, without closing anything. A per-item refusal is
+   * not an error: it comes back on its own `report.carried[].error` line, so
+   * the rest of the transfer still happened (R-SPR-8).
+   */
+  transferSprintItems(
     id: string,
-    carry?: SprintCarry[],
-    rev?: string,
+    input?: SprintTransferInput,
     team?: string,
   ): Promise<SprintResult>;
   /**
@@ -1136,6 +1713,113 @@ export interface DataProvider {
    * nothing in the app may call this on its own.
    */
   setTunnel(enabled: boolean): Promise<TunnelStatus>;
+
+  // YouTrack (`/api/v1/youtrack/*`, story GIT-US-0055)
+  /**
+   * One project's connection. It never carries the token: `hasToken` and
+   * `tokenSource` are all a surface is told, by design.
+   */
+  getYouTrackSettings(scope?: YouTrackScope): Promise<YouTrackSettings>;
+  /**
+   * Changes it. The patch is sparse and every value is applied as given, so
+   * `''` clears — including `token: ''`, which forgets the stored credential.
+   * The answer's `persisted` says whether the change reached the configuration
+   * file or only the running process.
+   */
+  updateYouTrackSettings(
+    patch: YouTrackSettingsPatch,
+    scope?: YouTrackScope,
+  ): Promise<YouTrackSettings>;
+  /**
+   * Probes the instance and reports who the credential authenticates as. With
+   * `url` and `token` it tests a connection the user has typed but not saved,
+   * so a wrong token is caught before it is written anywhere.
+   */
+  testYouTrackConnection(
+    probe?: { url?: string; token?: string },
+    scope?: YouTrackScope,
+  ): Promise<YouTrackTestResult>;
+  /** Project autosuggest; `q` filters by name and short name. */
+  listYouTrackProjects(q?: string, scope?: YouTrackScope): Promise<YouTrackProject[]>;
+  /**
+   * The custom fields of a YouTrack project, so the field map offers real names
+   * instead of free text. `project` defaults to the linked one.
+   */
+  listYouTrackFields(project?: string, scope?: YouTrackScope): Promise<YouTrackFieldList>;
+
+  // YouTrack import (`/api/v1/youtrack/issues` and the import operations,
+  // stories GIT-US-0054 and GIT-US-0047; epic GIT-EP-0012)
+  /**
+   * The issue autosuggest of the import dialog. The companion composes the
+   * effective query from the linked project, the caller's `q` and the preset,
+   * and resolves `linked` from its own index, so a result that a previous
+   * import already created says so.
+   */
+  searchYouTrackIssues(
+    query: YouTrackIssueQuery,
+    scope?: YouTrackScope,
+  ): Promise<YouTrackIssuePage>;
+  /**
+   * What an import would do, without writing anything: one plan row per issue
+   * with the action, the mapped type, the resolved parent and every warning the
+   * mapper raised. It takes the same options `runYouTrackImport` takes, which
+   * is what makes the preview honest.
+   */
+  previewYouTrackImport(
+    options: YouTrackImportOptions,
+    scope?: YouTrackScope,
+  ): Promise<YouTrackImportPreviewResult>;
+  /**
+   * Queues the import and answers the id of the job that runs it — see
+   * `YouTrackImportRun`. It never throws for a single failing issue: the job
+   * records what each issue produced, and a partial failure is read back from
+   * the queue rather than raised here.
+   */
+  runYouTrackImport(
+    options: YouTrackImportOptions,
+    scope?: YouTrackScope,
+  ): Promise<YouTrackImportRun>;
+
+  // background jobs (`/api/v1/sync/jobs`, story GIT-US-0078)
+  /**
+   * One page of the queue plus the whole queue's counts. The list is the source
+   * of truth: the `sync.job.*` stream is a live hint that a client may miss
+   * frames from, so a reconnect reconciles from here.
+   */
+  /**
+   * The synchronization state of the selected knowledge-base pages. Without
+   * `remote` no request leaves the process: the answer comes from each page's
+   * own `external` entry and the content it would publish, which is what makes
+   * a whole tree affordable to ask about.
+   */
+  kbSyncStatus(selector?: KbSyncSelector): Promise<KbSyncStatusResult>;
+  /**
+   * Queues a publish of the selected pages. It never blocks on the network and
+   * it never publishes the `## Feedback` block, which stays in the repository
+   * (ADR-030).
+   */
+  publishKbPage(selector: KbSyncSelector): Promise<KbSyncJobResult>;
+  /** Queues a pull of the selected pages from their articles. */
+  pullKbPage(selector: KbSyncSelector): Promise<KbSyncJobResult>;
+  /**
+   * Queues a push of one comment, or of every comment of an item that carries
+   * no YouTrack reference yet. The answer says what was *queued*: the comment's
+   * `external` entry is what says it arrived.
+   */
+  pushCommentToYoutrack(input: CommentPushInput): Promise<CommentPushResult>;
+
+  listSyncJobs(filter?: SyncJobFilter): Promise<SyncJobPage>;
+  /** One job, or `sync_job_not_found` — which a pruned job also answers. */
+  getSyncJob(id: string): Promise<SyncJob>;
+  /**
+   * Re-queues a failed or cancelled job; any other state is
+   * `sync_job_not_retryable`. A failed job keeps its id; a cancelled one cannot
+   * (the state machine has no edge out of `cancelled`) and comes back as a new
+   * job, so the answer's `id` is the one to follow.
+   */
+  retrySyncJob(id: string): Promise<SyncJob>;
+  /** Withdraws a queued or running job; any other state is `sync_job_not_retryable`. */
+  cancelSyncJob(id: string): Promise<SyncJob>;
   /**
    * Commits now. With no `paths` it flushes what commit-on-save has batched,
    * which is the "Commit N changes" action of the sync panel.
@@ -1193,6 +1877,39 @@ export interface DataProvider {
 }
 
 /** How a retro listing is narrowed; the filters are ANDed. */
+/** A draft filed straight into the triage queue (ADR-033). */
+export type InboxDraft = ItemDraft & {
+  /** Free text: `web`, `mcp`, `youtrack`, the name of a form. */
+  source?: string;
+  /** When the submission arrived, which is not when the file was written. */
+  received?: string;
+};
+
+/**
+ * What closing a sprint decides.
+ *
+ * `dryRun` computes the whole report and writes nothing, not even a write set:
+ * it is what the confirmation dialog renders, so that nothing is committed
+ * before a person has seen what would move where.
+ */
+export type SprintCloseInput = {
+  /** One explicit decision per unfinished item; it wins over `transfer`. */
+  carry?: SprintCarry[];
+  /** One destination for every unfinished reference. */
+  transfer?: SprintTransfer;
+  rev?: string;
+  dryRun?: boolean;
+};
+
+/** What a standalone transfer moves, and where. `mode` defaults to `next`. */
+export type SprintTransferInput = {
+  mode?: SprintTransferMode;
+  target?: string;
+  carry?: SprintCarry[];
+  rev?: string;
+  dryRun?: boolean;
+};
+
 export type RetroFilter = { sprint?: string; board?: string; state?: RetroState };
 
 /** A retro listing: the retros and every action they left open. */
@@ -1301,4 +2018,6 @@ export const readOnlyCapabilities: Capabilities = {
   mcp: false,
   openInEditor: false,
   maxBatchWrite: 0,
+  youtrackSupported: false,
+  youtrack: false,
 };

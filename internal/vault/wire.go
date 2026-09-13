@@ -246,6 +246,9 @@ type itemDraftParams struct {
 	Links     []core.Link    `json:"links,omitempty"`
 	Custom    map[string]any `json:"custom,omitempty"`
 	Body      string         `json:"body,omitempty"`
+	// Inbox files the new item straight into the project's triage queue instead
+	// of the ordinary backlog. Absent, nothing about item.create changes.
+	Inbox *inboxDraftParams `json:"inbox,omitempty"`
 }
 
 // draft turns the wire form into the core input.

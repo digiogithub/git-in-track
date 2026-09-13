@@ -1,0 +1,26 @@
+{
+  "id": "2-345",
+  "idReadable": "ACME-42",
+  "summary": "Login fails on Safari",
+  "description": "Steps to reproduce...\n\n- [ ] confirm",
+  "created": 1767225600000,
+  "updated": 1767312000000,
+  "resolved": null,
+  "project": { "id": "0-1", "name": "Acme Platform", "shortName": "ACME" },
+  "reporter": { "id": "1-1", "login": "jose", "fullName": "Jose F. Rives", "email": "jose@example.com" },
+  "customFields": [
+    { "id": "110-1", "name": "Type", "$type": "SingleEnumIssueCustomField", "value": { "id": "70-1", "name": "Bug" } },
+    { "id": "110-4", "name": "Assignee", "$type": "SingleUserIssueCustomField", "value": { "id": "1-7", "login": "ana", "fullName": "Ana Ruiz" } },
+    { "id": "110-5", "name": "Estimation", "$type": "PeriodIssueCustomField", "value": { "id": "0", "presentation": "3d", "minutes": 1440 } },
+    { "id": "110-6", "name": "Sprints", "$type": "MultiVersionIssueCustomField", "value": [ { "id": "112-9", "name": "Sprint 12" }, { "id": "112-10", "name": "Sprint 13" } ] },
+    { "id": "110-7", "name": "Due Date", "$type": "DateIssueCustomField", "value": 1768435200000 },
+    { "id": "110-8", "name": "Notes", "$type": "SimpleIssueCustomField", "value": null }
+  ],
+  "links": [
+    { "id": "97-1i", "direction": "INWARD", "linkType": { "id": "97-1", "name": "Subtask", "sourceToTarget": "parent for", "targetToSource": "subtask of", "directed": true, "aggregation": true }, "issues": [ { "id": "2-300", "idReadable": "ACME-30", "summary": "Auth epic" } ] },
+    { "id": "97-1s", "direction": "OUTWARD", "linkType": { "id": "97-1", "name": "Subtask", "sourceToTarget": "parent for", "targetToSource": "subtask of", "directed": true, "aggregation": true }, "issues": [] },
+    { "id": "97-2b", "direction": "BOTH", "linkType": { "id": "97-2", "name": "Relates", "sourceToTarget": "relates to", "targetToSource": "relates to", "directed": false, "aggregation": false }, "issues": [ { "id": "2-350", "idReadable": "ACME-47", "summary": "Safari CSP header" } ] }
+  ],
+  "tags": [ { "id": "6-1", "name": "regression" } ],
+  "$type": "Issue"
+}

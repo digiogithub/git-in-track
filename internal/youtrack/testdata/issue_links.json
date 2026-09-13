@@ -1,0 +1,6 @@
+[
+  { "id": "97-1s", "direction": "OUTWARD", "linkType": { "id": "97-1", "name": "Subtask", "sourceToTarget": "parent for", "targetToSource": "subtask of", "directed": true, "aggregation": true }, "issues": [ { "id": "2-8", "idReadable": "ACME-8", "summary": "Child" } ] },
+  { "id": "97-1i", "direction": "INWARD", "linkType": { "id": "97-1", "name": "Subtask", "sourceToTarget": "parent for", "targetToSource": "subtask of", "directed": true, "aggregation": true }, "issues": [ { "id": "2-1", "idReadable": "ACME-1", "summary": "Parent epic" } ] },
+  { "id": "97-2b", "direction": "BOTH", "linkType": { "id": "97-2", "name": "Relates", "sourceToTarget": "relates to", "targetToSource": "relates to", "directed": false, "aggregation": false }, "issues": [] },
+  { "id": "97-3s", "direction": "OUTWARD", "linkType": { "id": "97-3", "name": "Duplicate", "sourceToTarget": "duplicates", "targetToSource": "is duplicated by", "directed": true, "aggregation": false }, "issues": [] }
+]

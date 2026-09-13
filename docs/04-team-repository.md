@@ -1152,9 +1152,17 @@ bb-dc   https://git.acme.example/projects/ACME/repos/legacy/browse/docs/.pmngr/s
 **Status: implemented (GIT-US-0018).** `internal/core/sprint.go` parses, validates, allocates and
 emits a sprint file; `internal/core/sprintview.go` renders one — the header, the planning view and
 the closing report. `internal/vault/sprint.go` answers `sprint.list`, `sprint.get`,
-`sprint.create`, `sprint.update`, `sprint.start` and `sprint.close` for a workspace, and
-`internal/server/sprints.go` serves them over HTTP ([doc 07 §5.5](./07-cli-and-api.md)).
+`sprint.create`, `sprint.update`, `sprint.start`, `sprint.close` and `sprint.transfer` for a
+workspace, and `internal/server/sprints.go` serves them over HTTP ([doc 07 §5.5](./07-cli-and-api.md)).
 Burndown and cumulative flow are [§12](#12-metrics-burndown-cumulative-flow-and-flow-times) (GIT-US-0028, done).
+Optional dates, the derived status and the `snapshot` block landed in GIT-US-0075, GIT-US-0080 and
+GIT-US-0092 ([ADR-034](./adr/ADR-034-sprint-status-is-derived-from-dates.md)) and are wired end to
+end: `sprint.create` and `sprint.update` accept and park a dateless sprint, every sprint payload
+carries the derived status, `sprint.close` freezes the `snapshot` block once, and a closed sprint's
+metrics are read back from it. `sprint.transfer` moves unfinished work without closing anything
+(GIT-US-0085). Existing sprint files are unaffected and gain a snapshot only when they are next
+closed. The CLI is [doc 07 §4.16](./07-cli-and-api.md), the REST surface doc 07 §5.5, and the MCP
+tools `close_sprint` and `transfer_sprint_items` [doc 08 §4.14–§4.15](./08-mcp-server.md).
 
 ### 8.1 Identity
 
@@ -1179,9 +1187,9 @@ maximum number, ignore any counter, and take the next. Collisions are far rarer 
 | `type` | `sprint` | yes | |
 | `title` | string | no | Defaults to `Sprint <n>`. |
 | `board` | board id | yes | The scrum board this sprint belongs to. |
-| `state` | `planned` \| `active` \| `closed` | yes | Exactly one sprint per board SHOULD be `active`. |
-| `start` | date | yes | Inclusive, in the team timezone. |
-| `end` | date | yes | Inclusive. |
+| `state` | `planned` \| `active` \| `closed` | yes | The record of the two explicit acts. Exactly one sprint per board SHOULD be `active`. It is not what a reader is shown — see the derived status below. |
+| `start` | date | no | Inclusive, in the team timezone. Written together with `end` or not at all (R-SPR-9). |
+| `end` | date | no | Inclusive. A sprint with neither date is a **draft**. |
 | `goal` | string | no | One sentence, shown on the board header. |
 | `items` | list of refs | yes | `<KEY>/<ITEM-ID>`; the sprint scope. |
 | `committed` | list of refs | no | Snapshot of `items` taken when the sprint started; the basis for "committed vs. added mid-sprint". |
@@ -1189,7 +1197,30 @@ maximum number, ignore any counter, and take the next. Collisions are far rarer 
 | `velocity_target` | number | no | Points. |
 | `participants` | list of handles | no | Defaults to all active members. |
 | `retro` | retro ID | no | Filled in when the retro is created. |
+| `snapshot` | block | no | The progress frozen into the file when the sprint was closed, and the one derived number this product stores. Never present on an open sprint. Its fields are below. |
 | `created`, `updated`, `author` | as usual | | |
+
+**What a reader is shown is derived from the dates, not from `state`.** A stored status goes stale
+at midnight: a sprint whose `end` was yesterday still says `active` until somebody remembers to
+write the file, and the board, the listing and the header each had to decide for themselves
+whether to believe the field or the calendar. There is no second copy to disagree with any more
+([ADR-034](./adr/ADR-034-sprint-status-is-derived-from-dates.md)):
+
+| Derived status | When |
+|---|---|
+| `completed` | `state: closed`, whatever the dates say; or `end` is before today |
+| `draft` | the sprint carries no dates |
+| `upcoming` | `start` is after today |
+| `current` | `start <= today <= end`, both ends inclusive |
+
+An explicit close is a fact about the sprint and a date cannot argue with it, so `closed` always
+wins: a closed sprint with no dates at all is `completed`, not a draft. "Today" is a day in the
+**team timezone** (§3), which is the price of the derivation — two clients that disagree about the
+timezone disagree about a sprint's status for a few hours around midnight. `internal/core`
+compiles to WebAssembly, reads no clock and resolves no timezone database, so the caller localises
+the instant and passes it in: `(*Sprint).DerivedStatus(now)` is pure. The value travels as
+`status` on the sprint summary of every REST and MCP payload and is never written back —
+`SerializeSprint` has no `status` key.
 
 - **R-SPR-1** `items` is one ref per line for diff friendliness. Adding an item mid-sprint appends to
   `items` and leaves `committed` untouched.
@@ -1208,7 +1239,10 @@ maximum number, ignore any counter, and take the next. Collisions are far rarer 
 - **R-SPR-6** A create or a date change that would make two sprints of one board share a day is
   refused with `sprint_overlap` and a sentence naming the other sprint and its dates. The same
   condition in a file that is already on disk stays the warning `W-SPRINT-OVERLAP`: validation
-  describes, a write decides.
+  describes, a write decides. A **draft is exempt** — a sprint with no dates covers no day — and
+  the refusal names that escape hatch: *move the dates, or remove them to keep this sprint a
+  draft* (`core.SprintOverlapMessage`). That exemption is what lets the rule stay strict without
+  blocking planning.
 - **R-SPR-7** `committed` is what the sprint promised at its start. A sprint that has not started
   has no commitment, so nothing counts as an addition; once it has, every reference outside
   `committed` is reported as added mid-sprint.
@@ -1217,6 +1251,70 @@ maximum number, ignore any counter, and take the next. Collisions are far rarer 
   nobody cloned (`repo_not_cloned`, R-REM-1). Carrying one into another sprint writes only the
   target sprint file. A decision that cannot be applied is reported on its own line of the closing
   report; the rest of the closing still goes through.
+- **R-SPR-9** `start` and `end` are given **together or not at all**. Exactly one of them, or an
+  `end` before the `start`, is still `E-SPRINT-DATES`. A sprint with neither is a **draft**: a
+  valid, listable sprint that has a goal and a scope and no place on the calendar yet, so a team
+  can plan five sprints ahead and give them dates when the dates are known instead of inventing
+  ranges that do not collide.
+- **R-SPR-10** A listing orders sprints by their derived status — `current`, `upcoming`, `draft`,
+  `completed` — ties broken by start date and then by id, and may filter on it
+  (`core.SortSprintsForListing`, `core.FilterSprintsByStatus`). The order is a product judgement
+  rather than a derivation: what is running comes first, then what is coming, then what is being
+  planned, then what is over.
+- **R-SPR-11** The `snapshot` block is written **exactly once**, by the close, and never for an
+  open sprint. Closing a sprint that already carries one leaves it alone; it is never recomputed,
+  never repaired and never refreshed on a later read. It is a record of a moment, not a cache
+  (§12.1, [ADR-034](./adr/ADR-034-sprint-status-is-derived-from-dates.md)).
+
+**The `snapshot` block.** Closing a sprint is the one moment where ADR-017's refusal to store a
+derived series stops holding: afterwards the items leave the scope — carried into the next sprint,
+sent back to the backlog, or simply worked on — their files are rewritten, and the sprint's
+numbers stop being recomputable from the current state at all. The block is the frozen answer, and
+it sits between `retro` and `created` in the key order.
+
+| Key | Type | Notes |
+|---|---|---|
+| `version` | int | Schema version of the block; this binary writes `1`. A block with a higher version parses without loss and is emitted back unchanged. |
+| `closed_at` | timestamp | The instant the close froze it. |
+| `totals` | block | `items`, `resolved`, `done`, `unresolved`, `points`, `committed_points`, `done_points`. `resolved` is how much of the scope a clone or an index snapshot could grade; an unresolved reference is reported and never counted as done and never as points. |
+| `by_status` | map | Count per status id, keys sorted. |
+| `by_assignee`, `by_label` | map | One row per name — `{total, done, points}` — keys sorted, each row a flow mapping so the distribution reads as a table. A reference nobody could grade appears in no distribution: a snapshot never turns something it could not read into work. |
+| `burndown` | list | One flow mapping per **observed** sprint day: `date`, `remaining`, `remaining_points`, `ideal`, `completed`, `unknown`. Future days carry no measurement and are not frozen, and the series is capped at one point per sprint day, so the growth is bounded — but a closed sprint file is no longer a handful of lines. |
+| `provenance` | block | The provenance of the history the numbers were computed from (§12.2): `source`, `approximate`, `from`, `commits`, `truncated`, `items`, `covered`, `note`. Only a full, untruncated reconstruction from git is exact; everything else is written with `approximate: true` and stays that way for as long as the block exists. |
+
+Keys inside the block that this version does not model are preserved and emitted sorted after
+`provenance`, the same rule the top-level front matter follows. The emitted shape is exactly:
+
+```yaml
+snapshot:
+  version: 1
+  closed_at: 2026-03-06T23:00:00Z
+  totals:
+    items: 2
+    resolved: 2
+    done: 1
+    unresolved: 0
+    points: 8
+    committed_points: 8
+    done_points: 3
+  by_status:
+    done: 1
+    todo: 1
+  by_assignee:
+    alice: { total: 2, done: 1, points: 8 }
+  by_label:
+    core: { total: 1, done: 1, points: 3 }
+  burndown:
+    - { date: 2026-03-02, remaining: 2, remaining_points: 8, ideal: 8, completed: 0, unknown: 0 }
+  provenance:
+    source: git
+    approximate: false
+    from: 2026-02-25
+    commits: 12
+    items: 2
+    covered: 2
+    note: Reconstructed from the git history of the item files.
+```
 
 ### 8.3 Complete example
 
@@ -1272,11 +1370,11 @@ including session revocation. Anything not on that path is out of scope.
 | Code | Sev | Condition |
 |---|---|---|
 | `E-SPRINT-ID` | E | `id` missing or ≠ filename stem, or wrong team key. |
-| `E-SPRINT-DATES` | E | `start` or `end` missing, or `end` < `start`. |
+| `E-SPRINT-DATES` | E | Exactly one of `start` and `end` present, or `end` < `start`. A sprint with **neither** is a draft and is legal (R-SPR-9). |
 | `E-SPRINT-BOARD` | E | `board` names a board that does not exist. |
 | `E-SPRINT-STATE` | E | `state` outside the enum. |
 | `W-SPRINT-TWO-ACTIVE` | W | More than one `active` sprint on the same board. |
-| `W-SPRINT-OVERLAP` | W | Date ranges of two sprints on the same board overlap. |
+| `W-SPRINT-OVERLAP` | W | Date ranges of two sprints on the same board overlap. A draft raises it against nothing, however many dated sprints surround it. |
 | `W-SPRINT-REF-DEAD` | W | A ref does not resolve in a cloned project. |
 | `W-SPRINT-REF-UNKNOWN-PROJECT` | W | Ref names an undeclared project key. |
 
@@ -1666,6 +1764,18 @@ draws it at `/metrics/<SPRINT-ID>` ([doc 05 §12](./05-web-app.md)).
   source of truth (`gitops.HistoryCache`).
 - **R-MET-5** A history walk is bounded (`gitops.DefaultHistoryLimit`, 2 000 commits per path). A
   walk that hits the bound is reported as `truncated` and the days it cannot cover are unknown.
+- **R-MET-12** A **closed** sprint is the one exception, and it is narrow. When the sprint file
+  carries a `snapshot` block (§8.2), that block **wins**: `sprint.metrics` and the burndown
+  endpoint return the frozen numbers and walk no history at all, and only a sprint without one is
+  reconstructed. This is not the stored time series R-MET-1 rejects. That one would have been
+  maintained — appended to as work happened, merged when two people wrote it, repaired when it
+  drifted; this one is written once at the moment the truth is about to become unreachable and is
+  thereafter immutable, which makes it closer to a retro than to a cache. The price is real: a
+  snapshot frozen in browser-only mode, or frozen before a rebase rewrote the history, will not
+  match what a git walk says today, and it cannot be corrected — the provenance explains it, the
+  reader is told the numbers were frozen at the close (`core.SnapshotProvenance` reports `source:
+  snapshot`), and the only remedy for a close run against a half-synced workspace is to say so in
+  the retro.
 
 ### 12.2 Provenance — every metric says where it came from
 
@@ -1677,6 +1787,7 @@ draws it at `/metrics/<SPRINT-ID>` ([doc 05 §12](./05-web-app.md)).
 | `git` | Reconstructed from every revision of every covered item file. | `false`, or `true` when the walk was truncated |
 | `updated` | Approximated from each item's `updated` stamp: the item is assumed to have held its current status since it was last written, and its state before that is unknown. | `true` |
 | `none` | No history at all; only the current state is known. | `true` |
+| `snapshot` | Read from the closed sprint's frozen block (R-MET-12) instead of reconstructed now. It is not a fourth way of reading history: it is the record of a reading that already happened, and it carries the provenance of the history it froze inside its `note`. | whatever the frozen reading was |
 
 - **R-MET-7** A day the history cannot account for is **unknown**. It is counted in
   `BurndownPoint.unknown` and drawn as the hatched `unknown` band of the cumulative flow diagram. It

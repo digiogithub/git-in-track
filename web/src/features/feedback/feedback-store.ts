@@ -113,8 +113,13 @@ function subscribe(listener: Listener): () => void {
   // Another tab of the same app editing the same draft.
   const onStorage = (event: StorageEvent) => {
     if (event.key !== null && !event.key.startsWith(FEEDBACK_STORAGE_PREFIX)) return;
-    if (event.key === null) cache.clear();
-    else cache.delete(event.key);
+    if (event.key === null) {
+      cache.clear();
+      preferences.clear();
+    } else {
+      cache.delete(event.key);
+      preferences.delete(event.key);
+    }
     listener();
   };
   globalThis.addEventListener?.('storage', onStorage);
@@ -198,4 +203,65 @@ export function useFeedbackDraft(target: FeedbackTarget): FeedbackDraftApi {
 /** Test seam: forgets the parsed copies so the next read hits storage again. */
 export function resetFeedbackCache(): void {
   cache.clear();
+  preferences.clear();
+}
+
+// ------------------------------------------------- per-project preferences
+
+/**
+ * "Send the note to YouTrack after saving", remembered per project.
+ *
+ * It is a preference, not a draft: it outlives the notes it was set on, and it
+ * belongs to the project rather than to the item, because whether feedback
+ * belongs on the issue tracker is a decision a team takes once. It lives beside
+ * the drafts in `localStorage` for the same reason they do — it is personal, it
+ * is not repository content, and nobody else should inherit it.
+ */
+export const FEEDBACK_PUSH_PREFIX = `${FEEDBACK_STORAGE_PREFIX}push-youtrack:`;
+
+const preferences = new Map<string, boolean>();
+
+export function feedbackPushKey(project: string): string {
+  return `${FEEDBACK_PUSH_PREFIX}${project}`;
+}
+
+function readPreference(key: string): boolean {
+  const cached = preferences.get(key);
+  if (cached !== undefined) return cached;
+  const value = readStorage(key) === 'true';
+  preferences.set(key, value);
+  return value;
+}
+
+function writePreference(key: string, value: boolean): void {
+  preferences.set(key, value);
+  try {
+    if (value) globalThis.localStorage?.setItem(key, 'true');
+    else globalThis.localStorage?.removeItem(key);
+  } catch {
+    // The in-memory copy still serves this tab.
+  }
+  for (const listener of [...listeners]) listener();
+}
+
+export type FeedbackPushPreference = {
+  enabled: boolean;
+  setEnabled: (value: boolean) => void;
+};
+
+/** The "send to YouTrack after saving" preference of one project. */
+export function useFeedbackPushPreference(project: string): FeedbackPushPreference {
+  const key = feedbackPushKey(project);
+  const enabled = useSyncExternalStore(
+    subscribe,
+    () => readPreference(key),
+    () => false,
+  );
+  const setEnabled = useCallback(
+    (value: boolean) => {
+      writePreference(key, value);
+    },
+    [key],
+  );
+  return useMemo(() => ({ enabled, setEnabled }), [enabled, setEnabled]);
 }

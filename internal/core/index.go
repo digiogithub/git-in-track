@@ -322,7 +322,11 @@ type Index struct {
 	fileDiags      map[string][]Diagnostic
 
 	// Derived state, rebuilt after every pass.
-	byID           map[ItemID]*Item
+	byID map[ItemID]*Item
+	// byExternal resolves an (external system, external id) pair to the item
+	// that claims it. It is what makes an importer's idempotence check O(1)
+	// instead of a scan of the corpus (ADR-031).
+	byExternal     map[ExternalRef]ItemID
 	commentsByItem map[ItemID][]*Comment
 	children       map[ItemID][]ItemID
 	counts         map[ItemType]int
@@ -359,6 +363,7 @@ func (ix *Index) reset() {
 	ix.files = make(map[string]FileMeta)
 	ix.fileDiags = make(map[string][]Diagnostic)
 	ix.byID = make(map[ItemID]*Item)
+	ix.byExternal = make(map[ExternalRef]ItemID)
 	ix.commentsByItem = make(map[ItemID][]*Comment)
 	ix.children = make(map[ItemID][]ItemID)
 	ix.counts = make(map[ItemType]int)
@@ -1086,6 +1091,7 @@ func (ix *Index) commentSnapshot() map[ItemID]string {
 // requirement.
 func (ix *Index) rebuild() {
 	ix.byID = make(map[ItemID]*Item, len(ix.itemsByPath))
+	ix.byExternal = make(map[ExternalRef]ItemID, len(ix.itemsByPath))
 	ix.commentsByItem = make(map[ItemID][]*Comment, len(ix.commentsByPath))
 	ix.children = make(map[ItemID][]ItemID)
 	ix.counts = make(map[ItemType]int)
@@ -1108,6 +1114,7 @@ func (ix *Index) rebuild() {
 			continue
 		}
 		ix.byID[it.ID] = it
+		ix.indexExternal(it)
 		ix.counts[it.Type]++
 		key := ix.projectOf(it)
 		if _, _, n, err := ParseItemID(string(it.ID)); err == nil {
@@ -1266,6 +1273,15 @@ func (ix *Index) checkReferentialIntegrity() {
 		for _, l := range it.Links {
 			dangling(it, "links."+string(l.Kind), l.Target)
 		}
+		if it.Inbox != nil && it.Inbox.DuplicateOf != "" {
+			if _, ok := ix.byID[ItemID(bareTarget(string(it.Inbox.DuplicateOf)))]; !ok {
+				ix.derivedDiags = append(ix.derivedDiags, Diagnostic{
+					Code: CodeWarnInboxDupDead, Severity: SeverityWarning,
+					Path: it.Path, Field: "inbox.duplicate_of",
+					Message: fmt.Sprintf("inbox.duplicate_of points at unknown item %s", it.Inbox.DuplicateOf),
+				})
+			}
+		}
 	}
 	for _, item := range sortedCommentKeys(ix.commentsByItem) {
 		if _, ok := ix.byID[item]; ok {
@@ -1343,6 +1359,110 @@ func (ix *Index) updateCounts() {
 	ix.stats.ByType = byType
 	ix.stats.Errors = errCount
 	ix.stats.Warnings = warnCount
+}
+
+// indexExternal records every (system, id) pair an item claims. The first item
+// claiming a pair wins, in path order, exactly as a duplicate id does: the
+// alternative is a lookup whose answer depends on map iteration order. The
+// caller holds the write lock.
+func (ix *Index) indexExternal(it *Item) {
+	for _, e := range it.External {
+		ref := e.Ref()
+		if ref.System == "" || ref.ID == "" {
+			continue
+		}
+		if prev, taken := ix.byExternal[ref]; taken {
+			if prev == it.ID {
+				continue
+			}
+			ix.derivedDiags = append(ix.derivedDiags, Diagnostic{
+				Code: CodeWarnExternalDup, Severity: SeverityWarning, Path: it.Path, Field: "external",
+				Message: fmt.Sprintf("external reference %s is also claimed by %s", e, prev),
+			})
+			continue
+		}
+		ix.byExternal[ref] = it.ID
+	}
+}
+
+// ItemByExternal resolves an external reference to the item that claims it. It
+// is the idempotence check of every importer: look the pair up, update what you
+// find, create only when there is nothing.
+//
+// The lookup is a single map read, so importing N issues costs N lookups and not
+// N scans of the corpus.
+func (ix *Index) ItemByExternal(system, id string) (Item, bool) {
+	ix.mu.RLock()
+	defer ix.mu.RUnlock()
+	return ix.itemByExternalRef(NewExternalRef(system, id))
+}
+
+// ItemIDByExternal resolves an external reference to an item id without copying
+// the item. It is the cheap form for an importer that only needs to know whether
+// the pair is already taken.
+func (ix *Index) ItemIDByExternal(system, id string) (ItemID, bool) {
+	ix.mu.RLock()
+	defer ix.mu.RUnlock()
+	got, ok := ix.byExternal[NewExternalRef(system, id)]
+	return got, ok
+}
+
+// itemByExternalRef is the locked-caller form of ItemByExternal.
+func (ix *Index) itemByExternalRef(ref ExternalRef) (Item, bool) {
+	if ref.System == "" || ref.ID == "" {
+		return Item{}, false
+	}
+	id, ok := ix.byExternal[ref]
+	if !ok {
+		return Item{}, false
+	}
+	it, ok := ix.byID[id]
+	if !ok {
+		return Item{}, false
+	}
+	return cloneItem(it), true
+}
+
+// ExternalRefs returns every external reference the index knows, mapped to the
+// item that claims it. The caller gets a copy and may keep it.
+func (ix *Index) ExternalRefs() map[ExternalRef]ItemID {
+	ix.mu.RLock()
+	defer ix.mu.RUnlock()
+	out := make(map[ExternalRef]ItemID, len(ix.byExternal))
+	for ref, id := range ix.byExternal {
+		out[ref] = id
+	}
+	return out
+}
+
+// ItemCategory returns the coarse status category of an item, resolved through
+// the workflow of the project that owns it. It is the exported form of the
+// category lookup every planning surface needs in order to skip the inbox.
+func (ix *Index) ItemCategory(id ItemID) StatusCategory {
+	ix.mu.RLock()
+	defer ix.mu.RUnlock()
+	it, ok := ix.byID[id]
+	if !ok {
+		return ""
+	}
+	return ix.categoryOf(it)
+}
+
+// IsTriage reports whether an item sits in the inbox: its status resolves to the
+// reserved triage category. An item of a project that declares no triage status
+// is never in triage, which is how a project without an inbox behaves exactly as
+// it did before the inbox existed.
+func (ix *Index) IsTriage(id ItemID) bool {
+	return ix.ItemCategory(id) == CategoryTriage
+}
+
+// Inbox returns the items in the triage category matching a filter, whatever the
+// filter's own Inbox scope says. It is the dedicated inbox query: a surface
+// rendering the triage queue asks for this instead of remembering to flip a
+// scope it would otherwise get wrong.
+func (ix *Index) Inbox(ctx context.Context, f Filter) (Page[Item], error) {
+	f.Inbox = InboxOnly
+	return ix.Items(ctx, f)
 }
 
 // projectOf returns the project key an item belongs to: the key embedded in its

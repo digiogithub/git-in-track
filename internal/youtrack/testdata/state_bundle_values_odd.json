@@ -1,0 +1,6 @@
+[
+  { "id": "72-0", "name": "Open", "ordinal": 0, "isResolved": false, "$type": "StateBundleElement" },
+  { "id": "72-1", "name": "Weird", "ordinal": "second", "isResolved": "no", "$type": "StateBundleElement" },
+  "Fixed",
+  { "id": "72-3", "name": "Done", "ordinal": 3, "isResolved": true, "$type": "StateBundleElement" }
+]

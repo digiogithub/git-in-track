@@ -1,0 +1,41 @@
+{
+  "drafts": [
+    {
+      "draft": {
+        "author": "ana",
+        "authorName": "Ana Ruiz",
+        "authorEmail": "ana@example.com",
+        "body": "Reproduced on 17.4. See ![trace](.pmngr/attachments/ACME-US-0042/trace.png) for the stack.",
+        "kind": "comment",
+        "created": "2026-01-01T01:13:20Z"
+      },
+      "external": {
+        "system": "youtrack",
+        "id": "4-88",
+        "url": "https://yt.example.com/youtrack/issue/ACME-42#focus=Comments-4-88",
+        "syncedAt": null
+      },
+      "updated": null
+    },
+    {
+      "draft": {
+        "author": "jose",
+        "authorName": "Jose F. Rives",
+        "authorEmail": "jose@digio.es",
+        "body": "Fixed in `1.5.0`.",
+        "kind": "comment",
+        "created": "2026-01-02T05:00:00Z"
+      },
+      "external": {
+        "system": "youtrack",
+        "id": "4-90",
+        "url": "https://yt.example.com/youtrack/issue/ACME-42#focus=Comments-4-90",
+        "syncedAt": null
+      },
+      "updated": "2026-01-02T05:16:40Z"
+    }
+  ],
+  "warnings": [
+    "comments: 4-89: the comment has an empty body and was skipped, because a git-in-track comment cannot be empty"
+  ]
+}

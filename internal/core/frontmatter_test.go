@@ -329,6 +329,18 @@ func TestSerializeItemGolden(t *testing.T) {
 			path:   "epics/ACME-EP-0001-single-sign-on.md",
 			golden: "minimal-item.md",
 		},
+		{
+			name:   "external references are normalised and deduplicated",
+			source: "external-story.md",
+			path:   "stories/ACME-US-0077-mirror-the-tracker.md",
+			golden: "external-story.md",
+		},
+		{
+			name:   "inbox block keeps its key order and its unknown keys",
+			source: "inbox-item.md",
+			path:   "tasks/ACME-T-0301-someone-reported-a-broken-export.md",
+			golden: "inbox-item.md",
+		},
 	}
 
 	for _, tt := range tests {
