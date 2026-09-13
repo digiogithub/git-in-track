@@ -2,7 +2,7 @@
 id: GIT-US-0051
 type: story
 title: "Inbox data model: reserved triage category and the inbox front-matter block"
-status: backlog
+status: done
 priority: high
 parent: GIT-EP-0016
 milestone: GIT-M-0012
@@ -10,7 +10,9 @@ author: mcp
 labels: [core, docs]
 estimate: 8
 created: 2026-09-13T13:11:52Z
-updated: 2026-09-13T13:11:52Z
+updated: 2026-09-13T14:11:46Z
+started: 2026-09-13T14:11:39Z
+closed: 2026-09-13T14:11:46Z
 ---
 
 ## Description
@@ -23,14 +25,14 @@ The index and the query layer then have to honour the exclusion. `core.Filter` (
 
 ## Acceptance Criteria
 
-- [ ] `core.StatusCategory` accepts `triage`; `Valid()`, the workflow decoder and the project diagnostics all know it, and no existing category behaviour changes.
-- [ ] `core.Item` carries an `Inbox *ItemInbox` block with `status`, `snoozed_until`, `duplicate_of`, `source` and `received`; `ParseItem` and `SerializeItem` round-trip it byte-for-byte and unknown keys inside the block are still preserved.
-- [ ] An item whose status maps to category `triage` is excluded by default from `Index.Query`, board views, sprint views and sprint metrics.
-- [ ] `core.Filter` gains `Inbox`, `InboxStatuses` and `SnoozeAsOf`; a `snoozed` item with `snoozed_until <= SnoozeAsOf` matches a `pending` query.
-- [ ] Validation: `duplicate_of` must resolve to an existing item (warning when it does not), `snoozed_until` is required for `status: snoozed` and refused otherwise, and an `inbox` block on a non-triage item is a warning.
-- [ ] `docs/03-data-model.md` documents the block, the canonical key order (§3.2), the `triage` category (§6) and the JSON Schema (§18).
-- [ ] `docs/adr/ADR-033-inbox-is-a-reserved-triage-status-category.md` records why the inbox is a status category plus a front-matter block rather than a new item type or a separate folder, with its negative consequences.
-- [ ] `go test -race ./internal/core/...` covers parse, serialize, exclusion and snooze-expiry, and `make wasm` still builds.
+- [x] `core.StatusCategory` accepts `triage`; `Valid()`, the workflow decoder and the project diagnostics all know it, and no existing category behaviour changes.
+- [x] `core.Item` carries an `Inbox *ItemInbox` block with `status`, `snoozed_until`, `duplicate_of`, `source` and `received`; `ParseItem` and `SerializeItem` round-trip it byte-for-byte and unknown keys inside the block are still preserved.
+- [x] An item whose status maps to category `triage` is excluded by default from `Index.Query`, board views, sprint views and sprint metrics.
+- [x] `core.Filter` gains `Inbox`, `InboxStatuses` and `SnoozeAsOf`; a `snoozed` item with `snoozed_until <= SnoozeAsOf` matches a `pending` query.
+- [x] Validation: `duplicate_of` must resolve to an existing item (warning when it does not), `snoozed_until` is required for `status: snoozed` and refused otherwise, and an `inbox` block on a non-triage item is a warning.
+- [x] `docs/03-data-model.md` documents the block, the canonical key order (§3.2), the `triage` category (§6) and the JSON Schema (§18).
+- [x] `docs/adr/ADR-033-inbox-is-a-reserved-triage-status-category.md` records why the inbox is a status category plus a front-matter block rather than a new item type or a separate folder, with its negative consequences.
+- [x] `go test -race ./internal/core/...` covers parse, serialize, exclusion and snooze-expiry, and `make wasm` still builds.
 
 ## Notes
 

@@ -2,7 +2,7 @@
 id: GIT-US-0046
 type: story
 title: Native YouTrack REST client in internal/youtrack
-status: backlog
+status: done
 priority: high
 parent: GIT-EP-0011
 milestone: GIT-M-0011
@@ -10,7 +10,9 @@ author: mcp
 labels: [server, security, docs]
 estimate: 13
 created: 2026-09-13T13:11:10Z
-updated: 2026-09-13T13:11:10Z
+updated: 2026-09-13T14:09:56Z
+started: 2026-09-13T14:09:30Z
+closed: 2026-09-13T14:09:56Z
 ---
 
 ## Description
@@ -23,15 +25,15 @@ Behaviour that the reference implementation proved matters. Auth is `Authorizati
 
 ## Acceptance Criteria
 
-- [ ] `internal/youtrack.Client` exists with the methods above; `net/http` transport is injectable so tests use `httptest.Server`.
-- [ ] Base URLs with a context path produce correct request URLs, proved by a test pinning `https://yt.example.com/youtrack/api/users/me`.
-- [ ] A shared limiter caps outbound requests at a configurable rate, default 5 req/s, and is honoured across concurrent goroutines.
-- [ ] Retries cover 429 and 5xx and transport errors, respect `Retry-After` in seconds and HTTP-date form, and stop after `MaxRetries` (default 4); non-429 4xx fails on the first attempt.
-- [ ] Paging helpers pair `$skip` with `order by:` and stop on a short page; `$top` defaults to 100.
-- [ ] Typed errors `ErrUnauthorized` (401), `ErrForbidden` (403) and `ErrNotFound` (404) are returned and never contain the token.
-- [ ] The token never appears in any error, log line or `String()` output; a test asserts this.
-- [ ] `go test -race ./internal/youtrack/...` passes with `httptest`-backed fixtures and no live network access.
-- [ ] `make lint` passes, including `bodyclose`, `noctx` and `wrapcheck`.
+- [x] `internal/youtrack.Client` exists with the methods above; `net/http` transport is injectable so tests use `httptest.Server`.
+- [x] Base URLs with a context path produce correct request URLs, proved by a test pinning `https://yt.example.com/youtrack/api/users/me`.
+- [x] A shared limiter caps outbound requests at a configurable rate, default 5 req/s, and is honoured across concurrent goroutines.
+- [x] Retries cover 429 and 5xx and transport errors, respect `Retry-After` in seconds and HTTP-date form, and stop after `MaxRetries` (default 4); non-429 4xx fails on the first attempt.
+- [x] Paging helpers pair `$skip` with `order by:` and stop on a short page; `$top` defaults to 100.
+- [x] Typed errors `ErrUnauthorized` (401), `ErrForbidden` (403) and `ErrNotFound` (404) are returned and never contain the token.
+- [x] The token never appears in any error, log line or `String()` output; a test asserts this.
+- [x] `go test -race ./internal/youtrack/...` passes with `httptest`-backed fixtures and no live network access.
+- [x] `make lint` passes, including `bodyclose`, `noctx` and `wrapcheck`.
 
 ## Notes
 
@@ -40,3 +42,5 @@ Endpoints used (see the YouTrack endpoint cheat-sheet in the planning reports): 
 Note the comments endpoint takes no `$top` in the reference CLI and truncates silently — always send one here.
 
 Do NOT route YouTrack traffic through the CORS proxy: ADR-025 (`internal/server/cors_proxy.go`) allows only three git smart-HTTP paths and refuses private addresses by design. All YouTrack HTTP is done by the companion. Do NOT add a YouTrack SDK dependency; the standard library is enough and AGENTS.md requires justifying any new dependency.
+
+The last criterion was verified as `golangci-lint v2.13.2 run ./internal/youtrack/...` (0 issues) rather than a whole-module `make lint`, because another package was mid-edit by a parallel agent during the pass.

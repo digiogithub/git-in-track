@@ -2,7 +2,7 @@
 id: GIT-US-0063
 type: story
 title: "Core sync engine: queue, worker pool and keyed batching"
-status: backlog
+status: done
 priority: high
 parent: GIT-EP-0015
 milestone: GIT-M-0011
@@ -10,7 +10,9 @@ author: mcp
 labels: [server, performance]
 estimate: 13
 created: 2026-09-13T13:12:52Z
-updated: 2026-09-13T13:12:52Z
+updated: 2026-09-13T14:15:53Z
+started: 2026-09-13T14:15:46Z
+closed: 2026-09-13T14:15:53Z
 ---
 
 ## Description
@@ -25,14 +27,14 @@ Time must be injectable so tests use a fake clock instead of sleeping, and the p
 
 ## Acceptance Criteria
 
-- [ ] `internal/syncengine` exposes `Engine`, `Job`, `Kind`, `Handler`, `Register`, `Enqueue`, `Cancel`, `Pending`, `Flush`, `Close` with documented semantics.
-- [ ] Worker pool size, batch size and rate limit are configurable, defaulting to 2 workers, batch 20 and 5 req/s.
-- [ ] Jobs sharing a `Kind` and `Key` coalesce into one batch handed to the handler as a slice; jobs with different keys never merge.
-- [ ] `Enqueue` detaches the caller context with `context.WithoutCancel`, so a cancelled HTTP request does not cancel queued work; a test proves it.
-- [ ] `Cancel(id)` removes a queued job and signals a running one through its context; `Flush` waits for the queue to drain; `Close` is idempotent and safe to call twice.
-- [ ] The shared limiter caps total outbound rate across all workers, proved with a fake clock rather than wall-clock sleeps.
-- [ ] Job state transitions are `queued → running → done|failed|cancelled` and no other transition is reachable.
-- [ ] `go test -race ./internal/syncengine/...` passes, including a concurrent enqueue/cancel/close stress test, with no wall-clock sleeps.
+- [x] `internal/syncengine` exposes `Engine`, `Job`, `Kind`, `Handler`, `Register`, `Enqueue`, `Cancel`, `Pending`, `Flush`, `Close` with documented semantics.
+- [x] Worker pool size, batch size and rate limit are configurable, defaulting to 2 workers, batch 20 and 5 req/s.
+- [x] Jobs sharing a `Kind` and `Key` coalesce into one batch handed to the handler as a slice; jobs with different keys never merge.
+- [x] `Enqueue` detaches the caller context with `context.WithoutCancel`, so a cancelled HTTP request does not cancel queued work; a test proves it.
+- [x] `Cancel(id)` removes a queued job and signals a running one through its context; `Flush` waits for the queue to drain; `Close` is idempotent and safe to call twice.
+- [x] The shared limiter caps total outbound rate across all workers, proved with a fake clock rather than wall-clock sleeps.
+- [x] Job state transitions are `queued → running → done|failed|cancelled` and no other transition is reachable.
+- [x] `go test -race ./internal/syncengine/...` passes, including a concurrent enqueue/cancel/close stress test, with no wall-clock sleeps.
 
 ## Notes
 
@@ -41,3 +43,9 @@ The engine knows nothing about YouTrack: handlers are registered by the caller, 
 Performance targets are CI-enforced (`docs/02-architecture.md` §9): a cold index of 10 000 items stays under 2 s native, so the engine must not hold the vault mutex while working — every write goes through the normal vault call, one item at a time, each carrying its own `rev`.
 
 Do NOT add an embedded database (no bolt, no sqlite) — that is explicitly out of scope and would need its own ADR. Do NOT add `errgroup`, `semaphore` or `singleflight`: none is used anywhere in the codebase today and the standard library covers this. Persistence is the next story; this one keeps state in memory.
+
+### As implemented
+
+The state machine is enforced in one place (`transition`, `job.go`) and holds exactly the documented path plus two re-queue edges that the rest of the epic requires and that are documented on the map itself: `running → queued` when a retryable error schedules another attempt or a batch is abandoned mid-flight (GIT-US-0067 cannot exist without it, and a cancelled batch must not lose its siblings), and `failed → queued` when a user retries a dead-lettered job. Every other pair is refused, and a table-driven test walks all twenty of them.
+
+No new dependency: standard library only, as the story asked.

@@ -38,8 +38,10 @@ func TestLoadProjectConfigDogfood(t *testing.T) {
 	if !cfg.HasLabel("Core") {
 		t.Error("HasLabel must compare case-insensitively")
 	}
-	if cfg.IDAllocation.Counters[TypeStory] != 30 {
-		t.Errorf("story counter = %d, want 30", cfg.IDAllocation.Counters[TypeStory])
+	// The counter is a hint that grows with the live backlog of this repository
+	// (docs/03 section 4.1), so the test pins that it decodes, not its value.
+	if cfg.IDAllocation.Counters[TypeStory] <= 0 {
+		t.Errorf("story counter = %d, want a positive hint", cfg.IDAllocation.Counters[TypeStory])
 	}
 	if len(cfg.Workflow.Transitions[Status("todo")]) != 3 {
 		t.Errorf("transitions = %#v", cfg.Workflow.Transitions)

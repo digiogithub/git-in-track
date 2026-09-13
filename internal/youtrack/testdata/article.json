@@ -1,0 +1,14 @@
+{
+  "id": "42-7",
+  "idReadable": "ACME-A-3",
+  "summary": "Deployment handbook",
+  "content": "## Prerequisites\n\nYou need `kubectl`...\n\nSee ACME-42 for context.",
+  "ordinal": 2,
+  "created": 1760000000000,
+  "updated": 1767300000000,
+  "hasChildren": true,
+  "project": { "id": "0-1", "name": "Acme Platform", "shortName": "ACME" },
+  "parentArticle": { "id": "42-1", "idReadable": "ACME-A-1", "summary": "Operations" },
+  "reporter": { "id": "1-1", "login": "jose", "fullName": "Jose F. Rives", "email": "jose@example.com" },
+  "$type": "Article"
+}

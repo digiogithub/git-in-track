@@ -2,7 +2,7 @@
 id: GIT-T-0006
 type: task
 title: "Scaffold internal/youtrack: Client, Options, transport and typed errors"
-status: todo
+status: done
 priority: medium
 parent: GIT-US-0046
 milestone: GIT-M-0011
@@ -10,7 +10,9 @@ author: mcp
 labels: [server, security, agent-ok]
 estimate: 3
 created: 2026-09-13T13:15:09Z
-updated: 2026-09-13T13:15:09Z
+updated: 2026-09-13T14:09:05Z
+started: 2026-09-13T14:02:33Z
+closed: 2026-09-13T14:02:53Z
 ---
 
 ## Description
@@ -19,7 +21,13 @@ Create `internal/youtrack/client.go` with `Client`, `Options{BaseURL, Token, HTT
 
 ## Acceptance Criteria
 
-- [ ] A request against an `httptest.Server` mounted at a context path hits the expected absolute path.
-- [ ] 401, 403 and 404 map to the typed errors; other statuses become `APIError`.
-- [ ] No error, log line or `String()` output contains the token, asserted by a test.
-- [ ] `make lint` passes including `bodyclose`, `noctx` and `wrapcheck`.
+- [x] A request against an `httptest.Server` mounted at a context path hits the expected absolute path.
+- [x] 401, 403 and 404 map to the typed errors; other statuses become `APIError`.
+- [x] No error, log line or `String()` output contains the token, asserted by a test.
+- [x] `make lint` passes including `bodyclose`, `noctx` and `wrapcheck`.
+
+## Notes
+
+`go vet`, `gofmt` and `go test -race ./internal/youtrack/...` are clean. The pinned linter was run scoped to this package — `golangci-lint v2.13.2 run ./internal/youtrack/...` reports 0 issues — rather than through `make lint`, which lints the whole module and would have reported another agent's in-flight change in `internal/core`.
+
+Two `//nolint:bodyclose` annotations are deliberate and documented in place: the retry loop returns an unread body that its caller closes, and `DownloadAttachment` returns the body as its result for the caller to own.

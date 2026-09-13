@@ -187,7 +187,9 @@ func FlowBands() []FlowBand {
 	return []FlowBand{FlowDone, FlowCancelled, FlowInProgress, FlowTodo, FlowUnknown}
 }
 
-// bandOf maps a status category onto a band.
+// bandOf maps a status category onto a band. CategoryTriage has no band on
+// purpose: an item in the inbox is filtered out before it reaches a flow count,
+// and mapping it here would make it visible as "unknown" work (ADR-033).
 func bandOf(category StatusCategory) FlowBand {
 	switch category {
 	case CategoryDone:
@@ -401,6 +403,13 @@ func BuildSprintMetrics(s *Sprint, in MetricsInput) SprintMetricsView {
 				// The item did not exist that day: it is neither scope nor
 				// work, and the scope line rises when it appears.
 			case statePresent:
+				if obs.Category == CategoryTriage {
+					// The item existed that day but was still in the inbox, so
+					// it was not scope and it was not work (ADR-033). History
+					// reconstructed from git can see this even though the card
+					// walk never produces a triage card.
+					break
+				}
 				point.Items++
 				point.Scope += obs.Points()
 				band := bandOf(obs.Category)

@@ -2,7 +2,7 @@
 id: GIT-T-0096
 type: task
 title: Add SprintStatus and the pure DerivedStatus function
-status: todo
+status: done
 priority: medium
 parent: GIT-US-0075
 milestone: GIT-M-0012
@@ -10,7 +10,9 @@ author: mcp
 labels: [core, agent-ok]
 estimate: 3
 created: 2026-09-13T13:17:39Z
-updated: 2026-09-13T13:17:39Z
+updated: 2026-09-13T14:00:45Z
+started: 2026-09-13T14:00:16Z
+closed: 2026-09-13T14:00:45Z
 ---
 
 ## Description
@@ -19,6 +21,12 @@ Add `core.SprintStatus` (`draft|upcoming|current|completed`) with a `Valid()` me
 
 ## Acceptance Criteria
 
-- [ ] Each status is covered by a boundary test (the first day, the last day, the day after, and the closed-overrides-calendar case).
-- [ ] `SprintSummary` carries the derived status and nothing writes it to a file.
-- [ ] `go test -race ./internal/core/...` passes and `make wasm` builds.
+- [x] Each status is covered by a boundary test (the first day, the last day, the day after, and the closed-overrides-calendar case).
+- [x] `SprintSummary` carries the derived status and nothing writes it to a file.
+- [x] `go test -race ./internal/core/...` passes and `make wasm` builds.
+
+## Notes
+
+`state: closed` is checked **before** the dateless check, so a closed sprint with no dates derives `completed` rather than `draft`. That follows the story's "`state: closed` always derives `completed`" over the ordering sketched in this description.
+
+Also landed here, as the core seam for GIT-T-0107: `ParseSprintStatus`, `SprintStatusOrder`, `SprintStatus.Rank`, `FilterSprintsByStatus` and `SortSprintsForListing`.

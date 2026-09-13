@@ -53,6 +53,21 @@ const (
 	CodeEnum            Code = "E-ENUM"
 	CodeCommentMismatch Code = "E-CMT-ITEM-MISMATCH"
 
+	// External-reference codes (docs/03 section 12.5, ADR-031). The system name
+	// is never checked against a list: an unknown system is valid data.
+	CodeExternalFields  Code = "E-EXT-FIELDS"
+	CodeWarnExternalURL Code = "W-EXT-URL"
+	CodeWarnExternalDup Code = "W-EXT-DUP"
+
+	// Inbox codes (docs/03 section 6.4, ADR-033). They only ever fire on an item
+	// that carries an inbox block; an item without one is not in triage.
+	CodeInboxStatus         Code = "E-INBOX-STATUS"
+	CodeInboxSnooze         Code = "E-INBOX-SNOOZE"
+	CodeInboxDuplicate      Code = "E-INBOX-DUPLICATE"
+	CodeWarnInboxCategory   Code = "W-INBOX-CATEGORY"
+	CodeWarnInboxDupDead    Code = "W-INBOX-DUP-DEAD"
+	CodeWarnInboxNoCategory Code = "W-INBOX-NO-TRIAGE-STATUS"
+
 	CodeProjMissing          Code = "E-PROJ-MISSING"
 	CodeProjKey              Code = "E-PROJ-KEY"
 	CodeProjSchema           Code = "E-PROJ-SCHEMA"

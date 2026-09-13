@@ -32,9 +32,13 @@ type KBPage struct {
 	Headings    []Heading      `json:"headings,omitempty"`
 	Links       []Wikilink     `json:"links,omitempty"`
 	External    []string       `json:"external,omitempty"`
-	Updated     Timestamp      `json:"updated,omitempty"`
-	Size        int64          `json:"size,omitempty"`
-	Rev         Rev            `json:"rev"`
+	// ExternalRefs are the typed `external:` entries of the front matter: the
+	// systems this page mirrors (ADR-031). It is unrelated to External, which is
+	// the list of outbound URLs found in the body.
+	ExternalRefs []External `json:"externalRefs,omitempty"`
+	Updated      Timestamp  `json:"updated,omitempty"`
+	Size         int64      `json:"size,omitempty"`
+	Rev          Rev        `json:"rev"`
 
 	// Body is the Markdown after the front matter. It is kept in memory so that
 	// text filters and Search work without re-reading the file; it is never part
@@ -116,6 +120,7 @@ func ParsePage(filePath, relPath string, data []byte) *KBPage {
 	if p.FrontMatter != nil {
 		p.Title = strings.TrimSpace(stringOf(p.FrontMatter["title"]))
 		p.Tags = anyToStrings(p.FrontMatter["tags"])
+		p.ExternalRefs = externalsFromAny(p.FrontMatter["external"])
 		if ts, err := ParseTimestamp(stringOf(p.FrontMatter["updated"])); err == nil {
 			p.Updated = ts
 		}

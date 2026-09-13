@@ -102,6 +102,11 @@ func openMount(repo Repo, now func() time.Time) *mount {
 		m.err = fmt.Errorf("index %s: %w", repo.Path, err)
 		return m
 	}
+	// The vault dates what it writes, and grades how stale a committed index
+	// snapshot is, from its own clock. Handing it the server's clock keeps a
+	// test that pins `Options.Now` from drifting into the wall clock, and keeps
+	// every timestamp the API reports on one source of time.
+	v.SetClock(now)
 	m.vlt = v
 	return m
 }

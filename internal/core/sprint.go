@@ -37,6 +37,97 @@ func (s SprintState) Valid() bool {
 	return s == SprintPlanned || s == SprintActive || s == SprintClosed
 }
 
+// SprintStatus is the status a reader sees, derived from the sprint's dates and
+// the current day and never stored in the file (ADR-034). It sits beside
+// SprintState, which stays the record of the explicit `sprint.start` and
+// `sprint.close` acts (R-SPR-5, R-SPR-3).
+type SprintStatus string
+
+// The four derived statuses. `draft` is a sprint that carries no dates yet,
+// which is also the escape hatch out of the no-overlap rule.
+const (
+	SprintStatusDraft     SprintStatus = "draft"
+	SprintStatusUpcoming  SprintStatus = "upcoming"
+	SprintStatusCurrent   SprintStatus = "current"
+	SprintStatusCompleted SprintStatus = "completed"
+)
+
+// Valid reports whether s is one of the known derived statuses.
+func (s SprintStatus) Valid() bool {
+	switch s {
+	case SprintStatusDraft, SprintStatusUpcoming, SprintStatusCurrent, SprintStatusCompleted:
+		return true
+	default:
+		return false
+	}
+}
+
+// ParseSprintStatus decodes a derived status, which is what a query string
+// filter carries.
+func ParseSprintStatus(s string) (SprintStatus, error) {
+	status := SprintStatus(strings.ToLower(strings.TrimSpace(s)))
+	if !status.Valid() {
+		return "", fmt.Errorf("sprint status %q: want draft, upcoming, current or completed", s)
+	}
+	return status, nil
+}
+
+// SprintStatusOrder is the order a listing defaults to: what is running now,
+// then what is coming, then what is still being planned, then what is over.
+func SprintStatusOrder() []SprintStatus {
+	return []SprintStatus{SprintStatusCurrent, SprintStatusUpcoming, SprintStatusDraft, SprintStatusCompleted}
+}
+
+// Rank is the position of a status in SprintStatusOrder; an unknown status
+// sorts last.
+func (s SprintStatus) Rank() int {
+	for i, known := range SprintStatusOrder() {
+		if known == s {
+			return i
+		}
+	}
+	return len(SprintStatusOrder())
+}
+
+// FilterSprintsByStatus keeps the sprints whose derived status is one of
+// statuses. An empty filter keeps everything.
+func FilterSprintsByStatus(sprints []*Sprint, now time.Time, statuses []SprintStatus) []*Sprint {
+	if len(statuses) == 0 {
+		return sprints
+	}
+	wanted := make(map[SprintStatus]bool, len(statuses))
+	for _, status := range statuses {
+		wanted[status] = true
+	}
+	out := make([]*Sprint, 0, len(sprints))
+	for _, sprint := range sprints {
+		if wanted[sprint.DerivedStatus(now)] {
+			out = append(out, sprint)
+		}
+	}
+	return out
+}
+
+// SortSprintsForListing orders sprints the way a listing shows them: current,
+// upcoming, draft, completed, ties broken by start date and then by id. It
+// sorts in place and is stable for sprints that compare equal.
+func SortSprintsForListing(sprints []*Sprint, now time.Time) {
+	rank := make(map[*Sprint]int, len(sprints))
+	for _, sprint := range sprints {
+		rank[sprint] = sprint.DerivedStatus(now).Rank()
+	}
+	sort.SliceStable(sprints, func(i, j int) bool {
+		a, b := sprints[i], sprints[j]
+		if rank[a] != rank[b] {
+			return rank[a] < rank[b]
+		}
+		if !a.Start.Equal(b.Start.Time) {
+			return a.Start.Before(b.Start.Time)
+		}
+		return a.ID < b.ID
+	})
+}
+
 // sprintIDRE splits a sprint id from the right, because a team key may contain
 // hyphens: everything before the last `-S-` is the team key (docs/04 8.1).
 var sprintIDRE = regexp.MustCompile(`^([A-Z][A-Z0-9-]{1,15})-S-(\d{4,})$`)
@@ -77,15 +168,19 @@ type Sprint struct {
 	// Committed is the scope as it stood when the sprint started; `items` may
 	// grow afterwards, which is what tells commitment from mid-sprint additions
 	// (R-SPR-1).
-	Committed      []string  `yaml:"committed,omitempty" json:"committed,omitempty"`
-	Items          []string  `yaml:"items" json:"items"`
-	CapacityHours  *float64  `yaml:"capacity_hours,omitempty" json:"capacityHours,omitempty"`
-	VelocityTarget *float64  `yaml:"velocity_target,omitempty" json:"velocityTarget,omitempty"`
-	Participants   []string  `yaml:"participants,omitempty" json:"participants,omitempty"`
-	Retro          string    `yaml:"retro,omitempty" json:"retro,omitempty"`
-	Created        Timestamp `yaml:"created,omitempty" json:"created,omitempty"`
-	Updated        Timestamp `yaml:"updated,omitempty" json:"updated,omitempty"`
-	Author         string    `yaml:"author,omitempty" json:"author,omitempty"`
+	Committed      []string `yaml:"committed,omitempty" json:"committed,omitempty"`
+	Items          []string `yaml:"items" json:"items"`
+	CapacityHours  *float64 `yaml:"capacity_hours,omitempty" json:"capacityHours,omitempty"`
+	VelocityTarget *float64 `yaml:"velocity_target,omitempty" json:"velocityTarget,omitempty"`
+	Participants   []string `yaml:"participants,omitempty" json:"participants,omitempty"`
+	Retro          string   `yaml:"retro,omitempty" json:"retro,omitempty"`
+	// Snapshot is the progress frozen into the file when the sprint was closed
+	// (ADR-034, GIT-US-0080). It is nil for every sprint that is still open, it
+	// is written exactly once, and it is never recomputed on a later read.
+	Snapshot *SprintSnapshot `yaml:"snapshot,omitempty" json:"snapshot,omitempty"`
+	Created  Timestamp       `yaml:"created,omitempty" json:"created,omitempty"`
+	Updated  Timestamp       `yaml:"updated,omitempty" json:"updated,omitempty"`
+	Author   string          `yaml:"author,omitempty" json:"author,omitempty"`
 
 	// Extra preserves the front-matter keys this version does not model, so
 	// that an older binary never damages a newer file.
@@ -97,12 +192,47 @@ type Sprint struct {
 	Rev  Rev    `yaml:"-" json:"rev"`
 }
 
+// DerivedStatus computes the sprint's status from its dates and the day of now.
+// It is pure: now arrives already localized to the team timezone (docs/04 §3),
+// because internal/core compiles to WebAssembly and resolves no timezone
+// database and reads no clock.
+//
+// A closed sprint always derives `completed`, dates or no dates: the explicit
+// close is a fact about the sprint, and the calendar cannot argue with it.
+func (s *Sprint) DerivedStatus(now time.Time) SprintStatus {
+	if s == nil {
+		return SprintStatusDraft
+	}
+	if s.State == SprintClosed {
+		return SprintStatusCompleted
+	}
+	if s.Start.IsZero() || s.End.IsZero() {
+		return SprintStatusDraft
+	}
+	today := NewDate(now)
+	switch {
+	case today.After(s.End.Time):
+		return SprintStatusCompleted
+	case today.Before(s.Start.Time):
+		return SprintStatusUpcoming
+	default:
+		return SprintStatusCurrent
+	}
+}
+
+// IsDraft reports a sprint that carries no dates. A draft is exempt from the
+// no-overlap rule: removing the dates is the documented way to park a sprint
+// whose range collides with another one (docs/04 §8.4).
+func (s *Sprint) IsDraft() bool {
+	return s == nil || s.Start.IsZero() || s.End.IsZero()
+}
+
 // sprintKnownKeys is the set of front-matter keys Sprint models.
 var sprintKnownKeys = map[string]bool{
 	"id": true, "type": true, "title": true, "board": true, "state": true,
 	"start": true, "end": true, "goal": true, "committed": true, "items": true,
 	"capacity_hours": true, "velocity_target": true, "participants": true,
-	"retro": true, "created": true, "updated": true, "author": true,
+	"retro": true, "snapshot": true, "created": true, "updated": true, "author": true,
 }
 
 // DisplayTitle returns the sprint title, defaulting to `Sprint <n>` as
@@ -173,8 +303,9 @@ func (s *Sprint) TotalDays() int {
 // RemainingDays is how many days of the sprint are left at now, both ends
 // inclusive. It is 0 for a sprint that is over and the full length for one that
 // has not started.
+// A draft, which carries no dates, has no days left to count: it returns 0.
 func (s *Sprint) RemainingDays(now time.Time) int {
-	if s.End.IsZero() || now.IsZero() {
+	if s.IsDraft() || now.IsZero() {
 		return 0
 	}
 	today := NewDate(now)
@@ -228,6 +359,7 @@ func ParseSprint(filePath string, data []byte) (*Sprint, error) {
 	if s.State == "" {
 		s.State = SprintPlanned
 	}
+	adoptSnapshotExtra(s.Snapshot, fm["snapshot"])
 	s.Body = body
 	s.Path = filePath
 	s.Rev = ComputeRev(data)
@@ -257,6 +389,9 @@ func SerializeSprint(s *Sprint) ([]byte, error) {
 	writeRefBlock(w, "committed", s.Committed)
 	writeRefBlock(w, "items", s.Items)
 	w.scalar("retro", s.Retro)
+	if err := writeSnapshotBlock(w, s.Snapshot); err != nil {
+		return nil, fmt.Errorf("serialize sprint %s: %w", s.Path, err)
+	}
 	w.timestamp("created", s.Created)
 	w.timestamp("updated", s.Updated)
 	w.scalar("author", s.Author)
@@ -328,11 +463,17 @@ func (s *Sprint) Validate(in SprintValidateInput) []Diagnostic {
 			fmt.Sprintf("%q is not planned, active or closed", s.State))
 	}
 
+	// Dates are both or neither: a sprint with neither is a draft and is legal
+	// (ADR-034), a sprint with exactly one is a half-written file.
 	switch {
+	case s.Start.IsZero() && s.End.IsZero():
+		// A draft. Nothing to check.
 	case s.Start.IsZero():
-		add(CodeSprintDates, SeverityError, "start", "missing")
+		add(CodeSprintDates, SeverityError, "start",
+			"missing; a sprint carries both dates or neither, and neither makes it a draft")
 	case s.End.IsZero():
-		add(CodeSprintDates, SeverityError, "end", "missing")
+		add(CodeSprintDates, SeverityError, "end",
+			"missing; a sprint carries both dates or neither, and neither makes it a draft")
 	case s.End.Before(s.Start.Time):
 		add(CodeSprintDates, SeverityError, "end",
 			fmt.Sprintf("%s is before the start %s", s.End, s.Start))
@@ -432,6 +573,20 @@ func OverlappingSprint(candidate *Sprint, others []*Sprint) *Sprint {
 		}
 	}
 	return nil
+}
+
+// SprintOverlapMessage is the sentence a refused create or date change carries:
+// it names the other sprint and its range, and points at the escape hatch, as
+// R-SPR-6 requires. The caller turns it into its own `sprint_overlap` error.
+func SprintOverlapMessage(candidate, other *Sprint) string {
+	if candidate == nil || other == nil {
+		return ""
+	}
+	return fmt.Sprintf(
+		"sprint %s (%s to %s) overlaps %s (%s to %s) on board %s; "+
+			"move the dates, or remove them to keep %s a draft",
+		candidate.ID, candidate.Start, candidate.End,
+		other.ID, other.Start, other.End, other.Board, candidate.ID)
 }
 
 // containsString reports whether list holds value.

@@ -57,22 +57,30 @@ type Status string
 // projects with different workflows comparable on a team board.
 type StatusCategory string
 
-// The four status categories.
+// The five reserved status categories. CategoryTriage is the inbox: work that
+// has an id, a file and a history but has not been accepted into the backlog
+// yet, and is therefore excluded from planning everywhere (ADR-033).
 const (
 	CategoryTodo       StatusCategory = "todo"
 	CategoryInProgress StatusCategory = "in_progress"
 	CategoryDone       StatusCategory = "done"
 	CategoryCancelled  StatusCategory = "cancelled"
+	CategoryTriage     StatusCategory = "triage"
 )
 
-// Valid reports whether c is one of the four known categories.
+// Valid reports whether c is one of the five known categories.
 func (c StatusCategory) Valid() bool {
 	switch c {
-	case CategoryTodo, CategoryInProgress, CategoryDone, CategoryCancelled:
+	case CategoryTodo, CategoryInProgress, CategoryDone, CategoryCancelled, CategoryTriage:
 		return true
 	default:
 		return false
 	}
+}
+
+// StatusCategories lists every reserved category in a stable order.
+func StatusCategories() []StatusCategory {
+	return []StatusCategory{CategoryTodo, CategoryInProgress, CategoryDone, CategoryCancelled, CategoryTriage}
 }
 
 // Priority is the importance of an item.
@@ -146,6 +154,59 @@ type Link struct {
 	Kind   LinkKind `json:"kind" yaml:"kind"`
 	Target string   `json:"target" yaml:"target"`
 	Note   string   `json:"note,omitempty" yaml:"note,omitempty"`
+}
+
+// External is one reference to the same artifact in another system: the tracker
+// an item was imported from, the issue a comment mirrors, the page a knowledge
+// base article came from. It is a first-class front-matter field, not a custom
+// field and not a link: importers need it to be reliably typed and indexed.
+//
+// The pair (System, ID) is the idempotency key every importer matches on, so it
+// is the identity of an entry inside the list: re-adding the same pair updates
+// the rest of the entry instead of appending a duplicate.
+//
+// System is deliberately not an enumeration. A file written by a newer binary,
+// or by somebody else's tool, names a system this version has never heard of and
+// MUST still round-trip untouched.
+type External struct {
+	System   string    `json:"system" yaml:"system"`
+	ID       string    `json:"id" yaml:"id"`
+	URL      string    `json:"url,omitempty" yaml:"url,omitempty"`
+	Key      string    `json:"key,omitempty" yaml:"key,omitempty"`
+	SyncedAt Timestamp `json:"syncedAt,omitempty" yaml:"synced_at,omitempty"`
+}
+
+// ExternalRef is the identity half of an External: the pair an importer looks an
+// item up by. System is normalised to lower case so that "YouTrack" and
+// "youtrack" are the same system; ID keeps its case, because external trackers
+// hand out case-sensitive identifiers.
+type ExternalRef struct {
+	System string `json:"system"`
+	ID     string `json:"id"`
+}
+
+// NewExternalRef normalises a system and an external id into a lookup key.
+func NewExternalRef(system, id string) ExternalRef {
+	return ExternalRef{
+		System: strings.ToLower(strings.TrimSpace(system)),
+		ID:     strings.TrimSpace(id),
+	}
+}
+
+// Ref returns the identity of the entry, used as the set key of the external list.
+func (e External) Ref() ExternalRef { return NewExternalRef(e.System, e.ID) }
+
+// Valid reports whether the entry carries the two fields that make it usable:
+// a system and an id. It says nothing about which systems exist.
+func (e External) Valid() bool {
+	r := e.Ref()
+	return r.System != "" && r.ID != ""
+}
+
+// String renders the entry as "system:id", the form diagnostics and CLI output use.
+func (e External) String() string {
+	r := e.Ref()
+	return r.System + ":" + r.ID
 }
 
 // Timestamp is an instant with second precision, always rendered in UTC as
@@ -356,10 +417,14 @@ type Item struct {
 	Due     Date      `json:"due,omitempty" yaml:"due,omitempty"`
 
 	// Relations and extras.
-	Links       []Link         `json:"links,omitempty" yaml:"links,omitempty"`
+	Links []Link `json:"links,omitempty" yaml:"links,omitempty"`
+	// External references this item to the same artifact in other systems.
+	External    []External     `json:"external,omitempty" yaml:"external,omitempty"`
 	Attachments []string       `json:"attachments,omitempty" yaml:"attachments,omitempty"`
 	Custom      map[string]any `json:"custom,omitempty" yaml:"custom,omitempty"`
-	Deleted     bool           `json:"deleted,omitempty" yaml:"deleted,omitempty"`
+	// Inbox is the triage block, present only on items sitting in the inbox.
+	Inbox   *ItemInbox `json:"inbox,omitempty" yaml:"inbox,omitempty"`
+	Deleted bool       `json:"deleted,omitempty" yaml:"deleted,omitempty"`
 
 	// Extra holds every front-matter key this version does not know, including
 	// the "x-" keys reserved for third-party tools (R-CF-4). It is written back
@@ -387,6 +452,7 @@ type Comment struct {
 	InReplyTo   string              `json:"inReplyTo,omitempty" yaml:"in_reply_to,omitempty"`
 	Kind        CommentKind         `json:"kind,omitempty" yaml:"kind,omitempty"`
 	Reactions   map[string][]string `json:"reactions,omitempty" yaml:"reactions,omitempty"`
+	External    []External          `json:"external,omitempty" yaml:"external,omitempty"`
 	Attachments []string            `json:"attachments,omitempty" yaml:"attachments,omitempty"`
 
 	// Extra preserves unknown keys, as on Item.

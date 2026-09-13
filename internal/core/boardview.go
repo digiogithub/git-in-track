@@ -460,6 +460,14 @@ func walkCards(b *Board, in BoardInput, fn func(cardCandidate)) {
 			if source.Config != nil {
 				card.Category = source.Config.CategoryOf(it.Status)
 			}
+			if card.Category == CategoryTriage {
+				// The inbox is not planning (ADR-033): triage items never
+				// become cards, so boards, sprint scopes, sprint candidates and
+				// sprint metrics all skip them without knowing about the inbox.
+				// A sprint file that names one therefore reports it as an
+				// unresolved reference and never as work.
+				continue
+			}
 			fn(cardCandidate{Card: card, Config: source.Config, Matched: b.matches(it, source.Config)})
 		}
 	}
@@ -482,6 +490,9 @@ func walkCards(b *Board, in BoardInput, fn func(cardCandidate)) {
 			card.Category = entry.Category
 			if card.Category == "" && cfg != nil {
 				card.Category = cfg.CategoryOf(entry.Status)
+			}
+			if card.Category == CategoryTriage {
+				continue
 			}
 			it := entry.Item()
 			fn(cardCandidate{Card: card, Config: cfg, Matched: b.matches(&it, cfg), Remote: true})

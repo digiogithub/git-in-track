@@ -114,6 +114,73 @@ func (w *fmWriter) links(key string, links []Link) {
 	}
 }
 
+// externals writes the `external:` list, one reference per line as a flow
+// mapping, the same shape links use: a change to one reference is a one-line
+// diff, and the keys inside keep the order of the struct rather than being
+// sorted, so the system and the id — the identity pair — read first.
+func (w *fmWriter) externals(key string, list []External) {
+	if len(list) == 0 {
+		return
+	}
+	w.b.WriteString(key)
+	w.b.WriteString(":\n")
+	for _, raw := range list {
+		e := NormalizeExternal(raw)
+		parts := []string{
+			"system: " + yamlFlowString(e.System),
+			"id: " + yamlFlowString(e.ID),
+		}
+		if e.URL != "" {
+			parts = append(parts, "url: "+yamlFlowString(e.URL))
+		}
+		if e.Key != "" {
+			parts = append(parts, "key: "+yamlFlowString(e.Key))
+		}
+		if !e.SyncedAt.IsZero() {
+			parts = append(parts, "synced_at: "+e.SyncedAt.String())
+		}
+		w.b.WriteString("  - { ")
+		w.b.WriteString(strings.Join(parts, ", "))
+		w.b.WriteString(" }\n")
+	}
+}
+
+// inbox writes the triage block as a nested mapping: the known keys in the fixed
+// order of inboxKeyOrder, then the keys this version does not understand, sorted
+// lexicographically, so that a round trip is byte-stable either way.
+func (w *fmWriter) inbox(key string, in *ItemInbox) error {
+	if in.IsEmpty() {
+		return nil
+	}
+	w.b.WriteString(key)
+	w.b.WriteString(":\n")
+	for _, k := range inboxKeyOrder {
+		switch k {
+		case "status":
+			if in.Status != "" {
+				w.b.WriteString("  status: " + yamlString(string(in.Status)) + "\n")
+			}
+		case "snoozed_until":
+			if !in.SnoozedUntil.IsZero() {
+				w.b.WriteString("  snoozed_until: " + in.SnoozedUntil.String() + "\n")
+			}
+		case "duplicate_of":
+			if in.DuplicateOf != "" {
+				w.b.WriteString("  duplicate_of: " + yamlString(string(in.DuplicateOf)) + "\n")
+			}
+		case "source":
+			if in.Source != "" {
+				w.b.WriteString("  source: " + yamlString(in.Source) + "\n")
+			}
+		case "received":
+			if !in.Received.IsZero() {
+				w.b.WriteString("  received: " + in.Received.String() + "\n")
+			}
+		}
+	}
+	return w.writeMapBody(2, in.Extra)
+}
+
 // mapping writes a nested mapping such as custom:, with its keys sorted.
 func (w *fmWriter) mapping(key string, m map[string]any) error {
 	if len(m) == 0 {

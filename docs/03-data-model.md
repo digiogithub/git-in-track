@@ -191,11 +191,20 @@ Keys whose value is null/empty MUST be omitted rather than written as `null` or 
 id, type, title, status, priority, parent, epic, milestone, sprint,
 assignees, author, labels, estimate, effort, spent,
 created, updated, started, closed, due,
-links, blocks, depends_on, attachments, custom, deleted
+links, blocks, depends_on, external, attachments, custom, inbox, deleted
 ```
 
+Comments use the same order with their own keys in the region they belong to:
+`type, item, author, author_name, author_email, created, updated, in_reply_to, kind, reactions,
+external, attachments`.
+
 Rationale: identity first, then classification, then people, then numbers, then dates, then
-relations. Diffs of unrelated changes touch different regions of the block.
+relations, then the blocks. Diffs of unrelated changes touch different regions of the block.
+`external` sits with the relations because it is one — a relation to an artifact outside this
+repository ([§12.5](#125-external-references), [ADR-031](./adr/ADR-031-external-references.md)) —
+and `inbox` sits at the end, next to `deleted`, because like `deleted` it is lifecycle state that
+only a minority of files carry ([§6.4](#64-the-triage-category-and-the-inbox),
+[ADR-033](./adr/ADR-033-inbox-is-a-reserved-triage-status-category.md)).
 
 ### 3.3 Identifiers
 
@@ -298,7 +307,7 @@ Handles are declared in the team repository's `team.yaml` (doc 04, §3.2) and MA
 
 | Field | Allowed values |
 |---|---|
-| `type` | `epic`, `story`, `task`, `milestone`, `comment` (the `board`, `sprint` and `retro` types exist only in the team repo, and are specified in [doc 04](./04-team-repository.md) §§5, 8 and 9; all three round-trip through the same byte-stable emitter as an item, so an edit to one field is a one-line diff) |
+| `type` | `epic`, `story`, `task`, `milestone`, `comment` (the `board`, `sprint` and `retro` types exist only in the team repo, and are specified in [doc 04](./04-team-repository.md) §§5, 8 and 9; all three round-trip through the same byte-stable emitter as an item, so an edit to one field is a one-line diff). A sprint's stored `state` is `planned`, `active` or `closed`; the `draft`/`upcoming`/`current`/`completed` status a reader sees is derived from its dates and is never a stored value ([ADR-034](./adr/ADR-034-sprint-status-is-derived-from-dates.md)) |
 | `priority` | `critical`, `high`, `medium`, `low` |
 | `status` | any `id` declared in `project.yaml:workflow.statuses` |
 | relation kind | `blocks`, `blocked_by`, `relates_to`, `duplicates`, `duplicated_by` |
@@ -521,11 +530,13 @@ default `false`), `footnotes` (bool, default `true`), `callouts` (bool, default 
 
 - `statuses`: ordered list of `{id, name, category, wip?, color?, terminal?}`.
   - `id`: `[a-z][a-z0-9_]{0,31}`, unique.
-  - `category`: `todo | in_progress | done | cancelled` — the *coarse* bucket used by boards
+  - `category`: `todo | in_progress | done | cancelled | triage` — the *coarse* bucket used by boards
     (a board column maps `categories:` instead of `statuses:` when it must work for a project
     whose workflow the team has never seen — doc 04 R-COL-2),
     metrics, and agents that do not know a project's custom workflow. This field is what makes
-    heterogeneous projects comparable on a team board.
+    heterogeneous projects comparable on a team board. `triage` is the reserved inbox category
+    ([§6.4](#64-the-triage-category-and-the-inbox)); a project that declares no status in it simply
+    has no inbox.
   - `terminal`: bool; items in a terminal status are excluded from "open work" queries.
 - `initial`: status id used when creating an item (default: first status).
 - `transitions`: optional mapping `from → [to…]`. Absent or `null` means "any transition allowed".
@@ -555,6 +566,7 @@ docs:
 workflow:
   initial: backlog
   statuses:
+    - { id: triage,      name: Triage,      category: triage }
     - { id: backlog,     name: Backlog,     category: todo }
     - { id: todo,        name: To Do,       category: todo }
     - { id: in_progress, name: In Progress, category: in_progress, wip: 3 }
@@ -644,6 +656,58 @@ links:
 - `W-PROJ-COUNTER-STALE` — a counter is lower than the maximum scanned ID (informational; the scan
   wins and the counter is rewritten on the next allocation).
 
+### 6.4 The `triage` category and the inbox
+
+Incoming work that nobody has reviewed yet has to get an id, a file, a history and comments without
+polluting the backlog, the boards, the sprints or the metrics. It does that by being an **ordinary
+item in a status whose category is `triage`**, plus an `inbox:` front-matter block that records how
+it arrived and what the triager decided ([ADR-033](./adr/ADR-033-inbox-is-a-reserved-triage-status-category.md)).
+
+There is no inbox item type, no folder under `.pmngr/` and no stored `is_inbox` boolean: **the
+category is the truth and the block is the metadata.**
+
+```yaml
+status: triage
+inbox:
+  status: snoozed
+  snoozed_until: 2026-10-01
+  source: web
+  received: 2026-09-10T07:59:12Z
+```
+
+| Key | Type | Req. | Notes |
+|---|---|---|---|
+| `status` | `pending` \| `accepted` \| `rejected` \| `snoozed` \| `duplicate` | no | absent reads as `pending` |
+| `snoozed_until` | date | conditional | required for, and only allowed with, `status: snoozed` |
+| `duplicate_of` | item ID | conditional | required for `status: duplicate` |
+| `source` | string | no | free text: `web`, `mcp`, `youtrack`, a form name. Never an enumeration |
+| `received` | timestamp | no | when the submission arrived, which is not when the file was created |
+
+- **R-INBOX-1** An item is in the inbox when its `status` resolves to category `triage`, and at no
+  other time. The `inbox:` block on an item outside that category is preserved and reported as
+  `W-INBOX-CATEGORY`: it is history of how the item arrived, and it is ignored by the inbox.
+- **R-INBOX-2** A default query **excludes** triage items. `Filter.Inbox` is a tri-state —
+  `exclude` (the zero value), `only`, `include` — so every filter written before the inbox existed
+  keeps its meaning. Board views, sprint views, sprint candidates and sprint metrics exclude them
+  unconditionally.
+- **R-INBOX-3** A sprint file that names a triage reference reports it as **unresolved**, never as
+  work: it contributes no points and is never counted as done. The exclusion cannot be smuggled in
+  by hand-editing a sprint.
+- **R-INBOX-4** Snooze expiry is a **query-time comparison**, never a scheduler and never a
+  background job. A `snoozed` item whose `snoozed_until` is at or before the caller-supplied
+  `SnoozeAsOf` matches a query for `pending`. `internal/core` reads no clock — the caller passes the
+  instant, so results are reproducible and the package still compiles to WebAssembly.
+- **R-INBOX-5** Unknown keys **inside** the block are preserved on rewrite and re-emitted after the
+  known ones, sorted lexicographically, exactly as unknown top-level keys are (R-FMT-6).
+- **R-INBOX-6** Diagnostics: `E-INBOX-STATUS` (unknown triage state), `E-INBOX-SNOOZE`
+  (`snoozed_until` missing on a snoozed item, or present on any other), `E-INBOX-DUPLICATE`
+  (`duplicate_of` is not an item id, points at the item itself, or is missing on a `duplicate`),
+  `W-INBOX-CATEGORY` (block outside the triage category) and `W-INBOX-DUP-DEAD` (`duplicate_of`
+  resolves to nothing — a warning, because the target may arrive in a later merge).
+- **R-INBOX-7** A project scaffolded by `gintrack` declares `{id: triage, name: Triage, category:
+  triage}`, and it is neither the initial status nor the target of any declared transition, so
+  nothing ordinary lands there by accident.
+
 ---
 
 ## 7. Epics
@@ -672,8 +736,10 @@ its children.
 | `started` / `closed` | timestamp | no | set when leaving/entering a terminal category |
 | `due` | date | no | |
 | `links` | list of relations | no | [§12](#12-links-and-relations) |
+| `external` | list of external references | no | the same artifact in another system, [§12.5](#125-external-references) |
 | `attachments` | list of strings | no | filenames under `attachments/<ID>/` |
 | `custom` | mapping | no | declared custom fields |
+| `inbox` | mapping | no | triage metadata, only on items in the `triage` category, [§6.4](#64-the-triage-category-and-the-inbox) |
 | `deleted` | bool | no | soft delete, default `false` |
 
 An epic MUST NOT have `parent`. Stories point *up* to their epic; epics do not list their children
@@ -760,7 +826,7 @@ Everything an epic has, plus:
 | `type` | `story` | yes | |
 | `parent` | epic ID | no | the owning epic; `null` means an orphan story (valid) |
 | `milestone` | milestone ID | no | overrides the epic's milestone for planning |
-| `sprint` | sprint ID | no | `<TEAMKEY>-S-<NNNN>`, resolved in the team repo; soft reference |
+| `sprint` | sprint ID | no | `<TEAMKEY>-S-<NNNN>`, resolved in the team repo; soft reference. The sprint's own `start` and `end` are optional — both or neither — and its `draft`/`upcoming`/`current`/`completed` status is derived from them at read time and never stored; a closed sprint additionally carries a frozen `snapshot` block. See [doc 04](./04-team-repository.md) §8.2 and [ADR-034](./adr/ADR-034-sprint-status-is-derived-from-dates.md) |
 | `estimate` | number | no | story points; MUST be a member of `estimation.values` when the scale is `fibonacci` or `linear` |
 | `effort` | number | no | planned hours (requires `estimation.track_hours`) |
 | `spent` | number | no | consumed hours |
@@ -939,7 +1005,7 @@ team repo and is a team-level time box), a milestone is project-scoped and lives
 | `due` | date | no | the target date |
 | `closed` | timestamp | no | when it was actually reached |
 | `owner` | handle | no | single accountable person |
-| `labels`, `author`, `created`, `updated`, `links`, `attachments`, `custom`, `deleted` | as elsewhere | | |
+| `labels`, `author`, `created`, `updated`, `links`, `external`, `attachments`, `custom`, `deleted` | as elsewhere | | |
 
 Membership is expressed by the items (`milestone: ACME-M-0003`), never by a list inside the
 milestone. Same anti-conflict rationale as epics.
@@ -1020,6 +1086,7 @@ Example: `.pmngr/comments/ACME-US-0042/20260901T104512Z-jose.md`
 | `in_reply_to` | comment ref | no | `<ITEM-ID>#<file-stem>` |
 | `kind` | `comment` \| `status_change` \| `system` | no | default `comment` |
 | `reactions` | mapping emoji → list of handles | no | |
+| `external` | list of external references | no | the comment this one mirrors in another system, [§12.5](#125-external-references) |
 | `attachments` | list of strings | no | resolved under `attachments/<ITEM-ID>/` |
 
 `kind: system` marks machine-written entries (e.g. an agent recording an automated check). Systems
@@ -1111,6 +1178,50 @@ team repo (to map `WEB` → repo/docs path) and, for a live title/status, either
 committed snapshot `.pmngr/index/WEB.json` in the team repo (doc 04, §6). Without either, the
 reference renders as inert text with the ID. This is by design: **backlogs never leave their project
 repository**.
+
+### 12.5 External references
+
+`external` is the first-class record of the same artifact in another system: the YouTrack issue an
+item was imported from, the comment a mirrored thread came from, the wiki page a knowledge-base
+article was copied out of. It is a **list**, because one item may be linked into more than one
+system, and it is a first-class front-matter key rather than a `custom:` entry or an `x-` key
+because importers depend on it being typed, validated and indexed
+([ADR-031](./adr/ADR-031-external-references.md)).
+
+```yaml
+external:
+  - { system: youtrack, id: PRJ-42, url: https://youtrack.example.com/issue/PRJ-42, key: PRJ, synced_at: 2026-09-02T10:29:00Z }
+  - { system: plane, id: 9f2b1c7d }
+```
+
+| Key | Type | Req. | Notes |
+|---|---|---|---|
+| `system` | short token | yes | `[a-z0-9][a-z0-9._-]{0,31}`, stored lower-case. **Not an enumeration** |
+| `id` | string (1..200) | yes | the identifier the external system uses |
+| `url` | string | no | an absolute `http`/`https` address a human can open |
+| `key` | string | no | the external project/space key, when the system has one |
+| `synced_at` | timestamp | no | when this reference was last reconciled |
+
+- **R-EXT-1** `system` and `id` are both required. An entry missing either is `E-EXT-FIELDS`.
+- **R-EXT-2** The pair **(`system`, `id`)** is the identity of an entry and the idempotency key of
+  every importer. It is compared with `system` lower-cased and `id` case-sensitive. A parser that
+  reads the same pair twice in one file keeps the first entry.
+- **R-EXT-3** `system` is never validated against a list of known systems. A file naming a system
+  this version has never heard of is valid and MUST round-trip untouched (R-EVO-5). Only the shape
+  of the token is checked, so that a system name can be a path segment or a map key unescaped.
+- **R-EXT-4** A `url` that is not `http`/`https` is `W-EXT-URL`, a warning: the reference is still
+  usable, it just cannot be opened.
+- **R-EXT-5** Writes use set semantics keyed on (`system`, `id`), like `labels` and `links`:
+  `addExternal` / `removeExternal`. Re-adding a pair that is already present **updates** `url`,
+  `key` and `synced_at` in place and never appends a second entry; fields the writer omits keep the
+  value somebody else recorded. A `removeExternal` entry with an empty `id` unlinks every reference
+  of that system. Two writers pushing different systems into the same item therefore never clobber
+  each other.
+- **R-EXT-6** The index keeps a lookup from (`system`, `id`) to item id, so an importer's
+  "have I already got this one?" check is a single map read and not a scan of the backlog. Two
+  items claiming the same pair is `W-EXT-DUP`; the first file in path order wins the lookup.
+- **R-EXT-7** Knowledge-base pages carry the same key in their (otherwise free-form) front matter.
+  Comments carry it too, which is what lets a mirrored discussion be reconciled comment by comment.
 
 ---
 
@@ -1340,6 +1451,10 @@ Severity: **E** = error (blocks writes to the affected item; `doctor` exits non-
 | `E-CF-TYPE` | E | Custom field value has the wrong declared type |
 | `E-CMT-ITEM-MISMATCH` | E | Comment `item` ≠ containing folder name |
 | `E-ENUM` | E | `priority` or a custom enum has a value outside its allowed set |
+| `E-EXT-FIELDS` | E | An `external` entry is missing `system` or `id`, or `system` is not a short token ([§12.5](#125-external-references)) |
+| `E-INBOX-STATUS` | E | `inbox.status` is not one of the five triage states ([§6.4](#64-the-triage-category-and-the-inbox)) |
+| `E-INBOX-SNOOZE` | E | `inbox.snoozed_until` missing on a snoozed item, or present on any other |
+| `E-INBOX-DUPLICATE` | E | `inbox.duplicate_of` is not an item id, names the item itself, or is missing on a `duplicate` |
 | `W-SLUG-STALE` | W | Filename slug ≠ slug(title) |
 | `W-REF-DANGLING` | W | `parent`/`milestone`/`links.target` points at an unknown ID |
 | `W-REF-CYCLE-BLOCK` | W | Cycle in `blocks`/`blocked_by` |
@@ -1353,6 +1468,10 @@ Severity: **E** = error (blocks writes to the affected item; `doctor` exits non-
 | `W-LAYOUT-NESTED` / `W-LAYOUT-STRAY` | W | Files where the layout does not expect them |
 | `W-ESTIMATE-SCALE` | W | `estimate` not in `estimation.values` |
 | `W-PROJ-COUNTER-STALE` | W | Counter below scanned max |
+| `W-EXT-URL` | W | An `external` entry has a `url` that is not `http`/`https` |
+| `W-EXT-DUP` | W | The same `(system, id)` pair appears twice, in one file or across two |
+| `W-INBOX-CATEGORY` | W | An `inbox` block on an item whose status is not in the `triage` category |
+| `W-INBOX-DUP-DEAD` | W | `inbox.duplicate_of` points at an unknown item |
 
 The `E-TEAM-*` / `W-TEAM-*` codes belong to `team.yaml` and are catalogued in
 [`04-team-repository.md`](./04-team-repository.md) §3.5. They share this catalog's namespace and
@@ -1481,10 +1600,38 @@ Outline of the shared definitions:
         "target": { "$ref": "common.defs.json#/$defs/qualifiedId" },
         "note":   { "type": "string", "maxLength": 200 }
       }
+    },
+    "external": {
+      "type": "object",
+      "required": ["system", "id"],
+      "additionalProperties": false,
+      "properties": {
+        "system":    { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,31}$" },
+        "id":        { "type": "string", "minLength": 1, "maxLength": 200 },
+        "url":       { "type": "string", "pattern": "^https?://" },
+        "key":       { "type": "string", "maxLength": 64 },
+        "synced_at": { "$ref": "common.defs.json#/$defs/timestamp" }
+      }
+    },
+    "inbox": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "status":        { "enum": ["pending", "accepted", "rejected", "snoozed", "duplicate"] },
+        "snoozed_until": { "$ref": "common.defs.json#/$defs/date" },
+        "duplicate_of":  { "$ref": "common.defs.json#/$defs/id" },
+        "source":        { "type": "string", "maxLength": 64 },
+        "received":      { "$ref": "common.defs.json#/$defs/timestamp" }
+      }
     }
   }
 }
 ```
+
+`external` and `inbox` are the only two `$defs` whose value objects are not closed the same way:
+`external` is `additionalProperties: false` because the shape is fixed, while `inbox` is open
+because unknown keys inside the block are preserved on rewrite exactly as unknown top-level keys
+are (R-FMT-6, R-EVO-5).
 
 Outline of `story.schema.json` (the other item schemas differ only in `type`, allowed parent, and a
 couple of fields):
@@ -1515,8 +1662,10 @@ couple of fields):
     "closed":    { "$ref": "common.defs.json#/$defs/timestamp" },
     "due":       { "$ref": "common.defs.json#/$defs/date" },
     "links":     { "type": "array", "items": { "$ref": "common.defs.json#/$defs/link" } },
+    "external":  { "type": "array", "items": { "$ref": "common.defs.json#/$defs/external" } },
     "attachments": { "type": "array", "items": { "type": "string" } },
     "custom":    { "type": "object" },
+    "inbox":     { "$ref": "common.defs.json#/$defs/inbox" },
     "deleted":   { "type": "boolean" }
   },
   "patternProperties": { "^x-": true },

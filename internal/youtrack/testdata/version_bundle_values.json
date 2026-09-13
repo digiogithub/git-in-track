@@ -1,0 +1,4 @@
+[
+  { "id": "76-1", "name": "1.4.0", "description": "Sync release", "releaseDate": 1767225600000, "released": true, "archived": false, "$type": "VersionBundleElement" },
+  { "id": "76-2", "name": "1.5.0", "description": "", "releaseDate": null, "released": false, "archived": false, "$type": "VersionBundleElement" }
+]

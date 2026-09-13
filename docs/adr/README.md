@@ -64,6 +64,9 @@ Every ADR uses the same sections:
 | [ADR-028](ADR-028-retro-participants-name-themselves-and-comment-in-front-matter.md) | Retro participants name themselves in the browser, and the discussion is front matter | Accepted | 5 |
 | [ADR-029](ADR-029-signed-release-artifacts.md) | Release artifacts are signed on macOS and Windows, on their own runners | Accepted | 6 |
 | [ADR-030](ADR-030-feedback-notes-on-items-and-kb-pages.md) | Feedback notes: a comment on an item, an anchored block inside a KB page | Accepted | 5 |
+| [ADR-031](ADR-031-external-references.md) | `external` is a first-class front-matter field | Accepted | 7 |
+| [ADR-033](ADR-033-inbox-is-a-reserved-triage-status-category.md) | The inbox is a reserved `triage` status category plus a front-matter block | Accepted | 8 |
+| [ADR-034](ADR-034-sprint-status-is-derived-from-dates.md) | A sprint's status is derived from its dates, and a closed sprint freezes one snapshot | Accepted | 8 |
 
 ## Related documents
 

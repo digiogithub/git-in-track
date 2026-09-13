@@ -2,7 +2,7 @@
 id: GIT-US-0067
 type: story
 title: Retry policy, backoff and failure handling in the sync engine
-status: backlog
+status: done
 priority: high
 parent: GIT-EP-0015
 milestone: GIT-M-0011
@@ -10,7 +10,9 @@ author: mcp
 labels: [server, performance]
 estimate: 5
 created: 2026-09-13T13:13:09Z
-updated: 2026-09-13T13:13:09Z
+updated: 2026-09-13T14:16:28Z
+started: 2026-09-13T14:16:21Z
+closed: 2026-09-13T14:16:28Z
 ---
 
 ## Description
@@ -23,13 +25,13 @@ Each job carries an error record — attempt number, classification, the error t
 
 ## Acceptance Criteria
 
-- [ ] `RetryPolicy{MaxAttempts, Base, Max, Jitter}` is configurable, defaulting to 5 attempts with 500 ms / 1.5 s / 4 s growth capped at a maximum.
-- [ ] A `Retry-After` carried by the error overrides the computed backoff, in both seconds and HTTP-date form.
-- [ ] Errors are classified: 429 and 5xx and transport errors retry; 401, 403, 404 and validation errors fail immediately without consuming attempts.
-- [ ] A job that exhausts its attempts lands in a bounded dead-letter list with its last error, attempt count and timestamps preserved.
-- [ ] Every stored error string is redacted of credentials; a test asserts a token never reaches the error record.
-- [ ] Retry delays are driven by the injectable clock, so `go test -race ./internal/syncengine/...` runs without wall-clock sleeps.
-- [ ] A failing handler under concurrency never loses a job nor duplicates one; a table-driven test covers exhaustion, terminal failure and recovery on the second attempt.
+- [x] `RetryPolicy{MaxAttempts, Base, Max, Jitter}` is configurable, defaulting to 5 attempts with 500 ms / 1.5 s / 4 s growth capped at a maximum.
+- [x] A `Retry-After` carried by the error overrides the computed backoff, in both seconds and HTTP-date form.
+- [x] Errors are classified: 429 and 5xx and transport errors retry; 401, 403, 404 and validation errors fail immediately without consuming attempts.
+- [x] A job that exhausts its attempts lands in a bounded dead-letter list with its last error, attempt count and timestamps preserved.
+- [x] Every stored error string is redacted of credentials; a test asserts a token never reaches the error record.
+- [x] Retry delays are driven by the injectable clock, so `go test -race ./internal/syncengine/...` runs without wall-clock sleeps.
+- [x] A failing handler under concurrency never loses a job nor duplicates one; a table-driven test covers exhaustion, terminal failure and recovery on the second attempt.
 
 ## Notes
 
@@ -38,3 +40,9 @@ Two layers of retry existed in the reference YouTrack CLI and both are wanted he
 `internal/gitops/sync.go:661-684` is the closest existing retry loop and the intended style reference.
 
 Do NOT retry a job whose handler wrote a partial result without making the handler idempotent first — handlers are responsible for their own idempotence, and the importer story of GIT-EP-0012 relies on the `external` index for exactly that. Do NOT let the dead-letter list grow unbounded in memory.
+
+### As implemented
+
+The ladder grows by three from `Base` (500 ms, 1.5 s, 4.5 s, 13.5 s, then the 30 s cap), which is the documented shape rounded to a clean factor. A terminal error ends the job on its first attempt: the attempt that ran is recorded as attempt 1, and none of the remaining budget is spent.
+
+Classification is interface-based (`StatusCoder`, `RetryableError`, `TerminalError`, `RetryAfterProvider`, `RetryAfterHeaderProvider`) plus the `ErrTerminal` / `ErrRetry` sentinels, so the engine imports no client. `youtrack.APIError` exposes its status as a field rather than a method, so a handler wraps it with `syncengine.Terminal(err)` or `syncengine.RetryAfter(err, d)`, or the caller supplies `Options.Classify`.

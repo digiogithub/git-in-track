@@ -2,7 +2,7 @@
 id: GIT-US-0080
 type: story
 title: Closing a sprint freezes a progress snapshot into its file
-status: backlog
+status: in_progress
 priority: high
 parent: GIT-EP-0017
 milestone: GIT-M-0012
@@ -10,7 +10,8 @@ author: mcp
 labels: [core, docs]
 estimate: 8
 created: 2026-09-13T13:14:15Z
-updated: 2026-09-13T13:14:15Z
+updated: 2026-09-13T14:02:25Z
+started: 2026-09-13T14:02:25Z
 ---
 
 ## Description

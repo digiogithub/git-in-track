@@ -2,7 +2,7 @@
 id: GIT-US-0044
 type: story
 title: First-class `external` reference on items, comments and KB pages
-status: backlog
+status: done
 priority: high
 parent: GIT-EP-0011
 milestone: GIT-M-0011
@@ -10,7 +10,9 @@ author: mcp
 labels: [core, wasm, docs]
 estimate: 8
 created: 2026-09-13T13:10:47Z
-updated: 2026-09-13T13:10:47Z
+updated: 2026-09-13T14:03:54Z
+started: 2026-09-13T14:03:48Z
+closed: 2026-09-13T14:03:54Z
 ---
 
 ## Description
@@ -23,15 +25,15 @@ Writes must follow the existing sparse-patch discipline: `ItemDraft` (`internal/
 
 ## Acceptance Criteria
 
-- [ ] `core.External{System, ID, URL, Key, SyncedAt}` exists and is carried by `Item`, `Comment` and KB pages.
-- [ ] `ParseItem`/`ParseComment` read `external:` and reject malformed entries (missing `system` or `id`) through `internal/core/validate.go`.
-- [ ] `SerializeItem`/`SerializeComment` emit `external` at its documented position in the canonical key order; parse→serialize round-trip is byte-identical on the golden files.
-- [ ] `ItemDraft.External` and `ItemPatch.AddExternal`/`RemoveExternal` work, with set semantics identical to `labels`/`links` and no clobbering on concurrent patches.
-- [ ] `Index` resolves `(system, externalID) → ItemID`, and `core.Filter` can select items by external system and id.
-- [ ] Unknown `system` values are accepted and preserved (forward compatibility); no enum is hard-coded in the parser.
-- [ ] `docs/03-data-model.md` field table, §3.2 key order and §18 JSON Schema are updated in the same change.
-- [ ] `docs/adr/ADR-031-external-references.md` is written and accepted, with its negative consequences section filled in.
-- [ ] `go test -race ./internal/core/...` passes and `make wasm` still builds.
+- [x] `core.External{System, ID, URL, Key, SyncedAt}` exists and is carried by `Item`, `Comment` and KB pages.
+- [x] `ParseItem`/`ParseComment` read `external:` and reject malformed entries (missing `system` or `id`) through `internal/core/validate.go`.
+- [x] `SerializeItem`/`SerializeComment` emit `external` at its documented position in the canonical key order; parse→serialize round-trip is byte-identical on the golden files.
+- [x] `ItemDraft.External` and `ItemPatch.AddExternal`/`RemoveExternal` work, with set semantics identical to `labels`/`links` and no clobbering on concurrent patches.
+- [x] `Index` resolves `(system, externalID) → ItemID`, and `core.Filter` can select items by external system and id.
+- [x] Unknown `system` values are accepted and preserved (forward compatibility); no enum is hard-coded in the parser.
+- [x] `docs/03-data-model.md` field table, §3.2 key order and §18 JSON Schema are updated in the same change.
+- [x] `docs/adr/ADR-031-external-references.md` is written and accepted, with its negative consequences section filled in.
+- [x] `go test -race ./internal/core/...` passes and `make wasm` still builds.
 
 ## Notes
 

@@ -2,7 +2,7 @@
 id: GIT-US-0070
 type: story
 title: JSON job journal in the cache directory with replay and pruning
-status: backlog
+status: in_review
 priority: medium
 parent: GIT-EP-0015
 milestone: GIT-M-0011
@@ -10,7 +10,8 @@ author: mcp
 labels: [server, docs]
 estimate: 5
 created: 2026-09-13T13:13:25Z
-updated: 2026-09-13T13:13:25Z
+updated: 2026-09-13T14:17:01Z
+started: 2026-09-13T14:16:57Z
 ---
 
 ## Description
@@ -23,17 +24,23 @@ This is the one place the engine touches the filesystem, and the "no state outsi
 
 ## Acceptance Criteria
 
-- [ ] The engine writes `jobs.json` under `config.CacheDir`, atomically (tmp file plus rename) and with restrictive permissions.
-- [ ] Queued and failed jobs survive a restart; `done` jobs are pruned after a configurable retention window, default 7 days.
-- [ ] Jobs recorded as `running` at start-up are re-queued with their attempt count preserved, and the idempotence contract for handlers is documented in the package doc comment.
-- [ ] A corrupt, truncated or unreadable journal is moved aside and logged, and the engine starts with an empty queue rather than failing to start.
-- [ ] Journal writes are coalesced so a burst of state transitions does not produce one write per transition.
-- [ ] The journal never contains a credential, and payloads are checked for that in a test.
+- [x] The engine writes `jobs.json` under `config.CacheDir`, atomically (tmp file plus rename) and with restrictive permissions.
+- [x] Queued and failed jobs survive a restart; `done` jobs are pruned after a configurable retention window, default 7 days.
+- [x] Jobs recorded as `running` at start-up are re-queued with their attempt count preserved, and the idempotence contract for handlers is documented in the package doc comment.
+- [x] A corrupt, truncated or unreadable journal is moved aside and logged, and the engine starts with an empty queue rather than failing to start.
+- [x] Journal writes are coalesced so a burst of state transitions does not produce one write per transition.
+- [x] The journal never contains a credential, and payloads are checked for that in a test.
 - [ ] `docs/07-cli-and-api.md` documents the journal location, its format and its retention, and states that it is derived data safe to delete.
-- [ ] `go test -race ./internal/syncengine/...` covers write, replay, prune and the corrupt-file path over a temporary directory.
+- [x] `go test -race ./internal/syncengine/...` covers write, replay, prune and the corrupt-file path over a temporary directory.
 
 ## Notes
 
 `config.CacheDir` (`internal/config/path.go:96`) and `StateDir` (`:92`) are the existing locations for derived data; the on-disk index cache already lives there and is the precedent for "cache that can always be rebuilt".
 
 Do NOT introduce an embedded database — explicitly ruled out for this phase and an ADR-level decision. Do NOT record sync state inside the repository files as part of this story: per-item `external.synced_at` is owned by GIT-EP-0011's `external` field and by the importer, not by the journal.
+
+### As implemented
+
+The engine takes the directory as `Options.CacheDir` (a plain string) rather than importing `internal/config`; the caller passes `cfg.CacheDir(configPath)`. An empty value disables persistence, which is what the scheduler's own unit tests use.
+
+The documentation criterion is left unticked on purpose: this wave owned `internal/syncengine/` only, and `docs/07-cli-and-api.md` plus `CHANGELOG.md` were being edited by another agent at the same time. GIT-T-0125 stays `todo` and carries a comment with everything the docs pass needs, written from the implementation that landed.
