@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"regexp"
+	"strings"
 )
 
 // Field selectors for the user, project and custom-field endpoints.
@@ -68,6 +70,40 @@ func (c *Client) Project(ctx context.Context, key string) (Project, error) {
 		return Project{}, err
 	}
 	return out, nil
+}
+
+// entityID matches YouTrack's internal entity ids, as in "0-17". Every write
+// endpoint addresses a project by one of these; the short name is a display
+// name and is rejected with "Invalid structure of entity id".
+var entityID = regexp.MustCompile(`^\d+-\d+$`)
+
+// ProjectID resolves a project onto the internal entity id the write endpoints
+// insist on.
+//
+// The short name — the "ACME" of ACME-42 — is what a project is configured as
+// and what every read here is scoped by, but `POST /api/articles` refuses it:
+// the project of a new article has to be `{"id": "0-17"}`. A key that already
+// is an entity id is returned untouched, so a caller may pass either and a
+// resolved id can be cached and passed back in.
+func (c *Client) ProjectID(ctx context.Context, key string) (string, error) {
+	if key == "" {
+		return "", fmt.Errorf("%w: project key is empty", ErrInvalidInput)
+	}
+	if entityID.MatchString(key) {
+		return key, nil
+	}
+	// The search matches name and short name as a substring, so the exact
+	// short name still has to be picked out of what comes back.
+	found, err := c.AllProjects(ctx, key)
+	if err != nil {
+		return "", err
+	}
+	for _, project := range found {
+		if strings.EqualFold(project.ShortName, key) {
+			return project.ID, nil
+		}
+	}
+	return "", fmt.Errorf("%w: no project has the short name %q", ErrNotFound, key)
 }
 
 // CustomFieldSettings lists the custom fields a project uses, so a caller can

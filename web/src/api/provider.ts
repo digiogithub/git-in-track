@@ -31,6 +31,7 @@ import type {
   KbSyncSelector,
   KbSyncState,
   KbSyncStatusResult,
+  KbUnlinkResult,
   SprintSnapshot,
   SprintSnapshotBucket,
   SprintSnapshotPoint,
@@ -139,6 +140,7 @@ export type {
   KbSyncSelector,
   KbSyncState,
   KbSyncStatusResult,
+  KbUnlinkResult,
   SprintSnapshot,
   SprintSnapshotBucket,
   SprintSnapshotPoint,
@@ -380,6 +382,16 @@ export type YouTrackSettings = {
   url: string;
   /** The YouTrack project short name, the "ACME" of ACME-42. */
   project: string;
+  /**
+   * That project's internal entity id, the "0-17" form.
+   *
+   * YouTrack addresses a project by this id on every write — creating an
+   * article with the short name is refused outright — so the settings picker
+   * records it when the project is chosen. It is empty on a link written by
+   * hand, and the companion then resolves it from the short name when a job
+   * needs it.
+   */
+  projectId: string;
   /** git-in-track field → the YouTrack field carrying it and its value map. */
   fieldMap: Record<string, YouTrackFieldMapping>;
   pushComments: YouTrackPushComments;
@@ -405,6 +417,12 @@ export type YouTrackSettings = {
 export type YouTrackSettingsPatch = {
   url?: string;
   project?: string;
+  /**
+   * The entity id of the chosen project. A patch that moves `project` without
+   * carrying one clears the stored id rather than leaving the previous
+   * project's id behind it.
+   */
+  projectId?: string;
   fieldMap?: Record<string, YouTrackFieldMapping>;
   pushComments?: YouTrackPushComments;
   kbSync?: YouTrackKbSync;
@@ -1394,7 +1412,14 @@ export type ChangeEvent =
    * A `sprint.changed` frame: a sprint whose scope moved, by a close or by a
    * transfer. A dry run publishes none.
    */
-  | { kind: 'sprint'; sprint: string; board: string; state: string; carried: number; failed: number }
+  | {
+      kind: 'sprint';
+      sprint: string;
+      board: string;
+      state: string;
+      carried: number;
+      failed: number;
+    }
   /**
    * A `youtrack.kb.conflict` frame: a page and the article it mirrors both
    * changed. The page was left exactly as it is and the incoming content went
@@ -1739,8 +1764,19 @@ export interface DataProvider {
     probe?: { url?: string; token?: string },
     scope?: YouTrackScope,
   ): Promise<YouTrackTestResult>;
-  /** Project autosuggest; `q` filters by name and short name. */
-  listYouTrackProjects(q?: string, scope?: YouTrackScope): Promise<YouTrackProject[]>;
+  /**
+   * Project autosuggest; `q` filters by name and short name.
+   *
+   * `probe` reads the list with a URL and a token the user has typed but not
+   * saved, the way `testYouTrackConnection` does: choosing the remote project
+   * is part of connecting, so the picker has to work before anything is
+   * stored. Without it the saved connection is used.
+   */
+  listYouTrackProjects(
+    q?: string,
+    scope?: YouTrackScope,
+    probe?: { url?: string; token?: string },
+  ): Promise<YouTrackProject[]>;
   /**
    * The custom fields of a YouTrack project, so the field map offers real names
    * instead of free text. `project` defaults to the linked one.
@@ -1801,6 +1837,17 @@ export interface DataProvider {
   publishKbPage(selector: KbSyncSelector): Promise<KbSyncJobResult>;
   /** Queues a pull of the selected pages from their articles. */
   pullKbPage(selector: KbSyncSelector): Promise<KbSyncJobResult>;
+  /**
+   * Forgets the article one page mirrors: the `external:` entry leaves the
+   * page's front matter and nothing else happens.
+   *
+   * It is local and immediate — no job, and the instance is never called — so
+   * the article is neither deleted nor archived, and a page unlinked by mistake
+   * is recovered by publishing it again. It needs no connection either: a page
+   * keeps its reference after a project is disconnected, which is exactly when
+   * somebody wants to clean one up.
+   */
+  unlinkKbPage(selector: KbSyncSelector): Promise<KbUnlinkResult>;
   /**
    * Queues a push of one comment, or of every comment of an item that carries
    * no YouTrack reference yet. The answer says what was *queued*: the comment's

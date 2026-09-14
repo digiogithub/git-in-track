@@ -2,7 +2,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
-import { FakeProvider, sampleComments } from '@/api/fake-provider';
+import { FakeProvider, sampleComments, sampleItems } from '@/api/fake-provider';
 import { ProviderError } from '@/api/provider';
 
 import { renderBacklog } from './test-utils';
@@ -42,6 +42,63 @@ describe('ItemDetail', () => {
     const thread = within(await screen.findByRole('list', { name: 'Comment thread' }));
     expect(await thread.findByText('Northwind is the pilot tenant.')).toBeInTheDocument();
     expect(thread.getByText('jose')).toBeInTheDocument();
+  });
+
+  it('offers no unlink on an item that mirrors nothing', async () => {
+    renderBacklog({ path: '/p/ACME/items/ACME-US-0042' });
+
+    await screen.findByRole('heading', { name: 'Login with SSO', level: 1 });
+    expect(screen.queryByRole('button', { name: 'Unlink' })).toBeNull();
+  });
+
+  it('forgets the linked issue after a confirmation, and says the issue is left alone', async () => {
+    const linked = sampleItems.map((item) =>
+      item.id === 'ACME-US-0042'
+        ? {
+            ...item,
+            external: [
+              {
+                system: 'youtrack',
+                id: 'ACME-42',
+                url: 'https://yt.example.com/youtrack/issue/ACME-42',
+              },
+            ],
+          }
+        : item,
+    );
+    const provider = new FakeProvider({ items: linked });
+    const update = vi.spyOn(provider, 'updateItem');
+    renderBacklog({ path: '/p/ACME/items/ACME-US-0042', provider });
+
+    // The reference is shown, and it links to the issue rather than hiding in
+    // the file.
+    const issue = await screen.findByRole('link', { name: 'ACME-42' });
+    expect(issue).toHaveAttribute('href', 'https://yt.example.com/youtrack/issue/ACME-42');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Unlink' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText(/Nothing is sent to YouTrack/)).toBeInTheDocument();
+
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(update).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Unlink' }));
+    await userEvent.click(
+      within(await screen.findByRole('dialog')).getByRole('button', { name: 'Unlink the item' }),
+    );
+
+    await waitFor(() => {
+      expect(update).toHaveBeenCalledWith(
+        'ACME-US-0042',
+        { removeExternal: [{ system: 'youtrack', id: '' }] },
+        expect.any(String),
+      );
+    });
+    // The item no longer mirrors anything, so neither the reference nor the
+    // action it belonged to is still on screen.
+    await waitFor(() => {
+      expect(screen.queryByRole('link', { name: 'ACME-42' })).toBeNull();
+    });
   });
 
   it('renders comment bodies as Markdown', async () => {

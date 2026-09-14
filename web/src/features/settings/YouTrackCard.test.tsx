@@ -3,7 +3,8 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 
-import { FakeProvider, type FakeYouTrack } from '@/api/fake-provider';
+import { FakeProvider, sampleProject, type FakeYouTrack } from '@/api/fake-provider';
+import type { ProjectSummary } from '@/api/provider';
 import { ProviderContext } from '@/api/provider-context';
 import { ToastProvider } from '@/components/ui/toast';
 import { YouTrackCard } from '@/features/settings/YouTrackCard';
@@ -30,8 +31,11 @@ const connected: FakeYouTrack = {
   },
 };
 
-function renderCard(youtrack?: FakeYouTrack) {
-  const provider = new FakeProvider(youtrack === undefined ? {} : { youtrack });
+function renderCard(youtrack?: FakeYouTrack, projects?: ProjectSummary[]) {
+  const provider = new FakeProvider({
+    ...(youtrack === undefined ? {} : { youtrack }),
+    ...(projects === undefined ? {} : { projects }),
+  });
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -119,11 +123,7 @@ describe('YouTrackCard', () => {
   });
 
   it.each([
-    [
-      'youtrack_unauthorized',
-      /YouTrack rejected the token/,
-      /permanent token in Profile/,
-    ],
+    ['youtrack_unauthorized', /YouTrack rejected the token/, /permanent token in Profile/],
     ['youtrack_forbidden', /may not read this project/, /Read Project/],
     ['youtrack_not_found', /this project does not exist there/, /context path/],
     ['youtrack_unreachable', /could not be reached/, /firewall/],
@@ -192,7 +192,7 @@ describe('YouTrackCard', () => {
     expect(picker).toHaveValue('WEB');
   });
 
-  it('does not ask the instance for projects before a token is stored', async () => {
+  it('does not ask the instance for projects with no credential at all', async () => {
     renderCard({});
     const user = userEvent.setup();
 
@@ -200,7 +200,63 @@ describe('YouTrackCard', () => {
     await user.type(picker, 'ac');
 
     expect(screen.queryByRole('listbox')).toBeNull();
-    expect(screen.getByText(/Save a token to search the instance for it/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Fill in the URL and a token to search the instance for it/),
+    ).toBeInTheDocument();
+  });
+
+  it('searches the instance with a URL and token that are typed but not saved', async () => {
+    // Nothing is stored: the picker has to work anyway, because choosing the
+    // remote project is part of connecting to it.
+    const provider = renderCard({});
+    const user = userEvent.setup();
+
+    await user.type(
+      await screen.findByLabelText('Instance URL'),
+      'https://yt.example.com/youtrack',
+    );
+    await user.type(tokenField(), 'perm:typed');
+
+    const picker = screen.getByRole('combobox', { name: 'YouTrack project' });
+    await user.type(picker, 'web');
+    await screen.findByRole('option', { name: /Acme Web/ });
+    await user.click(within(screen.getByRole('option', { name: /Acme Web/ })).getByRole('button'));
+
+    expect(picker).toHaveValue('WEB');
+    expect(provider.youtrackProbe).toEqual({
+      url: 'https://yt.example.com/youtrack',
+      token: 'perm:typed',
+    });
+
+    // What the picker is for: the entity id every YouTrack write addresses a
+    // project by, which nobody can type and a short name cannot stand in for.
+    await user.click(screen.getByRole('button', { name: 'Save connection' }));
+    await expect(provider.getYouTrackSettings()).resolves.toMatchObject({
+      project: 'WEB',
+      projectId: '0-2',
+    });
+  });
+
+  it('drops a recorded id when the short name is typed over', async () => {
+    const provider = renderCard({
+      ...connected,
+      settings: { ...connected.settings, projectId: '0-1' },
+    });
+    const user = userEvent.setup();
+
+    const picker = await screen.findByRole('combobox', { name: 'YouTrack project' });
+    expect(screen.getByText(/Linked to 0-1/)).toBeInTheDocument();
+
+    await user.clear(picker);
+    await user.type(picker, 'OTHER');
+    await user.click(screen.getByRole('button', { name: 'Save connection' }));
+
+    // The id belonged to the previous project: keeping it would publish this
+    // project's pages into that one.
+    await expect(provider.getYouTrackSettings()).resolves.toMatchObject({
+      project: 'OTHER',
+      projectId: '',
+    });
   });
 
   // ------------------------------------- push and sync policy (GIT-T-0188/0219)
@@ -210,7 +266,9 @@ describe('YouTrackCard', () => {
     const user = userEvent.setup();
 
     const push = await screen.findByLabelText('Push comments');
-    expect(screen.getByText(/Nothing leaves this repository until someone uses/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Nothing leaves this repository until someone uses/),
+    ).toBeInTheDocument();
 
     await user.selectOptions(push, 'auto');
 
@@ -236,7 +294,9 @@ describe('YouTrackCard', () => {
     const user = userEvent.setup();
 
     const sync = await screen.findByLabelText('Knowledge base sync');
-    expect(screen.getByText(/published and pulled only from the knowledge-base toolbar/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/published and pulled only from the knowledge-base toolbar/),
+    ).toBeInTheDocument();
 
     await user.selectOptions(sync, 'on_write');
     expect(screen.getByText(/Saving a knowledge-base page enqueues a publish/)).toBeInTheDocument();
@@ -247,6 +307,46 @@ describe('YouTrackCard', () => {
     await expect(provider.getYouTrackSettings()).resolves.toMatchObject({
       kbSync: 'on_write',
       kbSyncDirection: 'both',
+    });
+  });
+
+  it('scopes every call to one project, and offers the choice only where there is one', async () => {
+    // A companion serving a single project resolves `?key=` on its own, so the
+    // picker would be a question with one answer.
+    const single = renderCard(connected);
+    expect(await screen.findByText('Connected')).toBeInTheDocument();
+    expect(screen.queryByLabelText('git-in-track project')).toBeNull();
+    expect(single.youtrackScope).toEqual({ projectKey: 'ACME' });
+  });
+
+  it('reads and writes the project the picker names, not whichever one is first', async () => {
+    const other: ProjectSummary = { ...sampleProject, key: 'WEB', name: 'Web' };
+    const provider = renderCard(connected, [sampleProject, other]);
+    const user = userEvent.setup();
+
+    // The first project is connected; its connection is what loads.
+    const picker = await screen.findByLabelText('git-in-track project');
+    expect(await screen.findByText('Connected')).toBeInTheDocument();
+    expect(urlField()).toHaveValue('https://yt.example.com/youtrack');
+
+    // The second is a project of its own, with a connection of its own — the
+    // bug this replaces sent every call unscoped, which the companion refuses.
+    await user.selectOptions(picker, 'WEB');
+    await waitFor(() => {
+      expect(urlField()).toHaveValue('');
+    });
+    expect(screen.getByText('Not connected')).toBeInTheDocument();
+
+    await user.type(urlField(), 'https://yt.example.com/youtrack');
+    await user.click(screen.getByRole('button', { name: 'Save connection' }));
+
+    await expect(provider.getYouTrackSettings({ projectKey: 'WEB' })).resolves.toMatchObject({
+      url: 'https://yt.example.com/youtrack',
+    });
+    // …and saving one project must not have touched the other.
+    await expect(provider.getYouTrackSettings({ projectKey: 'ACME' })).resolves.toMatchObject({
+      project: 'ACME',
+      url: 'https://yt.example.com/youtrack',
     });
   });
 

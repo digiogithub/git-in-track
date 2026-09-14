@@ -23,6 +23,7 @@ import type {
   InboxTriageInput,
   InboxTriageResult,
   KbSyncJobResult,
+  KbUnlinkResult,
   KbSyncStatusResult,
   SprintCloseInput,
   SprintTransferInput,
@@ -970,7 +971,11 @@ export class BrowserProvider implements DataProvider {
    * A dry run writes nothing, so it needs no writable vault and produces no
    * write set to persist: it is a read that happens to compute a report.
    */
-  async closeSprint(id: string, input: SprintCloseInput = {}, team?: string): Promise<SprintResult> {
+  async closeSprint(
+    id: string,
+    input: SprintCloseInput = {},
+    team?: string,
+  ): Promise<SprintResult> {
     if (input.dryRun === true) {
       await this.#ensureActive();
       return this.#call('sprint.close', {
@@ -1291,6 +1296,10 @@ export class BrowserProvider implements DataProvider {
   }
 
   pullKbPage(): Promise<KbSyncJobResult> {
+    return Promise.reject(new ProviderError('read_only', BROWSER_YOUTRACK_REASON));
+  }
+
+  unlinkKbPage(): Promise<KbUnlinkResult> {
     return Promise.reject(new ProviderError('read_only', BROWSER_YOUTRACK_REASON));
   }
 

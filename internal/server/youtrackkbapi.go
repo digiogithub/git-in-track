@@ -27,11 +27,14 @@ import (
 //
 // Both reach the same handlers, so the two spellings cannot drift.
 
-// mountYouTrackKB registers the three routes under whichever parent mounts it.
+// mountYouTrackKB registers the four routes under whichever parent mounts it.
 func (s *Server) mountYouTrackKB(r chi.Router) {
 	r.Get("/status", s.handleYouTrackKBStatus)
 	r.Post("/publish", s.handleYouTrackKBPublish)
 	r.Post("/pull", s.handleYouTrackKBPull)
+	// Forgetting the article a page mirrors. It is local and immediate: no
+	// job, and nothing is asked of the instance (GIT-US-0095).
+	r.Post("/unlink", s.handleYouTrackKBUnlink)
 }
 
 // youtrackKBRequest is the body of the two queueing routes. Status takes the
@@ -119,19 +122,9 @@ func (s *Server) queueYouTrackKBJob(w http.ResponseWriter, r *http.Request, meth
 // linked, and a 404 is what tells a client that this project has no such
 // resource rather than that the build lacks the feature.
 func (s *Server) youtrackKBScope(w http.ResponseWriter, r *http.Request) (string, bool) {
-	key := strings.TrimSpace(chi.URLParam(r, "key"))
-	if key == "" {
-		key = strings.TrimSpace(r.URL.Query().Get("key"))
-	}
-	if key == "" {
-		key = strings.TrimSpace(r.URL.Query().Get("project"))
-	}
-	if key == "" {
-		resolved, ok := s.youtrackProjectKey(w, r)
-		if !ok {
-			return "", false
-		}
-		key = resolved
+	key, ok := s.youtrackKBProject(w, r)
+	if !ok {
+		return "", false
 	}
 	found, err := s.youtrack.linkFor(key)
 	if err != nil {
@@ -144,6 +137,26 @@ func (s *Server) youtrackKBScope(w http.ResponseWriter, r *http.Request) (string
 		return "", false
 	}
 	return key, true
+}
+
+// youtrackKBProject resolves the project a knowledge-base request is about,
+// without asking whether it is connected to anything.
+//
+// Unlinking is the operation that needs this: a page keeps its `external:`
+// entry after a project is disconnected, and cleaning one up is precisely what
+// somebody does *after* the connection is gone.
+func (s *Server) youtrackKBProject(w http.ResponseWriter, r *http.Request) (string, bool) {
+	key := strings.TrimSpace(chi.URLParam(r, "key"))
+	if key == "" {
+		key = strings.TrimSpace(r.URL.Query().Get("key"))
+	}
+	if key == "" {
+		key = strings.TrimSpace(r.URL.Query().Get("project"))
+	}
+	if key != "" {
+		return key, true
+	}
+	return s.youtrackProjectKey(w, r)
 }
 
 // queryBool reads an optional boolean query parameter. A bare parameter with no

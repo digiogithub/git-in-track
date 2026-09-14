@@ -124,6 +124,7 @@ type ytSettingsBody struct {
 	Configured      bool            `json:"configured"`
 	URL             string          `json:"url"`
 	Project         string          `json:"project"`
+	ProjectID       string          `json:"projectId"`
 	FieldMap        config.FieldMap `json:"fieldMap"`
 	PushComments    string          `json:"pushComments"`
 	KBSync          string          `json:"kbSync"`
@@ -243,6 +244,64 @@ func TestYouTrackSettingsPatch(t *testing.T) {
 	}
 	if perm := info.Mode().Perm(); perm != 0o600 {
 		t.Errorf("configuration mode = %o, want 600", perm)
+	}
+}
+
+// TestYouTrackSettingsPatchRecordsTheEntityID covers what the picker saves: the
+// short name a person reads and the entity id a write is addressed by travel
+// together, and moving the project without a new id drops the old one rather
+// than leaving a create pointed at the previous project.
+func TestYouTrackSettingsPatchRecordsTheEntityID(t *testing.T) {
+	t.Parallel()
+
+	s, root, _ := newYouTrackServer(t, nil, "", false)
+	var body ytSettingsBody
+	decode(t, send(t, s, request{
+		method: http.MethodPatch,
+		target: "/api/v1/youtrack/settings",
+		body: map[string]any{
+			"url": "https://yt.example.com/youtrack", "project": "ACME", "projectId": "0-17",
+		},
+	}), http.StatusOK, &body)
+	if body.Project != "ACME" || body.ProjectID != "0-17" {
+		t.Fatalf("settings = %+v", body)
+	}
+	yaml, err := os.ReadFile(ytProjectYAML(root))
+	if err != nil {
+		t.Fatalf("read project.yaml: %v", err)
+	}
+	if !strings.Contains(string(yaml), "project_id: 0-17") {
+		t.Errorf("project.yaml does not record the entity id:\n%s", yaml)
+	}
+
+	// A different project, and no id with it: the old id must not survive. The
+	// answer omits an empty id, so it is decoded into a fresh value rather than
+	// over the one that is already there.
+	body = ytSettingsBody{}
+	decode(t, send(t, s, request{
+		method: http.MethodPatch,
+		target: "/api/v1/youtrack/settings",
+		body:   map[string]any{"project": "OTHER"},
+	}), http.StatusOK, &body)
+	if body.ProjectID != "" {
+		t.Errorf("projectId = %q, want it cleared with the project it belonged to", body.ProjectID)
+	}
+	if yaml, err = os.ReadFile(ytProjectYAML(root)); err != nil {
+		t.Fatalf("read project.yaml: %v", err)
+	}
+	if strings.Contains(string(yaml), "project_id") {
+		t.Errorf("project.yaml kept the previous project's entity id:\n%s", yaml)
+	}
+
+	// An id that is not one is refused rather than written and failed later.
+	var problem problemBody
+	decode(t, send(t, s, request{
+		method: http.MethodPatch,
+		target: "/api/v1/youtrack/settings",
+		body:   map[string]any{"projectId": "DIGIO"},
+	}), http.StatusBadRequest, &problem)
+	if problem.Code == "" {
+		t.Error("a short name was accepted as an entity id")
 	}
 }
 
@@ -456,6 +515,54 @@ func TestYouTrackDiscovery(t *testing.T) {
 	after, _, _ := s.youtrack.clientFor(ytProjectKey)
 	if before == nil || before != after {
 		t.Error("the client is rebuilt on every call, so the rate limit is not shared")
+	}
+}
+
+// TestYouTrackProjectsWithAnUnsavedConnection covers the picker the settings
+// card drives while it is being filled in: choosing the remote project is part
+// of connecting, so the list has to be readable with a URL and a token that
+// have been typed and not yet saved — and reading it must store neither.
+func TestYouTrackProjectsWithAnUnsavedConnection(t *testing.T) {
+	t.Parallel()
+
+	stub := newYTStub(t)
+	s, root, _ := newYouTrackServer(t, nil, "", false)
+
+	var projects struct {
+		Projects []struct {
+			ID        string `json:"id"`
+			ShortName string `json:"shortName"`
+		} `json:"projects"`
+	}
+	rec := send(t, s, request{
+		method: http.MethodPost,
+		target: "/api/v1/youtrack/projects",
+		body:   map[string]any{"url": stub.URL(), "token": ytToken, "q": "ac"},
+	})
+	decode(t, rec, http.StatusOK, &projects)
+	if len(projects.Projects) != 1 || projects.Projects[0].ShortName != "ACME" {
+		t.Fatalf("projects = %+v", projects)
+	}
+	// The entity id is the whole point of the picker: it is what a create is
+	// addressed by, and typing a short name cannot produce it.
+	if projects.Projects[0].ID != "0-1" {
+		t.Errorf("project id = %q, want the entity id 0-1", projects.Projects[0].ID)
+	}
+
+	yaml, err := os.ReadFile(ytProjectYAML(root))
+	if err != nil {
+		t.Fatalf("read project.yaml: %v", err)
+	}
+	if strings.Contains(string(yaml), stub.URL()) {
+		t.Error("listing projects wrote the connection to project.yaml")
+	}
+	var body ytSettingsBody
+	decode(t, send(t, s, request{method: http.MethodGet, target: "/api/v1/youtrack/settings"}), http.StatusOK, &body)
+	if body.HasToken {
+		t.Error("listing projects stored the token")
+	}
+	if rec.Body.String() != "" && strings.Contains(rec.Body.String(), ytToken) {
+		t.Error("the answer echoed the token")
 	}
 }
 

@@ -19,6 +19,7 @@ import type {
   InboxTriageResult,
   KbPageSyncStatus,
   KbSyncJobResult,
+  KbUnlinkResult,
   KbSyncSelector,
   KbSyncStatusResult,
   SprintCloseInput,
@@ -122,6 +123,7 @@ import type {
   YouTrackFieldValue,
   YouTrackFieldList,
   YouTrackProject,
+  YouTrackScope,
   YouTrackSettings,
   YouTrackSettingsPatch,
   YouTrackTestResult,
@@ -533,7 +535,7 @@ export function snapshotMetrics(
       ...snapshot.provenance,
       source: 'snapshot',
       note:
-        'Read from the sprint\'s stored snapshot: these numbers were frozen when the sprint was closed' +
+        "Read from the sprint's stored snapshot: these numbers were frozen when the sprint was closed" +
         (closedAt === '' ? '' : ` on ${closedAt}`) +
         ', not reconstructed now.',
     },
@@ -1183,6 +1185,12 @@ export class FakeProvider implements DataProvider {
   /** The YouTrack connection, in memory; null on a runtime that has none. */
   private youtrack: FakeYouTrack | null;
   private youtrackSettings: YouTrackSettings;
+  /** The connections of every *other* project, created on first read. */
+  private youtrackByProject = new Map<string, YouTrackSettings>();
+  /** The scope of the last YouTrack call, so a test can assert who asked. */
+  youtrackScope: YouTrackScope = {};
+  /** The unsaved connection the last project listing used, null when saved. */
+  youtrackProbe: { url: string; token: string } | null = null;
   /**
    * Whether a credential also arrives from the environment. It is what makes
    * clearing the stored one fall back rather than disconnect, which is the case
@@ -1201,10 +1209,13 @@ export class FakeProvider implements DataProvider {
     this.youtrack = data.youtrack ?? null;
     const seeded = data.youtrack?.settings ?? {};
     this.youtrackSettings = {
-      projectKey: 'GIT',
+      // The connection belongs to the first project the workspace holds, which
+      // is the one a settings surface scopes its calls to by default.
+      projectKey: (data.projects ?? [sampleProject])[0]?.key ?? 'GIT',
       configured: false,
       url: '',
       project: '',
+      projectId: '',
       fieldMap: {},
       pushComments: 'manual',
       kbSync: 'manual',
@@ -1745,6 +1756,16 @@ export class FakeProvider implements DataProvider {
     }
     const next: Item = { ...item, ...(patch.set ?? {}) };
     for (const key of patch.unset ?? []) delete (next as Record<string, unknown>)[key];
+    for (const ref of patch.removeExternal ?? []) {
+      // An entry with no id forgets every reference of that system, which is
+      // how one tracker is unlinked from an item that mirrors several.
+      next.external = (next.external ?? []).filter(
+        (entry) =>
+          entry.system !== ref.system ||
+          (ref.id !== '' && ref.id !== undefined && entry.id !== ref.id),
+      );
+      if (next.external.length === 0) delete next.external;
+    }
     if (patch.body !== undefined) next.body = patch.body;
     next.updated = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
     next.rev = this.nextRev();
@@ -2787,7 +2808,9 @@ export class FakeProvider implements DataProvider {
     try {
       decisions = this.expandCarries(sprint, incomplete, input.carry ?? [], input.transfer);
     } catch (error) {
-      return Promise.reject(error instanceof Error ? error : new ProviderError('internal', String(error)));
+      return Promise.reject(
+        error instanceof Error ? error : new ProviderError('internal', String(error)),
+      );
     }
     const carried = this.applyCarries(sprint, decisions, dryRun);
 
@@ -2840,7 +2863,9 @@ export class FakeProvider implements DataProvider {
         ...(input.target === undefined ? {} : { target: input.target }),
       });
     } catch (error) {
-      return Promise.reject(error instanceof Error ? error : new ProviderError('internal', String(error)));
+      return Promise.reject(
+        error instanceof Error ? error : new ProviderError('internal', String(error)),
+      );
     }
     const carried = this.applyCarries(sprint, decisions, dryRun);
     const report: SprintCloseReport = {
@@ -2972,7 +2997,10 @@ export class FakeProvider implements DataProvider {
       const remainingPoints = Math.max(0, committed - Math.round((committed * i) / days));
       burndown.push({
         date: new Date(start + i * 86_400_000).toISOString().slice(0, 10),
-        remaining: Math.max(0, summary.metrics.items - Math.floor((summary.metrics.done * i) / days)),
+        remaining: Math.max(
+          0,
+          summary.metrics.items - Math.floor((summary.metrics.done * i) / days),
+        ),
         remainingPoints,
         ideal: Math.round(committed * (1 - i / Math.max(1, days - 1)) * 100) / 100,
         completed: Math.floor((summary.metrics.done * i) / days),
@@ -3490,14 +3518,46 @@ export class FakeProvider implements DataProvider {
     return this.youtrack;
   }
 
-  getYouTrackSettings(): Promise<YouTrackSettings> {
+  /**
+   * The connection of one project, the way the companion resolves `?key=`: the
+   * seeded fixture belongs to a single project, and every other project the
+   * workspace holds answers an unconnected one of its own rather than sharing
+   * it. Recording the scope is what lets a test see which project a surface
+   * asked about.
+   */
+  private youtrackFor(scope: YouTrackScope = {}): YouTrackSettings {
+    this.youtrackScope = { ...scope };
+    const key = scope.projectKey ?? '';
+    if (key === '' || key === this.youtrackSettings.projectKey) return this.youtrackSettings;
+    const known = this.youtrackByProject.get(key);
+    if (known) return known;
+    const fresh: YouTrackSettings = {
+      ...this.youtrackSettings,
+      projectKey: key,
+      configured: false,
+      url: '',
+      project: '',
+      projectId: '',
+      fieldMap: {},
+      hasToken: this.youtrackEnvToken,
+      tokenSource: this.youtrackEnvToken ? 'env' : '',
+    };
+    this.youtrackByProject.set(key, fresh);
+    return fresh;
+  }
+
+  /** Writes one project's connection back where `youtrackFor` read it from. */
+  private storeYouTrack(next: YouTrackSettings): void {
+    if (next.projectKey === this.youtrackSettings.projectKey) this.youtrackSettings = next;
+    else this.youtrackByProject.set(next.projectKey, next);
+  }
+
+  getYouTrackSettings(scope: YouTrackScope = {}): Promise<YouTrackSettings> {
     if (!this.youtrackOrFail()) {
       return Promise.reject(new ProviderError('read_only', NO_YOUTRACK_REASON));
     }
-    return Promise.resolve({
-      ...this.youtrackSettings,
-      fieldMap: { ...this.youtrackSettings.fieldMap },
-    });
+    const current = this.youtrackFor(scope);
+    return Promise.resolve({ ...current, fieldMap: { ...current.fieldMap } });
   }
 
   /**
@@ -3505,14 +3565,23 @@ export class FakeProvider implements DataProvider {
    * applied as given, so `''` clears it, and the token half never becomes
    * readable — only `hasToken` and `tokenSource` move.
    */
-  updateYouTrackSettings(patch: YouTrackSettingsPatch): Promise<YouTrackSettings> {
+  updateYouTrackSettings(
+    patch: YouTrackSettingsPatch,
+    scope: YouTrackScope = {},
+  ): Promise<YouTrackSettings> {
     const youtrack = this.youtrackOrFail();
     if (!youtrack) {
       return Promise.reject(new ProviderError('read_only', NO_YOUTRACK_REASON));
     }
-    const next: YouTrackSettings = { ...this.youtrackSettings };
+    const next: YouTrackSettings = { ...this.youtrackFor(scope) };
     if (patch.url !== undefined) next.url = patch.url.trim().replace(/\/+$/, '');
-    if (patch.project !== undefined) next.project = patch.project.trim();
+    if (patch.project !== undefined) {
+      // The entity id belongs to the short name it was resolved from, so a
+      // move without a new id drops it, exactly as the companion does.
+      if (next.project !== patch.project.trim()) next.projectId = '';
+      next.project = patch.project.trim();
+    }
+    if (patch.projectId !== undefined) next.projectId = patch.projectId.trim();
     if (patch.fieldMap !== undefined) next.fieldMap = { ...patch.fieldMap };
     if (patch.pushComments !== undefined) next.pushComments = patch.pushComments;
     if (patch.kbSync !== undefined) next.kbSync = patch.kbSync;
@@ -3530,12 +3599,13 @@ export class FakeProvider implements DataProvider {
     }
     next.configured = next.url !== '' && next.project !== '';
     next.persisted = youtrack.persisted ?? true;
-    this.youtrackSettings = next;
+    this.storeYouTrack(next);
     return Promise.resolve({ ...next, fieldMap: { ...next.fieldMap } });
   }
 
   testYouTrackConnection(
     probe: { url?: string; token?: string } = {},
+    scope: YouTrackScope = {},
   ): Promise<YouTrackTestResult> {
     const youtrack = this.youtrackOrFail();
     if (!youtrack) {
@@ -3544,7 +3614,8 @@ export class FakeProvider implements DataProvider {
     if (youtrack.testError) {
       return Promise.reject(new ProviderError(youtrack.testError.code, youtrack.testError.message));
     }
-    const url = probe.url ?? this.youtrackSettings.url;
+    const current = this.youtrackFor(scope);
+    const url = probe.url ?? current.url;
     if (url === '') {
       return Promise.reject(
         new ProviderError(
@@ -3559,15 +3630,31 @@ export class FakeProvider implements DataProvider {
       login: 'jdoe',
       fullName: 'Jane Doe',
       email: 'jane@example.com',
-      project: this.youtrackSettings.project,
+      project: current.project,
       ...youtrack.test,
     });
   }
 
-  listYouTrackProjects(q?: string): Promise<YouTrackProject[]> {
+  listYouTrackProjects(
+    q?: string,
+    scope: YouTrackScope = {},
+    probe?: { url?: string; token?: string },
+  ): Promise<YouTrackProject[]> {
     const youtrack = this.youtrackOrFail();
     if (!youtrack) {
       return Promise.reject(new ProviderError('read_only', NO_YOUTRACK_REASON));
+    }
+    // A typed URL and token list the instance without anything being stored,
+    // which is what the settings picker uses while it is being filled in.
+    const unsaved = (probe?.url ?? '') !== '' && (probe?.token ?? '') !== '';
+    this.youtrackProbe = unsaved ? { url: probe?.url ?? '', token: probe?.token ?? '' } : null;
+    if (!unsaved && !this.youtrackFor(scope).hasToken) {
+      return Promise.reject(
+        new ProviderError(
+          'youtrack_not_configured',
+          'This project is not connected to YouTrack yet.',
+        ),
+      );
     }
     const needle = (q ?? '').trim().toLowerCase();
     const projects = youtrack.projects ?? sampleYouTrackProjects;
@@ -3693,7 +3780,8 @@ export class FakeProvider implements DataProvider {
     const seeded = this.kbSync?.pages ?? [];
     const selected = this.kbSyncPaths(selector);
     const pages: KbPageSyncStatus[] = selected.map(
-      (path) => seeded.find((row) => row.path === path) ?? { path, linked: false, state: 'unlinked' },
+      (path) =>
+        seeded.find((row) => row.path === path) ?? { path, linked: false, state: 'unlinked' },
     );
     return Promise.resolve({
       project: selector.project ?? this.youtrackSettings.projectKey,
@@ -3708,6 +3796,33 @@ export class FakeProvider implements DataProvider {
 
   pullKbPage(selector: KbSyncSelector): Promise<KbSyncJobResult> {
     return this.kbSyncJob('pull', selector);
+  }
+
+  /**
+   * Forgets the article one page mirrors. It is a local edit of the seeded
+   * status, the way the companion's is a local edit of the front matter: the
+   * page becomes `unlinked` and nothing is queued.
+   */
+  unlinkKbPage(selector: KbSyncSelector): Promise<KbUnlinkResult> {
+    if (this.youtrack === null) {
+      return Promise.reject(new ProviderError('read_only', FAKE_NO_YOUTRACK));
+    }
+    const path = selector.path ?? '';
+    const project = selector.project ?? this.youtrackSettings.projectKey;
+    const seeded = this.kbSync?.pages ?? [];
+    const row = seeded.find((entry) => entry.path === path);
+    if (!row?.linked) return Promise.resolve({ project, path, unlinked: false });
+    const articleId = row.articleId ?? '';
+    const cleared: KbPageSyncStatus = { path, linked: false, state: 'unlinked' };
+    if (this.kbSync) {
+      this.kbSync.pages = seeded.map((entry) => (entry.path === path ? cleared : entry));
+    }
+    return Promise.resolve({
+      project,
+      path,
+      unlinked: true,
+      ...(articleId === '' ? {} : { articleId }),
+    });
   }
 
   /** Queues a knowledge-base job and announces it the way the engine does. */

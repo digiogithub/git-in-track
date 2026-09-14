@@ -222,6 +222,11 @@ type itemPatch struct {
 	Set   map[string]any `json:"set,omitempty"`
 	Unset []string       `json:"unset,omitempty"`
 	Body  *string        `json:"body,omitempty"`
+	// RemoveExternal forgets external references by (system, id); an entry with
+	// no id removes every reference of that system. It is a set operation
+	// rather than a `set`, because an item may mirror more than one tracker and
+	// unlinking one of them must leave the others alone.
+	RemoveExternal []map[string]any `json:"removeExternal,omitempty"`
 }
 
 // parsePatch accepts both the flat REST body ({"status":"done"}) and the nested
@@ -241,6 +246,14 @@ func parsePatch(raw map[string]any) itemPatch {
 				for _, entry := range list {
 					if name, ok := entry.(string); ok {
 						patch.Unset = append(patch.Unset, name)
+					}
+				}
+			}
+		case "removeExternal":
+			if list, ok := value.([]any); ok {
+				for _, entry := range list {
+					if ref, ok := entry.(map[string]any); ok {
+						patch.RemoveExternal = append(patch.RemoveExternal, ref)
 					}
 				}
 			}

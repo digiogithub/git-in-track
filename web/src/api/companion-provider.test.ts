@@ -1373,6 +1373,34 @@ describe('CompanionProvider YouTrack surface (story GIT-US-0055)', () => {
     expect(fields.gintrackFields).toEqual(['status', 'priority']);
   });
 
+  it('lists projects with an unsaved connection as a POST, and never in the URL', async () => {
+    const fetchImpl = vi.fn().mockResolvedValueOnce(
+      response({
+        projects: [{ id: '0-2', shortName: 'WEB', name: 'Acme Web', archived: false }],
+        total: 1,
+        limit: 100,
+      }),
+    );
+
+    const projects = await provider(fetchImpl).listYouTrackProjects(
+      'we',
+      { projectKey: 'ACME' },
+      { url: 'https://yt.example.com/youtrack', token: 'perm:secret' },
+    );
+
+    const [url, init] = fetchImpl.mock.calls[0] ?? [];
+    // The search text travels in the body with the credential, so no token and
+    // no query text ends up in a URL a proxy or a log would keep.
+    expect(url).toBe(`${BASE}/api/v1/youtrack/projects?key=ACME`);
+    expect((init as RequestInit).method).toBe('POST');
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({
+      url: 'https://yt.example.com/youtrack',
+      token: 'perm:secret',
+      q: 'we',
+    });
+    expect(projects[0]).toMatchObject({ id: '0-2', shortName: 'WEB' });
+  });
+
   it.each([
     ['youtrack_not_configured', 409],
     ['youtrack_unauthorized', 502],

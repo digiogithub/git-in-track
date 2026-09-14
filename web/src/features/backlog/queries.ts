@@ -267,6 +267,43 @@ export function useToggleTask(
   });
 }
 
+export type UnlinkExternalVariables = {
+  id: string;
+  rev: string;
+  /** The tracker to forget; every reference of that system goes with it. */
+  system: string;
+};
+
+/**
+ * Forgets the tracker reference an item carries (GIT-US-0095).
+ *
+ * It is local: the issue is not closed, not deleted and not told anything, and
+ * the project stays connected. What changes is that this item no longer mirrors
+ * that issue, so comments can no longer be pushed from it and a re-import
+ * creates a new item rather than updating this one.
+ *
+ * The patch removes one *system* rather than the whole `external:` list: an
+ * item may mirror more than one tracker, and unlinking YouTrack must leave the
+ * others where they are.
+ */
+export function useUnlinkExternal(
+  project: string,
+): UseMutationResult<Item, Error, UnlinkExternalVariables> {
+  const provider = useProvider();
+  const queryClient = useQueryClient();
+
+  return useMutation<Item, Error, UnlinkExternalVariables>({
+    mutationFn: ({ id, rev, system }) =>
+      provider.updateItem(id, { removeExternal: [{ system, id: '' }] }, rev),
+    onSuccess: (item) => {
+      queryClient.setQueryData(backlogKeys.detail(project, item.id), item);
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: backlogKeys.project(project) });
+    },
+  });
+}
+
 export type DeleteItemVariables = {
   id: string;
   rev: string;
@@ -280,7 +317,9 @@ export type DeleteItemVariables = {
  * child that still names it as its parent resolves to a deleted item rather
  * than to nothing (docs/03 §7.1, ADR-026).
  */
-export function useDeleteItem(project: string): UseMutationResult<void, Error, DeleteItemVariables> {
+export function useDeleteItem(
+  project: string,
+): UseMutationResult<void, Error, DeleteItemVariables> {
   const provider = useProvider();
   const queryClient = useQueryClient();
 
@@ -308,7 +347,6 @@ export function useAddComment(
     },
   });
 }
-
 
 // ------------------------------------------------- pushing a comment upstream
 

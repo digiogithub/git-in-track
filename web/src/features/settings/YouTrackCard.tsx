@@ -21,6 +21,12 @@
  * host. They are rendered apart, never as one "failed" line. The companion
  * answers `502` for all of them on purpose, so a browser never mistakes
  * YouTrack refusing a token for its own session expiring.
+ *
+ * Every one of those calls is *per project*: the companion may serve several
+ * repositories at once, and `/api/v1/youtrack/*` refuses to guess which one a
+ * connection belongs to unless exactly one is mounted. So the card picks a
+ * git-in-track project first and scopes every read and write to it; the picker
+ * is shown only where there is a choice to make.
  */
 
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
@@ -32,6 +38,7 @@ import type {
   YouTrackKbSyncDirection,
   YouTrackProject,
   YouTrackPushComments,
+  YouTrackScope,
   YouTrackSettings,
   YouTrackSettingsPatch,
   YouTrackTestResult,
@@ -68,6 +75,8 @@ function isExternalToken(source: YouTrackTokenSource): boolean {
 type Draft = {
   url: string;
   project: string;
+  /** The chosen project's entity id; '' when the short name was typed by hand. */
+  projectId: string;
   token: string;
   pushComments: YouTrackPushComments;
   kbSync: YouTrackKbSync;
@@ -78,6 +87,7 @@ function draftOf(settings: YouTrackSettings): Draft {
   return {
     url: settings.url,
     project: settings.project,
+    projectId: settings.projectId,
     // Never seeded: the API does not return the token and a placeholder value
     // here would be saved back as if the user had typed it.
     token: '',
@@ -106,6 +116,7 @@ function YouTrackConnection() {
   const [draft, setDraft] = useState<Draft>({
     url: '',
     project: '',
+    projectId: '',
     token: '',
     pushComments: 'manual',
     kbSync: 'manual',
@@ -118,6 +129,10 @@ function YouTrackConnection() {
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState('');
   const [pickerOpen, setPickerOpen] = useState(false);
+  // '' means "whatever the list settles on": the picker only overrides the
+  // default once someone chooses, so a workspace with one project never has to.
+  const [chosenKey, setChosenKey] = useState('');
+  const localProjectId = useId();
   const urlId = useId();
   const tokenId = useId();
   const projectId = useId();
@@ -125,25 +140,49 @@ function YouTrackConnection() {
   const kbSyncId = useId();
   const kbDirectionId = useId();
 
+  // The git-in-track projects this companion serves. Every YouTrack call is
+  // scoped to one of them, and the companion refuses to guess when it holds
+  // more than one — so the list has to arrive before the first read goes out.
+  const localProjects = useQuery({
+    queryKey: ['projects'],
+    queryFn: () => provider?.listProjects() ?? Promise.resolve([]),
+    enabled: provider !== null,
+  });
+  const projectKeys = (localProjects.data ?? []).map((project) => project.key);
+  const projectKey =
+    chosenKey !== '' && projectKeys.includes(chosenKey) ? chosenKey : (projectKeys[0] ?? '');
+  const scope: YouTrackScope = projectKey === '' ? {} : { projectKey };
+  const projectsSettled = !localProjects.isPending;
+
   const load = useCallback(async () => {
-    if (!provider) return;
-    const loaded = await provider.getYouTrackSettings();
+    if (!provider || !projectsSettled) return;
+    const loaded = await provider.getYouTrackSettings(projectKey === '' ? {} : { projectKey });
     setSettings(loaded);
     setDraft(draftOf(loaded));
-  }, [provider]);
+    setTested(null);
+    setTestError(null);
+  }, [provider, projectsSettled, projectKey]);
 
   useEffect(() => {
+    setError(null);
     void load().catch((cause: unknown) => {
       setError(youtrackMessage(cause));
     });
   }, [load]);
 
   // The autosuggest asks the instance, so it can only run once a credential
-  // resolves; before that the field is a plain text input for the short name.
-  const canQuery = settings?.hasToken === true && draft.url.trim() !== '';
+  // resolves. A token the user has just typed counts: choosing the remote
+  // project is part of connecting, so the list is read with the unsaved URL and
+  // token rather than making somebody save a connection to find out what to
+  // connect to. Only when neither resolves is the field a plain text input.
+  const typedToken = draft.token.trim();
+  const probe = typedToken === '' ? undefined : { url: draft.url.trim(), token: typedToken };
+  const canQuery = draft.url.trim() !== '' && (settings?.hasToken === true || probe !== undefined);
   const projects = useQuery({
-    queryKey: ['youtrack', 'projects', search],
-    queryFn: () => provider?.listYouTrackProjects(search) ?? Promise.resolve([]),
+    // The token is part of the key only as "there is one": a credential must
+    // not end up in a cache key, and the URL already separates instances.
+    queryKey: ['youtrack', 'projects', projectKey, draft.url.trim(), probe !== undefined, search],
+    queryFn: () => provider?.listYouTrackProjects(search, scope, probe) ?? Promise.resolve([]),
     enabled: pickerOpen && canQuery,
     // Every keystroke settles into a new search, and therefore a new query key.
     // Without this the list empties while the next answer is in flight, so a
@@ -159,7 +198,7 @@ function YouTrackConnection() {
     setSaving(true);
     setError(null);
     try {
-      const next = await provider.updateYouTrackSettings(patch);
+      const next = await provider.updateYouTrackSettings(patch, scope);
       setSettings(next);
       setDraft(draftOf(next));
       toast({
@@ -180,6 +219,10 @@ function YouTrackConnection() {
     const patch: YouTrackSettingsPatch = {
       url: draft.url.trim(),
       project: draft.project.trim(),
+      // Sent even when empty: a short name typed by hand has no id, and the
+      // companion resolves one when a job needs it rather than writing a
+      // guess here.
+      projectId: draft.projectId.trim(),
       pushComments: draft.pushComments,
       kbSync: draft.kbSync,
       kbSyncDirection: draft.kbSyncDirection,
@@ -203,7 +246,7 @@ function YouTrackConnection() {
       ...(draft.token === '' ? {} : { token: draft.token }),
     };
     void provider
-      .testYouTrackConnection(probe)
+      .testYouTrackConnection(probe, scope)
       .then(setTested)
       .catch((cause: unknown) => {
         setTestError(youtrackMessage(cause));
@@ -215,6 +258,25 @@ function YouTrackConnection() {
 
   const tokenSource = settings?.tokenSource ?? '';
   const external = isExternalToken(tokenSource);
+
+  // Nothing on this card can be addressed to a project before the companion has
+  // said which projects it serves and answered for one of them. A form rendered
+  // ahead of that answer is a form whose values are reset under whoever started
+  // typing into it, so the card waits instead.
+  if (settings === null && error === null) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>YouTrack</CardTitle>
+          <CardDescription>
+            Connect this project to a YouTrack project to import issues, push comments and
+            synchronize knowledge-base pages.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="text-sm text-muted-foreground">Loading…</CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card>
@@ -239,6 +301,30 @@ function YouTrackConnection() {
             save();
           }}
         >
+          {projectKeys.length > 1 ? (
+            <div className="space-y-1">
+              <Label htmlFor={localProjectId}>git-in-track project</Label>
+              <Select
+                id={localProjectId}
+                value={projectKey}
+                onChange={(event) => {
+                  setChosenKey(event.target.value);
+                }}
+              >
+                {(localProjects.data ?? []).map((project) => (
+                  <option key={project.key} value={project.key}>
+                    {project.key} — {project.name}
+                  </option>
+                ))}
+              </Select>
+              <p className="text-muted-foreground">
+                This companion serves several projects, and a YouTrack connection belongs to one of
+                them. Everything below — the instance, the token and the field map — is saved for
+                the project chosen here.
+              </p>
+            </div>
+          ) : null}
+
           <div className="space-y-1">
             <Label htmlFor={urlId}>Instance URL</Label>
             <Input
@@ -294,7 +380,9 @@ function YouTrackConnection() {
               label="YouTrack project"
               value={draft.project}
               onValueChange={(value) => {
-                setDraft((current) => ({ ...current, project: value }));
+                // Typed by hand: whatever id was chosen belonged to another
+                // project, so it goes with it.
+                setDraft((current) => ({ ...current, project: value, projectId: '' }));
               }}
               onSearchChange={setSearch}
               onOpenChange={setPickerOpen}
@@ -315,7 +403,13 @@ function YouTrackConnection() {
                 </span>
               )}
               onSelect={(option) => {
-                setDraft((current) => ({ ...current, project: option.shortName }));
+                // The id is the half that matters to YouTrack: every write
+                // addresses a project by it, and it cannot be typed.
+                setDraft((current) => ({
+                  ...current,
+                  project: option.shortName,
+                  projectId: option.id,
+                }));
               }}
               placeholder="ACME"
               loading={projects.isFetching}
@@ -324,7 +418,10 @@ function YouTrackConnection() {
             <p className="text-muted-foreground">
               {canQuery
                 ? 'The short name, the “ACME” of ACME-42. Type to search the instance.'
-                : 'The short name, the “ACME” of ACME-42. Save a token to search the instance for it.'}
+                : 'The short name, the “ACME” of ACME-42. Fill in the URL and a token to search the instance for it.'}{' '}
+              {draft.projectId === ''
+                ? 'Choosing one from the list also records the id YouTrack needs to create articles.'
+                : `Linked to ${draft.projectId}, the id YouTrack creates articles with.`}
             </p>
           </div>
 
@@ -395,8 +492,8 @@ function YouTrackConnection() {
             </div>
             <div className="space-y-1 sm:col-span-2">
               <p className="text-muted-foreground">
-                The <code>## Feedback</code> block of a page is never published: reader notes stay in
-                this repository whichever direction is chosen.
+                The <code>## Feedback</code> block of a page is never published: reader notes stay
+                in this repository whichever direction is chosen.
               </p>
             </div>
           </div>

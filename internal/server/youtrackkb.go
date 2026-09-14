@@ -141,6 +141,34 @@ type kbRun struct {
 	// reported and skipped: one unreadable article must not abandon the rest of
 	// a handbook.
 	failed int
+	// projectID memoizes the internal entity id of the linked project, which is
+	// what creating an article needs; it is resolved on the first create of a
+	// job and never for a job that only updates.
+	projectID string
+}
+
+// entityProjectID resolves the linked project's internal entity id.
+//
+// A project is configured by its short name — the "ACME" of ACME-42 — and every
+// read is scoped by it, but `POST /api/articles` rejects it outright with
+// "Invalid structure of entity id": the project of a new article has to be the
+// `0-17` form. The settings picker records that id when the project is chosen
+// from the instance, so the usual path costs nothing; a link written by hand,
+// or by a build older than the key, is resolved from the short name once per
+// job, and only for a job that actually creates something.
+func (s *Server) entityProjectID(ctx context.Context, run *kbRun) (string, error) {
+	if run.projectID == "" {
+		run.projectID = run.link.ProjectID
+	}
+	if run.projectID != "" {
+		return run.projectID, nil
+	}
+	id, err := run.client.ProjectID(ctx, run.link.Project)
+	if err != nil {
+		return "", fmt.Errorf("resolve the YouTrack project %s: %w", run.link.Project, err)
+	}
+	run.projectID = id
+	return id, nil
 }
 
 // runKBJob performs one publish or pull.
@@ -258,7 +286,11 @@ func (s *Server) publishKBPage(
 	}
 
 	if !linked {
-		input.ProjectID = run.link.Project
+		projectID, err := s.entityProjectID(ctx, run)
+		if err != nil {
+			return err
+		}
+		input.ProjectID = projectID
 		created, err := run.client.CreateArticle(ctx, input)
 		if err != nil {
 			return fmt.Errorf("create an article for %s: %w", page.Path, err)
@@ -329,9 +361,13 @@ func (s *Server) ensureKBParent(ctx context.Context, run *kbRun, dir string) (st
 		return "", err
 	}
 	if id == "" {
+		projectID, idErr := s.entityProjectID(ctx, run)
+		if idErr != nil {
+			return "", idErr
+		}
 		content := ""
 		input := youtrack.ArticleInput{
-			Summary: &summary, Content: &content, ProjectID: run.link.Project,
+			Summary: &summary, Content: &content, ProjectID: projectID,
 		}
 		if parent != "" {
 			input.ParentArticleID = &parent

@@ -299,11 +299,16 @@ type itemPatchParams struct {
 	Set   *patchSet `json:"set,omitempty"`
 	Unset []string  `json:"unset,omitempty"`
 	Body  *string   `json:"body,omitempty"`
+	// RemoveExternal forgets external references by (system, id). An entry with
+	// an empty id removes every reference of that system, which is how one
+	// tracker is unlinked from an item that may mirror several — `unset:
+	// ["external"]` would take the others with it.
+	RemoveExternal []core.External `json:"removeExternal,omitempty"`
 }
 
 // patch turns the wire form into the core input.
 func (p itemPatchParams) patch() core.ItemPatch {
-	out := core.ItemPatch{Unset: p.Unset, Body: p.Body}
+	out := core.ItemPatch{Unset: p.Unset, Body: p.Body, RemoveExternal: p.RemoveExternal}
 	if p.Set == nil {
 		return out
 	}

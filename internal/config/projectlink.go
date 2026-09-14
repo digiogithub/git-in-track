@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -120,6 +121,10 @@ func knownFieldMapKey(key string) bool {
 	return false
 }
 
+// entityIDPattern matches a YouTrack internal entity id, as in "0-17". It is
+// the shape every write endpoint addresses a project by.
+var entityIDPattern = regexp.MustCompile(`^\d+-\d+$`)
+
 // YouTrackLink is the parsed `integrations.youtrack` block.
 type YouTrackLink struct {
 	// URL is the instance URL, context path included when the instance has one,
@@ -127,6 +132,15 @@ type YouTrackLink struct {
 	URL string `json:"url" yaml:"url"`
 	// Project is the YouTrack project short name, the "ACME" of ACME-42.
 	Project string `json:"project" yaml:"project"`
+	// ProjectID is the same project's internal entity id, the "0-17" form.
+	//
+	// It is what YouTrack's write endpoints insist on — creating an article
+	// with the short name is refused with "Invalid structure of entity id" —
+	// and the settings picker records it alongside the short name so that
+	// publishing costs no lookup. It stays optional: a link written by hand,
+	// or by an older build, carries only the short name and the id is resolved
+	// from it at the moment it is needed.
+	ProjectID string `json:"projectId,omitempty" yaml:"project_id,omitempty"`
 	// FieldMap maps a git-in-track field onto the YouTrack custom field that
 	// carries it and, for the three fields whose values are enumerable, onto
 	// what those values mean here. Keys are drawn from FieldMapKeys; see
@@ -169,6 +183,7 @@ func (l YouTrackLink) Normalized() YouTrackLink {
 	out := l
 	out.URL = strings.TrimRight(strings.TrimSpace(l.URL), "/")
 	out.Project = strings.TrimSpace(l.Project)
+	out.ProjectID = strings.TrimSpace(l.ProjectID)
 	if out.PushComments == "" {
 		out.PushComments = PushCommentsManual
 	}
@@ -212,6 +227,9 @@ func (l YouTrackLink) Validate() error {
 		add("project", "must not be empty: give the YouTrack project short name, the \"ACME\" of ACME-42")
 	} else if strings.ContainsAny(link.Project, " /\\?#") {
 		add("project", "%q is not a project short name", link.Project)
+	}
+	if link.ProjectID != "" && !entityIDPattern.MatchString(link.ProjectID) {
+		add("project_id", "%q is not a YouTrack entity id, which reads like 0-17", link.ProjectID)
 	}
 	if !link.PushComments.Valid() {
 		add("push_comments", "unknown mode %q: use manual or auto", link.PushComments)
@@ -333,6 +351,13 @@ func setYouTrackLink(data []byte, link YouTrackLink) ([]byte, error) {
 	changed := false
 	changed = setScalar(block, "url", link.URL) || changed
 	changed = setScalar(block, "project", link.Project) || changed
+	// An unresolved id is an absent key, not an empty one: the file says what
+	// the project is called and stays silent about what it has not learned.
+	if link.ProjectID == "" {
+		changed = mapDelete(block, "project_id") || changed
+	} else {
+		changed = setScalar(block, "project_id", link.ProjectID) || changed
+	}
 	changed = setScalar(block, "push_comments", string(link.PushComments)) || changed
 	changed = setScalar(block, "kb_sync", string(link.KBSync)) || changed
 	changed = setScalar(block, "kb_sync_direction", string(link.KBSyncDirection)) || changed

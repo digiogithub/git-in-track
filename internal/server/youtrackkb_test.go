@@ -91,9 +91,15 @@ func TestKBPublishCreatesThenUpdates(t *testing.T) {
 	if len(fake.createdArts) != 1 {
 		t.Fatalf("the publish created %d articles, want 1", len(fake.createdArts))
 	}
-	if fake.createdArts[0].ProjectID != "DEMO" {
-		t.Errorf("the creation body carries project %q, want DEMO: a project is only settable at creation",
+	// The body carries the project's internal entity id, never its short name:
+	// YouTrack answers `Invalid structure of entity id: DEMO` to the latter, so
+	// a publish that sent it created nothing at all.
+	if fake.createdArts[0].ProjectID != "0-7" {
+		t.Errorf("the creation body carries project %q, want the entity id 0-7",
 			fake.createdArts[0].ProjectID)
+	}
+	if len(fake.projectLookups) != 1 || fake.projectLookups[0] != "DEMO" {
+		t.Errorf("the entity id was resolved from %v, want one lookup of DEMO", fake.projectLookups)
 	}
 	if fake.createdArts[0].Summary == nil || *fake.createdArts[0].Summary == "" {
 		t.Error("the article was created without a summary")
@@ -118,6 +124,72 @@ func TestKBPublishCreatesThenUpdates(t *testing.T) {
 	}
 	if len(fake.createdArts) != 1 {
 		t.Errorf("the second publish created another article: %d in total", len(fake.createdArts))
+	}
+}
+
+// TestKBPublishResolvesTheProjectOnceAndOnlyToCreate proves the two halves of
+// the lookup: a folder publish that creates a tree resolves the entity id once
+// for the whole job, and a publish that only updates never asks at all.
+func TestKBPublishResolvesTheProjectOnceAndOnlyToCreate(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeYouTrack()
+	s, _ := newJobServer(t, fake)
+
+	if err := runKB(t.Context(), t, s, kbDirectionPublish,
+		vault.YouTrackKBParams{Project: "DEMO", Recursive: true}); err != nil {
+		t.Fatalf("the publish failed: %v", err)
+	}
+	if len(fake.createdArts) < 2 {
+		t.Fatalf("the publish created %d articles, want the page and its parents", len(fake.createdArts))
+	}
+	if len(fake.projectLookups) != 1 {
+		t.Errorf("the job resolved the project %d times, want once", len(fake.projectLookups))
+	}
+	for i, in := range fake.createdArts {
+		if in.ProjectID != "0-7" {
+			t.Errorf("article %d was created in project %q, want the entity id 0-7", i, in.ProjectID)
+		}
+	}
+
+	// Everything is linked now, so a second run updates and asks nothing.
+	before := len(fake.projectLookups)
+	if err := runKB(t.Context(), t, s, kbDirectionPublish,
+		vault.YouTrackKBParams{Project: "DEMO", Recursive: true}); err != nil {
+		t.Fatalf("the second publish failed: %v", err)
+	}
+	if len(fake.projectLookups) != before {
+		t.Errorf("a publish that creates nothing still resolved the project: %v", fake.projectLookups)
+	}
+}
+
+// TestKBPublishUsesTheRecordedEntityID proves the saved half of the picker: a
+// link that already carries the entity id publishes without asking the instance
+// what the short name resolves to.
+func TestKBPublishUsesTheRecordedEntityID(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeYouTrack()
+	s, _ := newJobServer(t, fake)
+	s.youtrack.mu.Lock()
+	s.youtrack.jobClient = func(string) (youtrackJobClient, vault.YouTrackLink, error) {
+		return fake, vault.YouTrackLink{
+			BaseURL:   "https://yt.example.com/youtrack",
+			Project:   "DEMO",
+			ProjectID: "0-17",
+		}, nil
+	}
+	s.youtrack.mu.Unlock()
+
+	if err := runKB(t.Context(), t, s, kbDirectionPublish,
+		vault.YouTrackKBParams{Project: "DEMO", Path: kbIndexPage}); err != nil {
+		t.Fatalf("the publish failed: %v", err)
+	}
+	if len(fake.createdArts) != 1 || fake.createdArts[0].ProjectID != "0-17" {
+		t.Fatalf("the creation body carries %+v, want the recorded entity id", fake.createdArts)
+	}
+	if len(fake.projectLookups) != 0 {
+		t.Errorf("the recorded id was resolved again: %v", fake.projectLookups)
 	}
 }
 

@@ -74,8 +74,26 @@ type fakeYouTrack struct {
 	updatedArts  []string
 	nextArticle  int
 
+	// projectLookups records every short name a job resolved onto an entity id,
+	// and projectIDErr fails that resolution.
+	projectLookups []string
+	projectIDErr   error
+
 	// err fails every call that has no more specific failure of its own.
 	err error
+}
+
+// ProjectID answers the internal entity id of a project, the way a real
+// instance does: the short name is not one, and creating an article with it is
+// rejected.
+func (f *fakeYouTrack) ProjectID(_ context.Context, key string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.projectLookups = append(f.projectLookups, key)
+	if f.projectIDErr != nil {
+		return "", f.projectIDErr
+	}
+	return "0-7", nil
 }
 
 // newFakeYouTrack builds an empty instance.

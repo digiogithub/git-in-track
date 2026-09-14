@@ -225,9 +225,7 @@ describe('publishing', () => {
 
   it('reports a refused publish with the problem code’s message', async () => {
     const user = userEvent.setup();
-    renderKb(
-      linked({ kbSync: { jobError: { code: 'youtrack_forbidden', message: '403' } } }),
-    );
+    renderKb(linked({ kbSync: { jobError: { code: 'youtrack_forbidden', message: '403' } } }));
 
     await screen.findByTestId('kb-sync-toolbar');
     await user.click(screen.getByRole('button', { name: /Publish to YouTrack/ }));
@@ -351,10 +349,7 @@ describe('tree badges', () => {
     renderKb(
       linked({
         kbSync: {
-          pages: [
-            { path: 'docs/index.md', linked: true, state: 'in_sync' },
-            row('conflict'),
-          ],
+          pages: [{ path: 'docs/index.md', linked: true, state: 'in_sync' }, row('conflict')],
         },
       }),
     );
@@ -455,5 +450,51 @@ describe('staying fresh', () => {
     // on every frame of a long import would be noise, not freshness.
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(status).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ------------------------------------------------------------------ unlinking
+
+describe('unlinking a page', () => {
+  it('is offered only for a page that mirrors an article', async () => {
+    renderKb(linked({ kbSync: { pages: [row('unlinked')] } }));
+
+    await screen.findByTestId('kb-sync-toolbar');
+    expect(screen.queryByRole('button', { name: 'Unlink' })).toBeNull();
+  });
+
+  it('asks before it forgets, and says the article is left alone', async () => {
+    const provider = linked({
+      kbSync: { pages: [row('in_sync', { articleId: 'ACME-A-3' })] },
+    });
+    const unlink = vi.spyOn(provider, 'unlinkKbPage');
+    renderKb(provider);
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole('button', { name: 'Unlink' }));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText(/ACME-A-3/)).toBeInTheDocument();
+    // The promise the confirmation makes: this is local, and it is not a
+    // disconnect of the project.
+    expect(within(dialog).getByText(/Nothing is sent to YouTrack/)).toBeInTheDocument();
+
+    // Cancelling writes nothing at all.
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(unlink).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: 'Unlink' }));
+    await user.click(
+      within(await screen.findByRole('dialog')).getByRole('button', { name: 'Unlink the page' }),
+    );
+
+    await waitFor(() => {
+      expect(unlink).toHaveBeenCalledWith({ path: PAGE, project: 'ACME' });
+    });
+    // The page is unlinked now, so the action it no longer applies to is gone.
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'Unlink' })).toBeNull();
+    });
+    expect(await screen.findByText('The page was unlinked')).toBeInTheDocument();
   });
 });

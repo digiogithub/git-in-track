@@ -83,6 +83,10 @@ type YouTrackLink struct {
 	// Project is the YouTrack project short name, the "ACME" of ACME-42. It
 	// scopes a query that does not scope itself.
 	Project string
+	// ProjectID is the same project's internal entity id, the "0-17" form the
+	// write endpoints insist on. It is empty when the link never recorded one,
+	// and the id is then resolved from the short name where it is needed.
+	ProjectID string
 	// FieldMap overrides the default field names *and* the default value
 	// translations, keyed as config.FieldMapKeys spells them.
 	//

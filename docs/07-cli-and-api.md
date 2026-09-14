@@ -2916,6 +2916,7 @@ GET   /api/v1/youtrack/settings?key=DEMO     the connection of one project, toke
 PATCH /api/v1/youtrack/settings?key=DEMO     sparse write of both halves
 POST  /api/v1/youtrack/test?key=DEMO         probe the connection, saved or typed
 GET   /api/v1/youtrack/projects?key=DEMO&q=  the instance's projects, for the autosuggest
+POST  /api/v1/youtrack/projects?key=DEMO     the same list, read with a connection typed but unsaved
 GET   /api/v1/youtrack/fields?key=DEMO&project=ACME   the remote project's custom fields
 GET   /api/v1/youtrack/issues?key=DEMO&q=&preset=&limit=&cursor=   search, for the import picker
 POST  /api/v1/youtrack/import/preview?key=DEMO   what an import would do; writes nothing
@@ -2924,7 +2925,22 @@ POST  /api/v1/youtrack/comments/push?key=DEMO    queue a comment push; answers a
 GET   /api/v1/youtrack/kb/status?key=DEMO&path=&recursive=&remote=   page sync states
 POST  /api/v1/youtrack/kb/publish?key=DEMO       queue a publish; answers a job id
 POST  /api/v1/youtrack/kb/pull?key=DEMO          queue a pull; answers a job id
+POST  /api/v1/youtrack/kb/unlink?key=DEMO        forget the article one page mirrors
 ```
+
+`/kb/unlink` takes `{"path"}` and answers
+`{"project", "path", "unlinked", "articleId"}`. It is the odd one of the four:
+no job, no call to the instance, and no connection required. It removes the
+page's `external:` entry and nothing else — the article is neither deleted nor
+archived, the project stays connected, and a page that carried no reference
+answers `unlinked: false` rather than failing. Publishing the page afterwards
+creates a new article instead of updating the one it forgot.
+
+The item half of the same operation is an ordinary item patch:
+`PATCH /api/v1/items/{id}` with `{"removeExternal": [{"system": "youtrack"}]}`.
+An entry with no `id` forgets every reference of that system, which is what
+unlinking one tracker from an item that mirrors several has to mean —
+`unset: ["external"]` would take the others with it.
 
 `key` is the **git-in-track** project key and may be omitted when the companion
 serves exactly one project; with several it is required, and its absence is
@@ -3282,6 +3298,12 @@ GET /api/v1/youtrack/projects?key=DEMO&q=ac
                   "archived": false } ],
   "total": 1, "limit": 100 }
 ```
+
+The `POST` form takes `{"url", "token", "q"}` and answers the same body. It
+exists because choosing the remote project is part of *connecting* to it: the
+settings picker has to list projects while the URL and the token are still being
+typed, and a credential belongs in a body rather than in a URL a proxy or a log
+would keep. A body with neither `url` nor `token` reads the saved connection.
 
 ```json
 GET /api/v1/youtrack/fields?key=DEMO&project=ACME

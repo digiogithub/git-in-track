@@ -22,7 +22,7 @@
  * still a thing to want, most obviously when the last automatic job failed.
  */
 
-import { RefreshCw, UploadCloud } from 'lucide-react';
+import { Link2Off, RefreshCw, UploadCloud } from 'lucide-react';
 import { useState } from 'react';
 
 import type { KbPageSyncStatus, KbSyncSelector } from '@/api/provider';
@@ -38,7 +38,7 @@ import {
 import { useToast } from '@/components/ui/toast';
 import { PUBLISH_SCOPE_NOTE } from '@/features/kb/kb-sync';
 import { KbSyncBadge } from '@/features/kb/KbSyncBadge';
-import { useKbSyncJob } from '@/features/kb/useKbData';
+import { useKbSyncJob, useKbUnlink } from '@/features/kb/useKbData';
 import { youtrackMessage } from '@/features/settings/youtrack-messages';
 import { useYouTrackSettings } from '@/features/settings/youtrack-queries';
 
@@ -75,17 +75,20 @@ export function KbSyncToolbar({
   const { toast } = useToast();
   const publish = useKbSyncJob(project, 'publish');
   const pull = useKbSyncJob(project, 'pull');
+  const unlink = useKbUnlink(project);
   const [confirmFolder, setConfirmFolder] = useState(false);
+  const [confirmUnlink, setConfirmUnlink] = useState(false);
   const settings = useYouTrackSettings(project);
 
   // What the project's own setting already does, which is what decides whether
   // the manual button is the way pages reach YouTrack or merely the fast one.
   // An unset direction means `push`, the same default the settings card shows.
   const direction = settings.data?.kbSyncDirection ?? '';
-  const publishesOnWrite =
-    settings.data?.kbSync === 'on_write' && direction !== 'pull';
+  const publishesOnWrite = settings.data?.kbSync === 'on_write' && direction !== 'pull';
 
-  const busy = publish.isPending || pull.isPending;
+  const busy = publish.isPending || pull.isPending || unlink.isPending;
+  // Only a page that mirrors an article has anything to forget.
+  const linked = status?.linked === true;
   const folderLabel = folder === '' ? 'this project' : folder;
 
   const run = (
@@ -179,6 +182,20 @@ export function KbSyncToolbar({
       >
         {checking ? 'Checking…' : 'Check the article'}
       </Button>
+      {linked ? (
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={busy}
+          title="Forgets the article this page mirrors; the article itself is left alone"
+          onClick={() => {
+            setConfirmUnlink(true);
+          }}
+        >
+          <Link2Off className="h-4 w-4" aria-hidden="true" />
+          Unlink
+        </Button>
+      ) : null}
 
       {publishesOnWrite ? (
         <span className="w-full text-xs text-muted-foreground">
@@ -186,6 +203,67 @@ export function KbSyncToolbar({
           buttons only bring it forward.
         </span>
       ) : null}
+
+      <Dialog open={confirmUnlink} onOpenChange={setConfirmUnlink}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Unlink this page from YouTrack?</DialogTitle>
+            <DialogDescription>
+              The reference to{' '}
+              {status?.articleId === undefined || status.articleId === ''
+                ? 'the article'
+                : status.articleId}{' '}
+              is removed from this page. Nothing is sent to YouTrack: the article stays exactly
+              where it is, and this project stays connected.
+            </DialogDescription>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Publishing this page afterwards creates a new article rather than updating that one, so
+            re-linking it means publishing again — or pasting the reference back by hand.
+          </p>
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setConfirmUnlink(false);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={busy}
+              onClick={() => {
+                unlink.mutate(
+                  { path },
+                  {
+                    onSuccess: (result) => {
+                      setConfirmUnlink(false);
+                      toast({
+                        title: result.unlinked
+                          ? 'The page was unlinked'
+                          : 'The page mirrored no article',
+                        description: result.unlinked
+                          ? 'Its YouTrack reference was removed. The article itself was not touched.'
+                          : 'Nothing was written: there was no reference to remove.',
+                      });
+                    },
+                    onError: (error) => {
+                      toast({
+                        variant: 'destructive',
+                        title: 'The page was not unlinked',
+                        description: youtrackMessage(error),
+                      });
+                    },
+                  },
+                );
+              }}
+            >
+              Unlink the page
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={confirmFolder} onOpenChange={setConfirmFolder}>
         <DialogContent>

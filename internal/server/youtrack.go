@@ -97,6 +97,10 @@ type youtrackSettings struct {
 	URL string `json:"url,omitempty"`
 	// Project is the YouTrack project short name.
 	Project string `json:"project,omitempty"`
+	// ProjectID is that project's internal entity id, the "0-17" form the
+	// write endpoints address a project by. It is empty on a link that was
+	// written by hand, and the id is then resolved when it is needed.
+	ProjectID string `json:"projectId,omitempty"`
 	// FieldMap maps a git-in-track field onto a YouTrack custom field and,
 	// for the three fields whose values are enumerable, onto what those values
 	// mean here. Each entry is an object: {"status":{"field":"State",
@@ -127,8 +131,12 @@ type youtrackSettings struct {
 // "set to empty" stay distinguishable, which is what makes disconnecting a
 // project expressible at all.
 type youtrackSettingsPatch struct {
-	URL             *string          `json:"url"`
-	Project         *string          `json:"project"`
+	URL     *string `json:"url"`
+	Project *string `json:"project"`
+	// ProjectID is the entity id of the project the picker chose. A patch that
+	// moves `project` without naming it clears the stored one rather than
+	// leaving the previous project's id behind it.
+	ProjectID       *string          `json:"projectId"`
 	FieldMap        *config.FieldMap `json:"fieldMap"`
 	PushComments    *string          `json:"pushComments"`
 	KBSync          *string          `json:"kbSync"`
@@ -144,6 +152,14 @@ type youtrackSettingsPatch struct {
 type youtrackTestRequest struct {
 	URL   string `json:"url"`
 	Token string `json:"token"`
+}
+
+// youtrackProjectsRequest is the body of POST /api/v1/youtrack/projects: the
+// search text, plus the unsaved connection to read the list with.
+type youtrackProjectsRequest struct {
+	URL   string `json:"url"`
+	Token string `json:"token"`
+	Q     string `json:"q"`
 }
 
 // youtrackTestResult is what a successful probe reports: who the token
@@ -295,6 +311,7 @@ func (y *youtrackState) view(projectKey string) (youtrackSettings, error) {
 		out.Configured = true
 		out.URL = found.link.URL
 		out.Project = found.link.Project
+		out.ProjectID = found.link.ProjectID
 		out.FieldMap = found.link.FieldMap
 		out.PushComments = string(found.link.PushComments)
 		out.KBSync = string(found.link.KBSync)
@@ -339,7 +356,15 @@ func mergeYouTrackPatch(current *config.YouTrackLink, patch youtrackSettingsPatc
 		out.URL, touched = *patch.URL, true
 	}
 	if patch.Project != nil {
+		// The id belongs to the short name it was resolved from: moving the
+		// project without a new id must not keep pointing at the old one.
+		if out.Project != *patch.Project {
+			out.ProjectID = ""
+		}
 		out.Project, touched = *patch.Project, true
+	}
+	if patch.ProjectID != nil {
+		out.ProjectID, touched = *patch.ProjectID, true
 	}
 	if patch.FieldMap != nil {
 		out.FieldMap, touched = *patch.FieldMap, true
@@ -441,6 +466,9 @@ func (s *Server) mountYouTrack(r chi.Router) {
 	r.Patch("/settings", s.handleYouTrackSettingsPatch)
 	r.Post("/test", s.handleYouTrackTest)
 	r.Get("/projects", s.handleYouTrackProjects)
+	// The same list read with a connection that is typed but not yet saved,
+	// which is what lets the settings picker work while it is being filled in.
+	r.Post("/projects", s.handleYouTrackProjectsProbe)
 	r.Get("/fields", s.handleYouTrackFields)
 	// The issue search the import dialog types into (GIT-US-0054). It is a
 	// read, so it needs no If-Match and takes no body.
@@ -607,10 +635,42 @@ func (s *Server) handleYouTrackProjects(w http.ResponseWriter, r *http.Request) 
 		s.failYouTrack(w, r, err)
 		return
 	}
+	s.writeYouTrackProjects(w, r, client, r.URL.Query().Get("q"))
+}
+
+// handleYouTrackProjectsProbe serves POST /api/v1/youtrack/projects.
+//
+// It is the same list, read with a connection the user has typed but not saved
+// — exactly what POST /test already accepts and for the same reason: choosing
+// the remote project is part of connecting, so the picker has to work before
+// there is anything stored to read it with. A body with neither field reads the
+// saved connection, so the POST form is also a GET with a longer q.
+func (s *Server) handleYouTrackProjectsProbe(w http.ResponseWriter, r *http.Request) {
+	key, ok := s.youtrackProjectKey(w, r)
+	if !ok {
+		return
+	}
+	var body youtrackProjectsRequest
+	if r.ContentLength != 0 && !decodeBody(w, r, &body) {
+		return
+	}
+	client, _, err := s.youtrackProbeClient(key, youtrackTestRequest{URL: body.URL, Token: body.Token})
+	if err != nil {
+		s.failYouTrack(w, r, err)
+		return
+	}
+	s.writeYouTrackProjects(w, r, client, body.Q)
+}
+
+// writeYouTrackProjects is the shared half of both spellings: one capped page
+// of projects, whoever resolved the client.
+func (s *Server) writeYouTrackProjects(
+	w http.ResponseWriter, r *http.Request, client *youtrack.Client, q string,
+) {
 	ctx, cancel := context.WithTimeout(r.Context(), youtrackProbeTimeout)
 	defer cancel()
 
-	projects, err := client.Projects(ctx, r.URL.Query().Get("q"), youtrack.Page{Top: youtrackMaxProjects})
+	projects, err := client.Projects(ctx, q, youtrack.Page{Top: youtrackMaxProjects})
 	if err != nil {
 		s.failYouTrack(w, r, err)
 		return

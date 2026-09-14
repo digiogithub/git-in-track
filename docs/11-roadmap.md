@@ -698,9 +698,12 @@ or a documented promise get an ADR in their story.
   (`features.youtrack`, `features.agent`, `fullTextSearch: 'pando'`) and hides when absent.
 - **Cycles extend sprints**; no new entity. **Inbox items are ordinary items** in a
   reserved `triage` status category with an `inbox` front-matter block.
-- **The agent interface speaks AG-UI directly** with `@ag-ui/client` and the shadcn design
-  system, through a companion proxy that injects the Pando token. Pando does not implement
-  the CopilotKit runtime, so CopilotKit would have meant a Node sidecar; rejected.
+- **The agent interface speaks AG-UI directly** with `@pando-ai/sdk/agui` and the shadcn
+  design system, through a companion proxy that injects the Pando token and routes each
+  repository to its own `pando agui-serve`. Pando does not implement the CopilotKit runtime,
+  so CopilotKit would have meant a Node sidecar; rejected. `@ag-ui/client` was rejected too:
+  its schemas drop Pando's `outcome: interrupt` and reasoning events (2026-09-13 gap analysis
+  in `docs/research/`, backlog in the `PANDO` project).
 - **Semantic search is an optional native accelerator** behind the existing `core/search`
   contract, exactly as `docs/02-architecture.md` §8 prescribes for bleve. The companion
   exports items and pages to a corpus Pando indexes and queries Pando over MCP; the core
@@ -774,7 +777,7 @@ history Plane's cycles have.
 
 **Deliverables**
 
-- Companion proxy to Pando AG-UI, `@ag-ui/client` store, chat route, tool-call cards,
+- Companion proxy to Pando AG-UI, `@pando-ai/sdk/agui` store, chat route, tool-call cards,
   human-in-the-loop dialogs, shared-state panel, frontend tools that drive the UI.
 - Pando configuration template, `backlog-assistant` persona and routing skill;
   `docs/20-agent-interface.md`.

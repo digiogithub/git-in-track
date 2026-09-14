@@ -23,6 +23,7 @@ import type {
   KbSyncJobResult,
   KbSyncSelector,
   KbSyncStatusResult,
+  KbUnlinkResult,
 } from '@/api/provider';
 import { useProvider } from '@/api/provider-context';
 
@@ -150,6 +151,28 @@ export function useKbSyncJob(
       // is still worth it: queuing is when the local side last told the truth
       // about itself, and the job's own events invalidate again as it runs.
       void queryClient.invalidateQueries({ queryKey: ['kb', 'sync', project] });
+    },
+  });
+}
+
+/**
+ * Forgetting the article a page mirrors (GIT-US-0095).
+ *
+ * Unlike the two directions above this is not a job: the `external:` entry
+ * leaves the page's front matter and the call is done, so the page's state is
+ * refetched immediately rather than waited for on the event stream. The page
+ * itself is invalidated too — its front matter is what changed.
+ */
+export function useKbUnlink(
+  project: string,
+): UseMutationResult<KbUnlinkResult, Error, KbSyncSelector> {
+  const provider = useProvider();
+  const queryClient = useQueryClient();
+  return useMutation<KbUnlinkResult, Error, KbSyncSelector>({
+    mutationFn: (selector) => provider.unlinkKbPage({ ...selector, project }),
+    onSuccess: (_result, selector) => {
+      void queryClient.invalidateQueries({ queryKey: ['kb', 'sync', project] });
+      void queryClient.invalidateQueries({ queryKey: kbPageKey(project, selector.path ?? '') });
     },
   });
 }

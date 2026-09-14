@@ -143,6 +143,48 @@ func TestUserProjectAndFieldEndpoints(t *testing.T) {
 	}
 }
 
+// TestProjectIDResolvesTheShortName covers the lookup every write endpoint
+// depends on: `POST /api/articles` takes `{"project": {"id": "0-1"}}` and
+// answers `Invalid structure of entity id: ACME` to the short name, so the
+// short name a project is configured with has to be resolved first.
+func TestProjectIDResolvesTheShortName(t *testing.T) {
+	srv, rec := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, "projects.json")
+	})
+	client := newTestClient(t, srv.URL, newFakeClock(), nil)
+
+	// The short name is matched exactly and case-insensitively: the search
+	// endpoint matches names as substrings, so it answers more than one row.
+	id, err := client.ProjectID(context.Background(), "acme")
+	if err != nil {
+		t.Fatalf("ProjectID: %v", err)
+	}
+	if id != "0-1" {
+		t.Fatalf("id = %q, want 0-1", id)
+	}
+	if rec.count() == 0 {
+		t.Fatal("the short name was not looked up")
+	}
+
+	// An id is already an id: passing one back in costs no request at all.
+	before := rec.count()
+	if id, err = client.ProjectID(context.Background(), "0-17"); err != nil || id != "0-17" {
+		t.Fatalf("ProjectID(0-17) = %q, %v", id, err)
+	}
+	if rec.count() != before {
+		t.Error("an entity id was looked up instead of being returned as it is")
+	}
+
+	// A short name no project has is not found, rather than silently becoming
+	// a creation in whatever project came back first.
+	if _, err = client.ProjectID(context.Background(), "NOPE"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("want ErrNotFound, got %v", err)
+	}
+	if _, err = client.ProjectID(context.Background(), ""); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("want ErrInvalidInput, got %v", err)
+	}
+}
+
 // TestMeNotFoundSuggestsContextPath pins the mapping that lets the settings UI
 // tell a bad token apart from a base URL missing its context path.
 func TestMeNotFoundSuggestsContextPath(t *testing.T) {

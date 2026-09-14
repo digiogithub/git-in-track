@@ -739,6 +739,7 @@ integrations:
   youtrack:
     url: https://yt.example.com/youtrack   # instance URL, context path included
     project: ACME                          # YouTrack project short name
+    project_id: 0-17                       # its internal entity id, what writes address
     field_map:                             # git-in-track field -> YouTrack custom field
       status: State
       priority: Priority
@@ -753,6 +754,7 @@ integrations:
 |---|---|---|---|---|
 | `url` | absolute URL | yes | — | `http` or `https`, context path included; no query, no fragment. Trailing `/` is trimmed. |
 | `project` | string | yes | — | YouTrack project short name: the `ACME` of `ACME-42`. |
+| `project_id` | entity id | no | — | The same project's internal id, as in `0-17`. YouTrack addresses a project by this id on every write — creating an article with the short name is refused with `Invalid structure of entity id` — so the settings picker records it when a project is chosen from the instance. Absent is legal: the companion resolves the id from the short name when a job needs one. Changing `project` without giving a new id drops it. |
 | `field_map` | mapping | no | `{}` | Keys from `status`, `priority`, `type`, `assignee`, `estimate`, `milestone`. An entry is either a YouTrack custom-field name or a `{field, values}` block; see below. |
 | `push_comments` | `manual` \| `auto` | no | `manual` | When a comment written here is pushed to the linked issue. |
 | `kb_sync` | `manual` \| `on_write` | no | `manual` | When a knowledge-base page is synchronized with a YouTrack article. |

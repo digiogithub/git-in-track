@@ -1,11 +1,5 @@
 import { Link, useNavigate, useParams } from '@tanstack/react-router';
-import {
-  CloudCheck,
-  CloudOff,
-  CloudUpload,
-  MessageSquarePlus,
-  TriangleAlert,
-} from 'lucide-react';
+import { CloudCheck, CloudOff, CloudUpload, MessageSquarePlus, TriangleAlert } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 
 import type { Comment, Item, ProjectSummary, YouTrackPushComments } from '@/api/provider';
@@ -14,6 +8,14 @@ import { useProvider } from '@/api/provider-context';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { fieldClasses } from '@/components/ui/field';
 import { Progress } from '@/components/ui/progress';
 import { Select } from '@/components/ui/select';
@@ -26,10 +28,7 @@ import {
   StatusBadge,
   TypeBadge,
 } from '@/features/backlog/Badges';
-import {
-  hasYoutrackRef,
-  useCommentSyncState,
-} from '@/features/backlog/comment-sync';
+import { hasYoutrackRef, useCommentSyncState, youtrackRef } from '@/features/backlog/comment-sync';
 import { DeleteItemDialog } from '@/features/backlog/DeleteItemDialog';
 import { FeatureLink } from '@/features/backlog/FeatureLink';
 import {
@@ -55,11 +54,9 @@ import {
   useProject,
   usePushCommentToYoutrack,
   useToggleTask,
+  useUnlinkExternal,
 } from '@/features/backlog/queries';
-import {
-  useFeedbackDraft,
-  useFeedbackPushPreference,
-} from '@/features/feedback/feedback-store';
+import { useFeedbackDraft, useFeedbackPushPreference } from '@/features/feedback/feedback-store';
 import { FeedbackPanel } from '@/features/feedback/FeedbackPanel';
 import { FeedbackSelection } from '@/features/feedback/FeedbackSelection';
 import { formatFeedbackComment } from '@/features/feedback/format';
@@ -431,6 +428,8 @@ function ItemDetailView() {
   const grandParentQuery = useItem(projectKey, parentQuery.data?.parent ?? '');
   const toggleTask = useToggleTask(projectKey);
   const deleteItem = useDeleteItem(projectKey);
+  const unlinkExternal = useUnlinkExternal(projectKey);
+  const [confirmingUnlink, setConfirmingUnlink] = useState(false);
   const feedback = useFeedbackDraft({ kind: 'item', project: projectKey, ref: id });
   const saveFeedback = useAddComment(projectKey);
   const [feedbackError, setFeedbackError] = useState<string | null>(null);
@@ -474,6 +473,10 @@ function ItemDetailView() {
   const childType =
     item.type === 'epic' ? 'story' : item.type === 'story' ? ('task' as const) : undefined;
   const custom = Object.entries(item.custom ?? {});
+  // The issue this item mirrors, when it mirrors one. It is what makes a
+  // comment pushable and what a re-import updates instead of duplicating, so
+  // the detail view says it out loud rather than leaving it in the file.
+  const tracker = youtrackRef(item);
   const feedbackCount = feedback.draft.notes.length;
   const showFeedback = feedback.draft.active || feedbackCount > 0;
   // The same three facts the per-comment action is gated on: this note becomes
@@ -606,6 +609,35 @@ function ItemDetailView() {
             <Field label="Path">
               <code className="break-all font-mono text-xs">{item.path}</code>
             </Field>
+            {tracker ? (
+              <Field label="YouTrack">
+                <span className="flex flex-wrap items-center gap-2">
+                  {tracker.url === undefined || tracker.url === '' ? (
+                    <code className="font-mono text-xs">{tracker.id}</code>
+                  ) : (
+                    <a
+                      href={tracker.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="font-mono text-xs hover:underline"
+                    >
+                      {tracker.id}
+                    </a>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={!provider.capabilities.write || unlinkExternal.isPending}
+                    title="Forgets the issue this item mirrors; the issue itself is left alone"
+                    onClick={() => {
+                      setConfirmingUnlink(true);
+                    }}
+                  >
+                    Unlink
+                  </Button>
+                </span>
+              </Field>
+            ) : null}
             <div className="sm:col-span-2 lg:col-span-3">
               <dt className="text-xs uppercase tracking-wide text-muted-foreground">Links</dt>
               <dd className="pt-1 text-sm">
@@ -780,6 +812,64 @@ function ItemDetailView() {
       </Card>
 
       <CommentsPanel item={item} projectKey={projectKey} />
+
+      <Dialog open={confirmingUnlink} onOpenChange={setConfirmingUnlink}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Unlink {item.id} from YouTrack?</DialogTitle>
+            <DialogDescription>
+              The reference to {tracker?.id ?? 'the issue'} is removed from this item. Nothing is
+              sent to YouTrack: the issue stays exactly where it is, and this project stays
+              connected.
+            </DialogDescription>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Afterwards, comments can no longer be sent from this item, and importing that issue
+            again creates a new item instead of updating this one.
+          </p>
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setConfirmingUnlink(false);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={unlinkExternal.isPending}
+              onClick={() => {
+                unlinkExternal.mutate(
+                  { id: item.id, rev: item.rev, system: 'youtrack' },
+                  {
+                    onSuccess: () => {
+                      setConfirmingUnlink(false);
+                      toast({
+                        title: `${item.id} was unlinked`,
+                        description:
+                          'Its YouTrack reference was removed. The issue was not touched.',
+                      });
+                    },
+                    onError: (error) => {
+                      toast({
+                        variant: 'destructive',
+                        title: 'The item was not unlinked',
+                        description:
+                          error instanceof ProviderError && error.code === 'stale_revision'
+                            ? `${item.id} changed on disk since this page was loaded. Reload it and try again.`
+                            : youtrackMessage(error),
+                      });
+                    },
+                  },
+                );
+              }}
+            >
+              Unlink the item
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {confirmingDelete ? (
         <DeleteItemDialog

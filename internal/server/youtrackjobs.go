@@ -94,6 +94,9 @@ type youtrackJobClient interface {
 	// ChildArticles walks the tree downwards, SearchArticles finds a parent
 	// article a previous publish created, and the other two write.
 	CreateArticle(ctx context.Context, in youtrack.ArticleInput) (youtrack.Article, error)
+	// ProjectID turns the configured short name into the internal entity id
+	// creating an article needs; see (*Server).entityProjectID.
+	ProjectID(ctx context.Context, key string) (string, error)
 	UpdateArticle(ctx context.Context, id string, in youtrack.ArticleInput) (youtrack.Article, error)
 	ChildArticles(ctx context.Context, id string) ([]youtrack.ArticleRef, error)
 	SearchArticles(ctx context.Context, query string, page youtrack.Page) ([]youtrack.Article, error)
@@ -241,6 +244,7 @@ func youtrackLinkOf(client *youtrack.Client, link *config.YouTrackLink) vault.Yo
 	out := vault.YouTrackLink{BaseURL: client.BaseURL()}
 	if link != nil {
 		out.Project = link.Project
+		out.ProjectID = link.ProjectID
 		out.FieldMap = youtrackFieldSpecs(link)
 		out.PushComments = string(link.PushComments)
 		out.LandInInbox = link.LandInInbox

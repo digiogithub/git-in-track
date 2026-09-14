@@ -142,9 +142,15 @@ export function YouTrackFieldMap({ settings, project, saving, onSave }: YouTrack
   const [proposedValues, setProposedValues] = useState<string[]>([]);
   const headingId = useId();
 
+  // Scoped to the git-in-track project the connection belongs to: a companion
+  // serving several repositories refuses the unscoped call rather than guess.
   const fields = useQuery({
-    queryKey: ['youtrack', 'fields', project],
-    queryFn: () => provider?.listYouTrackFields(project) ?? Promise.resolve(null),
+    queryKey: ['youtrack', 'fields', settings.projectKey, project],
+    queryFn: () =>
+      provider?.listYouTrackFields(
+        project,
+        settings.projectKey === '' ? {} : { projectKey: settings.projectKey },
+      ) ?? Promise.resolve(null),
     enabled: provider !== null && project !== '' && settings.hasToken,
     retry: false,
   });
@@ -360,8 +366,8 @@ export function YouTrackFieldMap({ settings, project, saving, onSave }: YouTrack
                 />
                 <span>
                   {missing.map(([, entry]) => entry.field).join(', ')}{' '}
-                  {missing.length === 1 ? 'is' : 'are'} mapped here but no longer exist in {project}.
-                  The mapping is kept — a field may have been renamed — and an import will skip it
+                  {missing.length === 1 ? 'is' : 'are'} mapped here but no longer exist in {project}
+                  . The mapping is kept — a field may have been renamed — and an import will skip it
                   until you point it somewhere real.
                 </span>
               </p>

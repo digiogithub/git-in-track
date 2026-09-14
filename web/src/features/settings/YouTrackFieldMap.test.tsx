@@ -26,6 +26,7 @@ const baseSettings: YouTrackSettings = {
   configured: true,
   url: 'https://yt.example.com/youtrack',
   project: 'ACME',
+  projectId: '0-1',
   fieldMap: {},
   pushComments: 'manual',
   kbSync: 'manual',
@@ -143,7 +144,9 @@ describe('YouTrackFieldMap', () => {
     renderMap();
 
     // The State bundle, mapped onto this project's own workflow statuses.
-    expect(await screen.findByRole('heading', { name: 'State values → Status' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', { name: 'State values → Status' }),
+    ).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Priority values → Priority' })).toBeInTheDocument();
     // Assignee and Estimate carry no bundle, so they have a field row and
     // nothing below it.

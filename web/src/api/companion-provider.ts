@@ -39,6 +39,7 @@ import type {
   ItemInbox,
   KbPageSyncStatus,
   KbSyncJobResult,
+  KbUnlinkResult,
   KbSyncSelector,
   KbSyncState,
   KbSyncStatusResult,
@@ -553,10 +554,7 @@ function toKbPageSyncStatus(value: unknown): KbPageSyncStatus {
   return row;
 }
 
-export function toKbSyncStatusResult(
-  value: unknown,
-  selector: KbSyncSelector,
-): KbSyncStatusResult {
+export function toKbSyncStatusResult(value: unknown, selector: KbSyncSelector): KbSyncStatusResult {
   const record = asRecord(value) ?? {};
   return {
     project: asString(record['project']) ?? selector.project ?? '',
@@ -627,7 +625,7 @@ export function toInboxPage(value: unknown): InboxPage {
     items,
     total: (record ? asNumber(record['total']) : undefined) ?? items.length,
     counts,
-    pending: (record ? asNumber(record['pending']) : undefined) ?? (counts.pending ?? 0),
+    pending: (record ? asNumber(record['pending']) : undefined) ?? counts.pending ?? 0,
   };
   const cursor = record ? asString(record['nextCursor']) : undefined;
   if (cursor !== undefined && cursor !== '') page.nextCursor = cursor;
@@ -660,7 +658,9 @@ function toExternal(value: unknown): External | undefined {
 }
 
 export function toExternalList(value: unknown): External[] | undefined {
-  const entries = asArray(value).map(toExternal).filter((e): e is External => e !== undefined);
+  const entries = asArray(value)
+    .map(toExternal)
+    .filter((e): e is External => e !== undefined);
   return entries.length === 0 ? undefined : entries;
 }
 
@@ -1047,6 +1047,7 @@ export function toYouTrackSettings(value: unknown): YouTrackSettings {
     configured: asBoolean(record['configured']) ?? false,
     url: asString(record['url']) ?? '',
     project: asString(record['project']) ?? '',
+    projectId: asString(record['projectId']) ?? '',
     fieldMap,
     pushComments: (asString(record['pushComments']) ?? '') as YouTrackPushComments,
     kbSync: (asString(record['kbSync']) ?? '') as YouTrackKbSync,
@@ -2073,7 +2074,11 @@ export class CompanionProvider implements DataProvider {
    * A `dryRun` computes the whole report and writes nothing, not even a write
    * set: it is what the confirmation dialog renders before anything moves.
    */
-  async closeSprint(id: string, input: SprintCloseInput = {}, team?: string): Promise<SprintResult> {
+  async closeSprint(
+    id: string,
+    input: SprintCloseInput = {},
+    team?: string,
+  ): Promise<SprintResult> {
     return (await this.#json(
       `${API_PREFIX}/sprints/${encodeURIComponent(id)}/close${teamQuery(team)}`,
       {
@@ -2220,20 +2225,17 @@ export class CompanionProvider implements DataProvider {
    * in the body, so one write cannot claim two different preconditions.
    */
   async triageInboxItem(input: InboxTriageInput): Promise<InboxTriageResult> {
-    const answer = await this.#json(
-      `${API_PREFIX}/items/${encodeURIComponent(input.id)}/triage`,
-      {
-        method: 'POST',
-        rev: input.rev ?? '*',
-        body: {
-          action: input.action,
-          ...(input.status === undefined ? {} : { status: input.status }),
-          ...(input.parent === undefined ? {} : { parent: input.parent }),
-          ...(input.snoozedUntil === undefined ? {} : { snoozedUntil: input.snoozedUntil }),
-          ...(input.duplicateOf === undefined ? {} : { duplicateOf: input.duplicateOf }),
-        },
+    const answer = await this.#json(`${API_PREFIX}/items/${encodeURIComponent(input.id)}/triage`, {
+      method: 'POST',
+      rev: input.rev ?? '*',
+      body: {
+        action: input.action,
+        ...(input.status === undefined ? {} : { status: input.status }),
+        ...(input.parent === undefined ? {} : { parent: input.parent }),
+        ...(input.snoozedUntil === undefined ? {} : { snoozedUntil: input.snoozedUntil }),
+        ...(input.duplicateOf === undefined ? {} : { duplicateOf: input.duplicateOf }),
       },
-    );
+    });
     return toInboxTriageResult(answer, input);
   }
 
@@ -2376,10 +2378,27 @@ export class CompanionProvider implements DataProvider {
     );
   }
 
-  /** `GET /api/v1/youtrack/projects?q=`. */
-  async listYouTrackProjects(q?: string, scope: YouTrackScope = {}): Promise<YouTrackProject[]> {
-    const query = buildQuery({ key: scope.projectKey, q: q === '' ? undefined : q });
-    const body = await this.#json(`${API_PREFIX}/youtrack/projects${query}`);
+  /**
+   * `GET /api/v1/youtrack/projects?q=`, or `POST` of the same path when the
+   * caller carries a connection that is typed but not yet saved — which is how
+   * the settings picker lists projects while it is being filled in.
+   */
+  async listYouTrackProjects(
+    q?: string,
+    scope: YouTrackScope = {},
+    probe?: { url?: string; token?: string },
+  ): Promise<YouTrackProject[]> {
+    const unsaved = probe !== undefined && (probe.url ?? '') !== '' && (probe.token ?? '') !== '';
+    const query = buildQuery({
+      key: scope.projectKey,
+      ...(unsaved ? {} : { q: q === '' ? undefined : q }),
+    });
+    const body = await this.#json(
+      `${API_PREFIX}/youtrack/projects${query}`,
+      unsaved
+        ? { method: 'POST', body: { url: probe?.url, token: probe?.token, q: q ?? '' } }
+        : undefined,
+    );
     const record = asRecord(body);
     return asArray(record ? record['projects'] : body).map(toYouTrackProject);
   }
@@ -2480,6 +2499,26 @@ export class CompanionProvider implements DataProvider {
    */
   async publishKbPage(selector: KbSyncSelector): Promise<KbSyncJobResult> {
     return this.#kbSyncJob('publish', selector);
+  }
+
+  /**
+   * `POST /api/v1/youtrack/kb/unlink`. A page, never a folder: a tree-wide
+   * unlink would be a bulk edit of committed files behind one click.
+   */
+  async unlinkKbPage(selector: KbSyncSelector): Promise<KbUnlinkResult> {
+    const answer = asRecord(
+      await this.#json(`${YOUTRACK_KB_PATH}/unlink${buildQuery({ key: selector.project })}`, {
+        method: 'POST',
+        body: { path: selector.path ?? '' },
+      }),
+    );
+    const articleId = asString(answer?.['articleId']) ?? '';
+    return {
+      project: asString(answer?.['project']) ?? selector.project ?? '',
+      path: asString(answer?.['path']) ?? selector.path ?? '',
+      unlinked: asBoolean(answer?.['unlinked']) ?? false,
+      ...(articleId === '' ? {} : { articleId }),
+    };
   }
 
   /** `POST /api/v1/youtrack/kb/pull`. */
@@ -3034,6 +3073,9 @@ export class CompanionProvider implements DataProvider {
 export function toRestPatch(patch: ItemPatch): Record<string, unknown> {
   const body: Record<string, unknown> = { ...(patch.set ?? {}) };
   if (patch.unset !== undefined && patch.unset.length > 0) body['unset'] = patch.unset;
+  if (patch.removeExternal !== undefined && patch.removeExternal.length > 0) {
+    body['removeExternal'] = patch.removeExternal;
+  }
   if (patch.body !== undefined) body['body'] = patch.body;
   return body;
 }

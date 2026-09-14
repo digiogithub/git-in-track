@@ -284,6 +284,15 @@ export type ItemPatch = {
   set?: Partial<Omit<Item, 'id' | 'type' | 'path' | 'rev' | 'body'>>;
   unset?: string[];
   body?: string;
+  /**
+   * Forgets external references by `(system, id)`; an entry with no `id`
+   * removes every reference of that system.
+   *
+   * It is a set operation rather than a `set`, because an item may mirror more
+   * than one tracker: unlinking YouTrack must leave a Jira entry where it is,
+   * which `unset: ['external']` cannot express.
+   */
+  removeExternal?: External[];
 };
 
 export type KbNode = {
@@ -356,6 +365,21 @@ export type KbSyncSelector = {
   recursive?: boolean;
   /** Status only: read each linked article instead of answering locally. */
   remote?: boolean;
+};
+
+/**
+ * What unlinking one knowledge-base page reports (GIT-US-0095).
+ *
+ * `unlinked` is false when the page carried no reference at all: the caller
+ * asked for a state the page is already in, nothing was written, and that is an
+ * answer rather than a failure.
+ */
+export type KbUnlinkResult = {
+  project: string;
+  path: string;
+  unlinked: boolean;
+  /** The article the page mirrored, empty when it mirrored none. */
+  articleId?: string;
 };
 
 /** One comment of a push answer. */
