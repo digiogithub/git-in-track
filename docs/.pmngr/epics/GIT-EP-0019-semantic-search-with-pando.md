@@ -2,13 +2,15 @@
 id: GIT-EP-0019
 type: epic
 title: Semantic search with Pando
-status: backlog
+status: done
 priority: medium
 milestone: GIT-M-0013
 author: mcp
 labels: [server, core, web, mcp, performance]
 created: 2026-09-13T13:08:37Z
-updated: 2026-09-13T21:16:50Z
+updated: 2026-09-15T17:09:40Z
+started: 2026-09-15T17:09:09Z
+closed: 2026-09-15T17:09:40Z
 ---
 
 ## Description

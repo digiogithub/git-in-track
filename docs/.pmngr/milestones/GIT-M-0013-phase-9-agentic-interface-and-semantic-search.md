@@ -2,11 +2,12 @@
 id: GIT-M-0013
 type: milestone
 title: Phase 9 — Agentic interface and semantic search
-status: backlog
+status: in_progress
 author: mcp
 labels: [web, server, mcp, docs]
 created: 2026-09-13T13:06:59Z
-updated: 2026-09-13T21:19:45Z
+updated: 2026-09-15T17:09:10Z
+started: 2026-09-15T17:09:10Z
 due: 2027-01-31
 ---
 
