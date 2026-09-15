@@ -34,6 +34,9 @@ type serveFlags struct {
 	mcpHTTP       bool
 	mcpAllowWrite bool
 	mcpAgent      string
+	// agent mounts the AG-UI proxy at /api/v1/agent, which relays a chat turn
+	// to a local `pando agui-serve` process (GIT-US-0049).
+	agent bool
 	// tunnel opens a public tunnel to this server as soon as it is listening
 	// (`server.tunnel` in the configuration).
 	tunnel bool
@@ -98,6 +101,8 @@ terminal: share the first, and the second only with whoever may write.`,
 		"advertise the MCP write tools; without it /mcp is read-only")
 	cmd.Flags().StringVar(&flags.mcpAgent, "mcp-agent", "",
 		"agent name recorded as the author of comments written through /mcp")
+	cmd.Flags().BoolVar(&flags.agent, "agent", false,
+		"serve the agent proxy at /api/v1/agent, relaying to the configured Pando AG-UI adapter")
 	cmd.Flags().BoolVar(&flags.tunnel, "tunnel", false,
 		"publish this server on the internet through a Cloudflare quick tunnel; requires a token")
 	cmd.Flags().IntVar(&flags.syncWorkers, "sync-workers", server.DefaultSyncWorkers,
@@ -185,6 +190,11 @@ func runServe(cmd *cobra.Command, build buildInfo, flags *serveFlags) error {
 		MCPHTTP:       pickBool(cmd, "mcp-http", flags.mcpHTTP, cfg.MCP.Enabled),
 		MCPAllowWrite: pickBool(cmd, "mcp-allow-write", flags.mcpAllowWrite, cfg.MCP.AllowWrite),
 		MCPAgent:      flags.mcpAgent,
+		// The agent proxy. It needs both the switch and a configured upstream;
+		// the token behind it is resolved here, once, and never leaves the
+		// process (GIT-US-0049).
+		Agent: pickBool(cmd, "agent", flags.agent, cfg.Agent.Enabled),
+		Pando: cfg.PandoTargets(),
 		// The public tunnel. Only the startup path may turn it on implicitly;
 		// a toggle made in the web UI is never written back to the file.
 		Tunnel: config.Tunnel{Enabled: tunnelOn, Provider: cfg.Server.Tunnel.Provider},
@@ -350,6 +360,15 @@ func printBanner(cmd *cobra.Command, build buildInfo, srv *server.Server, token 
 	banner("indexed:   %d items, %d pages\n", items, pages)
 	if opts.MCPHTTP {
 		banner("mcp:        %s/mcp (%s)\n", srv.URL(), writeMode(opts.MCPAllowWrite))
+	}
+	if opts.Agent {
+		if target, ok := opts.Pando.Target(""); ok {
+			// The URL, never the token: this line goes to a terminal that may
+			// be scrolled back, shared or pasted into an issue.
+			banner("agent:      %s%s (%s)\n", target.URL, target.Path, target.Agent)
+		} else {
+			banner("agent:      --agent was passed but agent.pando.url is not set; the proxy is off\n")
+		}
 	}
 	if opts.Tunnel.Enabled {
 		provider := opts.Tunnel.Provider

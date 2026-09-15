@@ -297,3 +297,94 @@ func TestSyncEngineSettingsPrecedence(t *testing.T) {
 		})
 	}
 }
+
+// TestServeAgentFlagIsDeclared pins `--agent` and its default. The proxy relays
+// a chat turn to a local agent process that can act on the backlog, so it is
+// opt-in exactly as the tunnel is.
+func TestServeAgentFlagIsDeclared(t *testing.T) {
+	t.Parallel()
+
+	root := newRootCommand(buildInfo{Version: "test"})
+	serve, _, err := root.Find([]string{"serve"})
+	if err != nil {
+		t.Fatalf("find serve: %v", err)
+	}
+	flag := serve.Flags().Lookup("agent")
+	if flag == nil {
+		t.Fatal("serve has no --agent flag")
+	}
+	if flag.DefValue != "false" {
+		t.Errorf("--agent default = %q, want false", flag.DefValue)
+	}
+	if !strings.Contains(flag.Usage, "/api/v1/agent") {
+		t.Errorf("--agent usage does not name the route: %q", flag.Usage)
+	}
+}
+
+// TestBannerPrintsTheAgentTargetWithoutItsToken is the whole point of the
+// banner line: an operator has to see which adapter the companion will talk to,
+// and nobody may see the credential it will talk to it with.
+func TestBannerPrintsTheAgentTargetWithoutItsToken(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Default()
+	cfg.Agent.Enabled = true
+	cfg.Agent.Pando.URL = "http://127.0.0.1:8090"
+	cfg.Agent.Pando.Token = "pando-secret-token-value"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("the fixture configuration is invalid: %v", err)
+	}
+
+	opts := server.Options{
+		Bind:      "127.0.0.1",
+		Token:     "companion-token",
+		Workspace: "default",
+		Agent:     true,
+		Pando:     cfg.PandoTargets(),
+	}
+	srv, err := server.New(opts)
+	if err != nil {
+		t.Fatalf("server.New(): %v", err)
+	}
+
+	cmd := &cobra.Command{}
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	printBanner(cmd, buildInfo{Version: "test"}, srv, opts.Token, opts)
+
+	out := stdout.String()
+	if !strings.Contains(out, "agent:      http://127.0.0.1:8090/api/v1/agui (backlog-assistant)") {
+		t.Errorf("the banner does not name the agent upstream:\n%s", out)
+	}
+	if strings.Contains(out, "pando-secret-token-value") {
+		t.Errorf("the banner printed the upstream token:\n%s", out)
+	}
+}
+
+// TestBannerWarnsWhenTheAgentHasNoUpstream keeps `--agent` with no configured
+// URL from looking like a working feature.
+func TestBannerWarnsWhenTheAgentHasNoUpstream(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Default()
+	cfg.Agent.Pando.URL = ""
+	opts := server.Options{
+		Bind:      "127.0.0.1",
+		Token:     "companion-token",
+		Workspace: "default",
+		Agent:     true,
+		Pando:     cfg.PandoTargets(),
+	}
+	srv, err := server.New(opts)
+	if err != nil {
+		t.Fatalf("server.New(): %v", err)
+	}
+	cmd := &cobra.Command{}
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	printBanner(cmd, buildInfo{Version: "test"}, srv, opts.Token, opts)
+
+	if !strings.Contains(stdout.String(), "agent.pando.url is not set") {
+		t.Errorf("the banner does not warn about the missing upstream:\n%s", stdout.String())
+	}
+}

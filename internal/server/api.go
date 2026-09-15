@@ -96,6 +96,11 @@ func (s *Server) mountAPI(api chi.Router) {
 		// The write surface of the MCP server, as a setting rather than only a
 		// CLI flag (docs/08-mcp-server.md section 7.1).
 		p.Route("/mcp", s.mountMCPSettings)
+		// The agent proxy to a local Pando AG-UI adapter (GIT-US-0049). It
+		// sits inside this bearer-auth group: the browser presents the
+		// companion's token, and the companion — never the browser — holds the
+		// upstream one.
+		p.Route("/agent", s.mountAgent)
 		p.Route("/git", s.mountGit)
 		// The YouTrack connection: its settings, the connection test and the
 		// two discovery calls the settings UI needs (GIT-US-0052). The browser

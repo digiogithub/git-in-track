@@ -232,6 +232,15 @@ func applyEnv(c *Config, env Reader) error {
 	if v := strings.TrimSpace(env(EnvYouTrackToken)); v != "" {
 		c.SetYouTrackTokenOverride(v, TokenSourceEnv)
 	}
+	if v := strings.TrimSpace(env(EnvPandoToken)); v != "" {
+		c.SetPandoTokenOverride(v)
+	}
+	if v := strings.TrimSpace(env(EnvPandoMCPToken)); v != "" {
+		c.SetPandoMCPTokenOverride(v)
+	}
+	if v := strings.TrimSpace(env(EnvPandoRESTToken)); v != "" {
+		c.SetPandoRESTTokenOverride(v)
+	}
 	if v := strings.TrimSpace(env(EnvLogLevel)); v != "" {
 		c.Log.Level = v
 	}

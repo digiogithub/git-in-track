@@ -128,6 +128,15 @@ type Options struct {
 	// means the default the MCP package picks.
 	MCPAgent string
 
+	// Agent mounts the AG-UI proxy at /api/v1/agent (`serve --agent` or
+	// `agent.enabled`). Without it the routes answer `not_implemented`.
+	Agent bool
+	// Pando is the resolved AG-UI routing table: the upstream URL, path and
+	// agent name per repository, plus the tokens. The snapshot has no exported
+	// field carrying a token and no marshaler, so handing it to the server
+	// cannot put one into a response or a log line.
+	Pando config.PandoTargets
+
 	// SyncEngine configures the background job engine: the worker pool, the
 	// batch size, the shared outbound rate limit, the retry budget and the
 	// grace period a shutdown drains for (GIT-US-0084). The zero value is the
@@ -163,6 +172,9 @@ type Server struct {
 	// when the endpoint is on, and the write mode both it and `gintrack mcp`
 	// take from the configuration.
 	mcp *mcpState
+	// agent owns the AG-UI proxy of /api/v1/agent: the routing table, the
+	// transports that dial it and the in-flight run cap (GIT-US-0049).
+	agent *agentState
 	// proxy is the browser-git CORS proxy mounted at /cors-proxy/
 	// (GIT-US-0042, docs/06-git-sync.md section 6.3).
 	proxy *corsProxy
@@ -267,6 +279,7 @@ func New(opts Options) (*Server, error) {
 		return nil, err
 	}
 	s.installYouTrackSeams()
+	s.agent = newAgentState(opts)
 	s.proxy = newCORSProxy(s)
 	s.tunnel = newTunnelState(opts)
 	s.router = s.routes()
@@ -420,8 +433,11 @@ func (s *Server) timeoutExceptStream(next http.Handler) http.Handler {
 		// The event stream and the MCP endpoint are long-lived connections, not
 		// requests that must finish inside the deadline; a proxied fetch is a
 		// transfer that carries its own, longer deadline (proxyTimeout).
+		// The agent proxy joins them: a conversation turn is a stream that
+		// lasts as long as the agent thinks, and the short upstream calls
+		// under the same prefix carry their own deadline (agentProbeTimeout).
 		if r.URL.Path == apiPrefix+"/events" || r.URL.Path == mcpPath || strings.HasPrefix(r.URL.Path, mcpPath+"/") ||
-			strings.HasPrefix(r.URL.Path, corsProxyPath+"/") {
+			strings.HasPrefix(r.URL.Path, corsProxyPath+"/") || strings.HasPrefix(r.URL.Path, agentPath+"/") {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -481,6 +497,10 @@ func (s *Server) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 			// The public tunnel of /api/v1/tunnel: whether this build can open
 			// one at all, not whether one is running.
 			"tunnel": s.tunnelSupported(),
+			// The AG-UI proxy of /api/v1/agent. True only when the feature is
+			// switched on and an upstream is configured; the token behind it
+			// is never reported here or anywhere else (GIT-US-0049).
+			"agent":  s.agent.available(),
 			"boards": true,
 		},
 		"limits": map[string]int{
