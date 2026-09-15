@@ -14,10 +14,10 @@
  */
 
 import { ArrowDown } from 'lucide-react';
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
-import type { AgentMessage, AgentRunStatus } from '@/features/agent/types';
+import type { AgentMessage, AgentToolCall, AgentRunStatus } from '@/features/agent/types';
 import { MessageBubble } from '@/features/agent/ui/MessageBubble';
 import { isVisible } from '@/features/agent/ui/model';
 
@@ -27,9 +27,15 @@ const PIN_SLACK = 48;
 export type MessageListProps = {
   messages: readonly AgentMessage[];
   runStatus: AgentRunStatus;
+  /**
+   * Extra content rendered under one tool call's card — how a frontend tool
+   * gets a *rendering* rather than a JSON blob (`show_items`, GIT-T-0094).
+   * Returning `null` leaves the default card alone.
+   */
+  renderToolResult?: (call: AgentToolCall) => ReactNode;
 };
 
-export function MessageList({ messages, runStatus }: MessageListProps) {
+export function MessageList({ messages, runStatus, renderToolResult }: MessageListProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [pinned, setPinned] = useState(true);
 
@@ -86,6 +92,7 @@ export function MessageList({ messages, runStatus }: MessageListProps) {
               key={message.id}
               message={message}
               streaming={message.id === streamingId}
+              {...(renderToolResult === undefined ? {} : { renderToolResult })}
             />
           ))}
         </div>

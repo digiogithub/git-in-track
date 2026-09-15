@@ -26,12 +26,14 @@ import type {
   PendingToolCall,
   RunErrorEvent,
 } from '@pando-ai/sdk/agui/client';
+import { approve } from '@pando-ai/sdk/agui/client';
 import type { StateCreator } from 'zustand';
 import { create } from 'zustand';
 import { createStore } from 'zustand/vanilla';
 
 import type { AgentThreadSummary, DataProvider } from '@/api/provider';
 import { ProviderError } from '@/api/provider';
+import { classifyHitl, permissionSubject, refusalFor } from '@/features/agent/hitl';
 import {
   AgentThread,
   ThreadGuard,
@@ -41,6 +43,7 @@ import {
   rememberThreadId,
   writeActiveThreadId,
 } from '@/features/agent/threads';
+import type { FrontendToolRunner } from '@/features/agent/tools/registry';
 import type {
   AgentError,
   AgentErrorCode,
@@ -58,6 +61,8 @@ export type AgentAttachOptions = {
   agent?: string;
   /** Injected by tests so the tab guard is deterministic. */
   guard?: ThreadGuard;
+  /** Frontend tools declared on every run; see `features/agent/tools/`. */
+  tools?: FrontendToolRunner;
 };
 
 export type AgentState = {
@@ -80,11 +85,20 @@ export type AgentState = {
    * Interim, until Pando can park a run on disconnect (PANDO-EP-0003).
    */
   readOnly: boolean;
+  /**
+   * Tool names a permission prompt may auto-approve for the rest of this
+   * thread. In memory only, and dropped on every thread switch: a grant that
+   * outlived a reload would be a standing cross-session permission, which is a
+   * security decision needing its own ADR (story GIT-US-0061).
+   */
+  alwaysAllowed: string[];
 
   /** Live objects, not render state. Kept here so one store owns one thread. */
   thread: AgentThread | null;
   guard: ThreadGuard | null;
   controller: AbortController | null;
+  /** The frontend tools this page implements, or `null` before `registerTools`. */
+  runner: FrontendToolRunner | null;
 
   attach(options: AgentAttachOptions): Promise<void>;
   /** Starts a conversation: a fresh thread id, an empty transcript. */
@@ -95,8 +109,20 @@ export type AgentState = {
   /** Answers an interrupt with a tool result built by the SDK's HITL helpers. */
   resume(toolCallId: string, result: string): Promise<void>;
   cancel(): Promise<void>;
+  /**
+   * Restores the transcript from the adapter without opening a stream. This is
+   * what a page does on mount for a thread that is not running: `reattach`
+   * would additionally subscribe to a run that is not there.
+   */
+  hydrate(): Promise<void>;
   /** After a reload: restore the transcript, then re-attach to a live run. */
   reattach(): Promise<void>;
+  /** Declares the browser's own tools; pass `null` to withdraw them. */
+  registerTools(runner: FrontendToolRunner | null): void;
+  /** Auto-approves later permission prompts for `toolName` in this thread. */
+  allowToolForThread(toolName: string): void;
+  /** Revokes a grant made by {@link allowToolForThread}. */
+  revokeToolForThread(toolName: string): void;
   refreshThreads(): Promise<void>;
   deleteThread(threadId: string): Promise<void>;
   dispose(): void;
@@ -135,6 +161,16 @@ export function toRunError(event: RunErrorEvent): AgentError {
   return { code, message: event.message };
 }
 
+/** A tool call's arguments, when the SDK could not parse them itself. */
+function parseArgs(argsText: string): unknown {
+  if (argsText.trim() === '') return {};
+  try {
+    return JSON.parse(argsText);
+  } catch {
+    return undefined;
+  }
+}
+
 function isAbort(error: unknown): boolean {
   return (
     typeof error === 'object' &&
@@ -158,12 +194,17 @@ const initialState = {
   interrupt: null,
   error: null,
   readOnly: false,
+  alwaysAllowed: [],
+  runner: null,
   thread: null,
   guard: null,
   controller: null,
 };
 
 export const agentStoreCreator: StateCreator<AgentState> = (set, get) => {
+  /** Tool calls already answered without a human, so none is answered twice. */
+  const settled = new Set<string>();
+
   /** Recomputes every derived field from the thread the SDK just updated. */
   function sync(): void {
     const thread = get().thread;
@@ -227,6 +268,57 @@ export const agentStoreCreator: StateCreator<AgentState> = (set, get) => {
       runStatus: runError !== null ? 'error' : interrupted ? 'interrupted' : 'idle',
       error: runError,
     });
+    if (interrupted && runError === null) await settle();
+  }
+
+  /**
+   * Answers the parts of an interrupt that need no human.
+   *
+   * Two cases, and only two. A tool this browser implements is executed and
+   * its result resumes the run — that is the whole frontend-tool protocol
+   * (story GIT-US-0064), and it has to be automatic or a navigation the agent
+   * asked for would sit behind a button nobody knows to press. A permission
+   * prompt for a tool the user granted "always" in this thread is approved.
+   *
+   * Everything else is left parked for a dialog, which is the point: the
+   * approval card is the security boundary, so nothing may answer it by
+   * default (story GIT-US-0061).
+   *
+   * `resume` re-enters `drive`, which re-enters this — that is how a chain of
+   * frontend tool calls unwinds. `settled` stops a call that somehow arrives
+   * twice from looping.
+   */
+  async function settle(): Promise<void> {
+    const { interrupt, alwaysAllowed, runner, readOnly } = get();
+    if (interrupt === null || readOnly) return;
+    for (const call of interrupt.toolCalls) {
+      if (settled.has(call.id)) continue;
+      const prompt = classifyHitl(call);
+      if (prompt === null) {
+        // Not a HITL prompt: a frontend tool, or a name nobody implements.
+        // Either way the runner answers — including for a name it does not
+        // know, because a parked run must never hang. With no runner at all
+        // (a headless store) the call stays pending and the UI says so.
+        if (runner === null) continue;
+        settled.add(call.id);
+        const result = await runner.run(call.name, call.args ?? parseArgs(call.argsText));
+        await get().resume(call.id, result);
+        return;
+      }
+      if (prompt.kind === 'malformed') {
+        settled.add(call.id);
+        await get().resume(call.id, refusalFor(prompt));
+        return;
+      }
+      if (
+        prompt.kind === 'permission' &&
+        alwaysAllowed.includes(permissionSubject(prompt.request))
+      ) {
+        settled.add(call.id);
+        await get().resume(call.id, approve());
+        return;
+      }
+    }
   }
 
   /** Refuses a run this tab does not own, or cannot make. */
@@ -265,7 +357,9 @@ export const agentStoreCreator: StateCreator<AgentState> = (set, get) => {
         repo: options.repo,
         guard,
         knownThreadIds,
+        ...(options.tools === undefined ? {} : { runner: options.tools }),
       });
+      settled.clear();
       const thread = makeThread(restored);
       set({ thread, threadId: thread.threadId });
       writeActiveThreadId(options.repo, thread.threadId);
@@ -277,6 +371,7 @@ export const agentStoreCreator: StateCreator<AgentState> = (set, get) => {
       const { repo, guard, threadId } = get();
       if (repo === null) return;
       if (threadId !== null) guard?.release(threadId);
+      settled.clear();
       const thread = makeThread();
       set({
         thread,
@@ -286,6 +381,7 @@ export const agentStoreCreator: StateCreator<AgentState> = (set, get) => {
         runStatus: 'idle',
         interrupt: null,
         error: null,
+        alwaysAllowed: [],
         knownThreadIds: rememberThreadId(repo, thread.threadId),
       });
       writeActiveThreadId(repo, thread.threadId);
@@ -296,6 +392,7 @@ export const agentStoreCreator: StateCreator<AgentState> = (set, get) => {
       const { repo, guard, threadId: current } = get();
       if (repo === null || threadId === current) return;
       if (current !== null) guard?.release(current);
+      settled.clear();
       const thread = makeThread(threadId);
       set({
         thread,
@@ -305,6 +402,7 @@ export const agentStoreCreator: StateCreator<AgentState> = (set, get) => {
         runStatus: 'idle',
         interrupt: null,
         error: null,
+        alwaysAllowed: [],
         knownThreadIds: rememberThreadId(repo, threadId),
       });
       writeActiveThreadId(repo, threadId);
@@ -327,7 +425,13 @@ export const agentStoreCreator: StateCreator<AgentState> = (set, get) => {
       if (thread === null) return;
       const controller = new AbortController();
       set({ controller });
-      await drive(thread.send(prompt, { signal: controller.signal }));
+      const tools = get().runner?.declarations;
+      await drive(
+        thread.send(prompt, {
+          signal: controller.signal,
+          ...(tools === undefined ? {} : { tools: [...tools] }),
+        }),
+      );
     },
 
     async resume(toolCallId: string, result: string): Promise<void> {
@@ -340,7 +444,13 @@ export const agentStoreCreator: StateCreator<AgentState> = (set, get) => {
       if (thread === null) return;
       const controller = new AbortController();
       set({ controller });
-      await drive(thread.resume(toolCallId, result, { signal: controller.signal }));
+      const tools = get().runner?.declarations;
+      await drive(
+        thread.resume(toolCallId, result, {
+          signal: controller.signal,
+          ...(tools === undefined ? {} : { tools: [...tools] }),
+        }),
+      );
     },
 
     async cancel(): Promise<void> {
@@ -356,6 +466,31 @@ export const agentStoreCreator: StateCreator<AgentState> = (set, get) => {
         // A run that already finished answers `not_found`; that is a cancel
         // that got what it wanted.
       }
+    },
+
+    async hydrate(): Promise<void> {
+      const thread = get().thread;
+      if (thread === null) return;
+      try {
+        await thread.hydrate();
+        sync();
+      } catch (error) {
+        set({ error: toAgentError(error) });
+      }
+    },
+
+    registerTools(runner: FrontendToolRunner | null): void {
+      set({ runner });
+    },
+
+    allowToolForThread(toolName: string): void {
+      const current = get().alwaysAllowed;
+      if (current.includes(toolName)) return;
+      set({ alwaysAllowed: [...current, toolName] });
+    },
+
+    revokeToolForThread(toolName: string): void {
+      set({ alwaysAllowed: get().alwaysAllowed.filter((name) => name !== toolName) });
     },
 
     async reattach(): Promise<void> {
@@ -401,6 +536,7 @@ export const agentStoreCreator: StateCreator<AgentState> = (set, get) => {
       const { controller, guard } = get();
       controller?.abort();
       guard?.dispose();
+      settled.clear();
       set({ ...initialState });
     },
   };

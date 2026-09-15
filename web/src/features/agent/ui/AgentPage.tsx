@@ -18,7 +18,8 @@
  * for a conversation nobody has started yet.
  */
 
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from '@tanstack/react-router';
 import { PanelLeft, TriangleAlert, X } from 'lucide-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 
@@ -27,12 +28,16 @@ import { useAppStore } from '@/app/store';
 import { Button } from '@/components/ui/button';
 import { Select } from '@/components/ui/select';
 import { useAgentStore } from '@/features/agent/store';
+import { createToolRunner } from '@/features/agent/tools/registry';
+import type { ToolContext, ToolNavigate } from '@/features/agent/tools/types';
 import { Composer } from '@/features/agent/ui/Composer';
 import { AgentUnavailable, EmptyState } from '@/features/agent/ui/EmptyState';
 import type { AgentInterruptRenderer } from '@/features/agent/ui/InterruptSlot';
 import { DefaultInterrupt } from '@/features/agent/ui/InterruptSlot';
+import { AgentToolResult } from '@/features/agent/ui/ItemCards';
 import { MessageList } from '@/features/agent/ui/MessageList';
 import { mergeThreadRows } from '@/features/agent/ui/model';
+import { StatePanel } from '@/features/agent/ui/StatePanel';
 import { ThreadList } from '@/features/agent/ui/ThreadList';
 import {
   deriveThreadTitle,
@@ -42,6 +47,7 @@ import {
   UNTITLED_THREAD,
   type AgentThreadMeta,
 } from '@/features/agent/ui/threadMeta';
+import { backlogKeys, useProjects } from '@/features/backlog/queries';
 import { cn } from '@/lib/cn';
 
 export type AgentPageProps = {
@@ -50,7 +56,10 @@ export type AgentPageProps = {
    * (story GIT-US-0061). See `InterruptSlot.tsx` for the contract.
    */
   renderInterrupt?: AgentInterruptRenderer;
-  /** Fills the right rail; the shared-state panel lands here (GIT-US-0064). */
+  /**
+   * Fills the right rail. Defaults to the shared-state panel
+   * (`ui/StatePanel.tsx`, story GIT-US-0061).
+   */
   renderRail?: () => ReactNode;
 };
 
@@ -77,6 +86,39 @@ function AgentChat({ renderInterrupt, renderRail }: AgentPageProps) {
   const interrupt = useAgentStore((state) => state.interrupt);
   const error = useAgentStore((state) => state.error);
   const readOnly = useAgentStore((state) => state.readOnly);
+  const stateDoc = useAgentStore((state) => state.stateDoc);
+  const alwaysAllowed = useAgentStore((state) => state.alwaysAllowed);
+
+  // The frontend tools (story GIT-US-0064). The registry never imports the
+  // router: navigation is handed in here, so the executors stay testable with
+  // a plain spy and the app keeps exactly one router.
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const projects = useProjects();
+  const fallbackProject = projects.data?.[0]?.key ?? '';
+
+  const toolContext = useMemo<ToolContext>(() => {
+    const go: ToolNavigate = (options) => navigate(options as never);
+    return {
+      navigate: go,
+      project: fallbackProject === '' ? null : fallbackProject,
+      lookup: {
+        // `ensureQueryData` is a cache read that only becomes a request when
+        // the item was never fetched, which is what keeps `show_items` from
+        // costing one call per card.
+        item: async (id: string) => {
+          try {
+            return await queryClient.ensureQueryData({
+              queryKey: backlogKeys.detail(id.split('-')[0] ?? fallbackProject, id),
+              queryFn: () => provider.getItem(id),
+            });
+          } catch {
+            return null;
+          }
+        },
+      },
+    };
+  }, [navigate, queryClient, provider, fallbackProject]);
 
   const [meta, setMeta] = useState<AgentThreadMeta[]>([]);
   const [listOpen, setListOpen] = useState(false);
@@ -97,13 +139,25 @@ function AgentChat({ renderInterrupt, renderRail }: AgentPageProps) {
       if (!live) return;
       const current = useAgentStore.getState();
       const known = current.threads.some((row) => row.id === current.threadId);
-      if (known) await current.reattach();
+      // `hydrate`, not `reattach`: on mount there is no run of ours in flight,
+      // and subscribing to a thread stream that has nothing to stream would
+      // hold a connection open for no one.
+      if (known) await current.hydrate();
     })();
     return () => {
       live = false;
       useAgentStore.getState().dispose();
     };
   }, [provider, repo]);
+
+  // Tools are registered separately from `attach` so the page may re-register
+  // when the router or the project changes without restarting the thread.
+  useEffect(() => {
+    useAgentStore.getState().registerTools(createToolRunner(toolContext));
+    return () => {
+      useAgentStore.getState().registerTools(null);
+    };
+  }, [toolContext]);
 
   // The title is derived, so it is recorded wherever the transcript came from:
   // a turn just sent, a thread switch that hydrated, a re-attach after a
@@ -235,7 +289,13 @@ function AgentChat({ renderInterrupt, renderRail }: AgentPageProps) {
             <EmptyState />
           </div>
         ) : (
-          <MessageList messages={messages} runStatus={runStatus} />
+          <MessageList
+            messages={messages}
+            runStatus={runStatus}
+            renderToolResult={(call) => (
+              <AgentToolResult call={call} fallbackProject={fallbackProject} />
+            )}
+          />
         )}
 
         {interrupt === null ? null : (
@@ -245,6 +305,8 @@ function AgentChat({ renderInterrupt, renderRail }: AgentPageProps) {
               resume: (toolCallId, result) => useAgentStore.getState().resume(toolCallId, result),
               cancel: () => useAgentStore.getState().cancel(),
               readOnly,
+              alwaysAllowed,
+              allowAlways: (toolName) => useAgentStore.getState().allowToolForThread(toolName),
             })}
           </div>
         )}
@@ -259,15 +321,17 @@ function AgentChat({ renderInterrupt, renderRail }: AgentPageProps) {
         />
       </section>
 
-      {/* The rail. Empty until the shared-state panel lands (GIT-US-0064). */}
+      {/* The rail: the shared-state document, thread-scoped and never cleared. */}
       <aside
         aria-label="Agent state"
-        className="hidden w-72 shrink-0 rounded-lg border border-border bg-surface xl:block"
+        className="hidden w-72 shrink-0 overflow-hidden rounded-lg border border-border bg-surface xl:block"
       >
         {renderRail === undefined ? (
-          <p className="px-3 py-3 text-xs text-muted-foreground">
-            The agent&rsquo;s plan, files and token usage will appear here.
-          </p>
+          <StatePanel
+            state={stateDoc}
+            alwaysAllowed={alwaysAllowed}
+            onRevoke={(toolName) => useAgentStore.getState().revokeToolForThread(toolName)}
+          />
         ) : (
           renderRail()
         )}

@@ -255,7 +255,11 @@ export type AgentThreadOptions = {
   onDroppedPatch?: (reason: string) => void;
 };
 
-export type AgentRunHandle = { signal?: AbortSignal };
+export type AgentRunHandle = {
+  signal?: AbortSignal;
+  /** Frontend tools declared on this run; see `features/agent/tools/`. */
+  tools?: AguiTool[];
+};
 
 /**
  * A conversation: the SDK's `PandoThread` plus the server-side thread API it
@@ -311,7 +315,7 @@ export class AgentThread {
 
   /** A new turn. The whole transcript goes back on the wire, as AG-UI requires. */
   async *send(prompt: string, handle: AgentRunHandle = {}): AsyncGenerator<AguiEvent> {
-    yield* this.#drive(this.thread.send(prompt, signalOf(handle)));
+    yield* this.#drive(this.thread.send(prompt, runOptions(handle)));
   }
 
   /**
@@ -325,7 +329,7 @@ export class AgentThread {
     result: string,
     handle: AgentRunHandle = {},
   ): AsyncGenerator<AguiEvent> {
-    yield* this.#drive(this.thread.resume(toolCallId, result, signalOf(handle)));
+    yield* this.#drive(this.thread.resume(toolCallId, result, runOptions(handle)));
   }
 
   /**
@@ -344,7 +348,12 @@ export class AgentThread {
     // out above. `send` pushes its prompt synchronously, so the placeholder is
     // removed before anything can observe it — and nothing is posted anyway,
     // because the override replaces the POST entirely.
-    const stream = this.thread.send('', signalOf(handle));
+    // No POST happens here (the transport is overridden), so no tools are
+    // declared: a re-attach must not look like a new run with a new toolset.
+    const stream = this.thread.send(
+      '',
+      handle.signal === undefined ? {} : { signal: handle.signal },
+    );
     this.thread.messages.pop();
     try {
       yield* this.#drive(stream);
@@ -376,8 +385,18 @@ export class AgentThread {
   }
 }
 
-function signalOf(handle: AgentRunHandle): { signal?: AbortSignal } {
-  return handle.signal === undefined ? {} : { signal: handle.signal };
+/**
+ * The run options one handle carries.
+ *
+ * Tools travel per run rather than per thread so the page may register them
+ * after the store has attached — the declarations are a frozen module constant
+ * either way, which is what keeps Pando's agent-pool key stable.
+ */
+function runOptions(handle: AgentRunHandle): { signal?: AbortSignal; tools?: AguiTool[] } {
+  return {
+    ...(handle.signal === undefined ? {} : { signal: handle.signal }),
+    ...(handle.tools === undefined ? {} : { tools: handle.tools }),
+  };
 }
 
 /**

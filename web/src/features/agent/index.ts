@@ -18,6 +18,10 @@ export {
   type AgentInterruptRenderProps,
   type AgentInterruptRenderer,
 } from '@/features/agent/ui/InterruptSlot';
+export { PermissionDialog, type PermissionDialogProps } from '@/features/agent/ui/PermissionDialog';
+export { QuestionDialog, type QuestionDialogProps } from '@/features/agent/ui/QuestionDialog';
+export { StatePanel, type StatePanelProps } from '@/features/agent/ui/StatePanel';
+export { AgentToolResult, ItemCards, type ItemCardsProps } from '@/features/agent/ui/ItemCards';
 export { Composer, type ComposerProps } from '@/features/agent/ui/Composer';
 export { MessageList, type MessageListProps } from '@/features/agent/ui/MessageList';
 export { MessageBubble, type MessageBubbleProps } from '@/features/agent/ui/MessageBubble';
@@ -39,7 +43,42 @@ export {
   type AgentThreadMeta,
 } from '@/features/agent/ui/threadMeta';
 
-export { createAgentStore, useAgentStore, type AgentState } from '@/features/agent/store';
+export {
+  buildQuestionAnswer,
+  classifyHitl,
+  hitlPrompts,
+  isHitlToolName,
+  permissionSubject,
+  refusalFor,
+  PERMISSION_TOOL_NAME,
+  QUESTION_TOOL_NAME,
+  type HitlPrompt,
+  type MalformedPrompt,
+  type PermissionPrompt,
+  type QuestionPrompt,
+  type QuestionSelection,
+} from '@/features/agent/hitl';
+export {
+  createToolRunner,
+  frontendTools,
+  isFrontendTool,
+  toolDeclarations,
+  type FrontendTool,
+  type FrontendToolRunner,
+  type ItemCard,
+  type ShowItemsResult,
+  type ToolContext,
+  type ToolLookup,
+  type ToolNavigate,
+  type ToolResult,
+} from '@/features/agent/tools';
+
+export {
+  createAgentStore,
+  useAgentStore,
+  type AgentAttachOptions,
+  type AgentState,
+} from '@/features/agent/store';
 export type {
   AgentError,
   AgentErrorCode,

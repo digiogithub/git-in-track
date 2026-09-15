@@ -106,6 +106,15 @@ place a reader looks for the current values; docs/20 explains each one.
 - **Two tabs on one thread fight.** A second POST on a live thread abandons the running
   one, server-side. We document it; we cannot fix it from here.
 
+### The security boundary, stated plainly
+
+`AutoApprove = false` plus the approval dialog is the whole boundary until Pando's `[AGUI] Tools`
+allow-list (PANDO-EP-0002, shipped 2026-09-14 and written by `gintrack agent init`) is in force
+on the instance; the allow-list supersedes it as the primary control and demotes human-in-the-loop
+approval to defence in depth, it does not replace it. Pando has no per-thread permission policy:
+the browser's "always allow for this thread" is an in-memory, per-thread, non-persisted client
+memory that auto-answers the next prompt for the same tool name and is forgotten on reload.
+
 ## Alternatives considered
 
 **CopilotKit with a Node sidecar.** Pando ships CopilotKit glue and an example that uses

@@ -18,9 +18,9 @@
  */
 
 import { Bot, TriangleAlert, User } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
-import type { AgentMessage } from '@/features/agent/types';
+import type { AgentMessage, AgentToolCall } from '@/features/agent/types';
 import { ReasoningBlock } from '@/features/agent/ui/ReasoningBlock';
 import { ToolCallCard } from '@/features/agent/ui/ToolCallCard';
 import { cn } from '@/lib/cn';
@@ -33,6 +33,8 @@ export type MessageBubbleProps = {
   message: AgentMessage;
   /** This message is the one the live run is still writing into. */
   streaming?: boolean;
+  /** Renders a frontend tool's result as UI instead of as JSON; see `MessageList`. */
+  renderToolResult?: (call: AgentToolCall) => ReactNode;
 };
 
 /**
@@ -102,7 +104,11 @@ function AssistantText({ text, streaming }: { text: string; streaming: boolean }
   );
 }
 
-export function MessageBubble({ message, streaming = false }: MessageBubbleProps) {
+export function MessageBubble({
+  message,
+  streaming = false,
+  renderToolResult,
+}: MessageBubbleProps) {
   if (message.role === 'user') {
     return (
       <article aria-label="You" className="flex justify-end gap-3">
@@ -152,7 +158,10 @@ export function MessageBubble({ message, streaming = false }: MessageBubbleProps
         )}
         {message.text === '' ? null : <AssistantText text={message.text} streaming={streaming} />}
         {message.toolCalls.map((call) => (
-          <ToolCallCard key={call.id} call={call} />
+          <Fragment key={call.id}>
+            <ToolCallCard call={call} />
+            {renderToolResult?.(call)}
+          </Fragment>
         ))}
         {message.error === undefined ? null : (
           <p className="text-sm text-destructive">{message.error}</p>

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FakeAgent } from '@/api/fake-provider';
 import { FakeProvider } from '@/api/fake-provider';
 import { useAppStore } from '@/app/store';
-import { simpleTurn } from '@/features/agent/fixtures';
+import { permissionInterrupt, permissionResumed, simpleTurn } from '@/features/agent/fixtures';
 import { useAgentStore } from '@/features/agent/store';
 import { AgentPage } from '@/features/agent/ui/AgentPage';
 import { THREAD_META_KEY } from '@/features/agent/ui/threadMeta';
@@ -182,5 +182,77 @@ describe('the conversation list', () => {
     await waitFor(() => {
       expect(globalThis.localStorage.getItem(THREAD_META_KEY)).not.toContain('doomed question');
     });
+  });
+});
+
+describe('restoring a conversation on mount', () => {
+  it('hydrates a known thread instead of opening a stream for it', async () => {
+    globalThis.localStorage.setItem('gintrack:agent-active-thread:repo-1', 'thread-known');
+    const provider = renderAgent({
+      events: simpleTurn,
+      threads: [{ id: 'thread-known', updatedAt: '2026-09-15T10:00:00Z' }],
+      messages: {
+        'thread-known': [
+          { id: 'h1', role: 'user', content: 'what did we decide?' },
+          { id: 'h2', role: 'assistant', content: 'we decided to ship.' },
+        ],
+      },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('we decided to ship.')).toBeInTheDocument();
+    });
+    // Hydration is a read, not a run: nothing was posted to start one.
+    expect(provider.agentRuns).toHaveLength(0);
+    expect(useAgentStore.getState().runStatus).toBe('idle');
+  });
+});
+
+describe('the interrupt dialogs', () => {
+  it('opens the permission dialog and resumes the run on approval', async () => {
+    const user = userEvent.setup();
+    const provider = renderAgent({ turns: [permissionInterrupt, permissionResumed] });
+
+    await ready();
+    await user.type(composer(), 'write a file{Enter}');
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('main.go')).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole('button', { name: 'Approve once' }));
+
+    await waitFor(() => {
+      expect(provider.agentRuns).toHaveLength(2);
+    });
+    expect(provider.agentRuns[1]?.messages?.at(-1)).toMatchObject({
+      role: 'tool',
+      content: '{"approved":true}',
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull();
+    });
+  });
+
+  it('records an always-allow grant as a revocable badge in the rail', async () => {
+    const user = userEvent.setup();
+    renderAgent({ turns: [permissionInterrupt, permissionResumed] });
+
+    await ready();
+    await user.type(composer(), 'write a file{Enter}');
+
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('switch', { name: 'Always allow' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Always allow' }));
+
+    await waitFor(() => {
+      expect(useAgentStore.getState().alwaysAllowed).toEqual(['write']);
+    });
+    const rail = screen.getByRole('complementary', { name: 'Agent state' });
+    expect(within(rail).getByText('write')).toBeInTheDocument();
+
+    await user.click(
+      within(rail).getByRole('button', { name: 'Revoke the standing approval for write' }),
+    );
+    expect(useAgentStore.getState().alwaysAllowed).toEqual([]);
   });
 });
