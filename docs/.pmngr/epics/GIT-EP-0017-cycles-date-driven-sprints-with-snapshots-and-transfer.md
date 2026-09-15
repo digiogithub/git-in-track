@@ -2,13 +2,15 @@
 id: GIT-EP-0017
 type: epic
 title: "Cycles: date-driven sprints with snapshots and transfer"
-status: backlog
+status: done
 priority: medium
 milestone: GIT-M-0012
 author: mcp
 labels: [core, web, server]
 created: 2026-09-13T13:08:15Z
-updated: 2026-09-13T13:08:15Z
+updated: 2026-09-15T19:37:32Z
+started: 2026-09-15T19:37:13Z
+closed: 2026-09-15T19:37:32Z
 ---
 
 ## Description

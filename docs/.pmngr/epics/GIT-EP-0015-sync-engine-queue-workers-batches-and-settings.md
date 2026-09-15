@@ -2,13 +2,15 @@
 id: GIT-EP-0015
 type: epic
 title: "Sync engine: queue, workers, batches and settings"
-status: backlog
+status: done
 priority: high
 milestone: GIT-M-0011
 author: mcp
 labels: [server, web, docs, performance]
 created: 2026-09-13T13:07:58Z
-updated: 2026-09-13T13:07:58Z
+updated: 2026-09-15T19:37:31Z
+started: 2026-09-15T19:37:12Z
+closed: 2026-09-15T19:37:31Z
 ---
 
 ## Description

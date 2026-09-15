@@ -2,13 +2,15 @@
 id: GIT-EP-0012
 type: epic
 title: Import YouTrack issues into the backlog
-status: backlog
+status: done
 priority: high
 milestone: GIT-M-0011
 author: mcp
 labels: [core, server, web, mcp]
 created: 2026-09-13T13:07:26Z
-updated: 2026-09-13T13:07:26Z
+updated: 2026-09-15T19:37:27Z
+started: 2026-09-15T19:37:08Z
+closed: 2026-09-15T19:37:27Z
 ---
 
 ## Description

@@ -2,13 +2,15 @@
 id: GIT-EP-0014
 type: epic
 title: Knowledge base sync with YouTrack articles
-status: backlog
+status: done
 priority: medium
 milestone: GIT-M-0011
 author: mcp
 labels: [core, server, web, docs]
 created: 2026-09-13T13:07:45Z
-updated: 2026-09-13T13:07:45Z
+updated: 2026-09-15T19:37:30Z
+started: 2026-09-15T19:37:10Z
+closed: 2026-09-15T19:37:30Z
 ---
 
 ## Description

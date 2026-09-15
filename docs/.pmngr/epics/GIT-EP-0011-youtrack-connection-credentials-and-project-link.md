@@ -2,13 +2,15 @@
 id: GIT-EP-0011
 type: epic
 title: YouTrack connection, credentials and project link
-status: backlog
+status: done
 priority: high
 milestone: GIT-M-0011
 author: mcp
 labels: [server, core, web, security, docs]
 created: 2026-09-13T13:07:15Z
-updated: 2026-09-13T13:07:15Z
+updated: 2026-09-15T19:37:26Z
+started: 2026-09-15T19:37:06Z
+closed: 2026-09-15T19:37:26Z
 ---
 
 ## Description

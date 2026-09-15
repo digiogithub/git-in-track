@@ -2,13 +2,15 @@
 id: GIT-EP-0013
 type: epic
 title: Push comments and feedback to YouTrack
-status: backlog
+status: done
 priority: medium
 milestone: GIT-M-0011
 author: mcp
 labels: [core, server, web, mcp]
 created: 2026-09-13T13:07:34Z
-updated: 2026-09-13T13:07:34Z
+updated: 2026-09-15T19:37:29Z
+started: 2026-09-15T19:37:09Z
+closed: 2026-09-15T19:37:29Z
 ---
 
 ## Description
