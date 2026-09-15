@@ -15,7 +15,7 @@ import (
 // readTools is the surface a server started without --allow-write advertises.
 var readTools = []string{
 	"get_item", "get_kb_page", "list_inbox", "list_items", "list_kb_pages",
-	"search_items", "search_kb",
+	"search_items", "search_kb", "search_semantic",
 }
 
 // writeTools is what enabling writes adds.

@@ -1170,19 +1170,20 @@ publish_kb_page_to_youtrack
 push_comment_to_youtrack
 search_items
 search_kb
+search_semantic
 sync_kb_page_from_youtrack
 transfer_sprint_items
 triage_inbox_item
 update_item
 
 $ gintrack mcp --agent claude-code
-gintrack mcp 0.4.0: workspace work, 2 repositories, 7 tools (read-only)
+gintrack mcp 0.4.0: workspace work, 2 repositories, 8 tools (read-only)
 ```
 
 Nothing but JSON-RPC frames is written to stdout; the startup line and every log go to
-stderr. There are **twenty-two tools**: seven read-only — `list_items`, `search_items`,
-`get_item`, `list_inbox`, `list_kb_pages`, `get_kb_page` and `search_kb` — and fifteen
-writes. Without writes enabled the fifteen write tools are absent from `tools/list`, not
+stderr. There are **twenty-three tools**: eight read-only — `list_items`, `search_items`,
+`search_semantic`, `get_item`, `list_inbox`, `list_kb_pages`, `get_kb_page` and `search_kb` —
+and fifteen writes. Without writes enabled the fifteen write tools are absent from `tools/list`, not
 merely refused.
 
 Writes are enabled by `--allow-write` or by `mcp.allowWrite: true` in the configuration file
@@ -1193,7 +1194,7 @@ what the companion's **Settings › Agent tools (MCP)** switch writes
 (`PATCH /api/v1/mcp/settings`, section 5.5), which is the way to enable writes without
 editing a file or teaching every agent runtime a flag.
 
-The **same twenty-two tools** are served over streamable HTTP at `POST /mcp` by
+The **same twenty-three tools** are served over streamable HTTP at `POST /mcp` by
 `gintrack serve --mcp-http` (section 4.1), which is what to use when the companion is already
 running: one index and one watcher, shared with the web UI.
 

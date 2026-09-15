@@ -25,7 +25,10 @@ func TestMCPListTools(t *testing.T) {
 		{
 			name: "read-only by default",
 			args: []string{"mcp", "--list-tools"},
-			want: []string{"list_items", "get_item", "search_items", "get_kb_page", "search_kb", "list_kb_pages"},
+			want: []string{
+				"list_items", "get_item", "search_items", "search_semantic",
+				"get_kb_page", "search_kb", "list_kb_pages",
+			},
 			absent: []string{
 				"create_epic", "create_story", "create_task", "create_milestone",
 				"update_item", "add_comment", "move_on_board",
@@ -153,8 +156,8 @@ func TestMCPOverStdio(t *testing.T) {
 		if err != nil {
 			t.Fatalf("tools/list: %v", err)
 		}
-		if len(listed.Tools) != 22 {
-			t.Errorf("tools = %d, want 22", len(listed.Tools))
+		if len(listed.Tools) != 23 {
+			t.Errorf("tools = %d, want 23", len(listed.Tools))
 		}
 		for _, tool := range listed.Tools {
 			if tool.InputSchema == nil || tool.OutputSchema == nil {

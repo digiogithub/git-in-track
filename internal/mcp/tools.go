@@ -27,6 +27,7 @@ func registerTools(s *Server) {
 	registerBoardTools(s)
 	registerSprintTools(s)
 	registerKBTools(s)
+	registerSearchTools(s)
 	registerYouTrackTools(s)
 }
 

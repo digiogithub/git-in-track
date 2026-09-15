@@ -6,7 +6,7 @@ with `GIT-US-0024`, plus `create_milestone` from `GIT-US-0033`;
 Phase: **Phase 5 — MCP server + agent workflows** (depends on Phase 2 companion CLI, Phase 3 boards, Phase 4 sync)
 Audience: contributors working on `internal/mcp`; authors of agent instructions (`AGENTS.md`)
 
-What ships today: twenty-two tools over stdio and over streamable HTTP, read-only by default,
+What ships today: twenty-three tools over stdio and over streamable HTTP, read-only by default,
 with cursor pagination, field projection and a `rev` on every item. Resources, prompts, the
 audit log, dry-run and rate limiting are specified here and land in later stories of the
 epic; each is labelled where it appears.
@@ -156,7 +156,7 @@ advertised yet; they arrive with sections 5 and 6.
    is what bounds a result.
 8. **One obvious tool per intent.** No tool overlaps another's purpose: `list_items` is
    structured, `search_items` is ranked prose over the backlog, `search_kb` is ranked prose
-   over the knowledge base. Fewer, sharper tools reduce mis-selection by the model. Tools
+   over the knowledge base, and `search_semantic` is ranked *meaning* over both (§4.19). Fewer, sharper tools reduce mis-selection by the model. Tools
    are named verb first — `list_items`, not `item_list` — because that is what agent
    runtimes and their users read
    ([ADR-015](adr/ADR-015-official-go-mcp-sdk-and-verb-noun-tools.md)).
@@ -175,13 +175,14 @@ advertised yet; they arrive with sections 5 and 6.
 
 ## 4. Tool catalog
 
-Twenty-two tools ship: twelve with `GIT-US-0024`, `create_milestone` with `GIT-US-0033`, the
-three inbox tools with `GIT-US-0056`, the two sprint rollover tools with `GIT-US-0085` and the
-four YouTrack tools with `GIT-US-0062`, `GIT-US-0079` and `GIT-US-0094`. They are the same
-twenty-two on both transports, from the same registry, over the same workspace.
+Twenty-three tools ship: twelve with `GIT-US-0024`, `create_milestone` with `GIT-US-0033`, the
+three inbox tools with `GIT-US-0056`, the two sprint rollover tools with `GIT-US-0085`, the
+four YouTrack tools with `GIT-US-0062`, `GIT-US-0079` and `GIT-US-0094`, and `search_semantic`
+with `GIT-US-0088`. They are the same twenty-three on both transports, from the same registry,
+over the same workspace.
 
-Seven are read tools and fifteen are write tools; `gintrack mcp --list-tools` prints seven,
-and with `--allow-write` twenty-two.
+Eight are read tools and fifteen are write tools; `gintrack mcp --list-tools` prints eight,
+and with `--allow-write` twenty-three.
 
 Common conventions for all tools:
 
@@ -208,6 +209,7 @@ Common conventions for all tools:
 | `get_kb_page`    | read  | `kb.page`                 | page-dependent      |
 | `list_kb_pages`  | read  | `kb.tree`                 | ~20 tokens/page     |
 | `search_kb`      | read  | `search`                  | ~60 tokens/result   |
+| `search_semantic` | read | `search.semantic`         | ~60 tokens/result   |
 | `create_epic`    | write | `item.create`             | ~90 tokens          |
 | `create_story`   | write | `item.create`             | ~90 tokens          |
 | `create_task`    | write | `item.create`             | ~90 tokens          |
@@ -851,12 +853,69 @@ Three rules govern what crosses the boundary, and they are the same in both dire
 - A page both sides changed produces `<page>.conflict.md` beside the page and leaves the
   original untouched. Nothing is merged automatically.
 
-### 4.19 Planned tools
+### 4.19 `search_semantic`
+
+Ranked-by-meaning search over backlog items **and** knowledge-base pages. It answers "which
+stories or pages are *about* X" — the question a substring index answers with nothing at all
+when the wording of the question is not the wording of the item.
+
+The ranking is not gintrack's: it comes from the Pando backend the companion installs behind
+the core method `search.semantic` (`internal/vault/semantic.go`). Pando returns *candidates
+only* — every field below is re-read from gintrack's own index before the answer leaves, and a
+candidate that no longer resolves is dropped, so nothing in a Pando corpus can reach an agent
+as if it were backlog state.
+
+```json
+// input
+{ "query": "how do we rotate refresh tokens", "project": "ACME", "limit": 5 }
+// output
+{
+  "hits": [
+    {"kind":"item","id":"ACME-US-0042","title":"Login with SSO","status":"in_progress",
+     "project":"ACME","score":0.82,"rev":"sha256:6f1ca09b4d2e8113",
+     "snippet":"…the discovery document is cached by the token service…"},
+    {"kind":"page","path":"docs/architecture/auth.md","title":"Authentication","project":"ACME",
+     "score":0.57,"rev":"sha256:2a90f31c7b054d81",
+     "snippet":"…refresh tokens are rotated on every use…"}
+  ],
+  "engine": "pando"
+}
+```
+
+- `limit` is 1 to 20, default 10, clamped rather than refused. `kind` narrows the answer to
+  `item` or `page`; `project` scopes it to one project key.
+- Each hit carries the current `rev` (and `status`, for an item), so an agent can act on a
+  candidate without a second read.
+- `score` comes from the embedding backend. It is comparable only with the other scores of
+  the same answer — never with the field weights of `search_items` (`02-architecture.md` §8).
+- `engine` names the backend that ranked the hits; `degraded: true` marks an answer computed
+  from an incomplete index, where a *miss* proves nothing.
+
+**Without a Pando backend the tool fails, it does not fall back.** The refusal is
+`{"error":{"code":"unavailable","message":…,"retry":"…use search_items…"}}`. The tool is still
+advertised in `tools/list`, because whether a backend answers is a property of the session,
+not of the surface; an empty list would let an agent conclude that nothing in the backlog
+matches, which is exactly the wrong conclusion.
+
+#### Which search answers which question
+
+| The question is… | Tool | Why |
+| --- | --- | --- |
+| **Structured** — an id, a status, an assignee, a sprint, a parent, a label, a date range | `get_item`, `list_items` | They read the front matter directly: exact, cheap, and they return the `rev` a write has to quote. |
+| **Literal** — words you expect to appear verbatim in an item or a page | `search_items`, `search_kb` | Substring ranking over ids, titles, labels and bodies. |
+| **Semantic** — a topic, a decision, "where did we say…", wording the user half-remembers | `search_semantic` | Ranks by meaning across items and pages, so a different vocabulary still finds the item. |
+| **Code** — a symbol, a call site, "how is X implemented" | Pando's `code_hybrid_search`, then `code_find_symbol` | The code index is the only one that sees Go and TypeScript and their symbol graph; the backlog corpus is Markdown only. |
+
+Call **one** of them, then widen only if it comes back empty. The same table is written into
+the routing skill `gintrack agent init` generates (`20-agent-interface.md`), because a rule an
+agent reads at the start of a session beats a tool description it skims.
+
+### 4.20 Planned tools
 
 `08` specified a larger catalog than `GIT-US-0024` implements. These are *planned*, each
 behind its own story: `list_workspaces`, `list_projects`, `get_kb_tree`, `link_items`,
 `list_comments`, `list_boards`, `get_board`, `get_sprint`, `list_retros`, `get_sync_status`
-and `run_sync` — verb first, like the twenty-two above. Every one of them already has a core
+and `run_sync` — verb first, like the twenty-three above. Every one of them already has a core
 method behind it, so the work is framing rather than domain logic.
 
 `delete_item` is deliberately **not** on that list: deleting a backlog item is a human action

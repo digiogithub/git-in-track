@@ -608,12 +608,22 @@ func (s *searchState) startReindex(ctx context.Context) (*reindexJob, error) {
 // invalidate an export that worked, so each failure is recorded against its own
 // half and the job carries on.
 func (s *searchState) runReindex(ctx context.Context, job *reindexJob) {
-	defer func() {
-		job.EndedAt = s.now().UTC()
+	// job is the same pointer view() copies under jobMu, so every write to it
+	// goes through mutate; a settings read racing a running reindex would
+	// otherwise observe a half-written record.
+	mutate := func(fn func(j *reindexJob)) {
 		s.jobMu.Lock()
-		s.running, s.last = nil, job
+		fn(job)
 		s.jobMu.Unlock()
-		s.publishProgress(job.ID, "", job.Phase, 1, 1, job.KBNote)
+	}
+	defer func() {
+		var phase, note string
+		s.jobMu.Lock()
+		job.EndedAt = s.now().UTC()
+		s.running, s.last = nil, job
+		phase, note = job.Phase, job.KBNote
+		s.jobMu.Unlock()
+		s.publishProgress(job.ID, "", phase, 1, 1, note)
 	}()
 
 	client := s.pando()
@@ -639,37 +649,42 @@ func (s *searchState) runReindex(ctx context.Context, job *reindexJob) {
 				}
 			}
 		}
-		job.Repos = append(job.Repos, out)
+		mutate(func(j *reindexJob) { j.Repos = append(j.Repos, out) })
 	}
 
 	// The knowledge-base half. Pando imports the corpus on its own schedule
 	// with KBWatch off, so without its REST reindex route the honest report is
 	// "re-exported, awaiting the next import" — not "reindexed".
-	job.Phase = searchPhaseKB
+	mutate(func(j *reindexJob) { j.Phase = searchPhaseKB })
 	s.publishProgress(job.ID, "", searchPhaseKB, 0, 0, "reindexing the knowledge base")
+	var kbStats *pando.ReindexStats
+	var kbNote string
 	if client == nil {
-		job.KBNote = "Re-exported. No Pando endpoint is configured, so nothing was asked to import it."
+		kbNote = "Re-exported. No Pando endpoint is configured, so nothing was asked to import it."
 	} else {
 		stats, err := client.ReindexKB(ctx)
 		switch {
 		case notConfigured(err):
-			job.KBNote = "Re-exported, awaiting Pando's next import pass: no REST URL is configured, " +
+			kbNote = "Re-exported, awaiting Pando's next import pass: no REST URL is configured, " +
 				"and with KBWatch off there is no watcher to trigger."
 		case err != nil:
-			job.KBNote = "Re-exported, but the knowledge-base reindex failed: " + err.Error()
+			kbNote = "Re-exported, but the knowledge-base reindex failed: " + err.Error()
 			s.log.Warn("knowledge base reindex failed", "error", err)
 		default:
-			job.KB = &stats
-			job.KBNote = "Reindexed."
+			kbStats = &stats
+			kbNote = "Reindexed."
 		}
 	}
 
-	job.Phase = searchPhaseDone
-	for _, repo := range job.Repos {
-		if repo.ExportError != "" || repo.CodeError != "" {
-			job.Phase = searchPhaseFailed
-			job.Error = "one or more repositories failed; see repos[]"
-			break
+	mutate(func(j *reindexJob) {
+		j.KB, j.KBNote = kbStats, kbNote
+		j.Phase = searchPhaseDone
+		for _, repo := range j.Repos {
+			if repo.ExportError != "" || repo.CodeError != "" {
+				j.Phase = searchPhaseFailed
+				j.Error = "one or more repositories failed; see repos[]"
+				break
+			}
 		}
-	}
+	})
 }

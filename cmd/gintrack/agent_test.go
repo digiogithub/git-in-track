@@ -88,7 +88,7 @@ func TestAgentInitWritesThePandoConfiguration(t *testing.T) {
 		t.Errorf("the skill has no front matter: %.60q", skill)
 	}
 	for _, want := range []string{
-		"list_items", "get_item", "search_items",
+		"list_items", "get_item", "search_items", "search_semantic",
 		"kb_search_documents", "path_prefix", "code_hybrid_search",
 		"hybrid_search_remembrances",
 	} {

@@ -254,10 +254,13 @@ bearer token and the go-git HTTP fallback password.
 
 | Tool | What it answers | Notes |
 |------|-----------------|-------|
-| `gintrack_list_items`, `gintrack_get_item`, `gintrack_search_items` | Structured questions: ids, statuses, assignees, sprints, parents, labels, dates | Exact, cheap, and they return the `rev` any write must quote. |
+| `gintrack_list_items`, `gintrack_get_item`, `gintrack_search_items` | Structured and literal questions: ids, statuses, assignees, sprints, parents, labels, dates, exact words | Exact, cheap, and they return the `rev` any write must quote. |
 | `gintrack_*` (the rest) | Comments, board moves, inbox triage, item creation | Available only when the companion was started with `--mcp-allow-write`. |
-| `kb_search_documents`, `kb_get_document` | Semantic questions over the exported corpus | Use `path_prefix: "items/"` or `"kb/"`; `file_path` is relative to the corpus root. |
+| `gintrack_search_semantic` | Which stories or pages are *about* X — meaning, not wording | Needs the Pando backend; answers `unavailable` naming `search_items` rather than an empty list, so an `unavailable` answer means the query never ran. |
+| `kb_search_documents`, `kb_get_document` | Corpus-level fallback for semantic questions | Use `path_prefix: "items/"` or `"kb/"`; `file_path` is relative to the corpus root. |
 | `code_hybrid_search`, `code_find_symbol` | Code questions | The corpus is Markdown only; the code index is the one that sees symbols. |
+
+The skill `gintrack agent init` writes carries the same four rows, so the routing the persona follows and the one documented here cannot drift apart.
 
 `hybrid_search_remembrances` is deliberately **not** on the list: it blends memories,
 knowledge base and code into one ranking, hides which index answered, and takes no
