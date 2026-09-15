@@ -78,7 +78,10 @@ import type {
   RepoInfo,
   SearchHit,
   SearchQuery,
+  SearchReindexJob,
   SearchResult,
+  SearchSettings,
+  SearchSettingsPatch,
   SnapshotInfo,
   SnapshotItemSummary,
   SnapshotRefresh,
@@ -159,6 +162,19 @@ export type FakeSearch = {
   fullTextSearch?: Capabilities['fullTextSearch'];
   semantic?: SearchHit[];
   degraded?: boolean;
+  /**
+   * The semantic-search settings surface, in memory. Absent — the default —
+   * makes this fake a runtime that has none at all: the `searchSettings`
+   * capability is false and every call fails, which is what a browser does.
+   * Supplying it, even as `{}`, opts a test into the companion behaviour.
+   */
+  settings?: Partial<SearchSettings>;
+  /** Whether a patch reaches the configuration file; true by default. */
+  persisted?: boolean;
+  /** When set, every reindex fails with this instead of queueing a job. */
+  reindexError?: { code: ProviderErrorCode; message: string };
+  /** Overrides on the job a reindex answers with. */
+  reindexJob?: Partial<SearchReindexJob>;
 };
 
 export type FakeData = {
@@ -669,6 +685,21 @@ function defaultFakeColumns(kind: 'kanban' | 'scrum'): BoardColumnPatch[] {
 function isDone(card: BoardCard): boolean {
   const category = card.category ?? categoryOf(card.status);
   return category === 'done' || category === 'cancelled';
+}
+
+/**
+ * Whether a Pando URL points at this machine. The companion delegates the rule
+ * to `pando.New`; the fake only needs the part the settings card depends on,
+ * which is that a remote host is refused unless `allowRemote` is on.
+ */
+function isLoopbackUrl(value: string): boolean {
+  let host: string;
+  try {
+    host = new URL(value).hostname;
+  } catch {
+    return false;
+  }
+  return host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]';
 }
 
 /** Why a fake with no YouTrack block behaves like browser-only mode. */
@@ -1290,6 +1321,16 @@ export class FakeProvider implements DataProvider {
   private mcp: McpSettings;
   /** Reads left before a `starting` tunnel settles, so polling is testable. */
   private tunnelReadsToConnect = 0;
+  /** The semantic-search settings, in memory; null on a runtime that has none. */
+  private searchSettings: SearchSettings | null;
+  /** Whether a settings patch reaches a configuration file. */
+  private searchPersisted = true;
+  /** When set, every reindex fails with this instead. */
+  private searchReindexError: { code: ProviderErrorCode; message: string } | null = null;
+  /** Overrides on the job a reindex answers with. */
+  private searchReindexJob: Partial<SearchReindexJob> | null = null;
+  /** Reindex jobs queued so far, so ids are stable and countable. */
+  private searchReindexCount = 0;
   /** The YouTrack connection, in memory; null on a runtime that has none. */
   private youtrack: FakeYouTrack | null;
   private youtrackSettings: YouTrackSettings;
@@ -1371,11 +1412,35 @@ export class FakeProvider implements DataProvider {
             running: true,
             ...this.syncEngine.settings,
           };
+    this.searchSettings =
+      data.search?.settings === undefined
+        ? null
+        : {
+            backend: data.search.fullTextSearch ?? 'pando',
+            configured: true,
+            mcpUrl: 'http://127.0.0.1:9777/mcp',
+            restUrl: '',
+            projectId: '',
+            corpusDir: '/home/dana/.local/state/gintrack/pando-kb',
+            allowRemote: false,
+            reachable: true,
+            reachableError: '',
+            corpora: [],
+            documents: 0,
+            lastExport: null,
+            reindex: null,
+            persisted: data.search.persisted ?? true,
+            ...data.search.settings,
+          };
+    this.searchPersisted = data.search?.persisted ?? true;
+    this.searchReindexError = data.search?.reindexError ?? null;
+    this.searchReindexJob = data.search?.reindexJob ?? null;
     this.semanticHits = structuredClone(data.search?.semantic ?? []);
     this.searchDegraded = data.search?.degraded ?? false;
     this.capabilities = {
       ...base,
       fullTextSearch: data.search?.fullTextSearch ?? base.fullTextSearch,
+      searchSettings: data.search?.settings !== undefined,
       youtrackSupported: this.youtrack !== null,
       youtrack: this.youtrack !== null && this.youtrackSettings.configured,
       agent: this.agent !== null,
@@ -3604,6 +3669,98 @@ export class FakeProvider implements DataProvider {
     }
     this.git = { ...next, persisted: true };
     return Promise.resolve({ ...this.git });
+  }
+
+  // -------------------------------------------------- semantic search settings
+
+  /**
+   * The settings surface, in memory. A runtime scripted without one refuses
+   * every call the way `BrowserProvider` does, which is what keeps the card's
+   * capability gate honest.
+   */
+  private requireSearchSettings(): SearchSettings {
+    if (this.searchSettings === null) {
+      throw new ProviderError('not_supported', 'This runtime has no semantic search.');
+    }
+    return this.searchSettings;
+  }
+
+  getSearchSettings(): Promise<SearchSettings> {
+    try {
+      return Promise.resolve(structuredClone(this.requireSearchSettings()));
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
+  updateSearchSettings(patch: SearchSettingsPatch): Promise<SearchSettings> {
+    let current: SearchSettings;
+    try {
+      current = this.requireSearchSettings();
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+    }
+    const next = { ...current, ...patch };
+    // The one refusal the companion makes on this path: a host that is not
+    // loopback is not dialled without `allowRemote` (docs/07 §3.3).
+    if (!next.allowRemote && next.mcpUrl !== '' && !isLoopbackUrl(next.mcpUrl)) {
+      return Promise.reject(
+        new ProviderError(
+          'validation_failed',
+          'A Pando URL whose host is not a loopback address needs “Allow a remote Pando”.',
+        ),
+      );
+    }
+    this.searchSettings = {
+      ...next,
+      configured: next.mcpUrl !== '' || next.corpusDir !== '',
+      persisted: this.searchPersisted,
+    };
+    return Promise.resolve(structuredClone(this.searchSettings));
+  }
+
+  reindexSearch(): Promise<SearchReindexJob> {
+    let current: SearchSettings;
+    try {
+      current = this.requireSearchSettings();
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+    }
+    if (this.searchReindexError !== null) {
+      return Promise.reject(
+        new ProviderError(this.searchReindexError.code, this.searchReindexError.message),
+      );
+    }
+    this.searchReindexCount += 1;
+    const job: SearchReindexJob = {
+      jobId: `reindex-${String(this.searchReindexCount)}`,
+      startedAt: '2026-09-15T10:04:00Z',
+      phase: 'export',
+      repos: [],
+      ...this.searchReindexJob,
+    };
+    this.searchSettings = { ...current, reindex: structuredClone(job) };
+    return Promise.resolve(structuredClone(job));
+  }
+
+  /**
+   * What the companion's settings read answers once a job has finished. A test
+   * drives the live half with `emitEvent({ kind: 'searchProgress', … })` and
+   * calls this for the job the card then re-reads.
+   */
+  finishSearchReindex(job: Partial<SearchReindexJob>): void {
+    const current = this.requireSearchSettings();
+    const running = current.reindex;
+    this.searchSettings = {
+      ...current,
+      reindex: {
+        jobId: running?.jobId ?? 'reindex-1',
+        startedAt: running?.startedAt ?? '2026-09-15T10:04:00Z',
+        phase: 'completed',
+        repos: running?.repos ?? [],
+        ...job,
+      },
+    };
   }
 
   // ------------------------------------------------------------------ tunnel

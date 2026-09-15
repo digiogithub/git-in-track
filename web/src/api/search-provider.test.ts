@@ -81,3 +81,72 @@ describe('FakeProvider search', () => {
     await expect(provider.search({ text: 'sso' })).resolves.toMatchObject({ degraded: true });
   });
 });
+
+describe('FakeProvider semantic search settings (story GIT-US-0091)', () => {
+  it('refuses every call on a runtime scripted without the surface', async () => {
+    const provider = new FakeProvider();
+
+    expect(provider.capabilities.searchSettings).toBe(false);
+    await expect(provider.getSearchSettings()).rejects.toMatchObject({ code: 'not_supported' });
+    await expect(provider.reindexSearch()).rejects.toMatchObject({ code: 'not_supported' });
+  });
+
+  it('answers a settings document a card can render', async () => {
+    const provider = new FakeProvider({
+      search: { fullTextSearch: 'pando', settings: { documents: 450 } },
+    });
+
+    expect(provider.capabilities.searchSettings).toBe(true);
+    await expect(provider.getSearchSettings()).resolves.toMatchObject({
+      backend: 'pando',
+      configured: true,
+      documents: 450,
+      reachable: true,
+    });
+  });
+
+  it('reports whether a patch reached the configuration file', async () => {
+    const written = new FakeProvider({ search: { settings: {} } });
+    const inMemory = new FakeProvider({ search: { settings: {}, persisted: false } });
+
+    await expect(written.updateSearchSettings({ projectId: 'acme' })).resolves.toMatchObject({
+      projectId: 'acme',
+      persisted: true,
+    });
+    await expect(inMemory.updateSearchSettings({ projectId: 'acme' })).resolves.toMatchObject({
+      persisted: false,
+    });
+  });
+
+  it('refuses a remote Pando URL unless allowRemote is on', async () => {
+    const provider = new FakeProvider({ search: { settings: {} } });
+
+    await expect(
+      provider.updateSearchSettings({ mcpUrl: 'http://pando.example.com:9777/mcp' }),
+    ).rejects.toMatchObject({ code: 'validation_failed' });
+    await expect(
+      provider.updateSearchSettings({
+        mcpUrl: 'http://pando.example.com:9777/mcp',
+        allowRemote: true,
+      }),
+    ).resolves.toMatchObject({ allowRemote: true });
+  });
+
+  it('queues a reindex, and answers the scripted refusal instead when told to', async () => {
+    const provider = new FakeProvider({ search: { settings: {} } });
+    const job = await provider.reindexSearch();
+
+    expect(job.phase).toBe('export');
+    await expect(provider.getSearchSettings()).resolves.toMatchObject({
+      reindex: { jobId: job.jobId },
+    });
+
+    const busy = new FakeProvider({
+      search: {
+        settings: {},
+        reindexError: { code: 'search_reindex_running', message: 'A reindex is already running.' },
+      },
+    });
+    await expect(busy.reindexSearch()).rejects.toMatchObject({ code: 'search_reindex_running' });
+  });
+});

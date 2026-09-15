@@ -171,6 +171,15 @@ const BROWSER_YOUTRACK_REASON =
  * has none of the three. This is a property of the runtime, not a permission,
  * so it is `not_supported` rather than `read_only`.
  */
+/**
+ * Why browser-only mode has no semantic-search settings. The corpus is
+ * exported by a process with a filesystem and Pando is reached by a process
+ * holding a token; a tab has neither, and the local index it does have has
+ * nothing to configure.
+ */
+const BROWSER_SEARCH_REASON =
+  'Semantic search is not available in browser-only mode: exporting a corpus and reaching Pando both need a local process. Run `gintrack serve` to configure it.';
+
 const BROWSER_AGENT_REASON =
   'The agent is not available in browser-only mode: it needs a local Pando adapter, which only the companion can start and reach. Run `gintrack serve` to use it.';
 
@@ -321,6 +330,7 @@ export class BrowserProvider implements DataProvider {
       maxBatchWrite: write ? 50 : 0,
       youtrackSupported: false,
       youtrack: false,
+      searchSettings: false,
       agent: false,
     };
     return this.#capabilities;
@@ -1614,6 +1624,25 @@ export class BrowserProvider implements DataProvider {
   }
 
   // ------------------------------------------------------------------- events
+
+  // -------------------------------------------------- semantic search settings
+
+  /**
+   * There is no Pando here and nothing to index. The `searchSettings`
+   * capability is `false`, so the card is not rendered and a call that reaches
+   * these is a caller that forgot to branch on it.
+   */
+  getSearchSettings(): Promise<never> {
+    return Promise.reject(new ProviderError('not_supported', BROWSER_SEARCH_REASON));
+  }
+
+  updateSearchSettings(): Promise<never> {
+    return Promise.reject(new ProviderError('not_supported', BROWSER_SEARCH_REASON));
+  }
+
+  reindexSearch(): Promise<never> {
+    return Promise.reject(new ProviderError('not_supported', BROWSER_SEARCH_REASON));
+  }
 
   // ------------------------------------------------------------------ agent
 

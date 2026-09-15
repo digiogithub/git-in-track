@@ -68,6 +68,24 @@ because a commit list cannot express them.
   reports "re-exported, awaiting Pando's next import pass". Note that the embedding model is
   pinned configuration: it is global to a Pando instance, and changing it silently degrades
   recall for every consumer until a full reindex.
+- **`search_semantic` on the MCP server** (`GIT-US-0088`, docs/08 §4.19). Twenty-three tools
+  now ship (eight read-only): the new one ranks backlog items and knowledge-base pages by
+  meaning through the core `search.semantic` method, returns each candidate with its current
+  `rev`, and — without a Pando backend — refuses with `unavailable` naming `search_items` as
+  the fallback rather than answering an empty list an agent would read as "nothing matches".
+  The routing skill `gintrack agent init` writes now carries the four-row table that says
+  which search answers which question shape.
+- **A semantic-search settings card** (`GIT-US-0091`, docs/05 §3.1) shows where Pando is,
+  whether it answered, the exported corpus per repository and a reindex button that follows
+  `search.progress`. Tokens are never shown: they come from the config file or the
+  `GINTRACK_PANDO_MCP_TOKEN` / `GINTRACK_PANDO_REST_TOKEN` environment variables.
+- **Human-in-the-loop dialogs, the shared-state panel and frontend tools in the agent chat**
+  (`GIT-US-0061`, `GIT-US-0064`, docs/05 §19). Permission and question prompts from Pando
+  open dialogs whose dismissal is an explicit denial; "always allow for this thread" is a
+  client-side memory only. The right rail shows todos, token usage, touched files and
+  sub-agents from the shared state. Five frontend tools (`open_item`, `open_kb_page`,
+  `focus_board_card`, `apply_backlog_filter`, `show_items`) let the agent drive the UI
+  through the interrupt protocol.
 
 ## [1.4.0] — 2026-09-13
 

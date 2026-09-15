@@ -2,7 +2,7 @@
 id: GIT-T-0074
 type: task
 title: Build the question dialog with a cancellable answer
-status: todo
+status: in_review
 priority: medium
 parent: GIT-US-0061
 milestone: GIT-M-0013
@@ -10,7 +10,8 @@ author: mcp
 labels: [web, agent-ok]
 estimate: 2
 created: 2026-09-13T13:17:08Z
-updated: 2026-09-13T13:17:08Z
+updated: 2026-09-15T16:30:38Z
+started: 2026-09-15T16:13:35Z
 ---
 
 ## Description

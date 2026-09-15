@@ -2,7 +2,7 @@
 id: GIT-US-0088
 type: story
 title: Semantic search as an agent tool and a routing skill
-status: backlog
+status: in_progress
 priority: medium
 parent: GIT-EP-0019
 milestone: GIT-M-0013
@@ -10,7 +10,8 @@ author: mcp
 labels: [mcp, docs]
 estimate: 5
 created: 2026-09-13T13:14:56Z
-updated: 2026-09-13T13:14:56Z
+updated: 2026-09-15T16:18:28Z
+started: 2026-09-15T16:18:28Z
 ---
 
 ## Description

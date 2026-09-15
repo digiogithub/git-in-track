@@ -2,7 +2,7 @@
 id: GIT-T-0196
 type: task
 title: Update the MCP surface-pinning tests and tool counts
-status: todo
+status: in_review
 priority: medium
 parent: GIT-US-0088
 milestone: GIT-M-0013
@@ -10,7 +10,8 @@ author: mcp
 labels: [mcp, agent-ok]
 estimate: 2
 created: 2026-09-13T13:20:09Z
-updated: 2026-09-13T13:20:09Z
+updated: 2026-09-15T16:20:07Z
+started: 2026-09-15T16:17:43Z
 ---
 
 ## Description

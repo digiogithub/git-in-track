@@ -2,7 +2,7 @@
 id: GIT-T-0098
 type: task
 title: Wire tool execution into the interrupt-resume cycle
-status: todo
+status: in_review
 priority: medium
 parent: GIT-US-0064
 milestone: GIT-M-0013
@@ -10,7 +10,8 @@ author: mcp
 labels: [web]
 estimate: 3
 created: 2026-09-13T13:17:41Z
-updated: 2026-09-13T13:17:41Z
+updated: 2026-09-15T16:30:45Z
+started: 2026-09-15T16:13:44Z
 ---
 
 ## Description

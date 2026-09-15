@@ -2,7 +2,7 @@
 id: GIT-T-0205
 type: task
 title: Build the PandoSearchCard settings card
-status: todo
+status: in_review
 priority: medium
 parent: GIT-US-0091
 milestone: GIT-M-0013
@@ -10,7 +10,8 @@ author: mcp
 labels: [web]
 estimate: 3
 created: 2026-09-13T13:20:33Z
-updated: 2026-09-13T13:20:33Z
+updated: 2026-09-15T16:21:36Z
+started: 2026-09-15T16:21:14Z
 ---
 
 ## Description

@@ -808,4 +808,19 @@ describe('BrowserProvider — what a tab cannot do (GIT-EP-0012, GIT-EP-0015)', 
       ).rejects.toMatchObject({ code: 'not_supported' });
     }
   });
+
+  it('refuses the semantic search settings, and never claims the capability', async () => {
+    const { provider: browser } = await mount();
+    const provider: DataProvider = browser;
+
+    // The card is gated on this flag, so browser-only mode simply has no card.
+    expect(provider.capabilities.searchSettings).toBe(false);
+
+    await expect(provider.getSearchSettings()).rejects.toBeInstanceOf(ProviderError);
+    await expect(provider.getSearchSettings()).rejects.toMatchObject({ code: 'not_supported' });
+    await expect(provider.updateSearchSettings({ projectId: 'x' })).rejects.toMatchObject({
+      code: 'not_supported',
+    });
+    await expect(provider.reindexSearch()).rejects.toMatchObject({ code: 'not_supported' });
+  });
 });

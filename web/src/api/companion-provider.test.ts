@@ -7,6 +7,8 @@ import {
   POLL_INTERVAL_MS,
   RECONNECT_BASE_MS,
   toCapabilities,
+  toSearchReindexJob,
+  toSearchSettings,
   type WebSocketLike,
 } from '@/api/companion-provider';
 import { ProviderError, type ChangeEvent } from '@/api/provider';
@@ -306,6 +308,7 @@ describe('CompanionProvider reads', () => {
       maxBatchWrite: 200,
       youtrackSupported: true,
       youtrack: false,
+      searchSettings: true,
       agent: false,
     });
     expect(client.version).toBe('0.4.0');
@@ -2137,5 +2140,197 @@ describe('CompanionProvider agent', () => {
   it('reads the agent capability from GET /capabilities', () => {
     expect(toCapabilities({ features: { agent: true } }).agent).toBe(true);
     expect(toCapabilities({ features: {} }).agent).toBe(false);
+  });
+});
+
+// ------------------------------------------- semantic search settings (0091)
+
+/** The GET document of docs/07 "Semantic search settings and reindex". */
+const searchSettingsBody = {
+  backend: 'pando',
+  configured: true,
+  mcpUrl: 'http://127.0.0.1:9777/mcp',
+  restUrl: 'http://127.0.0.1:9778',
+  projectId: 'acme-api',
+  corpusDir: '/home/dana/.local/state/gintrack/pando-kb',
+  allowRemote: false,
+  reachable: true,
+  reachableError: '',
+  corpora: [
+    {
+      repo: 'acme-api',
+      dir: '/home/dana/.local/state/gintrack/pando-kb/acme-api',
+      last: {
+        items: 412,
+        pages: 38,
+        written: 3,
+        removed: 0,
+        skipped: 447,
+        duration: 91_000_000,
+        at: '2026-09-15T10:02:11Z',
+        full: true,
+      },
+    },
+  ],
+  documents: 450,
+  lastExport: '2026-09-15T10:02:11Z',
+  reindex: null,
+  persisted: false,
+};
+
+describe('CompanionProvider semantic search settings (story GIT-US-0091)', () => {
+  it('reads the settings document, the live probe included', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(response(searchSettingsBody));
+
+    const settings = await provider(fetchImpl).getSearchSettings();
+
+    expect(lastCall(fetchImpl).url).toBe(`${BASE}/api/v1/search/settings`);
+    expect(settings.backend).toBe('pando');
+    expect(settings.reachable).toBe(true);
+    expect(settings.documents).toBe(450);
+    expect(settings.corpora[0]?.last.skipped).toBe(447);
+    expect(settings.persisted).toBe(false);
+    expect(settings.reindex).toBeNull();
+  });
+
+  it('keeps "nothing is configured" apart from "it did not answer"', () => {
+    const none = toSearchSettings({ backend: 'core', reachable: null });
+    const down = toSearchSettings({
+      backend: 'pando',
+      reachable: false,
+      reachableError: 'dial tcp 127.0.0.1:9777: connection refused',
+    });
+
+    expect(none.reachable).toBeNull();
+    expect(none.reachableError).toBe('');
+    expect(down.reachable).toBe(false);
+    expect(down.reachableError).toContain('connection refused');
+  });
+
+  it('patches only the five location fields and never a token', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(response({ ...searchSettingsBody, projectId: 'acme', persisted: true }));
+
+    const settings = await provider(fetchImpl).updateSearchSettings({
+      projectId: 'acme',
+      allowRemote: false,
+    });
+
+    const { url, init } = lastCall(fetchImpl);
+    expect(url).toBe(`${BASE}/api/v1/search/settings`);
+    expect(init.method).toBe('PATCH');
+    expect(bodyOf(init)).toEqual({ projectId: 'acme', allowRemote: false });
+    expect(settings.persisted).toBe(true);
+  });
+
+  it('queues a reindex and reads the finished job back', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      response({
+        jobId: 'reindex-1',
+        startedAt: '2026-09-15T10:04:00Z',
+        phase: 'export',
+        repos: [],
+      }),
+    );
+
+    const job = await provider(fetchImpl).reindexSearch();
+
+    expect(lastCall(fetchImpl).url).toBe(`${BASE}/api/v1/search/reindex`);
+    expect(lastCall(fetchImpl).init.method).toBe('POST');
+    expect(job).toEqual({
+      jobId: 'reindex-1',
+      startedAt: '2026-09-15T10:04:00Z',
+      phase: 'export',
+      repos: [],
+    });
+
+    const finished = toSearchReindexJob({
+      jobId: 'reindex-1',
+      phase: 'completed',
+      kbNote: 'Reindexed.',
+      kb: { scanned: 450, added: 3, updated: 0, unchanged: 447, deleted: 0 },
+      repos: [
+        {
+          repo: 'acme-api',
+          export: { items: 412, pages: 38, written: 3 },
+          codeJob: 'idx-7741',
+          codeError: 'pando is not reachable',
+        },
+      ],
+    });
+    expect(finished.phase).toBe('completed');
+    expect(finished.kb?.unchanged).toBe(447);
+    // The halves are independent: a failed code index leaves the export in the
+    // job rather than invalidating it.
+    expect(finished.repos[0]?.export.items).toBe(412);
+    expect(finished.repos[0]?.codeError).toBe('pando is not reachable');
+    expect(finished.repos[0]?.exportError).toBeUndefined();
+  });
+
+  it('maps the two refusals to their own codes', async () => {
+    const running = vi
+      .fn()
+      .mockResolvedValue(
+        response(
+          { code: 'search_reindex_running', detail: 'A reindex is already running.' },
+          { status: 409 },
+        ),
+      );
+    await expect(provider(running).reindexSearch()).rejects.toMatchObject({
+      code: 'search_reindex_running',
+    });
+
+    const off = vi
+      .fn()
+      .mockResolvedValue(
+        response(
+          { code: 'search_not_configured', detail: 'Nothing is configured to index.' },
+          { status: 400 },
+        ),
+      );
+    await expect(provider(off).reindexSearch()).rejects.toMatchObject({
+      code: 'search_not_configured',
+    });
+  });
+
+  it('translates a search.progress frame into a searchProgress event', () => {
+    const client = eventProvider();
+    const events: ChangeEvent[] = [];
+    client.subscribe((event) => events.push(event));
+    FakeSocket.instances[0]?.open();
+
+    FakeSocket.instances[0]?.emit({
+      type: 'search.progress',
+      seq: 6001,
+      data: {
+        operationId: 'reindex-1',
+        repo: 'acme-api',
+        phase: 'kb',
+        percent: 66,
+        done: 2,
+        total: 3,
+        message: 'Re-exported, awaiting Pando’s next import pass',
+      },
+    });
+
+    expect(events).toEqual([
+      {
+        kind: 'searchProgress',
+        operationId: 'reindex-1',
+        repoId: 'acme-api',
+        phase: 'kb',
+        percent: 66,
+        done: 2,
+        total: 3,
+        message: 'Re-exported, awaiting Pando’s next import pass',
+      },
+    ]);
+    client.dispose();
+  });
+
+  it('reads the search settings capability from GET /capabilities', () => {
+    expect(toCapabilities({ features: {} }).searchSettings).toBe(true);
+    expect(toCapabilities({ features: { searchSettings: false } }).searchSettings).toBe(false);
   });
 });

@@ -2,7 +2,7 @@
 id: GIT-T-0077
 type: task
 title: Build the shared-state side panel
-status: todo
+status: in_review
 priority: medium
 parent: GIT-US-0061
 milestone: GIT-M-0013
@@ -10,7 +10,8 @@ author: mcp
 labels: [web]
 estimate: 3
 created: 2026-09-13T13:17:12Z
-updated: 2026-09-13T13:17:12Z
+updated: 2026-09-15T16:30:39Z
+started: 2026-09-15T16:13:36Z
 ---
 
 ## Description

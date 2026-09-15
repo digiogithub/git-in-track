@@ -2,7 +2,7 @@
 id: GIT-T-0090
 type: task
 title: Implement apply_backlog_filter over the URL search schema
-status: todo
+status: in_review
 priority: medium
 parent: GIT-US-0064
 milestone: GIT-M-0013
@@ -10,7 +10,8 @@ author: mcp
 labels: [web, agent-ok]
 estimate: 2
 created: 2026-09-13T13:17:31Z
-updated: 2026-09-13T13:17:31Z
+updated: 2026-09-15T16:30:43Z
+started: 2026-09-15T16:13:41Z
 ---
 
 ## Description

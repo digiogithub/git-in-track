@@ -2,7 +2,7 @@
 id: GIT-T-0194
 type: task
 title: Register the search_semantic MCP tool
-status: todo
+status: in_review
 priority: medium
 parent: GIT-US-0088
 milestone: GIT-M-0013
@@ -10,7 +10,8 @@ author: mcp
 labels: [mcp]
 estimate: 3
 created: 2026-09-13T13:20:05Z
-updated: 2026-09-13T13:20:05Z
+updated: 2026-09-15T16:17:24Z
+started: 2026-09-15T16:17:19Z
 ---
 
 ## Description

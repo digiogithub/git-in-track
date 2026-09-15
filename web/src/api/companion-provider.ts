@@ -96,9 +96,17 @@ import type {
   ProviderErrorCode,
   RefResolution,
   RepoInfo,
+  SearchCorpus,
+  SearchCorpusStats,
   SearchHit,
   SearchQuery,
+  SearchReindexJob,
+  SearchReindexKbStats,
+  SearchReindexPhase,
+  SearchReindexRepo,
   SearchResult,
+  SearchSettings,
+  SearchSettingsPatch,
   SnapshotRefresh,
   SnapshotResult,
   RetroDraft,
@@ -203,6 +211,9 @@ const SUBSCRIBE_TOPICS = [
   // A knowledge-base page and its article both changed; the page was left
   // untouched and the incoming content went to `<page>.conflict.md`.
   'youtrack.kb.conflict',
+  // One step of a semantic-search reindex, so the settings card follows the
+  // job it started without polling (GIT-US-0091).
+  'search.progress',
 ];
 
 /** The `sync.job.*` topics, by the phase each one carries. */
@@ -226,6 +237,7 @@ export const companionCapabilities: Capabilities = {
   maxBatchWrite: 50,
   youtrackSupported: true,
   youtrack: false,
+  searchSettings: true,
   agent: false,
 };
 
@@ -340,6 +352,10 @@ const PROBLEM_CODES: Record<string, ProviderErrorCode> = {
   sync_job_not_found: 'sync_job_not_found',
   sync_job_not_retryable: 'sync_job_not_retryable',
   sync_engine_not_running: 'sync_engine_not_running',
+  // A reindex that is already running is a refusal to explain, and a companion
+  // with nothing to index with is a configuration to fix; neither is a retry.
+  search_reindex_running: 'search_reindex_running',
+  search_not_configured: 'search_not_configured',
   index_unavailable: 'internal',
   rate_limited: 'internal',
   internal: 'internal',
@@ -981,6 +997,118 @@ export function toSearchResult(value: unknown): SearchResult {
   return asBoolean(record?.['degraded']) === true ? { hits, degraded: true } : { hits };
 }
 
+// ------------------------------------------------- semantic search settings
+
+/** The phases the reindex walks; anything else reads as the first one. */
+function toSearchPhase(value: string | undefined): SearchReindexPhase {
+  switch (value) {
+    case 'code':
+    case 'kb':
+    case 'completed':
+    case 'failed':
+      return value;
+    default:
+      return 'export';
+  }
+}
+
+/** One `pandosync.Stats`; an export that never ran is all zeroes with no `at`. */
+function toSearchCorpusStats(value: unknown): SearchCorpusStats {
+  const record = asRecord(value) ?? {};
+  return {
+    items: asNumber(record['items']) ?? 0,
+    pages: asNumber(record['pages']) ?? 0,
+    written: asNumber(record['written']) ?? 0,
+    removed: asNumber(record['removed']) ?? 0,
+    skipped: asNumber(record['skipped']) ?? 0,
+    duration: asNumber(record['duration']) ?? 0,
+    at: asString(record['at']) ?? '',
+    full: asBoolean(record['full']) ?? false,
+  };
+}
+
+function toSearchCorpora(value: unknown): SearchCorpus[] {
+  return asArray(value).map((entry) => {
+    const record = asRecord(entry) ?? {};
+    return {
+      repo: asString(record['repo']) ?? '',
+      dir: asString(record['dir']) ?? '',
+      last: toSearchCorpusStats(record['last']),
+    };
+  });
+}
+
+function toSearchReindexRepos(value: unknown): SearchReindexRepo[] {
+  return asArray(value).map((entry) => {
+    const record = asRecord(entry) ?? {};
+    return {
+      repo: asString(record['repo']) ?? '',
+      export: toSearchCorpusStats(record['export']),
+      ...optional('exportError', asString(record['exportError'])),
+      ...optional('codeJob', asString(record['codeJob'])),
+      ...optional('codeError', asString(record['codeError'])),
+    };
+  });
+}
+
+function toSearchKbStats(value: unknown): SearchReindexKbStats | undefined {
+  const record = asRecord(value);
+  if (record === null) return undefined;
+  return {
+    scanned: asNumber(record['scanned']) ?? 0,
+    added: asNumber(record['added']) ?? 0,
+    updated: asNumber(record['updated']) ?? 0,
+    unchanged: asNumber(record['unchanged']) ?? 0,
+    deleted: asNumber(record['deleted']) ?? 0,
+  };
+}
+
+/** `POST /search/reindex`, and the `reindex` field of the settings. */
+export function toSearchReindexJob(value: unknown): SearchReindexJob {
+  const record = asRecord(value) ?? {};
+  return {
+    jobId: asString(record['jobId']) ?? '',
+    startedAt: asString(record['startedAt']) ?? '',
+    ...optional('endedAt', asString(record['endedAt'])),
+    phase: toSearchPhase(asString(record['phase'])),
+    repos: toSearchReindexRepos(record['repos']),
+    ...optional('kb', toSearchKbStats(record['kb'])),
+    ...optional('kbNote', asString(record['kbNote'])),
+    ...optional('error', asString(record['error'])),
+  };
+}
+
+/**
+ * `GET|PATCH /search/settings` → what the settings card renders.
+ *
+ * `reachable` keeps three states, so `null` is preserved rather than folded
+ * into `false`: "nothing is configured" and "it is configured and did not
+ * answer" are different things to tell the user.
+ */
+export function toSearchSettings(value: unknown): SearchSettings {
+  const record = asRecord(value) ?? {};
+  const reachable = asBoolean(record['reachable']);
+  return {
+    backend: toFullTextSearch(asString(record['backend'])),
+    configured: asBoolean(record['configured']) ?? false,
+    mcpUrl: asString(record['mcpUrl']) ?? '',
+    restUrl: asString(record['restUrl']) ?? '',
+    projectId: asString(record['projectId']) ?? '',
+    corpusDir: asString(record['corpusDir']) ?? '',
+    allowRemote: asBoolean(record['allowRemote']) ?? false,
+    reachable: reachable ?? null,
+    reachableError: asString(record['reachableError']) ?? '',
+    corpora: toSearchCorpora(record['corpora']),
+    documents: asNumber(record['documents']) ?? 0,
+    lastExport: asString(record['lastExport']) ?? null,
+    reindex:
+      record['reindex'] === undefined || record['reindex'] === null
+        ? null
+        : toSearchReindexJob(record['reindex']),
+    persisted: asBoolean(record['persisted']) ?? false,
+  };
+}
+
 export function toIndexStats(value: unknown): IndexStats {
   const record = asRecord(value) ?? {};
   const counts = asRecord(record['counts']) ?? {};
@@ -1064,6 +1192,9 @@ export function toCapabilities(value: unknown): Capabilities {
     youtrackSupported:
       asBoolean(features['youtrackSupported']) ?? companionCapabilities.youtrackSupported,
     youtrack: asBoolean(features['youtrack']) ?? companionCapabilities.youtrack,
+    // The search settings routes are part of every companion; the flag exists
+    // so a build without them can say so rather than answering 404 to a card.
+    searchSettings: asBoolean(features['searchSettings']) ?? companionCapabilities.searchSettings,
     // A companion that does not report the flag has no agent routes: the chat
     // surface stays hidden rather than failing on the first call.
     agent: asBoolean(features['agent']) ?? companionCapabilities.agent,
@@ -2391,6 +2522,34 @@ export class CompanionProvider implements DataProvider {
     return asArray(record ? record['repos'] : body) as GitRepoStatus[];
   }
 
+  // ------------------------------------------------ semantic search settings
+
+  /** `GET /api/v1/search/settings` (docs/07, story GIT-US-0091). */
+  async getSearchSettings(): Promise<SearchSettings> {
+    return toSearchSettings(await this.#json(`${API_PREFIX}/search/settings`));
+  }
+
+  /**
+   * `PATCH /api/v1/search/settings`. Only the five location fields travel:
+   * tokens are not patchable, so a credential can never be copied into the
+   * configuration file by this path.
+   */
+  async updateSearchSettings(patch: SearchSettingsPatch): Promise<SearchSettings> {
+    return toSearchSettings(
+      await this.#json(`${API_PREFIX}/search/settings`, { method: 'PATCH', body: patch }),
+    );
+  }
+
+  /**
+   * `POST /api/v1/search/reindex` → `202` with the queued job. The work runs
+   * in the background and reports on `search.progress`.
+   */
+  async reindexSearch(): Promise<SearchReindexJob> {
+    return toSearchReindexJob(
+      await this.#json(`${API_PREFIX}/search/reindex`, { method: 'POST', body: {} }),
+    );
+  }
+
   // --------------------------------------------------------- mcp write tools
 
   /** `GET /api/v1/mcp/settings`. */
@@ -3196,6 +3355,19 @@ export class CompanionProvider implements DataProvider {
           const path = asString(payload['path']);
           this.#emit({ kind: 'kb', repoId, paths: path === undefined ? [] : [path] });
         }
+        return;
+      }
+      case 'search.progress': {
+        this.#emit({
+          kind: 'searchProgress',
+          operationId: asString(payload['operationId']) ?? '',
+          repoId,
+          phase: toSearchPhase(asString(payload['phase'])),
+          percent: asNumber(payload['percent']) ?? 0,
+          done: asNumber(payload['done']) ?? 0,
+          total: asNumber(payload['total']) ?? 0,
+          message: asString(payload['message']) ?? '',
+        });
         return;
       }
       case 'sync.progress':

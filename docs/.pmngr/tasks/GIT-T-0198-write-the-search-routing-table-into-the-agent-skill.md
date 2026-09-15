@@ -2,7 +2,7 @@
 id: GIT-T-0198
 type: task
 title: Write the search routing table into the agent skill
-status: todo
+status: in_review
 priority: medium
 parent: GIT-US-0088
 milestone: GIT-M-0013
@@ -10,7 +10,8 @@ author: mcp
 labels: [docs, agent-ok]
 estimate: 2
 created: 2026-09-13T13:20:17Z
-updated: 2026-09-13T13:20:17Z
+updated: 2026-09-15T16:20:08Z
+started: 2026-09-15T16:17:44Z
 ---
 
 ## Description

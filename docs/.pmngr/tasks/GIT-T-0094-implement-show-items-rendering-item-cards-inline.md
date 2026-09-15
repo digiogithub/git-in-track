@@ -2,7 +2,7 @@
 id: GIT-T-0094
 type: task
 title: Implement show_items rendering item cards inline
-status: todo
+status: in_review
 priority: medium
 parent: GIT-US-0064
 milestone: GIT-M-0013
@@ -10,7 +10,8 @@ author: mcp
 labels: [web]
 estimate: 3
 created: 2026-09-13T13:17:36Z
-updated: 2026-09-13T13:17:36Z
+updated: 2026-09-15T16:30:44Z
+started: 2026-09-15T16:13:42Z
 ---
 
 ## Description

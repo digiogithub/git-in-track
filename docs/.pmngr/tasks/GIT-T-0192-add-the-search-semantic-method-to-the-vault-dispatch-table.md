@@ -2,7 +2,7 @@
 id: GIT-T-0192
 type: task
 title: Add the search.semantic method to the vault dispatch table
-status: todo
+status: in_review
 priority: medium
 parent: GIT-US-0088
 milestone: GIT-M-0013
@@ -10,7 +10,8 @@ author: mcp
 labels: [core, server]
 estimate: 3
 created: 2026-09-13T13:20:00Z
-updated: 2026-09-13T13:20:00Z
+updated: 2026-09-15T16:17:22Z
+started: 2026-09-15T16:17:17Z
 ---
 
 ## Description
