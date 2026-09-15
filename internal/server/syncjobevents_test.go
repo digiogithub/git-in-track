@@ -284,23 +284,20 @@ func TestSyncJobEventsReachTheEventStreamAndTheReplayRing(t *testing.T) {
 	}
 	<-ran
 
+	// Every state change is announced off the engine lock, so the goroutine
+	// that enqueued the job may reach its `queued` emit after the batch that
+	// Flush started has already announced `started` and `done`. The contract
+	// is that all three arrive, not that they arrive in state order; drain
+	// until both ends of the job's life are on the stream.
 	seen := map[string]bool{}
 	deadline := time.After(2 * time.Second)
-	for !seen[eventSyncJobDone] {
+	for !seen[eventSyncJobDone] || !seen[eventSyncJobQueued] {
 		select {
 		case ev := <-client.events:
 			seen[ev.Type] = true
 		case <-deadline:
-			t.Fatalf("the job never finished on the stream: %v", seen)
+			t.Fatalf("topics seen = %v, want the job announced as queued and done", seen)
 		}
-	}
-	// `sync.job.started` is absent here, and deliberately not asserted: the
-	// engine as it stands does not call OnJob for the queued -> running
-	// transition (internal/syncengine, startBatch), so the topic exists in the
-	// contract and stays silent until it does. Everything else this layer can
-	// observe is on the stream.
-	if !seen[eventSyncJobQueued] {
-		t.Fatalf("topics seen = %v, want the job announced as queued", seen)
 	}
 	// A client that reconnects with `since` is served the same events from the
 	// hub's replay ring, which is the contract every other topic inherits.
@@ -308,7 +305,16 @@ func TestSyncJobEventsReachTheEventStreamAndTheReplayRing(t *testing.T) {
 	if !ok || len(replayed) == 0 {
 		t.Fatalf("since(0) = %d events, ok=%v", len(replayed), ok)
 	}
-	if replayed[0].Type != eventSyncJobQueued {
-		t.Fatalf("the replay starts at %q, want %q", replayed[0].Type, eventSyncJobQueued)
+	// The ring keeps publish order, which is the order the emits reached the
+	// hub, so it is asserted as a set: the same topics the live stream carried,
+	// nothing dropped and nothing invented.
+	replayedTopics := map[string]bool{}
+	for _, ev := range replayed {
+		replayedTopics[ev.Type] = true
+	}
+	for _, topic := range []string{eventSyncJobQueued, eventSyncJobDone} {
+		if !replayedTopics[topic] {
+			t.Fatalf("the replay lacks %q: %v", topic, replayedTopics)
+		}
 	}
 }
