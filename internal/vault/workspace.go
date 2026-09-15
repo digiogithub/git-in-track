@@ -63,6 +63,10 @@ type Workspace struct {
 	// history reads the past of a repository's files, for the metrics of
 	// GIT-US-0028. It is nil in the browser, where there is no git to walk.
 	history HistorySource
+	// semantic ranks by meaning, over a corpus a host exported for a Pando
+	// instance. It is nil in the browser, which has no reach to one
+	// (GIT-US-0082; see semantic.go).
+	semantic SemanticSearcher
 }
 
 // NewWorkspace returns an empty workspace.

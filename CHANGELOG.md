@@ -14,6 +14,109 @@ because a commit list cannot express them.
 
 Nothing yet.
 
+## [1.6.0] — 2026-09-15
+
+### Added
+
+- **An agent proxy to a local Pando AG-UI adapter** (`GIT-US-0049`, docs/07 §5.5).
+  `gintrack serve --agent` mounts `/api/v1/agent`, which relays AG-UI runs, threads and
+  cancellations to a `pando agui-serve` process configured under `agent.pando`. The
+  browser holds only the companion's own bearer token: the Pando credential is injected
+  server-side, the browser `Origin` is stripped, and the discovery document is rewritten
+  so no response names the Pando origin. Runs stream unbuffered, a disconnect cancels the
+  upstream run, and `agent.pando.maxRuns` caps the runs in flight with a `503` and a
+  `Retry-After`. `GINTRACK_PANDO_TOKEN` overrides the configured token; `features.agent`
+  reports the capability.
+- **`gintrack agent init`** (`GIT-US-0069`, docs/20, ADR-035) writes the Pando-side
+  configuration for one repository: `.pando.toml` with the AG-UI adapter, its tool
+  allow-list, the gintrack MCP server and the exported corpus, plus a `backlog-assistant`
+  persona and a search-routing skill. The generated `.pando.toml` carries the companion
+  bearer token **encrypted**: `agent init` runs `pando secret` and writes the `age1:`
+  ciphertext into `[MCPServers.gintrack.Auth]`, which Pando decrypts on load. Without a
+  usable `pando` binary the command refuses (exit 5) instead of writing a clear secret;
+  `--pando`, `--age-keys` and the `--plaintext-token` escape hatch control that. The file
+  is still written with mode 0600 and must be git-ignored.
+  The generated file also turns Pando's MCP gateway off (`[ToolDiscovery]`, `[MCPGateway]`):
+  with it on, MCP tools hide behind `tool_search` / `mcp_call_tool`, the allow-list strips
+  them and no per-tool approval is ever asked.
+- **The web app speaks AG-UI through the companion** (`GIT-US-0053`). `@pando-ai/sdk`
+  0.2.0 is pinned (browser-safe `agui/client` entry, +1 kB gzipped); the `DataProvider`
+  gains eight agent methods and the `agent` capability; a Zustand store owns threads,
+  runs, interrupts and reattachment. No chat surface ships yet.
+- **A typed client for Pando's search tools** (`GIT-US-0077`, `internal/pando`) over the
+  MCP streamable-HTTP transport, plus the REST corpus resync. URLs that are not loopback
+  are refused unless `search.pando.allowRemote` is set.
+- **Pando corpus exporter** (`GIT-US-0073`, docs/21). The companion mirrors every item and
+  knowledge-base page into a Markdown corpus outside the repository
+  (`<cache dir>/pando-kb/<repo>/<project>/items/…` and `/kb/…`), which Pando imports for
+  semantic search. Writes are atomic and skipped when content is unchanged; vanished
+  sources are pruned; a dropped event subscription triggers a full re-export. Configure
+  Pando with `[Remembrances] KBPath` pointing at the corpus directory — never at a
+  repository root — plus `KBAutoImport = true` and `KBWatch = false`. The corpus is derived
+  data: never committed, safe to delete. The companion now runs that export from
+  `Server.Start` in the background — the listener answers while it writes — and then keeps
+  the corpus current from the event hub, with a slow-subscriber drop mapped onto a full
+  re-export (`GIT-T-0130`, `GIT-T-0134`).
+- **Semantic search behind the core search contract** (`GIT-US-0082`, docs/02 §8.1, docs/07).
+  `internal/core` gains a `Searcher` interface `*core.Index` already satisfied, and the
+  companion adds a Pando-backed implementation next to it. `GET /api/v1/search` now answers
+  `{"hits":[…],"engine":…,"degraded":…}`: exact matches first in their existing order, then
+  semantic candidates the substring index did not find, each hit tagged `source: "core"` or
+  `"pando"`. Pando returns candidates only — every field shown is re-read from git-in-track's
+  own index and an unresolvable candidate is dropped — and the semantic leg has a 300 ms
+  budget, so a Pando that is down, slow or unconfigured degrades the answer instead of
+  failing the request. `features.search` reports `"pando"` only while that backend is
+  actually answering. Browser-only mode is unchanged: always the core index.
+  `search.semantic` joins the core contract for every caller, the MCP tools included.
+- **Search settings and a reindex button** (`GIT-US-0091`, backend half, docs/07).
+  `GET|PATCH /api/v1/search/settings` reports and persists `search.pando` — the endpoint, the
+  corpus directory, the project id, the last export of every repository, a live reachability
+  probe and the selected backend — with the `persisted` semantics of `PATCH /api/v1/git/settings`
+  and without ever carrying a token. `POST /api/v1/search/reindex` re-exports every corpus,
+  triggers Pando's code index of each source tree and reindexes the knowledge base, streaming
+  `search.progress` on the event hub and refusing a second concurrent run with
+  `search_reindex_running` (409). Without Pando's REST URL the knowledge-base half honestly
+  reports "re-exported, awaiting Pando's next import pass". Note that the embedding model is
+  pinned configuration: it is global to a Pando instance, and changing it silently degrades
+  recall for every consumer until a full reindex.
+- **`search_semantic` on the MCP server** (`GIT-US-0088`, docs/08 §4.19). Twenty-three tools
+  now ship (eight read-only): the new one ranks backlog items and knowledge-base pages by
+  meaning through the core `search.semantic` method, returns each candidate with its current
+  `rev`, and — without a Pando backend — refuses with `unavailable` naming `search_items` as
+  the fallback rather than answering an empty list an agent would read as "nothing matches".
+  The routing skill `gintrack agent init` writes now carries the four-row table that says
+  which search answers which question shape.
+- **A semantic-search settings card** (`GIT-US-0091`, docs/05 §3.1) shows where Pando is,
+  whether it answered, the exported corpus per repository and a reindex button that follows
+  `search.progress`. Tokens are never shown: they come from the config file or the
+  `GINTRACK_PANDO_MCP_TOKEN` / `GINTRACK_PANDO_REST_TOKEN` environment variables.
+- **Human-in-the-loop dialogs, the shared-state panel and frontend tools in the agent chat**
+  (`GIT-US-0061`, `GIT-US-0064`, docs/05 §19). Permission and question prompts from Pando
+  open dialogs whose dismissal is an explicit denial; "always allow for this thread" is a
+  client-side memory only. The right rail shows todos, token usage, touched files and
+  sub-agents from the shared state. Five frontend tools (`open_item`, `open_kb_page`,
+  `focus_board_card`, `apply_backlog_filter`, `show_items`) let the agent drive the UI
+  through the interrupt protocol.
+
+## [1.5.0] — 2026-09-14
+
+### Added
+
+- **Unlinking from YouTrack.** `PATCH /api/v1/items/{id}` accepts
+  `{"removeExternal": [{"system": "youtrack"}]}` to forget the issue an item mirrors, and
+  `POST /api/v1/youtrack/kb/unlink?key=…` forgets the article a knowledge-base page mirrors
+  (it answers `unlinked: false` rather than failing when there was nothing to forget).
+  Publishing the page afterwards creates a fresh article. docs/07 §5.5.
+- **Testing a connection before saving it.** `POST /api/v1/youtrack/projects` lists the
+  instance's projects for a connection typed in the settings card but not yet saved, so the
+  project picker works during the first setup.
+
+### Changed
+
+- The YouTrack knowledge-base sync and the per-project link (`config.projectlink`) report
+  their state more precisely after a page or item is unlinked; the roadmap and the phase 9
+  plan were realigned to the Pando gap analysis of 2026-09-13 (`docs/research/`).
+
 ## [1.4.0] — 2026-09-13
 
 ### Added
@@ -613,12 +716,38 @@ Nothing yet.
   *is* a commit, so a rebase carries it along instead of overwriting a checkout
   (`GIT-US-0041`).
 
-## [1.0.0] — unreleased, prepared
+## [1.3.0] — 2026-09-11
 
-> **This entry is prepared, not published.** No `v1.0.0` tag has been pushed; the
-> repository carries no tags at all. The maintainer cuts the tag, and the release
-> workflow does everything else. The remaining steps are listed in
-> [docs/12-release-readiness-1-0.md](docs/12-release-readiness-1-0.md) §6.
+### Added
+
+- **Feedback mode.** Select any text in an item body or a knowledge-base page and write a
+  note about it: on an item it lands as a comment, on a page it is appended to a
+  `## Feedback` block (ADR-030). The notes stay in the repository and are never published
+  to an external tracker.
+
+## [1.2.0] — 2026-09-10
+
+### Changed
+
+- **Web UI refinements** across the backlog, boards and knowledge-base screens: layout,
+  navigation and rendering polish, with no change to the API or the data model.
+
+## [1.1.3] — 2026-09-10
+
+### Added
+
+- Task comments render as Markdown in the web app.
+
+### Fixed
+
+- The file watcher no longer misses newly created tasks, and the UI refreshes when they
+  appear; the watcher and the companion API were tightened along the way.
+- CI: the version step's redirects are grouped so actionlint passes.
+
+## [1.0.0] — 2026-09-07
+
+> Released as `v1.0.0` on 2026-09-07. The readiness evidence behind it is in
+> [docs/12-release-readiness-1-0.md](docs/12-release-readiness-1-0.md).
 
 First stable release. git-in-track is a project management tool with **no server and no
 database**: epics, stories, tasks, milestones, comments, boards, sprints, retrospectives
@@ -812,6 +941,11 @@ each, `Contents: read and write`. GHCR needs no secret. The release workflow ver
 tokens before it builds anything and fails with the fix in the message when either is
 missing. Full procedure: [docs/09](docs/09-ci-cd-and-releases.md) §9 and §10.
 
-[Unreleased]: https://github.com/digiogithub/git-in-track/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/digiogithub/git-in-track/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/digiogithub/git-in-track/compare/v1.5.0...v1.6.0
+[1.5.0]: https://github.com/digiogithub/git-in-track/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/digiogithub/git-in-track/compare/v1.3.0...v1.4.0
+[1.3.0]: https://github.com/digiogithub/git-in-track/compare/v1.2.0...v1.3.0
+[1.2.0]: https://github.com/digiogithub/git-in-track/compare/v1.1.3...v1.2.0
+[1.1.3]: https://github.com/digiogithub/git-in-track/compare/v1.0.0...v1.1.3
 [1.0.0]: https://github.com/digiogithub/git-in-track/releases/tag/v1.0.0

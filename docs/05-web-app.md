@@ -158,6 +158,7 @@ state is shareable by URL and survives reloads.
   /metrics/$sprintId                        SprintMetrics (as built)
 /sync                                    SyncPanel
   /sync/conflicts/$conflictId              ConflictResolver
+/agent                                   AgentPage     (as built, GIT-US-0057)
 /search                                  GlobalSearch
 ```
 
@@ -183,6 +184,8 @@ open repository at once and labels each row with the project it came from, becau
 a workspace the same title can exist in two repositories. Below the repos: "Recently edited" (from the
 index, `updated desc`, limit 20), "Assigned to me" (matching `team.yaml` identity
 or the configured git author email), and a sync health strip.
+
+Where the companion reports `fullTextSearch: 'pando'`, a second group, *Related by meaning*, follows the exact matches: each row carries the why-matched passage as escaped text with the query terms highlighted and a subdued relevance. A per-user toggle (`semanticResults` in `gintrack:ui-prefs`) hides it, and a `degraded` response says the semantic half was unreachable (docs/21).
 
 **AddRepositoryWizard (`/repos/add`)** — Three steps.
 1. *Location*: in browser-only mode, "Choose folder" invokes
@@ -524,6 +527,31 @@ Over the wire an entry is always an object, `{"status": {"field": "State", "valu
 "in_progress"}}}`. A field with no value mapping is written without a `values` key, which is what
 keeps a hand-written `project.yaml` as readable as it was found (doc 03 §6.5).
 
+**Semantic search over Pando (`features/settings/PandoSearchCard.tsx`, story GIT-US-0091).** The
+card exists to answer one complaint — "semantic search returns nothing" — without reading the
+companion's log, so everything on it is a step of that diagnosis: the backend badge (`core` or
+`pando`, plus *degraded* when the endpoint did not answer), the MCP and REST URLs, the code project
+id, the corpus directory, an `allowRemote` switch carrying doc 07 §3.3's warning verbatim, the
+result of the **live** reachability probe with whatever error it produced, and one row per mounted
+repository of the exported corpus — its directory, its last export time and its
+written/removed/skipped counts, where a large *skipped* means "nothing changed", not "nothing was
+found". **Reindex now** posts `POST /api/v1/search/reindex`, which answers `202` with a job and then
+works in the background; the card follows the `search.progress` frames through the provider's event
+seam (a `searchProgress` change event) — phases `export` → `code` → `kb` → `completed`/`failed` —
+and re-reads the settings on a terminal frame, because the counts, the per-repository errors and the
+knowledge-base note live on the finished job rather than in the frame. A second run while one is
+going is refused with `search_reindex_running` and reported as "a reindex is already running", not
+as a failure to retry. Two things it deliberately does not do: it never renders a token field —
+neither Pando token is reported or patchable, and the card says instead that they are set in the
+configuration file or in `GINTRACK_PANDO_MCP_TOKEN` / `GINTRACK_PANDO_REST_TOKEN` — and it never
+calls a re-export a completed index: without a REST URL the job's own `kbNote` says the corpus was
+re-exported and awaits Pando's next import pass, and the card repeats it word for word. A standing
+warning says the embedding model is pinned configuration: Pando silently skips chunks whose vector
+length differs from the query's, and the model is per Pando **instance**, so changing it degrades
+recall invisibly for every consumer of that instance until a full reindex. The card is gated on the
+`searchSettings` capability — companion mode — so browser-only mode has no card rather than an empty
+one.
+
 **Import from YouTrack (`features/youtrack/`, story GIT-US-0059).** The entry is a button in the
 backlog toolbar, and it needs **both** capability flags: `youtrackSupported`, because a browser-only
 tab has no process to hold a token, and `youtrack`, because importing from an instance nothing is
@@ -734,6 +762,22 @@ export interface DataProvider {
     resolution: ConflictResolution,
   ): Promise<ConflictResolveResult>;
 
+  // agent — Pando AG-UI through the companion (GIT-EP-0018, §19)
+  // Every call takes `{ repo, signal }`: one `pando agui-serve` runs per
+  // repository and the companion routes `repo` onto its `{url, token}`, so the
+  // Pando token never reaches the browser.
+  getAgentInfo(options?: AgentRequestOptions): Promise<AguiInfo>;
+  getAgentHealth(options?: AgentRequestOptions): Promise<AgentHealth>;
+  // An async iterable rather than a callback feed, because that is what the
+  // SDK's `PandoThread` consumes. The whole transcript is resent every turn.
+  runAgent(input: RunAgentInput, options?: AgentRunOptions): AsyncIterable<AguiEvent>;
+  listAgentThreads(options?: AgentRequestOptions): Promise<AgentThreadSummary[]>;
+  getAgentThreadMessages(threadId: string, options?: AgentRequestOptions): Promise<AguiMessage[]>;
+  // Re-attaches to a thread whose run is still live, without starting one.
+  streamAgentThread(threadId: string, options?: AgentRunOptions): AsyncIterable<AguiEvent>;
+  deleteAgentThread(threadId: string, options?: AgentRequestOptions): Promise<void>;
+  cancelAgentRun(threadId: string, options?: AgentRequestOptions): Promise<void>;
+
   // events
   subscribe(handler: (e: ChangeEvent) => void): Unsubscribe;
 }
@@ -747,10 +791,12 @@ interface Capabilities {
   git: boolean;
   ssh: boolean;              // companion only
   watch: boolean;            // fsnotify push events
-  fullTextSearch: 'core' | 'bleve';
+  fullTextSearch: 'core' | 'bleve' | 'pando';
   mcp: boolean;
   openInEditor: boolean;
   maxBatchWrite: number;
+  searchSettings: boolean;   // the runtime exposes GET|PATCH /api/v1/search/settings
+  agent: boolean;            // a Pando AG-UI adapter is configured and reachable
 }
 ```
 
@@ -1701,3 +1747,229 @@ the set.
    identically. The team is **not** in the URL yet: a shared `/boards/<slug>`
    link resolves against the active team of whoever opens it, and moving it into
    the route is the open question that replaces this one.
+
+---
+
+## 19. The agent chat (as built, GIT-US-0057)
+
+`/agent` is a conversation with a Pando agent that can read this workspace
+(epic GIT-EP-0018). It is capability-gated end to end: the sidebar entry is
+rendered only when `capabilities.agent` is true, and the route itself always
+resolves but renders "the agent is not available here" when it is false — the
+branch is on the capability, never on the provider kind, so a companion built
+without the AG-UI routes behaves like browser-only mode.
+
+### 19.1 Layout
+
+Three columns — conversations, the conversation, and a right rail — collapsing
+to one below `lg`, where the rail disappears and the list becomes a panel behind
+a toggle. The rail holds the shared-state panel (§19.8).
+
+```
+src/features/agent/
+  index.ts              the public surface; nothing outside imports deeper
+  client.ts             the AG-UI transport over `DataProvider` (GIT-US-0053)
+  threads.ts            thread identity, the tab guard, the `AgentMessage` projection
+  store.ts              `useAgentStore` — messages, run status, interrupt, read-only
+  hitl.ts               permission/question classification over the SDK's helpers
+  tools/registry.ts     the frontend tools declared to the agent, and their runner
+  tools/navigation.ts   open_item, open_kb_page, focus_board_card
+  tools/backlog.ts      apply_backlog_filter, show_items
+  tools/types.ts        the tool contract: schema, validator, executor, context
+  ui/AgentPage.tsx      the three-column shell and the route component
+  ui/ThreadList.tsx     new / select / delete, titles derived from the first prompt
+  ui/MessageList.tsx    the transcript: a polite live region, auto-scrolling when pinned
+  ui/MessageBubble.tsx  one message: Markdown, reasoning, tool calls
+  ui/ToolCallCard.tsx   a collapsed `<details>` card per tool call
+  ui/ReasoningBlock.tsx reasoning, collapsed, monospace, never Markdown
+  ui/Composer.tsx       Enter sends, Shift+Enter breaks, Stop cancels the run
+  ui/InterruptSlot.tsx  the seam, and the routing from an interrupt to its dialog
+  ui/PermissionDialog.tsx approve / deny / always — the security surface (§19.7)
+  ui/QuestionDialog.tsx   typed answers, and an explicit cancellation
+  ui/StatePanel.tsx     the right rail: plan, context budget, files, sub-agents
+  ui/ItemCards.tsx      `show_items` rendered inline in the transcript
+  ui/model.ts           what the transcript shows, and what the list shows
+  ui/threadMeta.ts      derived thread titles in `localStorage`
+```
+
+### 19.2 Agent output is untrusted content
+
+An agent reply goes through the same pipeline as repository Markdown (§7,
+`@/markdown` public surface only), which sanitises as its last transform. Raw
+HTML in a reply is therefore text, not markup. `externalImages` is off for this
+surface — an image URL a model chose is a request a model chose to make — and
+`wikilinks` is off, because a reply is not a vault page. Tool arguments and tool
+results never touch Markdown at all: they are escaped text inside a `<pre>`,
+with results clamped at 4 kB behind a "show more".
+
+User messages are rendered as escaped plain text as well: what someone typed is
+what they should see.
+
+### 19.3 Streaming
+
+`renderMarkdown` is a full unified pass, so re-running it per delta would burn
+the main thread on a long answer. `MessageBubble` throttles the source it parses
+(~120 ms, trailing edge) and renders the unparsed tail — always a suffix, because
+text only grows — as plain text beside it, with a caret while the run is live.
+Syntax highlighting waits for the end of the stream. The list auto-scrolls only
+while the reader is at the bottom, and offers "jump to latest" otherwise.
+
+### 19.4 What is persisted
+
+Transcripts are **not**. Pando owns the history, keyed by thread id, and the
+store restores a thread by asking for it. The browser keeps three derived
+things, all of them disposable:
+
+| Key | What |
+|---|---|
+| `gintrack:agent-threads:<repo>` | the thread ids this repository has seen |
+| `gintrack:agent-active-thread:<repo>` | which one this browser was last on |
+| `gintrack:agent:threads` | `{ [repo]: { id, title, updatedAt }[] }` — titles derived from the first user message |
+
+Losing the whole lot costs a list of labels and a starting point.
+
+### 19.5 One live run per tab
+
+A second POST on a thread that already has a run is refused by Pando with
+`session_busy`, so tabs agree among themselves over a `BroadcastChannel`
+(`threads.ts`): a tab announces the thread it wants, whoever owns it says so,
+and the newcomer falls back to read-only — everything renders, nothing runs, and
+the composer says why. It is advisory and interim, until park-on-disconnect
+lands on the Pando side.
+
+### 19.6 The interrupt slot
+
+A run parks when the agent calls a tool the browser owns (a permission prompt, a
+question, a frontend tool). Until the dialogs land (GIT-US-0061, GIT-US-0064)
+the page shows what is pending and a Cancel. Two seams exist so that wave
+changes nothing else: `AgentPage` takes a `renderInterrupt` prop of type
+`AgentInterruptRenderer` — `({ interrupt, resume, cancel, readOnly,
+alwaysAllowed, allowAlways }) => ReactNode` — and `ui/InterruptSlot.tsx` holds
+the fallback it replaces. The `result` string that `resume(toolCallId, result)`
+takes is built by the SDK's HITL helpers (`approve`, `deny`, `answerQuestion`,
+`cancelQuestion`).
+
+An interrupt is routed by tool name (`features/agent/hitl.ts`):
+
+| Pending tool | Who answers |
+|---|---|
+| `pando_permission_request` | `ui/PermissionDialog.tsx` — a human, always |
+| `AskUserQuestion` | `ui/QuestionDialog.tsx` — a human, always |
+| anything else | the frontend tool registry, automatically (§19.9) |
+
+`classifyHitl` re-checks the *shape* of the arguments rather than trusting the
+SDK's name-only narrowing: a half-streamed payload classifies as `malformed`,
+and the store refuses it immediately — a denial for a permission, a
+cancellation for a question — instead of rendering a dialog nobody can answer.
+
+### 19.7 Human in the loop is the interim security boundary (GIT-US-0061)
+
+Until Pando ships the adapter-wide `[AGUI] Tools` allow-list and
+`Mesnada = false` (PANDO-EP-0002), `HumanInTheLoop = true` with
+`AutoApprove = false` plus these dialogs is **the only thing** standing between
+a prompt and a destructive call: the agent behind `/agent` is Pando's full
+coder agent, with bash, edit and write. The approval card is a product surface
+and a security surface, not a debug affordance. When the allow-list lands, it
+narrows what can even be requested and HITL becomes defence in depth — it is
+superseded, not replaced. See ADR-035 and docs/20; a second layer worth having
+today is running `agui-serve` as a low-privilege user in a container.
+
+What follows from that, concretely:
+
+- **Nothing defaults to yes.** Deny is the resting state, and Pando agrees:
+  `approvalFromMessage` (`internal/agui/hitl.go:145`) reads anything that is
+  not an explicit approval — prose, a malformed answer, a client error, no
+  answer at all — as a denial.
+- **Dismissal is an explicit refusal, behind one confirmation.** Escape, the
+  backdrop and the corner close all hold the dialog open and ask; the answer to
+  that question is a denial (or, for a question, `cancelQuestion()`). A stray
+  keypress cannot end a turn, and no dialog can close without an answer
+  reaching Pando.
+- **Arguments are agent output.** They render as escaped text in a `<pre>` —
+  never Markdown, never HTML.
+- **"Always allow" is a client-side memory.** *Pando itself has no per-thread
+  permission policy*: the adapter asks every time. The grant lives in the agent
+  store's `alwaysAllowed`, keyed on the underlying tool name, and the store
+  auto-approves matching prompts for the rest of that thread. It is in memory
+  only — never `localStorage`, never the config file — so it is gone on reload
+  and on every thread switch, and it is listed as a revocable badge under
+  "Standing approvals" in the state panel. A standing cross-session grant would
+  be a security decision needing its own ADR.
+
+### 19.8 The shared-state panel
+
+`ui/StatePanel.tsx` fills the right rail with the AG-UI shared-state document
+(`internal/agui/state.go`): the model, the context budget as a meter over
+prompt + completion tokens, the todo list, the touched files and the delegated
+sub-agents. `STATE_SNAPSHOT` seeds it and `STATE_DELTA` patches it, both inside
+the SDK's reducer; the document belongs to the **thread**, not the run, so it is
+never cleared on `RUN_STARTED` and survives between turns. Every section is a
+native `<details>`, and an empty one is omitted rather than rendered as a hollow
+heading.
+
+The store gained `hydrate()` for this wave: a thread restore (`GET
+/threads/{id}/messages`) with no stream attached. `AgentPage` calls it on mount
+for a thread the adapter still knows, where `reattach()` would additionally
+subscribe to a run that is not running.
+
+### 19.9 The frontend tool registry (GIT-US-0064)
+
+`features/agent/tools/` declares the UI actions the agent may ask for. Five
+ship: `open_item`, `open_kb_page`, `focus_board_card`, `apply_backlog_filter`
+and `show_items`. Each entry carries a name, a description, a JSON-schema
+`parameters` object, a zod schema and an executor; `toolDeclarations()` returns
+one frozen array, built at module load, that goes out as `RunAgentInput.tools`
+on every `send` and `resume` — Pando keys its agent pool by agent name plus a
+hash of the declared toolset (`internal/agui/agentpool.go:54-77`), so a list
+that moved would rebuild the agent every turn.
+
+Execution rides the interrupt protocol. Pando emits the tool call, then
+`RUN_FINISHED{outcome:"interrupt"}`, and keeps the agent suspended; the store
+validates the arguments, runs the executor and resumes the same thread with a
+trailing `tool` message carrying the JSON result. **Every failure is a result,
+never a throw**: an unknown tool name, arguments that fail validation and an
+executor that raises all come back as `{error: …}`, because a frontend tool
+that threw would leave the run suspended until Pando's ten-minute window
+elapsed, which reads to the user as the app having frozen.
+
+Four rules hold the registry in place:
+
+- **No router import.** Navigation arrives as `ToolContext.navigate`, handed in
+  by `AgentPage` from `useNavigate()`. Tests pass a spy.
+- **No writes, and no data path.** Anything that reads or writes backlog
+  content goes through the gintrack MCP server, where the rev protocol and the
+  write gate apply. `show_items` resolves ids through `ToolContext.lookup`,
+  which the page wires to `queryClient.ensureQueryData` — a cache read that
+  becomes a request only for an item nobody has fetched.
+- **No argument may decide a URL on its own.** Item ids are matched against the
+  shape ids have, KB paths are refused outright if they carry a scheme, a
+  backslash, a leading `/` or a `..` segment, and `apply_backlog_filter`
+  round-trips through the route's own `parseItemSearch` so the params it writes
+  are by construction ones the router accepts. The URL stays the only home of a
+  filter.
+- **No shadowing.** A frontend tool named `pando_permission_request` or
+  `AskUserQuestion` would route an approval through an executor that answers
+  it, so `assertNoHitlShadowing` runs at import time and the registry refuses to
+  load.
+
+`show_items` is the one tool that renders rather than navigates: its result
+carries the resolved cards and the ids it could not resolve, and
+`ui/ItemCards.tsx` draws them inline under the tool-call card through
+`MessageList`'s `renderToolResult` hook. Reading the cards off the result — not
+off a fresh query — is what makes an old turn show what the agent showed then.
+
+### 19.10 The agent store's surface
+
+```
+state    threadId, knownThreadIds, threads, messages, stateDoc, runStatus,
+         interrupt, error, readOnly, alwaysAllowed, runner
+actions  attach({provider, repo, agent?, guard?, tools?}), newThread,
+         selectThread, send, resume(toolCallId, result), cancel,
+         hydrate, reattach, refreshThreads, deleteThread,
+         registerTools(runner | null), allowToolForThread(toolName),
+         revokeToolForThread(toolName), dispose
+```
+
+`alwaysAllowed` and the `settled` set of already-answered tool calls are both
+cleared by `attach`, `newThread`, `selectThread` and `dispose`: a grant and an
+auto-answer belong to one conversation and no other.

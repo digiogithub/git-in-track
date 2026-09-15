@@ -346,17 +346,26 @@ type kbPageResult struct {
 	RelPath string `json:"relPath,omitempty"`
 }
 
-// searchHit is one ranked search result.
-type searchHit struct {
+// SearchHit is one ranked search result as the contract renders it. It is
+// exported because the companion merges two backends' hits into one list
+// before it answers (GIT-US-0082) and cannot name an unexported type to do it.
+type SearchHit struct {
 	Kind    string  `json:"kind"`
 	ID      string  `json:"id,omitempty"`
 	Path    string  `json:"path"`
 	Title   string  `json:"title"`
 	Snippet string  `json:"snippet"`
 	Score   float64 `json:"score"`
+	// Source names the backend the hit came from: "core" for the substring
+	// index, "pando" for a semantic candidate resolved back into it. It is
+	// always set, so a client never has to guess from an absent field.
+	Source string `json:"source,omitempty"`
 
 	Project string `json:"project,omitempty"`
 	// VaultID names the repository the hit came from, so that a workspace-wide
 	// search can say which project — and which clone — answered.
 	VaultID string `json:"vaultId,omitempty"`
 }
+
+// searchHit is the name the rest of this package knows the type by.
+type searchHit = SearchHit

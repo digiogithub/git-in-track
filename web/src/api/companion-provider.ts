@@ -23,8 +23,18 @@
  * interval refresh signal when the socket cannot be opened at all.
  */
 
+import { parseSSE } from '@pando-ai/sdk/agui/client';
+
 import { resolveCompanionBaseUrl } from '@/api/detect';
 import type {
+  AgentHealth,
+  AgentRequestOptions,
+  AgentRunOptions,
+  AgentThreadSummary,
+  AguiEvent,
+  AguiInfo,
+  AguiMessage,
+  RunAgentInput,
   CommentPushEntry,
   CommentPushInput,
   CommentPushResult,
@@ -86,8 +96,17 @@ import type {
   ProviderErrorCode,
   RefResolution,
   RepoInfo,
+  SearchCorpus,
+  SearchCorpusStats,
   SearchHit,
   SearchQuery,
+  SearchReindexJob,
+  SearchReindexKbStats,
+  SearchReindexPhase,
+  SearchReindexRepo,
+  SearchResult,
+  SearchSettings,
+  SearchSettingsPatch,
   SnapshotRefresh,
   SnapshotResult,
   RetroDraft,
@@ -192,6 +211,9 @@ const SUBSCRIBE_TOPICS = [
   // A knowledge-base page and its article both changed; the page was left
   // untouched and the incoming content went to `<page>.conflict.md`.
   'youtrack.kb.conflict',
+  // One step of a semantic-search reindex, so the settings card follows the
+  // job it started without polling (GIT-US-0091).
+  'search.progress',
 ];
 
 /** The `sync.job.*` topics, by the phase each one carries. */
@@ -215,6 +237,8 @@ export const companionCapabilities: Capabilities = {
   maxBatchWrite: 50,
   youtrackSupported: true,
   youtrack: false,
+  searchSettings: true,
+  agent: false,
 };
 
 /** State of the event socket, surfaced in Settings. */
@@ -328,6 +352,10 @@ const PROBLEM_CODES: Record<string, ProviderErrorCode> = {
   sync_job_not_found: 'sync_job_not_found',
   sync_job_not_retryable: 'sync_job_not_retryable',
   sync_engine_not_running: 'sync_engine_not_running',
+  // A reindex that is already running is a refusal to explain, and a companion
+  // with nothing to index with is a configuration to fix; neither is a retry.
+  search_reindex_running: 'search_reindex_running',
+  search_not_configured: 'search_not_configured',
   index_unavailable: 'internal',
   rate_limited: 'internal',
   internal: 'internal',
@@ -934,7 +962,10 @@ export function toKbPage(value: unknown, requestedPath: string): KbPage {
 
 export function toSearchHits(value: unknown): SearchHit[] {
   const record = asRecord(value);
-  const results = record ? asArray(record['results']) : asArray(value);
+  // Three shapes are accepted, so a companion older than GIT-US-0086 keeps
+  // working: the bare array it used to answer with, the `results` envelope,
+  // and the `hits` envelope that now carries `degraded` alongside.
+  const results = record ? asArray(record['hits'] ?? record['results']) : asArray(value);
   return results
     .map((entry) => {
       const hit = asRecord(entry);
@@ -945,6 +976,9 @@ export function toSearchHits(value: unknown): SearchHit[] {
         title: asString(hit['title']) ?? '',
         snippet: asString(hit['snippet']) ?? '',
         score: asNumber(hit['score']) ?? 0,
+        // A hit that names no origin comes from the local index: only the
+        // semantic half ever says `pando` (GIT-US-0086).
+        source: asString(hit['source']) === 'pando' ? 'pando' : 'core',
       };
       put(mapped, 'id', asString(hit['id']));
       // A workspace-wide search says which project — and which repository —
@@ -954,6 +988,125 @@ export function toSearchHits(value: unknown): SearchHit[] {
       return mapped;
     })
     .filter((entry): entry is SearchHit => entry !== null);
+}
+
+/** `GET /search` → the hits plus whether the semantic half answered. */
+export function toSearchResult(value: unknown): SearchResult {
+  const record = asRecord(value);
+  const hits = toSearchHits(value);
+  return asBoolean(record?.['degraded']) === true ? { hits, degraded: true } : { hits };
+}
+
+// ------------------------------------------------- semantic search settings
+
+/** The phases the reindex walks; anything else reads as the first one. */
+function toSearchPhase(value: string | undefined): SearchReindexPhase {
+  switch (value) {
+    case 'code':
+    case 'kb':
+    case 'completed':
+    case 'failed':
+      return value;
+    default:
+      return 'export';
+  }
+}
+
+/** One `pandosync.Stats`; an export that never ran is all zeroes with no `at`. */
+function toSearchCorpusStats(value: unknown): SearchCorpusStats {
+  const record = asRecord(value) ?? {};
+  return {
+    items: asNumber(record['items']) ?? 0,
+    pages: asNumber(record['pages']) ?? 0,
+    written: asNumber(record['written']) ?? 0,
+    removed: asNumber(record['removed']) ?? 0,
+    skipped: asNumber(record['skipped']) ?? 0,
+    duration: asNumber(record['duration']) ?? 0,
+    at: asString(record['at']) ?? '',
+    full: asBoolean(record['full']) ?? false,
+  };
+}
+
+function toSearchCorpora(value: unknown): SearchCorpus[] {
+  return asArray(value).map((entry) => {
+    const record = asRecord(entry) ?? {};
+    return {
+      repo: asString(record['repo']) ?? '',
+      dir: asString(record['dir']) ?? '',
+      last: toSearchCorpusStats(record['last']),
+    };
+  });
+}
+
+function toSearchReindexRepos(value: unknown): SearchReindexRepo[] {
+  return asArray(value).map((entry) => {
+    const record = asRecord(entry) ?? {};
+    return {
+      repo: asString(record['repo']) ?? '',
+      export: toSearchCorpusStats(record['export']),
+      ...optional('exportError', asString(record['exportError'])),
+      ...optional('codeJob', asString(record['codeJob'])),
+      ...optional('codeError', asString(record['codeError'])),
+    };
+  });
+}
+
+function toSearchKbStats(value: unknown): SearchReindexKbStats | undefined {
+  const record = asRecord(value);
+  if (record === null) return undefined;
+  return {
+    scanned: asNumber(record['scanned']) ?? 0,
+    added: asNumber(record['added']) ?? 0,
+    updated: asNumber(record['updated']) ?? 0,
+    unchanged: asNumber(record['unchanged']) ?? 0,
+    deleted: asNumber(record['deleted']) ?? 0,
+  };
+}
+
+/** `POST /search/reindex`, and the `reindex` field of the settings. */
+export function toSearchReindexJob(value: unknown): SearchReindexJob {
+  const record = asRecord(value) ?? {};
+  return {
+    jobId: asString(record['jobId']) ?? '',
+    startedAt: asString(record['startedAt']) ?? '',
+    ...optional('endedAt', asString(record['endedAt'])),
+    phase: toSearchPhase(asString(record['phase'])),
+    repos: toSearchReindexRepos(record['repos']),
+    ...optional('kb', toSearchKbStats(record['kb'])),
+    ...optional('kbNote', asString(record['kbNote'])),
+    ...optional('error', asString(record['error'])),
+  };
+}
+
+/**
+ * `GET|PATCH /search/settings` → what the settings card renders.
+ *
+ * `reachable` keeps three states, so `null` is preserved rather than folded
+ * into `false`: "nothing is configured" and "it is configured and did not
+ * answer" are different things to tell the user.
+ */
+export function toSearchSettings(value: unknown): SearchSettings {
+  const record = asRecord(value) ?? {};
+  const reachable = asBoolean(record['reachable']);
+  return {
+    backend: toFullTextSearch(asString(record['backend'])),
+    configured: asBoolean(record['configured']) ?? false,
+    mcpUrl: asString(record['mcpUrl']) ?? '',
+    restUrl: asString(record['restUrl']) ?? '',
+    projectId: asString(record['projectId']) ?? '',
+    corpusDir: asString(record['corpusDir']) ?? '',
+    allowRemote: asBoolean(record['allowRemote']) ?? false,
+    reachable: reachable ?? null,
+    reachableError: asString(record['reachableError']) ?? '',
+    corpora: toSearchCorpora(record['corpora']),
+    documents: asNumber(record['documents']) ?? 0,
+    lastExport: asString(record['lastExport']) ?? null,
+    reindex:
+      record['reindex'] === undefined || record['reindex'] === null
+        ? null
+        : toSearchReindexJob(record['reindex']),
+    persisted: asBoolean(record['persisted']) ?? false,
+  };
 }
 
 export function toIndexStats(value: unknown): IndexStats {
@@ -1008,6 +1161,16 @@ function optional<K extends string, V>(key: K, value: V | undefined): Record<K, 
   return value === undefined ? {} : { [key]: value };
 }
 
+/**
+ * Which search engine the companion reported. Anything unknown reads as the
+ * always-available core index rather than promising a surface that is not
+ * there.
+ */
+function toFullTextSearch(value: string | undefined): Capabilities['fullTextSearch'] {
+  if (value === 'bleve' || value === 'pando') return value;
+  return 'core';
+}
+
 /** `GET /capabilities` → the object the UI branches on. */
 export function toCapabilities(value: unknown): Capabilities {
   const record = asRecord(value) ?? {};
@@ -1019,7 +1182,7 @@ export function toCapabilities(value: unknown): Capabilities {
     git,
     ssh: asBoolean(features['ssh']) ?? git,
     watch: asBoolean(features['watcher']) ?? companionCapabilities.watch,
-    fullTextSearch: asString(features['search']) === 'bleve' ? 'bleve' : 'core',
+    fullTextSearch: toFullTextSearch(asString(features['search'])),
     mcp: asBoolean(features['mcpHttp']) ?? false,
     openInEditor: asBoolean(features['openInEditor']) ?? companionCapabilities.openInEditor,
     maxBatchWrite: asNumber(limits['maxBatchWrite']) ?? companionCapabilities.maxBatchWrite,
@@ -1029,6 +1192,12 @@ export function toCapabilities(value: unknown): Capabilities {
     youtrackSupported:
       asBoolean(features['youtrackSupported']) ?? companionCapabilities.youtrackSupported,
     youtrack: asBoolean(features['youtrack']) ?? companionCapabilities.youtrack,
+    // The search settings routes are part of every companion; the flag exists
+    // so a build without them can say so rather than answering 404 to a card.
+    searchSettings: asBoolean(features['searchSettings']) ?? companionCapabilities.searchSettings,
+    // A companion that does not report the flag has no agent routes: the chat
+    // surface stays hidden rather than failing on the first call.
+    agent: asBoolean(features['agent']) ?? companionCapabilities.agent,
   };
 }
 
@@ -1481,7 +1650,64 @@ type RequestOptions = {
   /** Sent as `If-Match`; `undefined` on reads. */
   rev?: string;
   accept?: string;
+  /**
+   * Aborts the request. Only the agent routes pass one: an aborted fetch is
+   * re-thrown untouched instead of being dressed up as "the companion is
+   * unreachable", which it is not.
+   */
+  signal?: AbortSignal;
 };
+
+/** Companion routes that proxy one repository's Pando AG-UI adapter. */
+export const AGENT_PREFIX = `${API_PREFIX}/agent`;
+
+/**
+ * Turns an SSE response into AG-UI events with the SDK's own parser.
+ *
+ * Nothing here re-implements the protocol: `parseSSE` reassembles frames
+ * across chunk boundaries and decodes each `data:` line, and `PandoThread`
+ * (in `features/agent`) reduces what comes out. This function only guards the
+ * two ways a proxy can hand back something that is not a stream at all.
+ */
+async function* agentEvents(response: Response, path: string): AsyncGenerator<AguiEvent> {
+  const contentType = response.headers.get('content-type') ?? '';
+  if (!contentType.includes('text/event-stream')) {
+    throw new ProviderError(
+      'internal',
+      `The agent answered with "${contentType || '(no content type)'}" instead of an SSE stream; something between the app and the companion intercepted the request.`,
+      path,
+    );
+  }
+  if (!response.body) {
+    throw new ProviderError('internal', 'The agent stream carried no body.', path);
+  }
+  yield* parseSSE(response.body);
+}
+
+/** The `RequestOptions` half of an `AgentRequestOptions`. */
+function agentRequest(options: AgentRequestOptions): RequestOptions {
+  return options.signal === undefined ? {} : { signal: options.signal };
+}
+
+/** One `GET /agent/threads` row; anything without an id is dropped. */
+function toAgentThreadSummary(value: unknown): AgentThreadSummary | null {
+  const record = asRecord(value);
+  const id = record ? asString(record['id']) : undefined;
+  if (id === undefined) return null;
+  const title = asString(record?.['title']);
+  const createdAt = asString(record?.['createdAt']);
+  const updatedAt = asString(record?.['updatedAt']);
+  const messageCount = asNumber(record?.['messageCount']);
+  const running = asBoolean(record?.['running']);
+  return {
+    id,
+    ...(title === undefined ? {} : { title }),
+    ...(createdAt === undefined ? {} : { createdAt }),
+    ...(updatedAt === undefined ? {} : { updatedAt }),
+    ...(messageCount === undefined ? {} : { messageCount }),
+    ...(running === undefined ? {} : { running }),
+  };
+}
 
 export class CompanionProvider implements DataProvider {
   readonly kind = 'companion' as const;
@@ -1780,14 +2006,14 @@ export class CompanionProvider implements DataProvider {
     return response.blob();
   }
 
-  async search(query: SearchQuery): Promise<SearchHit[]> {
+  async search(query: SearchQuery): Promise<SearchResult> {
     const search = buildQuery({
       q: query.text,
       scope: 'items,kb',
       project: query.projectKey,
       limit: query.limit,
     });
-    return toSearchHits(await this.#json(`${API_PREFIX}/search${search}`));
+    return toSearchResult(await this.#json(`${API_PREFIX}/search${search}`));
   }
 
   /**
@@ -2296,6 +2522,34 @@ export class CompanionProvider implements DataProvider {
     return asArray(record ? record['repos'] : body) as GitRepoStatus[];
   }
 
+  // ------------------------------------------------ semantic search settings
+
+  /** `GET /api/v1/search/settings` (docs/07, story GIT-US-0091). */
+  async getSearchSettings(): Promise<SearchSettings> {
+    return toSearchSettings(await this.#json(`${API_PREFIX}/search/settings`));
+  }
+
+  /**
+   * `PATCH /api/v1/search/settings`. Only the five location fields travel:
+   * tokens are not patchable, so a credential can never be copied into the
+   * configuration file by this path.
+   */
+  async updateSearchSettings(patch: SearchSettingsPatch): Promise<SearchSettings> {
+    return toSearchSettings(
+      await this.#json(`${API_PREFIX}/search/settings`, { method: 'PATCH', body: patch }),
+    );
+  }
+
+  /**
+   * `POST /api/v1/search/reindex` → `202` with the queued job. The work runs
+   * in the background and reports on `search.progress`.
+   */
+  async reindexSearch(): Promise<SearchReindexJob> {
+    return toSearchReindexJob(
+      await this.#json(`${API_PREFIX}/search/reindex`, { method: 'POST', body: {} }),
+    );
+  }
+
   // --------------------------------------------------------- mcp write tools
 
   /** `GET /api/v1/mcp/settings`. */
@@ -2718,6 +2972,105 @@ export class CompanionProvider implements DataProvider {
     })) as ConflictResolveResult;
   }
 
+  // ------------------------------------------------------------------ agent
+
+  async getAgentInfo(options: AgentRequestOptions = {}): Promise<AguiInfo> {
+    return (await this.#json(
+      `${AGENT_PREFIX}/info${buildQuery({ repo: options.repo })}`,
+      agentRequest(options),
+    )) as AguiInfo;
+  }
+
+  async getAgentHealth(options: AgentRequestOptions = {}): Promise<AgentHealth> {
+    const body = asRecord(
+      await this.#json(
+        `${AGENT_PREFIX}/health${buildQuery({ repo: options.repo })}`,
+        agentRequest(options),
+      ),
+    );
+    const version = asString(body?.['version']);
+    const detail = asString(body?.['detail']);
+    return {
+      ok: asBoolean(body?.['ok']) ?? true,
+      ...(version === undefined ? {} : { version }),
+      ...(detail === undefined ? {} : { detail }),
+    };
+  }
+
+  /**
+   * POSTs a `RunAgentInput` and streams back the AG-UI events.
+   *
+   * It is `async *` rather than a callback feed on purpose: `PandoThread`
+   * consumes exactly this shape, so the SDK's reducer plugs onto the provider
+   * seam with no adapter in between. The bearer token is the companion's own
+   * (`token.ts`); the Pando token lives on the companion side and never
+   * reaches the browser.
+   */
+  async *runAgent(input: RunAgentInput, options: AgentRunOptions = {}): AsyncIterable<AguiEvent> {
+    const path = `${AGENT_PREFIX}/run${buildQuery({ repo: options.repo })}`;
+    const response = await this.#send(path, {
+      ...agentRequest(options),
+      method: 'POST',
+      body: input,
+      accept: 'text/event-stream',
+    });
+    yield* agentEvents(response, path);
+  }
+
+  async listAgentThreads(options: AgentRequestOptions = {}): Promise<AgentThreadSummary[]> {
+    const body = await this.#json(
+      `${AGENT_PREFIX}/threads${buildQuery({ repo: options.repo })}`,
+      agentRequest(options),
+    );
+    const rows = Array.isArray(body) ? body : (asRecord(body)?.['threads'] ?? []);
+    if (!Array.isArray(rows)) return [];
+    return rows.map(toAgentThreadSummary).filter((row): row is AgentThreadSummary => row !== null);
+  }
+
+  async getAgentThreadMessages(
+    threadId: string,
+    options: AgentRequestOptions = {},
+  ): Promise<AguiMessage[]> {
+    const body = await this.#json(
+      `${AGENT_PREFIX}/threads/${encodeURIComponent(threadId)}/messages${buildQuery({
+        repo: options.repo,
+      })}`,
+      agentRequest(options),
+    );
+    const rows = Array.isArray(body) ? body : (asRecord(body)?.['messages'] ?? []);
+    return Array.isArray(rows) ? (rows as AguiMessage[]) : [];
+  }
+
+  async *streamAgentThread(
+    threadId: string,
+    options: AgentRunOptions = {},
+  ): AsyncIterable<AguiEvent> {
+    const path = `${AGENT_PREFIX}/threads/${encodeURIComponent(threadId)}/stream${buildQuery({
+      repo: options.repo,
+    })}`;
+    const response = await this.#send(path, {
+      ...agentRequest(options),
+      accept: 'text/event-stream',
+    });
+    yield* agentEvents(response, path);
+  }
+
+  async deleteAgentThread(threadId: string, options: AgentRequestOptions = {}): Promise<void> {
+    await this.#send(
+      `${AGENT_PREFIX}/threads/${encodeURIComponent(threadId)}${buildQuery({ repo: options.repo })}`,
+      { ...agentRequest(options), method: 'DELETE' },
+    );
+  }
+
+  async cancelAgentRun(threadId: string, options: AgentRequestOptions = {}): Promise<void> {
+    await this.#send(
+      `${AGENT_PREFIX}/runs/${encodeURIComponent(threadId)}/cancel${buildQuery({
+        repo: options.repo,
+      })}`,
+      { ...agentRequest(options), method: 'POST' },
+    );
+  }
+
   subscribe(handler: (event: ChangeEvent) => void): Unsubscribe {
     this.#handlers.add(handler);
     if (this.#handlers.size === 1) this.#connect();
@@ -2757,9 +3110,14 @@ export class CompanionProvider implements DataProvider {
         mode: 'cors',
         credentials: 'omit',
         headers,
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
         ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
       });
     } catch (error) {
+      // The caller aborted on purpose. Reporting that as an unreachable
+      // companion would send the UI hunting for a connection problem that is
+      // not there.
+      if (options.signal?.aborted === true) throw error;
       throw new ProviderError(
         'internal',
         `The companion at ${this.baseUrl} is unreachable (${
@@ -2997,6 +3355,19 @@ export class CompanionProvider implements DataProvider {
           const path = asString(payload['path']);
           this.#emit({ kind: 'kb', repoId, paths: path === undefined ? [] : [path] });
         }
+        return;
+      }
+      case 'search.progress': {
+        this.#emit({
+          kind: 'searchProgress',
+          operationId: asString(payload['operationId']) ?? '',
+          repoId,
+          phase: toSearchPhase(asString(payload['phase'])),
+          percent: asNumber(payload['percent']) ?? 0,
+          done: asNumber(payload['done']) ?? 0,
+          total: asNumber(payload['total']) ?? 0,
+          message: asString(payload['message']) ?? '',
+        });
         return;
       }
       case 'sync.progress':

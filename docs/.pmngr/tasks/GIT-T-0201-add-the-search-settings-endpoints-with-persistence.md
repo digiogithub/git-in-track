@@ -2,7 +2,7 @@
 id: GIT-T-0201
 type: task
 title: Add the search settings endpoints with persistence
-status: todo
+status: done
 priority: medium
 parent: GIT-US-0091
 milestone: GIT-M-0013
@@ -10,7 +10,9 @@ author: mcp
 labels: [server]
 estimate: 3
 created: 2026-09-13T13:20:22Z
-updated: 2026-09-13T13:20:22Z
+updated: 2026-09-15T16:44:24Z
+started: 2026-09-15T16:04:14Z
+closed: 2026-09-15T16:44:24Z
 ---
 
 ## Description

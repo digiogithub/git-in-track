@@ -21,6 +21,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { GitSettingsCard } from '@/features/settings/GitSettingsCard';
 import { McpToolsCard } from '@/features/settings/McpToolsCard';
+import { PandoSearchCard } from '@/features/settings/PandoSearchCard';
 import { SyncEngineCard } from '@/features/settings/SyncEngineCard';
 import { SyncProxyCard } from '@/features/settings/SyncProxyCard';
 import { TeamProjectsCard } from '@/features/settings/TeamProjectsCard';
@@ -116,6 +117,7 @@ export function SettingsPage() {
       <SyncProxyCard />
       <SyncEngineCard />
       <McpToolsCard />
+      <PandoSearchCard />
       <YouTrackCard />
 
       <Card>

@@ -299,6 +299,16 @@ func (w *Workspace) Dispatch(ctx context.Context, method string, raw []byte) (an
 			return nil, err
 		}
 		return w.Search(ctx, p.Q, p.Limit, p.Project)
+	case "search.semantic":
+		// Ranked by meaning rather than by substring. The host installs the
+		// backend (see semantic.go); without one the method answers
+		// `unavailable`, never an empty result, so a caller can tell "nothing
+		// matched" from "this session cannot do that".
+		p, err := decodeParams[SemanticQuery](raw)
+		if err != nil {
+			return nil, err
+		}
+		return w.SearchSemantic(ctx, p)
 	}
 
 	target, err := w.route(method, raw)

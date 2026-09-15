@@ -128,6 +128,28 @@ type Options struct {
 	// means the default the MCP package picks.
 	MCPAgent string
 
+	// Agent mounts the AG-UI proxy at /api/v1/agent (`serve --agent` or
+	// `agent.enabled`). Without it the routes answer `not_implemented`.
+	Agent bool
+	// Pando is the resolved AG-UI routing table: the upstream URL, path and
+	// agent name per repository, plus the tokens. The snapshot has no exported
+	// field carrying a token and no marshaler, so handing it to the server
+	// cannot put one into a response or a log line.
+	Pando config.PandoTargets
+
+	// Search is the `search` section of the configuration. Its `pando`
+	// subsection is the optional semantic accelerator: when it names an MCP
+	// endpoint, GET /api/v1/search merges semantic candidates into the exact
+	// hits and `features.search` reports "pando" (GIT-US-0082). The two tokens
+	// are expected already resolved through Config.ResolvedPandoMCPToken and
+	// Config.ResolvedPandoRESTToken; they are never marshaled into a response.
+	Search config.Search
+	// SearchCorpusDir is the corpus root used when `search.pando.corpusDir` is
+	// empty: `<index.cacheDir>/pando-kb`. One subdirectory per mounted
+	// repository is written under it, which is the path `gintrack agent init`
+	// writes into Pando's KBPath. Empty disables the corpus export entirely.
+	SearchCorpusDir string
+
 	// SyncEngine configures the background job engine: the worker pool, the
 	// batch size, the shared outbound rate limit, the retry budget and the
 	// grace period a shutdown drains for (GIT-US-0084). The zero value is the
@@ -163,6 +185,9 @@ type Server struct {
 	// when the endpoint is on, and the write mode both it and `gintrack mcp`
 	// take from the configuration.
 	mcp *mcpState
+	// agent owns the AG-UI proxy of /api/v1/agent: the routing table, the
+	// transports that dial it and the in-flight run cap (GIT-US-0049).
+	agent *agentState
 	// proxy is the browser-git CORS proxy mounted at /cors-proxy/
 	// (GIT-US-0042, docs/06-git-sync.md section 6.3).
 	proxy *corsProxy
@@ -172,6 +197,10 @@ type Server struct {
 	// `sync.job.*` events (GIT-US-0074, GIT-US-0084). It exists from New so
 	// that a handler can be registered before Start replays the journal.
 	sync *syncState
+	// search owns the semantic half of GET /api/v1/search: the Pando client,
+	// the corpus exporter of every mounted repository and the settings surface
+	// at /api/v1/search/settings (GIT-US-0082, GIT-US-0091).
+	search *searchState
 	// youtrack owns the YouTrack connection of every mounted project: the
 	// committed link in project.yaml, the machine-local token and the clients
 	// built from the two (GIT-US-0052).
@@ -267,6 +296,12 @@ func New(opts Options) (*Server, error) {
 		return nil, err
 	}
 	s.installYouTrackSeams()
+	s.agent = newAgentState(opts)
+	// The search accelerator is built here so that the semantic backend is
+	// installed on the workspace before the first request, and so that a
+	// handler can read the corpus statistics before Start has exported
+	// anything.
+	s.search = newSearchState(opts, s.repos, s.hub, s.log, now)
 	s.proxy = newCORSProxy(s)
 	s.tunnel = newTunnelState(opts)
 	s.router = s.routes()
@@ -336,6 +371,10 @@ func (s *Server) Start(ctx context.Context) error {
 
 	s.startWatch(ctx)
 	defer s.stopWatch()
+	// The corpus export runs in the background, cancelled by the same context
+	// that stops the listener: a ten-thousand-item repository must not delay
+	// the first request by one second (GIT-T-0130, GIT-T-0134).
+	s.startCorpusSync(ctx)
 	// The tunnel forwards to the address the listener just resolved, so it can
 	// only be opened here, and it is closed before the process exits so that no
 	// published workspace outlives the server.
@@ -420,8 +459,11 @@ func (s *Server) timeoutExceptStream(next http.Handler) http.Handler {
 		// The event stream and the MCP endpoint are long-lived connections, not
 		// requests that must finish inside the deadline; a proxied fetch is a
 		// transfer that carries its own, longer deadline (proxyTimeout).
+		// The agent proxy joins them: a conversation turn is a stream that
+		// lasts as long as the agent thinks, and the short upstream calls
+		// under the same prefix carry their own deadline (agentProbeTimeout).
 		if r.URL.Path == apiPrefix+"/events" || r.URL.Path == mcpPath || strings.HasPrefix(r.URL.Path, mcpPath+"/") ||
-			strings.HasPrefix(r.URL.Path, corsProxyPath+"/") {
+			strings.HasPrefix(r.URL.Path, corsProxyPath+"/") || strings.HasPrefix(r.URL.Path, agentPath+"/") {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -453,10 +495,13 @@ func (s *Server) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 		"mode":    s.opts.Mode,
 		"ui":      s.uiState(),
 		"features": map[string]any{
-			"watcher":      s.watching(),
-			"nativeIndex":  true,
-			"write":        true,
-			"search":       "core",
+			"watcher":     s.watching(),
+			"nativeIndex": true,
+			"write":       true,
+			// "core" or "pando": the backend the next query will actually
+			// use, so a Pando that is down reports "core" rather than
+			// promising an accelerator that is not answering (GIT-US-0082).
+			"search":       s.search.backend(),
 			"renderer":     "client",
 			"openInEditor": false,
 			// Git: commit-on-save ships with GIT-US-0020; the sync pipeline
@@ -481,6 +526,10 @@ func (s *Server) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 			// The public tunnel of /api/v1/tunnel: whether this build can open
 			// one at all, not whether one is running.
 			"tunnel": s.tunnelSupported(),
+			// The AG-UI proxy of /api/v1/agent. True only when the feature is
+			// switched on and an upstream is configured; the token behind it
+			// is never reported here or anywhere else (GIT-US-0049).
+			"agent":  s.agent.available(),
 			"boards": true,
 		},
 		"limits": map[string]int{

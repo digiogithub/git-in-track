@@ -2,7 +2,7 @@
 id: GIT-T-0067
 type: task
 title: Route permission and question interrupts to dialogs
-status: todo
+status: done
 priority: medium
 parent: GIT-US-0061
 milestone: GIT-M-0013
@@ -10,7 +10,9 @@ author: mcp
 labels: [web, security]
 estimate: 3
 created: 2026-09-13T13:16:58Z
-updated: 2026-09-13T13:16:58Z
+updated: 2026-09-15T16:43:39Z
+started: 2026-09-15T16:13:32Z
+closed: 2026-09-15T16:43:39Z
 ---
 
 ## Description

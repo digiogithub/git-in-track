@@ -263,6 +263,42 @@ mcp:
                          # (the Settings page writes this field; section 5.5)
                          # over stdio as well as for POST /mcp
 
+# The agent surface: the proxy at /api/v1/agent that relays a chat turn to a
+# local `pando agui-serve` process (§5.5). It is off by default, and the token
+# below never leaves the companion — it is injected as an Authorization header
+# on the server-to-server hop and appears in no response, log line or URL.
+agent:
+  enabled: false                 # same switch as `gintrack serve --agent`
+  pando:
+    url: http://127.0.0.1:8090   # agui-serve base; loopback unless allowRemote
+    path: /api/v1/agui           # Pando's AG-UI mount point
+    token: ""                    # GINTRACK_PANDO_TOKEN overrides it
+    tokenFile: ""                # read the token from a file instead
+    agent: backlog-assistant     # AG-UI agent or profile: POST {path}/{agent}
+    insecureTls: false           # for an agui-serve left on its self-signed cert
+    allowRemote: false           # true to dial a host that is not loopback
+    maxRuns: 8                   # runs in flight before a 503 + Retry-After, 0-256
+    repos:                       # per-repository upstreams, matched on the mounted id
+      - repo: git-in-track
+        url: http://127.0.0.1:8091
+        token: ""
+        tokenFile: ""
+        agent: ""                # empty inherits the section's
+
+# Semantic search over Pando's knowledge base and code index. An empty `mcpUrl`
+# leaves search on the built-in core index alone; the section is consumed by the
+# search endpoints, which return candidates and then re-read every field from
+# this companion's own index.
+search:
+  pando:
+    mcpUrl: ""                   # e.g. http://127.0.0.1:9777/mcp; empty = off
+    mcpToken: ""                 # GINTRACK_PANDO_MCP_TOKEN overrides it
+    restUrl: ""                  # `pando serve` base; optional, enables REST reindex
+    restToken: ""                # GINTRACK_PANDO_REST_TOKEN overrides it
+    projectId: ""                # code project id; empty = Pando's sanitised repo path
+    corpusDir: ""                # empty = <index.cacheDir>/pando-kb
+    allowRemote: false
+
 # The credentials of the external trackers this machine is linked to. It is the
 # only place git-in-track stores a secret it did not generate itself, which is
 # why the whole file is 0600 (ADR-032). The committed half of the connection —
@@ -315,6 +351,9 @@ Effective value = flag > environment variable > config file > built-in default.
 | `GINTRACK_SYNC_MAX_ATTEMPTS` | `sync.engine.maxAttempts` |
 | `GINTRACK_GIT_COMMIT_ON_SAVE` | `git.commitOnSave` |
 | `GINTRACK_YOUTRACK_TOKEN` | `integrations.youtrack.<key>.token`, for every project |
+| `GINTRACK_PANDO_TOKEN`   | `agent.pando.token`, for every upstream |
+| `GINTRACK_PANDO_MCP_TOKEN` | `search.pando.mcpToken` |
+| `GINTRACK_PANDO_REST_TOKEN` | `search.pando.restToken` |
 | `GINTRACK_LOG_LEVEL`     | `log.level`         |
 | `GINTRACK_LOG_FORMAT`    | `log.format`        |
 | `NO_COLOR`               | disables ANSI color |
@@ -333,6 +372,37 @@ which is what a CI checkout with a single linked project wants; a machine
 serving two linked projects should use the file instead. The provenance of the
 effective token is reported — never its value — as `env`, `file`, `flag` or
 `none` by `gintrack youtrack status` and by `GET /api/v1/youtrack/settings`.
+
+The three `GINTRACK_PANDO_*` variables are separate names for the same reason,
+and each one overrides exactly one key. Within the file half, an inline `token`
+beats a `tokenFile`, and a row of `agent.pando.repos` beats the section-wide
+value for the repository it names. All three are read through accessors
+(`config.ResolvedPandoToken(repoID)` and its two siblings) rather than copied
+into a struct, so no `Save` can write an environment secret back into the file
+and no `gintrack config show --json` can print one.
+
+#### `search.pando`
+
+Semantic search is served by a local [Pando](https://github.com/digiogithub/pando) instance.
+`mcpUrl` is Pando's streamable-HTTP MCP endpoint (typically `http://127.0.0.1:9777/mcp`) and
+`mcpToken` the bearer token it requires (`MCPServer.HttpToken` in Pando's own configuration).
+`projectId` names the indexed code project and defaults to the repository path sanitised the
+way Pando does it — `/www/git-in-track` becomes `www_git-in-track`. `restUrl` and `restToken`
+are optional and only enable the corpus resync (`POST /api/v1/remembrances/kb/reindex`,
+authenticated with `X-Pando-Token`); they need `pando serve`, not `pando mcp-server`, so with
+them unset the resync reports "not configured" rather than failing. `corpusDir` is where the
+exported corpus is written (docs/21). Leaving `mcpUrl` empty switches semantic search off.
+
+**A URL whose host is not a loopback address is refused, and there is no override but
+`allowRemote`.** Pando's MCP transport exposes far more than search — file writes, shell
+execution, agent spawning — so a companion that could be pointed at a remote Pando would be a
+remote-code-execution gadget wearing a search feature's clothes. `allowRemote` exists for a
+future authenticated deployment and should stay off.
+
+**Loopback is not a boundary against your own browser.** Until Pando's MCP CORS policy stops
+being `*`, any web page you visit can reach `127.0.0.1:9777` from the browser with no companion
+involved. Binding to loopback keeps the network out; it does not keep a hostile page out. That
+is Pando's to fix (its backlog item PANDO-EP-0006), not the companion's.
 
 ### 3.4 Git backend selection
 
@@ -390,6 +460,8 @@ gintrack serve [flags]
   --mcp-http          Serve the Model Context Protocol at POST /mcp (doc 08 §2.2)
   --mcp-allow-write   Advertise the MCP write tools; without it /mcp is read-only
   --mcp-agent name    Agent name recorded as the author of comments written through /mcp
+  --agent             Serve the agent proxy at /api/v1/agent, relaying to the
+                      configured Pando AG-UI adapter (§5.5, off by default)
   --tunnel            Publish this server through a Cloudflare quick tunnel and print
                       the temporary public https URL (off by default; refused with
                       --token none). See the warning below before using it.
@@ -1098,19 +1170,20 @@ publish_kb_page_to_youtrack
 push_comment_to_youtrack
 search_items
 search_kb
+search_semantic
 sync_kb_page_from_youtrack
 transfer_sprint_items
 triage_inbox_item
 update_item
 
 $ gintrack mcp --agent claude-code
-gintrack mcp 0.4.0: workspace work, 2 repositories, 7 tools (read-only)
+gintrack mcp 0.4.0: workspace work, 2 repositories, 8 tools (read-only)
 ```
 
 Nothing but JSON-RPC frames is written to stdout; the startup line and every log go to
-stderr. There are **twenty-two tools**: seven read-only — `list_items`, `search_items`,
-`get_item`, `list_inbox`, `list_kb_pages`, `get_kb_page` and `search_kb` — and fifteen
-writes. Without writes enabled the fifteen write tools are absent from `tools/list`, not
+stderr. There are **twenty-three tools**: eight read-only — `list_items`, `search_items`,
+`search_semantic`, `get_item`, `list_inbox`, `list_kb_pages`, `get_kb_page` and `search_kb` —
+and fifteen writes. Without writes enabled the fifteen write tools are absent from `tools/list`, not
 merely refused.
 
 Writes are enabled by `--allow-write` or by `mcp.allowWrite: true` in the configuration file
@@ -1121,7 +1194,7 @@ what the companion's **Settings › Agent tools (MCP)** switch writes
 (`PATCH /api/v1/mcp/settings`, section 5.5), which is the way to enable writes without
 editing a file or teaching every agent runtime a flag.
 
-The **same twenty-two tools** are served over streamable HTTP at `POST /mcp` by
+The **same twenty-three tools** are served over streamable HTTP at `POST /mcp` by
 `gintrack serve --mcp-http` (section 4.1), which is what to use when the companion is already
 running: one index and one watcher, shared with the web UI.
 
@@ -1586,6 +1659,49 @@ sync. A project that sets the option and declares no triage status has no inbox,
 so the whole import is refused with `no_triage_status` before anything is
 written, preview included.
 
+### 4.18 `gintrack agent init`
+
+```
+gintrack agent init [--repo <path>] [--companion-url <url>] [--agui-port <n>] [--force] [--json]
+                    [--pando <path>] [--age-keys <set>] [--plaintext-token]
+```
+
+Writes the Pando-side configuration for one repository so that `pando agui-serve` can act as
+the agent behind the companion's `/api/v1/agent` proxy (docs/20, ADR-035). At the repository
+root it creates `.pando.toml` (the `[AGUI]` adapter with its profile and tool allow-list,
+`[MCPServers.gintrack]` pointing at this companion's `/mcp`, `[Remembrances]` pointing at the
+exported corpus with `KBWatch = false`, `[MCPServer]` HTTP off), `agents/personas/
+backlog-assistant.md` and `agents/skills/gintrack-search/SKILL.md`. Outside the repository it
+creates, once, the AG-UI token file `<stateDir>/agui/<repo id>.token` (mode 0600). It never
+prints a token.
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--repo <path>` | `.` | The repository to configure; must be a mounted repository |
+| `--companion-url <url>` | the configured bind address | Where Pando reaches this companion |
+| `--agui-port <n>` | `8090` | Port written into `[AGUI] Port` |
+| `--force` | off | Overwrite files that already exist |
+| `--json` | off | Machine-readable summary of what was written (`tokenEncrypted` reports which token form landed) |
+| `--pando <path>` | the `pando` on `PATH` | Binary used to encrypt the companion token with `pando secret` |
+| `--age-keys <set>` | Pando's default set | Forwarded as `pando secret --age-keys <set>` (key sets live under `~/.config/pando/keys/`) |
+| `--plaintext-token` | off | Write the token as a literal `Authorization` header instead of encrypting it |
+
+Exit code 5 when a target file exists and `--force` was not given; nothing is written in that
+case and the message names the file. Exit code 5 as well when `pando` cannot be found or
+`pando secret` does not return an `age1:` ciphertext — again nothing is written, and the
+message offers `--pando` and `--plaintext-token`.
+
+**The generated `.pando.toml` carries the companion bearer token encrypted** in
+`[MCPServers.gintrack.Auth]` (`Type = 'bearer'`, `Token = 'age1:…'`): Pando cannot expand
+environment variables in an MCP server's configuration, but it decrypts an `age1:` value on
+load and derives the `Authorization: Bearer …` header itself. `--plaintext-token` writes the
+old `[MCPServers.gintrack.Headers]` form instead. The file is mode 0600 and must be
+git-ignored; the command says so on stdout and never prints the token or the ciphertext.
+`pando secret` takes its value as an argument (it reads no stdin), so the token is briefly
+visible in the local process list. The two commands to run next are printed: `pando
+agui-serve --cwd <repo> --port <n> --no-tls --token-file <f>` and `gintrack serve --agent
+--mcp-http`.
+
 ---
 
 ## 5. Local REST API
@@ -1825,9 +1941,10 @@ GET /api/v1/capabilities
     "mcpHttp": false,
     "mcpWrite": false,
     "mcpTools": [],
-    "search": "bleve",
+    "search": "pando",
     "renderer": "goldmark",
     "tunnel": true,
+    "agent": false,
     "youtrackSupported": true,
     "youtrack": false,
     "write": true
@@ -1847,6 +1964,22 @@ the token — and `features.youtrack` says at least one served project actually
 declares an `integrations.youtrack` block. The settings card is shown on the
 first flag and filled from the second; browser-only mode reports neither and
 hides the whole feature (GIT-US-0048).
+
+`features.agent` is true only when **both** halves are in place: the feature is
+switched on (`gintrack serve --agent` or `agent.enabled: true`) **and** an
+upstream URL is configured. It is a companion-only capability — browser-only mode
+has no server to proxy through and reports `false`. Nothing about the upstream
+token is reported here or anywhere else.
+
+`features.search` names the search backend that will answer the **next** query:
+`"core"` for the substring index every mode ships with, `"pando"` when the
+optional semantic accelerator of GIT-US-0082 is configured **and** answering.
+A Pando that is configured but unreachable, unauthorized or over its latency
+budget reports `"core"`, so a client never promises an accelerator that is down;
+it flips back to `"pando"` by itself on the first query that succeeds again.
+The web client maps this value onto `Capabilities.fullTextSearch`, whose union is
+`'core' | 'bleve' | 'pando'` — `bleve` is documented, not shipped (docs/02 §8) —
+and browser-only mode always reports `"core"`.
 
 #### Workspaces and repositories
 
@@ -2669,16 +2802,37 @@ GET /api/v1/search?q=oidc+discovery&scope=items,kb&project=ACME&limit=20
 ```json
 {
   "query":"oidc discovery",
-  "results":[
-    {"kind":"item","id":"ACME-T-0311","project":"ACME","title":"Wire OIDC discovery endpoint",
-     "score":8.42,"snippet":"Fetch /.well-known/<em>openid-configuration</em> and cache…",
-     "path":"docs/.pmngr/tasks/…"},
-    {"kind":"kb","project":"ACME","path":"architecture/auth.md","title":"Authentication",
-     "score":5.10,"snippet":"…<em>OIDC</em> <em>discovery</em> is cached for one hour…"}
+  "hits":[
+    {"kind":"item","id":"ACME-T-0311","project":"ACME","vaultId":"acme","title":"Wire OIDC discovery endpoint",
+     "score":8.42,"snippet":"Fetch /.well-known/openid-configuration and cache…",
+     "path":"docs/.pmngr/tasks/…","source":"core"},
+    {"kind":"page","project":"ACME","vaultId":"acme","path":"docs/architecture/auth.md","title":"Authentication",
+     "score":0.0163,"snippet":"…discovery documents are cached for one hour…","source":"pando"}
   ],
-  "total":7,"tookMs":9,"engine":"bleve"
+  "total":7,"engine":"pando","degraded":false
 }
 ```
+
+Every hit carries `source`, the backend that produced it (GIT-US-0082):
+
+- `"core"` — the substring index. Every term must match; the score is the sum of
+  the field weights it matched (id 100, title 3, label 2, body 1).
+- `"pando"` — a semantic candidate from the optional accelerator, **resolved back
+  into this companion's own index**: the title, path and project are re-read
+  locally, and a candidate that no longer resolves is dropped rather than
+  returned. The score is Pando's reciprocal-rank-fusion value, which lives in a
+  different space from the core one and must never be compared with it.
+
+**The order is the contract.** Exact hits lead, in the order the substring index
+ranked them; semantic hits the exact half did not already find follow. The two
+lists are concatenated, never re-ranked together.
+
+`engine` repeats the `features.search` capability for this one answer, and
+`degraded` is `true` when the semantic half could not be obtained — Pando
+unreachable, unauthorized, or over its 300 ms budget. A degraded answer is still
+a `200` with the exact hits in it: **search never fails over its accelerator**.
+A companion with no Pando configured answers `engine: "core"`,
+`degraded: false`, and every hit `source: "core"`.
 
 Without `?project=`, the query spans **every mounted repository** — the team knowledge base
 included — and each hit carries the `project` it belongs to (the team key for a team
@@ -2686,6 +2840,106 @@ knowledge-base page) plus the `vaultId` of the repository that answered, so a wo
 returns a row whose source is ambiguous (GIT-US-0016). With `?project=<KEY>`, only the repository
 exposing that key is searched, and an unknown key is a `404`.
 
+
+#### Semantic search settings and reindex (GIT-US-0091)
+
+Three companion-only endpoints, inside the bearer-auth group. They are what makes
+the exported corpus diagnosable: where Pando is, where the corpus lives, whether
+it is current, and a button to rebuild it.
+
+```http
+GET   /api/v1/search/settings
+PATCH /api/v1/search/settings   {"mcpUrl":"http://127.0.0.1:9777/mcp","projectId":"acme-api"}
+POST  /api/v1/search/reindex
+```
+
+`GET` answers:
+
+```json
+{
+  "backend":"pando",
+  "configured":true,
+  "mcpUrl":"http://127.0.0.1:9777/mcp",
+  "restUrl":"http://127.0.0.1:9778",
+  "projectId":"acme-api",
+  "corpusDir":"/home/dana/.local/state/gintrack/pando-kb",
+  "allowRemote":false,
+  "reachable":true,
+  "reachableError":"",
+  "corpora":[
+    {"repo":"acme-api","dir":"/home/dana/.local/state/gintrack/pando-kb/acme-api",
+     "last":{"items":412,"pages":38,"written":3,"removed":0,"skipped":447,
+             "duration":91000000,"at":"2026-09-15T10:02:11Z","full":true}}
+  ],
+  "documents":450,
+  "lastExport":"2026-09-15T10:02:11Z",
+  "reindex":null,
+  "persisted":false
+}
+```
+
+- `backend` is the value `features.search` reports, and `reachable` is a **live
+  probe** of the MCP endpoint run while answering (`null` when none is
+  configured, with `reachableError` saying why a probe failed).
+- `corpora` is one entry per mounted repository: the directory its corpus is
+  written to — `<corpusDir>/<repo id>`, the same path `gintrack agent init`
+  writes into Pando's `KBPath` — and the statistics of its last full export.
+  `documents` and `lastExport` summarize them.
+- Neither Pando token is ever reported. They are resolved from
+  `GINTRACK_PANDO_MCP_TOKEN` / `GINTRACK_PANDO_REST_TOKEN` or the configuration
+  file (docs/07 §3.3) and stay in the companion process.
+
+`PATCH` takes any subset of `mcpUrl`, `restUrl`, `projectId`, `corpusDir` and
+`allowRemote`; an absent field is left alone. **Tokens are not patchable**: a
+credential enters the process from the environment or the file, never over the
+API. The change is adopted by the running process immediately — the Pando client
+and every corpus exporter are rebuilt — and then written to the configuration
+file, with the tokens already in that file left untouched. The response repeats
+the settings and adds `persisted`, exactly as `PATCH /api/v1/git/settings` does:
+`false` means the companion was started without a configuration path (a test, or
+`serve --repo`) and the change lives only until it exits. A non-loopback URL
+without `allowRemote`, a URL that is not one, or a relative `corpusDir` is
+refused with `invalid_request` (400) and nothing is adopted.
+
+`POST /api/v1/search/reindex` answers `202` with the job, then runs in the
+background and publishes `search.progress` (§5.6). Per repository it re-exports
+the whole corpus and asks Pando to index the source tree; then it reindexes the
+knowledge base once:
+
+```json
+202
+{"jobId":"reindex-1","startedAt":"2026-09-15T10:04:00Z","phase":"export","repos":[]}
+```
+
+Poll `GET /api/v1/search/settings`, whose `reindex` field carries the running job
+and, afterwards, the last finished one:
+
+```json
+{"jobId":"reindex-1","phase":"completed","kbNote":"Reindexed.",
+ "kb":{"scanned":450,"added":3,"updated":0,"unchanged":447,"deleted":0},
+ "repos":[{"repo":"acme-api","export":{"items":412,"pages":38,"written":3},"codeJob":"idx-7741"}]}
+```
+
+- The three halves are independent. A Pando that is down never invalidates an
+  export that worked: `exportError` and `codeError` are reported per repository,
+  and the job ends `failed` with the successful halves still in it.
+- **The knowledge-base half is honest.** Pando has no filesystem watcher for the
+  corpus (`KBWatch` is off by design), so without a REST URL the corpus is
+  re-exported and `kbNote` says *"Re-exported, awaiting Pando's next import
+  pass"* — not that anything was reindexed. With `restUrl` configured the job
+  calls Pando's reindex route and `kb` carries the real
+  `scanned/added/updated/unchanged/deleted` counts.
+- A second call while one is running is refused with `search_reindex_running`
+  (409) and the running job is untouched. A companion with neither a corpus
+  directory nor a Pando endpoint answers `search_not_configured` (400).
+
+> **Operations: the embedding model is pinned configuration.** Pando skips any
+> chunk whose vector length differs from the query's — silently, with no
+> dimension guard and no error — and the model is configured **per Pando
+> instance, not per corpus**. Changing it therefore degrades recall invisibly for
+> *every* consumer of that instance, not just git-in-track, until a full reindex
+> has re-embedded everything. Treat the model as a pinned value and reindex
+> deliberately when it changes.
 
 #### The inbox (GIT-US-0056, ADR-033)
 
@@ -3359,6 +3613,112 @@ gets both halves from one call instead of hard-coding the list in the frontend.
 Each call is bounded by a 15 s timeout inside the router's 30 s one and honours
 request cancellation: closing the settings card cancels the call in flight.
 
+#### The agent proxy (GIT-US-0049)
+
+`gintrack serve --agent` mounts a relay to a local Pando AG-UI adapter
+(`pando agui-serve`). The browser talks AG-UI to the companion; the companion
+talks AG-UI to Pando. The point of the hop is that **the browser never holds the
+Pando token and never learns the Pando origin**: the credential is injected as an
+`Authorization: Bearer` header server-side, and the discovery document is
+rewritten before it is forwarded.
+
+The whole group sits inside the bearer-auth group of §5.1, so every request below
+needs this run's companion token, and every one of them answers `401` without it.
+
+```http
+GET    /api/v1/agent/info                     # discovery, rewritten (see below)
+GET    /api/v1/agent/health                   # upstream liveness probe
+POST   /api/v1/agent/run?repo=<id>            # run a turn; SSE response
+GET    /api/v1/agent/threads
+GET    /api/v1/agent/threads/{id}/messages
+GET    /api/v1/agent/threads/{id}/stream      # reattach to a live run; SSE
+DELETE /api/v1/agent/threads/{id}
+POST   /api/v1/agent/runs/{id}/cancel
+```
+
+Every route maps one-to-one onto the upstream route of the same name under
+`agent.pando.path` (default `/api/v1/agui`), except two: `/health` probes the
+adapter's unauthenticated `{path}/healthz` and is the only hop that carries no
+token, and `/run` posts to `{path}/{agent}`, where `{agent}` is the configured
+`agent.pando.agent` — the browser does not choose which agent runs.
+
+**Routing.** The deployment is one `agui-serve` process per repository, so
+`?repo=<id>` selects the upstream from the `agent.pando.repos` table, falling
+back to the section-wide URL. An id that names neither a table row nor a mounted
+repository is an `agent_repo_unknown` **404** — never a silent fallback to
+another repository's agent.
+
+**Streaming.** `POST /run` and `/threads/{id}/stream` answer
+`Content-Type: text/event-stream` with `Cache-Control: no-cache` and
+`X-Accel-Buffering: no`. Frames are Pando's own: bare `data: {json}` lines whose
+discriminator is the JSON `type` field (`RUN_STARTED`, `TEXT_MESSAGE_CONTENT`,
+`RUN_FINISHED`, `RUN_ERROR`, …), not the SSE `event:` field. The relay flushes
+every write as it arrives (`httputil.ReverseProxy` with `FlushInterval: -1`),
+both streaming routes are exempt from the 30 s request deadline of §5.3, and the
+inbound request context is passed straight through: **closing the browser
+connection cancels the upstream run**.
+
+**Header hygiene.** The browser's `Origin`, `Referer`, `Cookie` and
+`Authorization` headers are dropped before dialling Pando — Pando skips its CORS
+check when no `Origin` is present, which is why its allow-list is deliberately
+left empty — and no `X-Forwarded-*` header is added. The `repo` parameter and
+anything that looks like a credential (`token`, `access_token`, `api_key`) are
+stripped from the forwarded query string: the Pando token travels in a header, in
+one direction, and never in a URL. The upstream's own CORS headers are removed
+from the response, since they describe the Pando listener's policy and not this
+one's.
+
+**`GET /info`** is the one route that is not a byte-for-byte relay. Pando answers
+with absolute URLs into its own origin, so the proxy rewrites every
+`agents[].url` to the companion-relative `/api/v1/agent/run`, rewrites `path` to
+`/api/v1/agent`, and **removes** every remaining string anywhere in the document
+that parses as an absolute URL. Removing rather than rewriting is deliberate: a
+key the browser never sees cannot leak an origin.
+
+```http
+GET /api/v1/agent/info
+200
+{
+  "protocol": "ag-ui",
+  "path": "/api/v1/agent",
+  "capabilities": { "humanInTheLoop": true, "sharedState": true },
+  "agents": [
+    { "name": "backlog-assistant", "description": "…", "url": "/api/v1/agent/run" }
+  ]
+}
+```
+
+**Concurrency.** Pando enforces no limit of its own, so the companion does:
+`agent.pando.maxRuns` (default 8) caps the runs in flight across the whole
+proxy. Over the cap a run is refused immediately rather than queued:
+
+```http
+POST /api/v1/agent/run
+503
+Retry-After: 5
+{ "code": "agent_busy", "status": 503, "detail": "This companion already has 8 agent runs in flight…" }
+```
+
+**Problem codes.** Every failure is an RFC 7807 document (§5.4), never a
+half-written stream without a terminal frame:
+
+| Code | Status | Meaning |
+| --- | --- | --- |
+| `not_implemented` | 501 | the feature is off, or no upstream is configured |
+| `unauthorized` | 401 | the companion bearer token is missing or wrong |
+| `agent_repo_unknown` | 404 | `?repo=` names no upstream and no mounted repository |
+| `invalid_request` | 400 | the request body is above the 1 MiB cap |
+| `agent_busy` | 503 | the in-flight run cap is reached; retry after `Retry-After` |
+| `agent_upstream` | 502 | the adapter could not be reached or refused the hop |
+
+An `agent_upstream` detail never echoes the upstream body or names the upstream
+host: the browser is not supposed to learn either, and the full error goes to the
+companion's log instead. No response, header or log line this feature writes ever
+contains the Pando token.
+
+The feature is **companion-only**. Browser-only mode has no server to proxy
+through, reports `features.agent: false` and offers nothing to enable.
+
 #### The CORS proxy (GIT-US-0042, docs/06 §6.3, ADR-025)
 
 Browser-only mode cannot reach a git host directly, so the companion forwards the
@@ -3617,6 +3977,15 @@ Event types and `data` schemas:
             "phase":"fetch|commit|integrate|push|done|failed",
             "percent":60, "message":"rebasing 1 commit onto origin/main",
             "ahead":1, "behind":0 } }
+
+// search.progress — the Pando corpus export and the reindex of GIT-US-0091.
+// `operationId` is "startup" for the export the server runs at boot, and the
+// reindex job id otherwise; `repo` is empty for the whole-workspace phases.
+{ "type":"search.progress",
+  "data": { "operationId":"reindex-1", "repo":"ACME",
+            "phase":"export|code|kb|completed|failed",
+            "percent":72, "done":324, "total":450,
+            "message":"indexing the source tree" } }
 
 // conflict.detected — a merge/rebase produced conflicts
 { "type":"conflict.detected",

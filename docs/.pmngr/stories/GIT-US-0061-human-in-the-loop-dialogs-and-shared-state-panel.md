@@ -2,7 +2,7 @@
 id: GIT-US-0061
 type: story
 title: Human in the loop dialogs and shared-state panel
-status: backlog
+status: done
 priority: medium
 parent: GIT-EP-0018
 milestone: GIT-M-0013
@@ -10,7 +10,9 @@ author: mcp
 labels: [web, security]
 estimate: 5
 created: 2026-09-13T13:12:43Z
-updated: 2026-09-13T21:15:40Z
+updated: 2026-09-15T16:44:38Z
+started: 2026-09-15T16:13:53Z
+closed: 2026-09-15T16:44:38Z
 ---
 
 ## Description

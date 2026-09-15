@@ -13,6 +13,15 @@
  * land with their stories.
  */
 
+/**
+ * AG-UI protocol types (GIT-US-0053). They are imported from the browser-safe
+ * entry `@pando-ai/sdk/agui/client`, never from the package root or the
+ * `/agui` index, which pull Node-only code and CopilotKit. Every one of them
+ * is a type, so the import is erased at build time and the provider boundary
+ * stays free of a runtime dependency on the SDK.
+ */
+import type { AguiEvent, AguiInfo, AguiMessage, RunAgentInput } from '@pando-ai/sdk/agui/client';
+
 import type {
   CommentPushEntry,
   CommentPushInput,
@@ -88,7 +97,6 @@ import type {
   RetroTheme,
   RetroThemeView,
   RetroView,
-  SearchHit,
   SnapshotInfo,
   SnapshotItemSummary,
   SnapshotResult,
@@ -197,7 +205,6 @@ export type {
   RetroTheme,
   RetroThemeView,
   RetroView,
-  SearchHit,
   SnapshotInfo,
   SnapshotItemSummary,
   SnapshotResult,
@@ -1194,7 +1201,12 @@ export type Capabilities = {
   ssh: boolean;
   /** fsnotify push events. */
   watch: boolean;
-  fullTextSearch: 'core' | 'bleve';
+  /**
+   * Which engine answers `search`. `'pando'` means the companion can also ask
+   * a Pando index for semantically related passages, which is what the search
+   * UI gates its "Related by meaning" section on (GIT-US-0086).
+   */
+  fullTextSearch: 'core' | 'bleve' | 'pando';
   mcp: boolean;
   openInEditor: boolean;
   maxBatchWrite: number;
@@ -1207,6 +1219,22 @@ export type Capabilities = {
   youtrackSupported: boolean;
   /** At least one mounted project declares an `integrations.youtrack` block. */
   youtrack: boolean;
+  /**
+   * This runtime exposes `/api/v1/search/settings` — companion mode. It gates
+   * the semantic-search settings card the way `youtrackSupported` gates the
+   * YouTrack one: the card has to exist before anything is configured, so it
+   * asks whether the runtime *has* the surface, not whether Pando is already
+   * wired up (GIT-US-0091).
+   */
+  searchSettings: boolean;
+  /**
+   * The companion can reach a Pando AG-UI adapter for at least one repository
+   * (GIT-EP-0018). Everything the agent feature renders branches on this flag,
+   * never on the provider kind: a companion built without the agent routes,
+   * or configured with no `agui-serve` behind it, answers `false` and the chat
+   * surface simply is not there.
+   */
+  agent: boolean;
 };
 
 export type RepoKind = 'project' | 'team';
@@ -1309,10 +1337,176 @@ export function teamScope(team?: string): { team?: string } {
   return team === undefined || team === '' ? {} : { team };
 }
 
+/**
+ * Where a hit came from. `'core'` is an exact match found by the local index;
+ * `'pando'` is a passage a semantic index considered related. A hit that
+ * carries no `source` predates GIT-US-0086 and is read as `'core'`.
+ */
+export type SearchHitSource = 'core' | 'pando';
+
+/**
+ * One search result. `snippet` is the passage that matched — repository
+ * content, so it is always rendered as escaped text — and `score` is the
+ * engine's own relevance, only ever shown as a subdued indicator.
+ */
+export type SearchHit = {
+  kind: 'item' | 'page';
+  id?: string;
+  path?: string;
+  title: string;
+  snippet?: string;
+  score?: number;
+  /** Project key the hit belongs to; the team key for a team knowledge-base page. */
+  project?: string;
+  /** Repository the hit came from, set by a workspace-wide search. */
+  vaultId?: string;
+  source: SearchHitSource;
+};
+
+/**
+ * The answer to one search. Hits arrive ordered: exact matches first, then the
+ * semantic ones that are not already among them. `degraded` says the semantic
+ * half could not be reached, so the panel can say so instead of silently
+ * dropping a section the user turned on.
+ */
+export type SearchResult = {
+  hits: SearchHit[];
+  degraded?: boolean;
+};
+
 export type SearchQuery = {
   text: string;
   projectKey?: string;
   limit?: number;
+};
+
+/**
+ * The statistics of one full corpus export (`pandosync.Stats`, docs/21).
+ *
+ * `written`, `removed` and `skipped` are what makes an export diagnosable: a
+ * run that skipped everything wrote nothing because nothing changed, which is
+ * a very different thing from a run that found nothing to export.
+ */
+export type SearchCorpusStats = {
+  items: number;
+  pages: number;
+  written: number;
+  removed: number;
+  skipped: number;
+  /** Nanoseconds, as Go encodes a `time.Duration`. */
+  duration: number;
+  /** RFC 3339; empty when the corpus has never been exported. */
+  at: string;
+  full: boolean;
+};
+
+/** One mounted repository's corpus: where it is written and how it last went. */
+export type SearchCorpus = {
+  repo: string;
+  dir: string;
+  last: SearchCorpusStats;
+};
+
+/** What Pando's REST reindex route counted (`pando.ReindexStats`). */
+export type SearchReindexKbStats = {
+  scanned: number;
+  added: number;
+  updated: number;
+  unchanged: number;
+  deleted: number;
+};
+
+/**
+ * The reindex of one repository. The halves are independent on purpose: a
+ * Pando that is down never invalidates an export that worked, so `exportError`
+ * and `codeError` are reported apart and either may be empty.
+ */
+export type SearchReindexRepo = {
+  repo: string;
+  export: SearchCorpusStats;
+  exportError?: string;
+  /** The Pando code-index job the repository's source tree was handed to. */
+  codeJob?: string;
+  codeError?: string;
+};
+
+/**
+ * Where a reindex is. The three working phases are walked in this order and
+ * the job settles into `completed` or `failed`; the same values arrive on the
+ * `search.progress` topic.
+ */
+export type SearchReindexPhase = 'export' | 'code' | 'kb' | 'completed' | 'failed';
+
+/** `POST /api/v1/search/reindex` → the job, and `settings.reindex` afterwards. */
+export type SearchReindexJob = {
+  jobId: string;
+  startedAt: string;
+  endedAt?: string;
+  phase: SearchReindexPhase;
+  repos: SearchReindexRepo[];
+  /** Real counts, only when a REST URL made a true reindex possible. */
+  kb?: SearchReindexKbStats;
+  /**
+   * What happened to the knowledge-base half in words. Without a REST URL it
+   * says the corpus was re-exported and awaits Pando's next import pass —
+   * `KBWatch` is off by design, so nothing was indexed and the card must not
+   * claim otherwise.
+   */
+  kbNote?: string;
+  error?: string;
+};
+
+/**
+ * `GET|PATCH /api/v1/search/settings` — where Pando is, where the corpus lives
+ * and whether it is current (story GIT-US-0091, docs/07).
+ *
+ * Neither Pando token is ever part of this shape. They are resolved from the
+ * environment or the configuration file and stay in the companion process, so
+ * the card reports where a credential comes from and never offers a field for
+ * one.
+ */
+export type SearchSettings = {
+  /** The engine `features.search` reports, the same values as the capability. */
+  backend: Capabilities['fullTextSearch'];
+  configured: boolean;
+  mcpUrl: string;
+  restUrl: string;
+  projectId: string;
+  corpusDir: string;
+  allowRemote: boolean;
+  /**
+   * A live probe of the MCP endpoint, run while answering. `null` means no
+   * endpoint is configured, which is not a failure; `false` comes with
+   * `reachableError` saying what went wrong.
+   */
+  reachable: boolean | null;
+  reachableError: string;
+  corpora: SearchCorpus[];
+  /** Exported documents across every corpus. */
+  documents: number;
+  /** RFC 3339 of the most recent export, or null when there has been none. */
+  lastExport: string | null;
+  /** The running job, or the last finished one; null before the first. */
+  reindex: SearchReindexJob | null;
+  /**
+   * Whether the last change reached the configuration file. `false` means the
+   * companion has no configuration path — a test, or `serve --repo` — so the
+   * change lives only until the process exits.
+   */
+  persisted: boolean;
+};
+
+/**
+ * The fields a search-settings change may carry; an absent one is left alone.
+ * Tokens are deliberately absent: a credential enters the process from the
+ * environment or the file, never over the API.
+ */
+export type SearchSettingsPatch = {
+  mcpUrl?: string;
+  restUrl?: string;
+  projectId?: string;
+  corpusDir?: string;
+  allowRemote?: boolean;
 };
 
 export type UpdateOp = {
@@ -1393,6 +1587,21 @@ export type ProviderErrorCode =
   | 'sync_job_not_retryable'
   /** The engine has been closed, or was never started. */
   | 'sync_engine_not_running'
+  /**
+   * A reindex is already running; the running one was untouched. It is a
+   * refusal to explain and not a failure to retry, so the card says so and
+   * keeps following the job that is already there (GIT-US-0091).
+   */
+  | 'search_reindex_running'
+  /** Neither a corpus directory nor a Pando endpoint: there is nothing to index. */
+  | 'search_not_configured'
+  /**
+   * The runtime cannot do this at all — browser-only mode asked for the agent,
+   * say. It is a permanent property of the runtime, not a failure to retry and
+   * not a permission the user could be granted, so it is its own code rather
+   * than `read_only` (GIT-US-0053).
+   */
+  | 'not_supported'
   | 'internal';
 
 export type ChangeEvent =
@@ -1425,6 +1634,24 @@ export type ChangeEvent =
    * changed. The page was left exactly as it is and the incoming content went
    * to `conflictPath`.
    */
+  /**
+   * A `search.progress` frame: one step of a semantic-search reindex. It is
+   * how the settings card follows a job it started without polling, and the
+   * terminal phases (`completed`, `failed`) are what tell it to re-read the
+   * settings for the finished job (GIT-US-0091).
+   */
+  | {
+      kind: 'searchProgress';
+      /** The reindex job this frame belongs to (`jobId`). */
+      operationId: string;
+      /** The repository being worked on; empty for the whole-job phases. */
+      repoId: string;
+      phase: SearchReindexPhase;
+      percent: number;
+      done: number;
+      total: number;
+      message: string;
+    }
   | {
       kind: 'kbConflict';
       project: string;
@@ -1515,7 +1742,7 @@ export interface DataProvider {
   listKbTree(scope: KbScope): Promise<KbNode[]>;
   getPage(scope: KbScope, path: string): Promise<KbPage>;
   readAsset(scope: KbScope, path: string): Promise<Blob>;
-  search(query: SearchQuery): Promise<SearchHit[]>;
+  search(query: SearchQuery): Promise<SearchResult>;
   validateItem(input: { id?: string; text?: string; path?: string }): Promise<Diagnostic[]>;
   /**
    * Everything that still points at an item: a child's `parent`, a story's
@@ -1711,6 +1938,30 @@ export interface DataProvider {
   updateGitSettings(patch: GitSettingsPatch): Promise<GitSettings>;
   /** Per-repository git state: backend, identity and dirty set. */
   getGitStatus(repoId?: string): Promise<GitRepoStatus[]>;
+
+  // semantic search settings (`GET|PATCH /api/v1/search/settings`, GIT-US-0091)
+  /**
+   * Where Pando is, where the exported corpus lives, how current it is and
+   * whether the endpoint answers right now. The reachability probe runs while
+   * the request is answered, so a call is a diagnosis and not a cached one.
+   */
+  getSearchSettings(): Promise<SearchSettings>;
+  /**
+   * Changes them. The running process adopts the patch first and the
+   * configuration file is written afterwards, and `persisted` says whether the
+   * second half happened. A non-loopback URL without `allowRemote`, a URL that
+   * is not one, or a relative `corpusDir` is refused with `validation_failed`
+   * and nothing is adopted.
+   */
+  updateSearchSettings(patch: SearchSettingsPatch): Promise<SearchSettings>;
+  /**
+   * Starts a reindex and answers the job it queued; the work runs in the
+   * background and reports on the `search.progress` topic, which arrives here
+   * as a `searchProgress` change event. A second call while one runs is
+   * refused with `search_reindex_running`, and a companion with nothing to
+   * index with answers `search_not_configured`.
+   */
+  reindexSearch(): Promise<SearchReindexJob>;
 
   // MCP write tools (`GET|PATCH /api/v1/mcp/settings`)
   /**
@@ -1920,8 +2171,90 @@ export interface DataProvider {
     resolution: ConflictResolution,
   ): Promise<ConflictResolveResult>;
 
+  // agent (Pando AG-UI, GIT-EP-0018 / GIT-US-0053)
+  /**
+   * The adapter's discovery document: which agents exist and which optional
+   * halves of the protocol — frontend tools, human-in-the-loop, shared state,
+   * interrupts — this deployment implements.
+   */
+  getAgentInfo(options?: AgentRequestOptions): Promise<AguiInfo>;
+  /** Liveness of the adapter behind the companion, for the settings card. */
+  getAgentHealth(options?: AgentRequestOptions): Promise<AgentHealth>;
+  /**
+   * Runs the agent and yields AG-UI events as they arrive.
+   *
+   * It is an async iterable rather than a callback feed because that is the
+   * shape `PandoThread` consumes (`client.run`), so the SDK's own reducer can
+   * be dropped straight onto this seam. The HTTP failure surfaces on the first
+   * `next()`, as a `ProviderError`; aborting `options.signal` ends the
+   * iteration.
+   *
+   * The whole transcript is resent on every turn: Pando forwards only the
+   * trailing user message, and a trailing `tool` message is what resumes an
+   * interrupted run rather than starting a new one.
+   */
+  runAgent(input: RunAgentInput, options?: AgentRunOptions): AsyncIterable<AguiEvent>;
+  /** Every thread the adapter remembers for a repository, newest first. */
+  listAgentThreads(options?: AgentRequestOptions): Promise<AgentThreadSummary[]>;
+  /** The stored transcript of one thread, for restoring it after a reload. */
+  getAgentThreadMessages(threadId: string, options?: AgentRequestOptions): Promise<AguiMessage[]>;
+  /**
+   * Re-attaches to a thread whose run is still live — the tab that owned it
+   * reloaded, say. It yields the same event stream `runAgent` does, without
+   * starting a run.
+   */
+  streamAgentThread(threadId: string, options?: AgentRunOptions): AsyncIterable<AguiEvent>;
+  /** Forgets a thread and its transcript. */
+  deleteAgentThread(threadId: string, options?: AgentRequestOptions): Promise<void>;
+  /**
+   * Cancels the run in flight on a thread. The stream then ends with a
+   * `RUN_ERROR` carrying `code: 'cancelled'`.
+   */
+  cancelAgentRun(threadId: string, options?: AgentRequestOptions): Promise<void>;
+
   subscribe(handler: (event: ChangeEvent) => void): Unsubscribe;
 }
+
+// ------------------------------------------------------------------- agent
+
+/**
+ * What every agent call needs: which repository's adapter to talk to, and a
+ * signal to give up with. One `agui-serve` runs per repository and the
+ * companion routes `repo` onto `{url, token}` of its own, so the Pando token
+ * never reaches the browser (decision of 2026-09-13).
+ */
+export type AgentRequestOptions = {
+  /** Repository id; the companion's default repository when omitted. */
+  repo?: string;
+  signal?: AbortSignal;
+};
+
+/** A streaming agent call. Same shape; named apart so the docs stay honest. */
+export type AgentRunOptions = AgentRequestOptions;
+
+/** `GET /api/v1/agent/health` → is there an adapter answering at all. */
+export type AgentHealth = {
+  ok: boolean;
+  /** Adapter version, when it reports one. */
+  version?: string;
+  /** Why it is not ok; absent when it is. */
+  detail?: string;
+};
+
+/** One row of `GET /api/v1/agent/threads`. */
+export type AgentThreadSummary = {
+  id: string;
+  /** A title the adapter derived, usually the opening message. */
+  title?: string;
+  /** RFC 3339. */
+  createdAt?: string;
+  updatedAt?: string;
+  messageCount?: number;
+  /** True while a run is still attached to this thread. */
+  running?: boolean;
+};
+
+export type { AguiEvent, AguiInfo, AguiMessage, RunAgentInput };
 
 /** How a retro listing is narrowed; the filters are ANDed. */
 /** A draft filed straight into the triage queue (ADR-033). */
@@ -2067,4 +2400,6 @@ export const readOnlyCapabilities: Capabilities = {
   maxBatchWrite: 0,
   youtrackSupported: false,
   youtrack: false,
+  searchSettings: false,
+  agent: false,
 };

@@ -2,7 +2,7 @@
 id: GIT-T-0176
 type: task
 title: Update docs/02 section 8 for the Pando accelerator
-status: todo
+status: done
 priority: medium
 parent: GIT-US-0082
 milestone: GIT-M-0013
@@ -10,7 +10,9 @@ author: mcp
 labels: [docs, agent-ok]
 estimate: 1
 created: 2026-09-13T13:19:35Z
-updated: 2026-09-13T13:19:35Z
+updated: 2026-09-15T16:43:51Z
+started: 2026-09-15T16:04:13Z
+closed: 2026-09-15T16:43:51Z
 ---
 
 ## Description

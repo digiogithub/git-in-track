@@ -2,7 +2,7 @@
 id: GIT-US-0086
 type: story
 title: Semantic results in the search UI
-status: backlog
+status: done
 priority: medium
 parent: GIT-EP-0019
 milestone: GIT-M-0013
@@ -10,7 +10,9 @@ author: mcp
 labels: [web]
 estimate: 5
 created: 2026-09-13T13:14:38Z
-updated: 2026-09-13T13:14:38Z
+updated: 2026-09-15T16:44:53Z
+started: 2026-09-15T15:50:45Z
+closed: 2026-09-15T16:44:53Z
 ---
 
 ## Description

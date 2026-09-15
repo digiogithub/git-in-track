@@ -1,0 +1,98 @@
+---
+name: gintrack-search
+description: Routes a question about the git-in-track backlog to the right search tool - structured queries to the gintrack MCP server, literal ones to its full-text search, meaning-based ones to semantic search, code ones to the code index.
+when-to-use: The user asks anything about items, sprints, milestones, knowledge-base pages or the code of this repository.
+when-not-to-use: The user asks about something outside this repository, or asks you to change a file.
+version: 1
+---
+
+# Routing a question about `{{ .RepoID }}`
+
+Four kinds of question, four routes, and picking the wrong one is the usual
+reason an answer is vague. Decide first, then call **one** tool, then widen only
+if it comes back empty.
+
+| The question is… | Route it to | Because |
+|---|---|---|
+| **Structured** — an id, a status, an assignee, a sprint, a parent, a label, a date range | `gintrack` MCP: `get_item`, `list_items` | These read the front matter directly. They are exact, they are cheap, and they return a `rev` you need for any write. |
+| **Literal** — words you expect to appear verbatim in an item or a page | `search_items`, `search_kb` | Substring ranking over ids, titles, labels and bodies, straight out of the repository index. |
+| **Semantic** — a topic, a decision, "where did we say…", wording the user half-remembers | `search_semantic` (fallback: `kb_search_documents` with a `path_prefix`) | It ranks items and pages by meaning and resolves every hit back to the live repository, so you get an id and a `rev`, not a mirror of one. |
+| **Code** — a symbol, a call site, "how is X implemented" | `code_hybrid_search`, then `code_find_symbol` | The code index is the only one that sees Go, TypeScript and their symbol graph. The backlog corpus is Markdown only. |
+
+The same table is in `docs/08-mcp-server.md` §4.19 and `docs/20-agent-interface.md`.
+
+## One example per row
+
+**Structured.** "Which tasks of GIT-US-0069 are still open?"
+
+```
+list_items(parent: "GIT-US-0069", status: ["todo", "in_progress"],
+           fields: ["id", "title", "status", "assignees"])
+```
+
+Not `kb_search_documents("open tasks of GIT-US-0069")`: the status lives in front
+matter, so an exact filter beats a similarity score every time.
+
+**Literal.** "Which items mention `X-Pando-Token`?"
+
+```
+search_items(query: "X-Pando-Token")
+```
+
+The string appears verbatim, so substring ranking is exact and free. Reach for
+`search_kb` for the same question over knowledge-base pages.
+
+**Semantic.** "Where did we decide how the CORS proxy is allowed to forward?"
+
+```
+search_semantic(query: "CORS proxy allow-list git smart HTTP", limit: 5)
+```
+
+Hits come back with `kind`, `id` or `path`, `score`, a snippet and the current
+`rev`, ranked by meaning rather than by wording. `kind: "item"` or `"page"`
+narrows it; `project` scopes it to one project key.
+
+If `search_semantic` answers `{"error":{"code":"unavailable"}}`, this session has
+no Pando backend wired into gintrack. Do **not** report that nothing matched —
+the query never ran. Fall back to `search_items` and `search_kb` with the words
+you expect literally, or search the exported corpus directly:
+
+```
+kb_search_documents(query: "CORS proxy allow-list git smart HTTP",
+                    path_prefix: "kb/")
+```
+
+`file_path` is relative to the corpus root, so the two prefixes that matter are
+`items/` (one document per backlog item) and `kb/` (one per knowledge-base
+page). An empty prefix searches every document Pando has indexed, this
+repository's corpus included — that is rarely what you want.
+
+Then read the winner with `kb_get_document` and, if it is an item, confirm it
+with `get_item` — the exported copy can lag the repository by one export.
+
+**Code.** "How does the companion decide which repositories to serve?"
+
+```
+code_hybrid_search(query: "workspace repos resolution companion serve")
+code_find_symbol(name: "WorkspaceRepos")
+```
+
+## Prefer separate calls over one combined one
+
+`hybrid_search_remembrances` searches memories, knowledge base and code at once
+and returns a blended ranking. That is the wrong shape here: it hides which
+index answered, it mixes Pando's own memories into a question about this
+repository, and it takes no `path_prefix`. Call the specific tool, and call the
+second one only when the first returns nothing.
+
+## After a semantic hit, go back to the source
+
+`search_semantic` and `kb_search_documents` return **candidates**. A snippet is a
+mirror; the repository is the authority. Take the item id out of the hit, call
+`get_item`, and answer from that. Cite the id, not the snippet.
+
+## Nothing found
+
+Say so. Name the tool you used and the query you used, and offer the next
+narrower or wider query. Do not guess an id, and do not answer from memory of
+another repository.

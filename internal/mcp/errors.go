@@ -27,6 +27,11 @@ const (
 	codeInvalidCursor = "invalid_cursor"
 	// codeNotFound is an item, page or board that is not indexed.
 	codeNotFound = "not_found"
+	// codeUnavailable is a capability this session does not have: today the
+	// semantic backend a browser-only or Pando-less session never installs. It
+	// is not a failure of the request, so the answer names what to do instead
+	// rather than an empty result the agent would read as "nothing matched".
+	codeUnavailable = "unavailable"
 	// codePreconditionRequired is a write tool called without the rev of the
 	// read it is based on. It is the same refusal the REST API returns as 428
 	// for a mutation with no If-Match (docs/07 section 5.3).

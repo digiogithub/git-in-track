@@ -7,6 +7,13 @@
  */
 
 import type {
+  AgentHealth,
+  AgentRunOptions,
+  AgentThreadSummary,
+  AguiEvent,
+  AguiInfo,
+  AguiMessage,
+  RunAgentInput,
   CommentPushEntry,
   CommentPushInput,
   CommentPushResult,
@@ -71,6 +78,10 @@ import type {
   RepoInfo,
   SearchHit,
   SearchQuery,
+  SearchReindexJob,
+  SearchResult,
+  SearchSettings,
+  SearchSettingsPatch,
   SnapshotInfo,
   SnapshotItemSummary,
   SnapshotRefresh,
@@ -142,8 +153,34 @@ import type {
 import { ProviderError, readOnlyCapabilities } from '@/api/provider';
 import { DEFAULT_COMMIT_TEMPLATE, validateCommitTemplate } from '@/git/message';
 
+/**
+ * The search engine this fake stands in for: the capability it reports, the
+ * semantic hits every query appends after the exact ones, and whether the
+ * semantic half answers at all (GIT-US-0086).
+ */
+export type FakeSearch = {
+  fullTextSearch?: Capabilities['fullTextSearch'];
+  semantic?: SearchHit[];
+  degraded?: boolean;
+  /**
+   * The semantic-search settings surface, in memory. Absent — the default —
+   * makes this fake a runtime that has none at all: the `searchSettings`
+   * capability is false and every call fails, which is what a browser does.
+   * Supplying it, even as `{}`, opts a test into the companion behaviour.
+   */
+  settings?: Partial<SearchSettings>;
+  /** Whether a patch reaches the configuration file; true by default. */
+  persisted?: boolean;
+  /** When set, every reindex fails with this instead of queueing a job. */
+  reindexError?: { code: ProviderErrorCode; message: string };
+  /** Overrides on the job a reindex answers with. */
+  reindexJob?: Partial<SearchReindexJob>;
+};
+
 export type FakeData = {
   projects?: ProjectSummary[];
+  /** Overrides on the search engine; omit for the plain core index. */
+  search?: FakeSearch;
   items?: Item[];
   comments?: Comment[];
   pages?: KbPage[];
@@ -190,6 +227,50 @@ export type FakeData = {
    * `unlinked`, which is what a page nobody has published looks like.
    */
   kbSync?: FakeKbSync;
+  /**
+   * The Pando agent, in memory. Absent — the default — makes this fake a
+   * runtime with no agent at all: the `agent` capability is false and every
+   * agent call fails, which is what a browser does. Supplying it opts a test
+   * into the companion behaviour.
+   */
+  agent?: FakeAgent;
+};
+
+/**
+ * A scripted AG-UI stream (story GIT-US-0053).
+ *
+ * Nothing here simulates an agent: a test supplies the exact event array each
+ * turn should yield, in order, and asserts on `runs`, the inputs the store
+ * actually posted. That keeps the fake honest — it replays a recording, it
+ * does not invent a protocol.
+ */
+export type FakeAgent = {
+  /**
+   * One event array per turn, consumed in order. When the queue runs dry the
+   * last entry is replayed, so a test that only cares about the first turn
+   * does not have to script the rest.
+   */
+  turns?: AguiEvent[][];
+  /** Shorthand for a single-turn `turns`. */
+  events?: AguiEvent[];
+  /** What `getAgentInfo` answers. */
+  info?: AguiInfo;
+  /** What `getAgentHealth` answers. */
+  health?: AgentHealth;
+  /** What `listAgentThreads` answers. */
+  threads?: AgentThreadSummary[];
+  /** Stored transcripts, keyed by thread id, for `getAgentThreadMessages`. */
+  messages?: Record<string, AguiMessage[]>;
+  /** Events `streamAgentThread` replays; falls back to the current turn. */
+  reattach?: AguiEvent[];
+  /** When set, starting a run fails with this before any event arrives. */
+  runError?: { code: ProviderErrorCode; message: string };
+  /**
+   * When set, the stream throws this after `throwAfter` events — the
+   * mid-stream transport failure a terminal error state has to survive.
+   */
+  streamError?: { code: ProviderErrorCode; message: string };
+  throwAfter?: number;
 };
 
 /**
@@ -606,6 +687,21 @@ function isDone(card: BoardCard): boolean {
   return category === 'done' || category === 'cancelled';
 }
 
+/**
+ * Whether a Pando URL points at this machine. The companion delegates the rule
+ * to `pando.New`; the fake only needs the part the settings card depends on,
+ * which is that a remote host is refused unless `allowRemote` is on.
+ */
+function isLoopbackUrl(value: string): boolean {
+  let host: string;
+  try {
+    host = new URL(value).hostname;
+  } catch {
+    return false;
+  }
+  return host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]';
+}
+
 /** Why a fake with no YouTrack block behaves like browser-only mode. */
 const NO_YOUTRACK_REASON =
   'YouTrack is not available in this mode. Run `gintrack serve` to connect a project.';
@@ -778,6 +874,49 @@ const sampleGintrackFields = [
   'due',
   'sprint',
 ];
+
+/** The discovery document a fake with no `info` override answers with. */
+export const sampleAgentInfo: AguiInfo = {
+  protocol: 'ag-ui',
+  version: 'fake',
+  path: '/api/v1/agent',
+  agents: [{ name: 'coder', url: '/api/v1/agent/run', description: 'The fake coder agent.' }],
+  capabilities: {
+    frontendTools: true,
+    humanInTheLoop: true,
+    sharedState: true,
+    interrupts: true,
+  },
+};
+
+/**
+ * Replays a scripted event array as an AG-UI stream.
+ *
+ * It yields between microtasks so a consumer can abort mid-stream, which is
+ * what the cancel and the mid-stream-failure tests need.
+ */
+async function* replayAgentEvents(
+  script: AguiEvent[],
+  agent: FakeAgent,
+  signal?: AbortSignal,
+): AsyncGenerator<AguiEvent> {
+  let seen = 0;
+  for (const event of script) {
+    if (signal?.aborted === true) {
+      throw new DOMException('The run was aborted.', 'AbortError');
+    }
+    if (agent.streamError && agent.throwAfter !== undefined && seen === agent.throwAfter) {
+      throw new ProviderError(agent.streamError.code, agent.streamError.message);
+    }
+    // A real stream never resolves synchronously; neither does this one.
+    await Promise.resolve();
+    seen += 1;
+    yield structuredClone(event);
+  }
+  if (agent.streamError && agent.throwAfter === undefined) {
+    throw new ProviderError(agent.streamError.code, agent.streamError.message);
+  }
+}
 
 const writableCapabilities: Capabilities = {
   ...readOnlyCapabilities,
@@ -1182,6 +1321,16 @@ export class FakeProvider implements DataProvider {
   private mcp: McpSettings;
   /** Reads left before a `starting` tunnel settles, so polling is testable. */
   private tunnelReadsToConnect = 0;
+  /** The semantic-search settings, in memory; null on a runtime that has none. */
+  private searchSettings: SearchSettings | null;
+  /** Whether a settings patch reaches a configuration file. */
+  private searchPersisted = true;
+  /** When set, every reindex fails with this instead. */
+  private searchReindexError: { code: ProviderErrorCode; message: string } | null = null;
+  /** Overrides on the job a reindex answers with. */
+  private searchReindexJob: Partial<SearchReindexJob> | null = null;
+  /** Reindex jobs queued so far, so ids are stable and countable. */
+  private searchReindexCount = 0;
   /** The YouTrack connection, in memory; null on a runtime that has none. */
   private youtrack: FakeYouTrack | null;
   private youtrackSettings: YouTrackSettings;
@@ -1203,6 +1352,24 @@ export class FakeProvider implements DataProvider {
   private engineSettings: SyncEngineSettings | null;
   /** The knowledge-base synchronization fixture; null on a runtime with none. */
   private kbSync: FakeKbSync | null;
+  /** The scripted agent; null on a runtime that has none. */
+  private agent: FakeAgent | null;
+  /** Turns consumed so far, so each `runAgent` takes the next script. */
+  private agentTurn = 0;
+  /** Every `RunAgentInput` posted, in order, for a test to assert on. */
+  readonly agentRuns: RunAgentInput[] = [];
+  /** Every thread id `cancelAgentRun` was called with, in order. */
+  readonly agentCancels: string[] = [];
+  /** Every thread id `deleteAgentThread` was called with, in order. */
+  readonly agentDeletes: string[] = [];
+  /**
+   * Semantic hits every `search` appends after the exact ones, so a test can
+   * script the Pando half without an index. They are stamped `pando` on the
+   * way out whatever the fixture says.
+   */
+  semanticHits: SearchHit[] = [];
+  /** Makes every `search` report that the semantic half could not be reached. */
+  searchDegraded = false;
 
   constructor(data: FakeData = {}, opts: { readOnly?: boolean } = {}) {
     const base = opts.readOnly ? readOnlyCapabilities : writableCapabilities;
@@ -1229,6 +1396,7 @@ export class FakeProvider implements DataProvider {
     };
     this.youtrackEnvToken = this.youtrackSettings.tokenSource === 'env';
     this.kbSync = data.kbSync ?? null;
+    this.agent = data.agent ?? null;
     this.syncEngine = data.syncEngine ?? null;
     this.syncJobs = structuredClone(data.syncEngine?.jobs ?? []);
     this.engineSettings =
@@ -1244,10 +1412,38 @@ export class FakeProvider implements DataProvider {
             running: true,
             ...this.syncEngine.settings,
           };
+    this.searchSettings =
+      data.search?.settings === undefined
+        ? null
+        : {
+            backend: data.search.fullTextSearch ?? 'pando',
+            configured: true,
+            mcpUrl: 'http://127.0.0.1:9777/mcp',
+            restUrl: '',
+            projectId: '',
+            corpusDir: '/home/dana/.local/state/gintrack/pando-kb',
+            allowRemote: false,
+            reachable: true,
+            reachableError: '',
+            corpora: [],
+            documents: 0,
+            lastExport: null,
+            reindex: null,
+            persisted: data.search.persisted ?? true,
+            ...data.search.settings,
+          };
+    this.searchPersisted = data.search?.persisted ?? true;
+    this.searchReindexError = data.search?.reindexError ?? null;
+    this.searchReindexJob = data.search?.reindexJob ?? null;
+    this.semanticHits = structuredClone(data.search?.semantic ?? []);
+    this.searchDegraded = data.search?.degraded ?? false;
     this.capabilities = {
       ...base,
+      fullTextSearch: data.search?.fullTextSearch ?? base.fullTextSearch,
+      searchSettings: data.search?.settings !== undefined,
       youtrackSupported: this.youtrack !== null,
       youtrack: this.youtrack !== null && this.youtrackSettings.configured,
+      agent: this.agent !== null,
     };
     this.projects = data.projects ?? [sampleProject];
     this.items = new Map((data.items ?? sampleItems).map((i) => [i.id, structuredClone(i)]));
@@ -1668,7 +1864,13 @@ export class FakeProvider implements DataProvider {
     return Promise.reject(new ProviderError('not_found', `Asset ${path} not found`, path));
   }
 
-  search(query: SearchQuery): Promise<SearchHit[]> {
+  /**
+   * Exact hits come from the seeded items and pages; the semantic half is
+   * scripted, because a fake has no embedding index to ask. Hits are ordered
+   * the way the companion orders them: exact first, then the semantic ones
+   * that are not already among them (GIT-US-0086).
+   */
+  search(query: SearchQuery): Promise<SearchResult> {
     const needle = query.text.toLowerCase();
     const hits: SearchHit[] = [];
     for (const item of this.items.values()) {
@@ -1680,6 +1882,7 @@ export class FakeProvider implements DataProvider {
           title: item.title,
           snippet: '',
           score: 2,
+          source: 'core',
         });
       } else if (item.body.toLowerCase().includes(needle)) {
         hits.push({
@@ -1689,16 +1892,33 @@ export class FakeProvider implements DataProvider {
           title: item.title,
           snippet: '',
           score: 1,
+          source: 'core',
         });
       }
     }
     for (const page of this.pages.values()) {
       if (`${page.title} ${page.body}`.toLowerCase().includes(needle)) {
-        hits.push({ kind: 'page', path: page.path, title: page.title, snippet: '', score: 1 });
+        hits.push({
+          kind: 'page',
+          path: page.path,
+          title: page.title,
+          snippet: '',
+          score: 1,
+          source: 'core',
+        });
       }
     }
-    hits.sort((a, b) => b.score - a.score || a.title.localeCompare(b.title));
-    return Promise.resolve(hits.slice(0, query.limit ?? 20));
+    hits.sort((a, b) => (b.score ?? 0) - (a.score ?? 0) || a.title.localeCompare(b.title));
+    const exact = hits.slice(0, query.limit ?? 20);
+    const seen = new Set(exact.map((hit) => hit.id ?? hit.path ?? hit.title));
+    const semantic = this.semanticHits
+      .filter((hit) => !seen.has(hit.id ?? hit.path ?? hit.title))
+      .map((hit): SearchHit => ({ ...hit, source: 'pando' }));
+    return Promise.resolve(
+      this.searchDegraded
+        ? { hits: [...exact, ...semantic], degraded: true }
+        : { hits: [...exact, ...semantic] },
+    );
   }
 
   validateItem(): Promise<Diagnostic[]> {
@@ -3451,6 +3671,98 @@ export class FakeProvider implements DataProvider {
     return Promise.resolve({ ...this.git });
   }
 
+  // -------------------------------------------------- semantic search settings
+
+  /**
+   * The settings surface, in memory. A runtime scripted without one refuses
+   * every call the way `BrowserProvider` does, which is what keeps the card's
+   * capability gate honest.
+   */
+  private requireSearchSettings(): SearchSettings {
+    if (this.searchSettings === null) {
+      throw new ProviderError('not_supported', 'This runtime has no semantic search.');
+    }
+    return this.searchSettings;
+  }
+
+  getSearchSettings(): Promise<SearchSettings> {
+    try {
+      return Promise.resolve(structuredClone(this.requireSearchSettings()));
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
+  updateSearchSettings(patch: SearchSettingsPatch): Promise<SearchSettings> {
+    let current: SearchSettings;
+    try {
+      current = this.requireSearchSettings();
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+    }
+    const next = { ...current, ...patch };
+    // The one refusal the companion makes on this path: a host that is not
+    // loopback is not dialled without `allowRemote` (docs/07 §3.3).
+    if (!next.allowRemote && next.mcpUrl !== '' && !isLoopbackUrl(next.mcpUrl)) {
+      return Promise.reject(
+        new ProviderError(
+          'validation_failed',
+          'A Pando URL whose host is not a loopback address needs “Allow a remote Pando”.',
+        ),
+      );
+    }
+    this.searchSettings = {
+      ...next,
+      configured: next.mcpUrl !== '' || next.corpusDir !== '',
+      persisted: this.searchPersisted,
+    };
+    return Promise.resolve(structuredClone(this.searchSettings));
+  }
+
+  reindexSearch(): Promise<SearchReindexJob> {
+    let current: SearchSettings;
+    try {
+      current = this.requireSearchSettings();
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+    }
+    if (this.searchReindexError !== null) {
+      return Promise.reject(
+        new ProviderError(this.searchReindexError.code, this.searchReindexError.message),
+      );
+    }
+    this.searchReindexCount += 1;
+    const job: SearchReindexJob = {
+      jobId: `reindex-${String(this.searchReindexCount)}`,
+      startedAt: '2026-09-15T10:04:00Z',
+      phase: 'export',
+      repos: [],
+      ...this.searchReindexJob,
+    };
+    this.searchSettings = { ...current, reindex: structuredClone(job) };
+    return Promise.resolve(structuredClone(job));
+  }
+
+  /**
+   * What the companion's settings read answers once a job has finished. A test
+   * drives the live half with `emitEvent({ kind: 'searchProgress', … })` and
+   * calls this for the job the card then re-reads.
+   */
+  finishSearchReindex(job: Partial<SearchReindexJob>): void {
+    const current = this.requireSearchSettings();
+    const running = current.reindex;
+    this.searchSettings = {
+      ...current,
+      reindex: {
+        jobId: running?.jobId ?? 'reindex-1',
+        startedAt: running?.startedAt ?? '2026-09-15T10:04:00Z',
+        phase: 'completed',
+        repos: running?.repos ?? [],
+        ...job,
+      },
+    };
+  }
+
   // ------------------------------------------------------------------ tunnel
 
   /**
@@ -4300,6 +4612,81 @@ export class FakeProvider implements DataProvider {
       merge: { ...merge, clean: true, conflicted: 0 },
       result: { staged: true, continued: resolution.continue !== false, remaining: [] },
     });
+  }
+
+  // ------------------------------------------------------------------ agent
+
+  getAgentInfo(): Promise<AguiInfo> {
+    return this.withAgent((agent) => agent.info ?? sampleAgentInfo);
+  }
+
+  getAgentHealth(): Promise<AgentHealth> {
+    return this.withAgent((agent) => agent.health ?? { ok: true, version: 'fake' });
+  }
+
+  async *runAgent(input: RunAgentInput, options: AgentRunOptions = {}): AsyncIterable<AguiEvent> {
+    const agent = this.requireAgent();
+    this.agentRuns.push(structuredClone(input));
+    if (agent.runError) {
+      throw new ProviderError(agent.runError.code, agent.runError.message);
+    }
+    const script = this.nextAgentTurn(agent);
+    yield* replayAgentEvents(script, agent, options.signal);
+  }
+
+  listAgentThreads(): Promise<AgentThreadSummary[]> {
+    return this.withAgent((agent) => structuredClone(agent.threads ?? []));
+  }
+
+  getAgentThreadMessages(threadId: string): Promise<AguiMessage[]> {
+    return this.withAgent((agent) => structuredClone(agent.messages?.[threadId] ?? []));
+  }
+
+  async *streamAgentThread(
+    threadId: string,
+    options: AgentRunOptions = {},
+  ): AsyncIterable<AguiEvent> {
+    const agent = this.requireAgent();
+    void threadId;
+    const script = agent.reattach ?? this.nextAgentTurn(agent);
+    yield* replayAgentEvents(script, agent, options.signal);
+  }
+
+  deleteAgentThread(threadId: string): Promise<void> {
+    return this.withAgent(() => {
+      this.agentDeletes.push(threadId);
+    });
+  }
+
+  cancelAgentRun(threadId: string): Promise<void> {
+    return this.withAgent(() => {
+      this.agentCancels.push(threadId);
+    });
+  }
+
+  /** Runs `fn` against the scripted agent, rejecting when there is none. */
+  private withAgent<T>(fn: (agent: FakeAgent) => T): Promise<T> {
+    try {
+      return Promise.resolve(fn(this.requireAgent()));
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
+  /** The next scripted turn; the last one repeats once the queue runs dry. */
+  private nextAgentTurn(agent: FakeAgent): AguiEvent[] {
+    const turns = agent.turns ?? (agent.events ? [agent.events] : []);
+    const script = turns[Math.min(this.agentTurn, turns.length - 1)] ?? [];
+    this.agentTurn += 1;
+    return script;
+  }
+
+  /** The refusal a runtime with no agent gives, matching `BrowserProvider`. */
+  private requireAgent(): FakeAgent {
+    if (this.agent === null) {
+      throw new ProviderError('not_supported', 'This runtime has no agent.');
+    }
+    return this.agent;
   }
 
   subscribe(handler: (event: ChangeEvent) => void): Unsubscribe {

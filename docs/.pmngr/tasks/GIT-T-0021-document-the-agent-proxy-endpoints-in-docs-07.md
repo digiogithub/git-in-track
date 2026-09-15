@@ -2,7 +2,7 @@
 id: GIT-T-0021
 type: task
 title: Document the agent proxy endpoints in docs/07
-status: todo
+status: done
 priority: medium
 parent: GIT-US-0049
 milestone: GIT-M-0013
@@ -10,7 +10,9 @@ author: mcp
 labels: [docs, agent-ok]
 estimate: 1
 created: 2026-09-13T13:15:48Z
-updated: 2026-09-13T13:15:48Z
+updated: 2026-09-15T16:42:59Z
+started: 2026-09-15T15:28:34Z
+closed: 2026-09-15T16:42:59Z
 ---
 
 ## Description

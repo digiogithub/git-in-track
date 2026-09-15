@@ -1,0 +1,5 @@
+job_id: idx-7f3c9a
+message: "Indexing started. Use code_index_status with the job_id to track progress."
+project_id: www_git-in-track
+project_path: /www/git-in-track
+status: in_progress

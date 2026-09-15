@@ -249,7 +249,10 @@ describe('BrowserProvider', () => {
     await expect(
       provider.getPage({ kind: 'project', projectKey: 'ACME' }, 'docs/index.md'),
     ).resolves.toMatchObject({ title: 'Docs' });
-    await expect(provider.search({ text: 'sso', limit: 5 })).resolves.toHaveLength(1);
+    // The browser build has no semantic index: every hit is an exact one.
+    await expect(provider.search({ text: 'sso', limit: 5 })).resolves.toEqual({
+      hits: [expect.objectContaining({ source: 'core' })],
+    });
 
     expect(call).toHaveBeenCalledWith('kb.tree', { project: 'ACME' });
     expect(call).toHaveBeenCalledWith('search', { q: 'sso', limit: 5 });
@@ -773,5 +776,51 @@ describe('BrowserProvider — what a tab cannot do (GIT-EP-0012, GIT-EP-0015)', 
     // queue that happens to be empty.
     const settings = await provider.getSyncSettings();
     expect(settings.engine).toBeUndefined();
+  });
+
+  it('refuses every agent call with a typed `not_supported`, and never claims the capability', async () => {
+    const { provider: browser } = await mount();
+    const provider: DataProvider = browser;
+
+    expect(provider.capabilities.agent).toBe(false);
+
+    await expect(provider.getAgentInfo()).rejects.toBeInstanceOf(ProviderError);
+    await expect(provider.getAgentInfo()).rejects.toMatchObject({ code: 'not_supported' });
+    await expect(provider.getAgentHealth()).rejects.toMatchObject({ code: 'not_supported' });
+    await expect(provider.listAgentThreads()).rejects.toMatchObject({ code: 'not_supported' });
+    await expect(provider.getAgentThreadMessages('t1')).rejects.toMatchObject({
+      code: 'not_supported',
+    });
+    await expect(provider.deleteAgentThread('t1')).rejects.toMatchObject({
+      code: 'not_supported',
+    });
+    await expect(provider.cancelAgentRun('t1')).rejects.toMatchObject({ code: 'not_supported' });
+
+    // The streams refuse on first pull, not on construction.
+    for (const stream of [
+      provider.runAgent({ threadId: 't', runId: 'r', messages: [] }),
+      provider.streamAgentThread('t1'),
+    ]) {
+      await expect(
+        (async () => {
+          for await (const event of stream) void event;
+        })(),
+      ).rejects.toMatchObject({ code: 'not_supported' });
+    }
+  });
+
+  it('refuses the semantic search settings, and never claims the capability', async () => {
+    const { provider: browser } = await mount();
+    const provider: DataProvider = browser;
+
+    // The card is gated on this flag, so browser-only mode simply has no card.
+    expect(provider.capabilities.searchSettings).toBe(false);
+
+    await expect(provider.getSearchSettings()).rejects.toBeInstanceOf(ProviderError);
+    await expect(provider.getSearchSettings()).rejects.toMatchObject({ code: 'not_supported' });
+    await expect(provider.updateSearchSettings({ projectId: 'x' })).rejects.toMatchObject({
+      code: 'not_supported',
+    });
+    await expect(provider.reindexSearch()).rejects.toMatchObject({ code: 'not_supported' });
   });
 });

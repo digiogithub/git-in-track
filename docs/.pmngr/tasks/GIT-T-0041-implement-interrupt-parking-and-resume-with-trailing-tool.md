@@ -2,7 +2,7 @@
 id: GIT-T-0041
 type: task
 title: Implement interrupt parking and resume with trailing tool messages
-status: todo
+status: done
 priority: medium
 parent: GIT-US-0053
 milestone: GIT-M-0013
@@ -10,7 +10,9 @@ author: mcp
 labels: [web]
 estimate: 3
 created: 2026-09-13T13:16:19Z
-updated: 2026-09-13T13:16:19Z
+updated: 2026-09-15T16:43:53Z
+started: 2026-09-15T15:19:26Z
+closed: 2026-09-15T16:43:53Z
 ---
 
 ## Description

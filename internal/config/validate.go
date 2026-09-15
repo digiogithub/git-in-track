@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -81,6 +82,8 @@ func (c *Config) Validate() error {
 		add("index.debounce", "must not be negative")
 	}
 	c.validateSyncEngine(add)
+	c.validateAgent(add)
+	c.validateSearch(add)
 	if !validLogLevel(c.Log.Level) {
 		add("log.level", "unknown level %q: use debug, info, warn or error", c.Log.Level)
 	}
@@ -137,6 +140,87 @@ func (c *Config) validateSyncEngine(add func(field, format string, args ...any))
 	}
 	if e.Retention < 0 {
 		add("sync.engine.retention", "must not be negative")
+	}
+}
+
+// validateAgent checks the `agent` section. An empty URL is not an error: it is
+// how the feature stays off, which is the default. A URL that is there and
+// wrong is refused, and so is one that leaves the machine without
+// `allowRemote` — the proxy injects a bearer token and streams an agent's
+// output, so dialing the network is an opt-in, never a typo's consequence.
+func (c *Config) validateAgent(add func(field, format string, args ...any)) {
+	p := c.Agent.Pando
+	validatePandoURL(add, "agent.pando.url", p.URL, p.AllowRemote)
+	if path := strings.TrimSpace(p.Path); path != "" && !strings.HasPrefix(path, "/") {
+		add("agent.pando.path", "%q must start with a slash", path)
+	}
+	if p.MaxRuns < 0 || p.MaxRuns > MaxPandoMaxRuns {
+		add("agent.pando.maxRuns", "%d is outside the range 0-%d, where 0 means the default of %d",
+			p.MaxRuns, MaxPandoMaxRuns, DefaultPandoMaxRuns)
+	}
+	seen := make(map[string]bool, len(p.Repos))
+	for i, row := range p.Repos {
+		field := fmt.Sprintf("agent.pando.repos[%d]", i)
+		switch id := strings.TrimSpace(row.Repo); {
+		case id == "":
+			add(field+".repo", "must name a registered repository id")
+		case seen[id]:
+			add(field+".repo", "duplicate repository id %q", id)
+		default:
+			seen[id] = true
+		}
+		validatePandoURL(add, field+".url", row.URL, row.AllowRemote || p.AllowRemote)
+	}
+	if c.Agent.Enabled && !c.Agent.Pando.hasURL() {
+		add("agent.pando.url", "must be set when agent.enabled is true")
+	}
+}
+
+// hasURL reports whether the section names an upstream anywhere.
+func (p Pando) hasURL() bool {
+	if strings.TrimSpace(p.URL) != "" {
+		return true
+	}
+	for _, row := range p.Repos {
+		if strings.TrimSpace(row.URL) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// validateSearch checks the `search` section. Both Pando URLs are optional and
+// both obey the same loopback rule the agent upstream does.
+func (c *Config) validateSearch(add func(field, format string, args ...any)) {
+	p := c.Search.Pando
+	validatePandoURL(add, "search.pando.mcpUrl", p.MCPURL, p.AllowRemote)
+	validatePandoURL(add, "search.pando.restUrl", p.RESTURL, p.AllowRemote)
+	if dir := strings.TrimSpace(p.CorpusDir); dir != "" && !filepath.IsAbs(dir) {
+		add("search.pando.corpusDir", "%q is not an absolute path", dir)
+	}
+}
+
+// validatePandoURL checks one URL of a Pando stanza: absolute, http or https,
+// with a host, and on a loopback interface unless the stanza opted out.
+func validatePandoURL(add func(field, format string, args ...any), field, raw string, allowRemote bool) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return
+	}
+	u, err := url.Parse(value)
+	if err != nil {
+		add(field, "%q is not a URL", value)
+		return
+	}
+	switch {
+	case u.Scheme != "http" && u.Scheme != "https":
+		add(field, "unsupported scheme %q: use http or https", u.Scheme)
+	case u.Host == "":
+		add(field, "%q names no host", value)
+	case u.User != nil:
+		add(field, "must not carry credentials in the URL")
+	case !allowRemote && !LoopbackURL(value):
+		add(field, "%q is not a loopback address: set allowRemote: true on this section to dial it anyway", u.Host)
 	}
 }
 

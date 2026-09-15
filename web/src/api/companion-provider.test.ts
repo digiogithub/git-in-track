@@ -7,6 +7,8 @@ import {
   POLL_INTERVAL_MS,
   RECONNECT_BASE_MS,
   toCapabilities,
+  toSearchReindexJob,
+  toSearchSettings,
   type WebSocketLike,
 } from '@/api/companion-provider';
 import { ProviderError, type ChangeEvent } from '@/api/provider';
@@ -267,11 +269,14 @@ describe('CompanionProvider reads', () => {
       frontMatter: { tags: ['architecture'] },
     });
 
-    const hits = await client.search({ text: 'oidc', projectKey: 'ACME', limit: 20 });
+    const found = await client.search({ text: 'oidc', projectKey: 'ACME', limit: 20 });
     expect(lastCall(fetchImpl).url).toBe(
       `${BASE}/api/v1/search?q=oidc&scope=items%2Ckb&project=ACME&limit=20`,
     );
-    expect(hits.map((hit) => hit.kind)).toEqual(['item', 'page']);
+    expect(found.hits.map((hit) => hit.kind)).toEqual(['item', 'page']);
+    // A companion that names no origin is answering with its local index.
+    expect(found.hits.every((hit) => hit.source === 'core')).toBe(true);
+    expect(found.degraded).toBeUndefined();
   });
 
   it('reads capabilities from GET /api/v1/capabilities', async () => {
@@ -303,6 +308,8 @@ describe('CompanionProvider reads', () => {
       maxBatchWrite: 200,
       youtrackSupported: true,
       youtrack: false,
+      searchSettings: true,
+      agent: false,
     });
     expect(client.version).toBe('0.4.0');
   });
@@ -1976,5 +1983,365 @@ describe('CompanionProvider YouTrack knowledge base and comment push', () => {
       },
     ]);
     client.dispose();
+  });
+});
+
+// --------------------------------------------------------------------- agent
+
+/** An SSE response whose body is a real `ReadableStream`, split mid-frame. */
+function sseResponse(chunks: string[]): Response {
+  const encoder = new TextEncoder();
+  return {
+    ok: true,
+    status: 200,
+    statusText: 'OK',
+    headers: { get: (name: string) => (name === 'content-type' ? 'text/event-stream' : null) },
+    body: new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+        controller.close();
+      },
+    }),
+  } as unknown as Response;
+}
+
+describe('CompanionProvider agent', () => {
+  it('reads the discovery document for a repository', async () => {
+    const info = {
+      protocol: 'ag-ui',
+      path: '/api/v1/agent',
+      agents: [{ name: 'coder', url: '/api/v1/agent/run' }],
+      capabilities: {
+        frontendTools: true,
+        humanInTheLoop: true,
+        sharedState: true,
+        interrupts: true,
+      },
+    };
+    const fetchImpl = vi.fn().mockResolvedValue(response(info));
+
+    await expect(provider(fetchImpl).getAgentInfo({ repo: 'repo-1' })).resolves.toEqual(info);
+    expect(lastCall(fetchImpl).url).toBe(`${BASE}/api/v1/agent/info?repo=repo-1`);
+  });
+
+  it('reads health, filling in what the companion left out', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(response({ version: '0.705.1' }));
+    await expect(provider(fetchImpl).getAgentHealth()).resolves.toEqual({
+      ok: true,
+      version: '0.705.1',
+    });
+    expect(lastCall(fetchImpl).url).toBe(`${BASE}/api/v1/agent/health`);
+  });
+
+  it('POSTs a RunAgentInput with the bearer token and streams the events back', async () => {
+    setToken('secret');
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(
+        sseResponse([
+          'data: {"type":"RUN_STARTED","threadId":"t1","runId":"r1"}\n\n',
+          'data: {"type":"TEXT_MESSAGE_CO',
+          'NTENT","messageId":"m1","delta":"hi"}\n\n',
+          'data: {"type":"RUN_FINISHED","threadId":"t1","runId":"r1","outcome":"success"}\n\n',
+        ]),
+      );
+
+    const input = { threadId: 't1', runId: 'r1', messages: [] };
+    const seen = [];
+    for await (const event of provider(fetchImpl).runAgent(input, { repo: 'repo-1' })) {
+      seen.push(event);
+    }
+
+    expect(seen.map((event) => event.type)).toEqual([
+      'RUN_STARTED',
+      'TEXT_MESSAGE_CONTENT',
+      'RUN_FINISHED',
+    ]);
+    const { url, init } = lastCall(fetchImpl);
+    expect(url).toBe(`${BASE}/api/v1/agent/run?repo=repo-1`);
+    expect(init.method).toBe('POST');
+    expect(headerOf(init, 'Authorization')).toBe('Bearer secret');
+    expect(headerOf(init, 'Accept')).toBe('text/event-stream');
+    expect(bodyOf(init)).toEqual(input);
+    clearToken();
+  });
+
+  it('refuses a run the proxy answered with something that is not a stream', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(response({ hello: 'world' }));
+    const stream = provider(fetchImpl).runAgent({ threadId: 't', runId: 'r', messages: [] });
+
+    await expect(
+      (async () => {
+        for await (const event of stream) void event;
+      })(),
+    ).rejects.toBeInstanceOf(ProviderError);
+  });
+
+  it('maps a problem document on the run route onto a typed error', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(
+        response({ code: 'conflict', detail: 'a run is already attached' }, { status: 409 }),
+      );
+    const stream = provider(fetchImpl).runAgent({ threadId: 't', runId: 'r', messages: [] });
+
+    await expect(
+      (async () => {
+        for await (const event of stream) void event;
+      })(),
+    ).rejects.toMatchObject({ code: 'stale_revision' });
+  });
+
+  it('re-throws an abort untouched instead of calling the companion unreachable', async () => {
+    const controller = new AbortController();
+    const fetchImpl = vi.fn().mockImplementation(() => {
+      controller.abort();
+      return Promise.reject(new DOMException('aborted', 'AbortError'));
+    });
+    const stream = provider(fetchImpl).runAgent(
+      { threadId: 't', runId: 'r', messages: [] },
+      { signal: controller.signal },
+    );
+
+    await expect(
+      (async () => {
+        for await (const event of stream) void event;
+      })(),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
+  it('lists threads, reads their messages, deletes and cancels', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        response({ threads: [{ id: 't1', title: 'First', messageCount: 4, running: true }, {}] }),
+      )
+      .mockResolvedValueOnce(response({ messages: [{ id: 'm1', role: 'user', content: 'hi' }] }))
+      .mockResolvedValueOnce(response(null, { status: 204 }))
+      .mockResolvedValueOnce(response(null, { status: 202 }));
+    const client = provider(fetchImpl);
+
+    await expect(client.listAgentThreads({ repo: 'repo-1' })).resolves.toEqual([
+      { id: 't1', title: 'First', messageCount: 4, running: true },
+    ]);
+    await expect(client.getAgentThreadMessages('t1')).resolves.toEqual([
+      { id: 'm1', role: 'user', content: 'hi' },
+    ]);
+
+    await client.deleteAgentThread('t 1');
+    expect(lastCall(fetchImpl).url).toBe(`${BASE}/api/v1/agent/threads/t%201`);
+    expect(lastCall(fetchImpl).init.method).toBe('DELETE');
+
+    await client.cancelAgentRun('t1');
+    expect(lastCall(fetchImpl).url).toBe(`${BASE}/api/v1/agent/runs/t1/cancel`);
+    expect(lastCall(fetchImpl).init.method).toBe('POST');
+  });
+
+  it('reads the agent capability from GET /capabilities', () => {
+    expect(toCapabilities({ features: { agent: true } }).agent).toBe(true);
+    expect(toCapabilities({ features: {} }).agent).toBe(false);
+  });
+});
+
+// ------------------------------------------- semantic search settings (0091)
+
+/** The GET document of docs/07 "Semantic search settings and reindex". */
+const searchSettingsBody = {
+  backend: 'pando',
+  configured: true,
+  mcpUrl: 'http://127.0.0.1:9777/mcp',
+  restUrl: 'http://127.0.0.1:9778',
+  projectId: 'acme-api',
+  corpusDir: '/home/dana/.local/state/gintrack/pando-kb',
+  allowRemote: false,
+  reachable: true,
+  reachableError: '',
+  corpora: [
+    {
+      repo: 'acme-api',
+      dir: '/home/dana/.local/state/gintrack/pando-kb/acme-api',
+      last: {
+        items: 412,
+        pages: 38,
+        written: 3,
+        removed: 0,
+        skipped: 447,
+        duration: 91_000_000,
+        at: '2026-09-15T10:02:11Z',
+        full: true,
+      },
+    },
+  ],
+  documents: 450,
+  lastExport: '2026-09-15T10:02:11Z',
+  reindex: null,
+  persisted: false,
+};
+
+describe('CompanionProvider semantic search settings (story GIT-US-0091)', () => {
+  it('reads the settings document, the live probe included', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(response(searchSettingsBody));
+
+    const settings = await provider(fetchImpl).getSearchSettings();
+
+    expect(lastCall(fetchImpl).url).toBe(`${BASE}/api/v1/search/settings`);
+    expect(settings.backend).toBe('pando');
+    expect(settings.reachable).toBe(true);
+    expect(settings.documents).toBe(450);
+    expect(settings.corpora[0]?.last.skipped).toBe(447);
+    expect(settings.persisted).toBe(false);
+    expect(settings.reindex).toBeNull();
+  });
+
+  it('keeps "nothing is configured" apart from "it did not answer"', () => {
+    const none = toSearchSettings({ backend: 'core', reachable: null });
+    const down = toSearchSettings({
+      backend: 'pando',
+      reachable: false,
+      reachableError: 'dial tcp 127.0.0.1:9777: connection refused',
+    });
+
+    expect(none.reachable).toBeNull();
+    expect(none.reachableError).toBe('');
+    expect(down.reachable).toBe(false);
+    expect(down.reachableError).toContain('connection refused');
+  });
+
+  it('patches only the five location fields and never a token', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(response({ ...searchSettingsBody, projectId: 'acme', persisted: true }));
+
+    const settings = await provider(fetchImpl).updateSearchSettings({
+      projectId: 'acme',
+      allowRemote: false,
+    });
+
+    const { url, init } = lastCall(fetchImpl);
+    expect(url).toBe(`${BASE}/api/v1/search/settings`);
+    expect(init.method).toBe('PATCH');
+    expect(bodyOf(init)).toEqual({ projectId: 'acme', allowRemote: false });
+    expect(settings.persisted).toBe(true);
+  });
+
+  it('queues a reindex and reads the finished job back', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      response({
+        jobId: 'reindex-1',
+        startedAt: '2026-09-15T10:04:00Z',
+        phase: 'export',
+        repos: [],
+      }),
+    );
+
+    const job = await provider(fetchImpl).reindexSearch();
+
+    expect(lastCall(fetchImpl).url).toBe(`${BASE}/api/v1/search/reindex`);
+    expect(lastCall(fetchImpl).init.method).toBe('POST');
+    expect(job).toEqual({
+      jobId: 'reindex-1',
+      startedAt: '2026-09-15T10:04:00Z',
+      phase: 'export',
+      repos: [],
+    });
+
+    const finished = toSearchReindexJob({
+      jobId: 'reindex-1',
+      phase: 'completed',
+      kbNote: 'Reindexed.',
+      kb: { scanned: 450, added: 3, updated: 0, unchanged: 447, deleted: 0 },
+      repos: [
+        {
+          repo: 'acme-api',
+          export: { items: 412, pages: 38, written: 3 },
+          codeJob: 'idx-7741',
+          codeError: 'pando is not reachable',
+        },
+      ],
+    });
+    expect(finished.phase).toBe('completed');
+    expect(finished.kb?.unchanged).toBe(447);
+    // The halves are independent: a failed code index leaves the export in the
+    // job rather than invalidating it.
+    expect(finished.repos[0]?.export.items).toBe(412);
+    expect(finished.repos[0]?.codeError).toBe('pando is not reachable');
+    expect(finished.repos[0]?.exportError).toBeUndefined();
+  });
+
+  it('maps the two refusals to their own codes', async () => {
+    const running = vi
+      .fn()
+      .mockResolvedValue(
+        response(
+          { code: 'search_reindex_running', detail: 'A reindex is already running.' },
+          { status: 409 },
+        ),
+      );
+    await expect(provider(running).reindexSearch()).rejects.toMatchObject({
+      code: 'search_reindex_running',
+    });
+
+    const off = vi
+      .fn()
+      .mockResolvedValue(
+        response(
+          { code: 'search_not_configured', detail: 'Nothing is configured to index.' },
+          { status: 400 },
+        ),
+      );
+    await expect(provider(off).reindexSearch()).rejects.toMatchObject({
+      code: 'search_not_configured',
+    });
+  });
+
+  it('translates a search.progress frame into a searchProgress event', () => {
+    const client = eventProvider();
+    const events: ChangeEvent[] = [];
+    client.subscribe((event) => events.push(event));
+    FakeSocket.instances[0]?.open();
+
+    FakeSocket.instances[0]?.emit({
+      type: 'search.progress',
+      seq: 6001,
+      data: {
+        operationId: 'reindex-1',
+        repo: 'acme-api',
+        phase: 'kb',
+        percent: 66,
+        done: 2,
+        total: 3,
+        message: 'Re-exported, awaiting Pando’s next import pass',
+      },
+    });
+
+    expect(events).toEqual([
+      {
+        kind: 'searchProgress',
+        operationId: 'reindex-1',
+        repoId: 'acme-api',
+        phase: 'kb',
+        percent: 66,
+        done: 2,
+        total: 3,
+        message: 'Re-exported, awaiting Pando’s next import pass',
+      },
+    ]);
+    client.dispose();
+  });
+
+  it('reads the search settings capability from GET /capabilities', () => {
+    expect(toCapabilities({ features: {} }).searchSettings).toBe(true);
+    expect(toCapabilities({ features: { searchSettings: false } }).searchSettings).toBe(false);
+  });
+
+  // `features.search` is the one capability with three values; the UI branches
+  // on the third to show semantic results (GIT-T-0174).
+  it('maps features.search onto fullTextSearch, pando included', () => {
+    expect(toCapabilities({ features: { search: 'pando' } }).fullTextSearch).toBe('pando');
+    expect(toCapabilities({ features: { search: 'bleve' } }).fullTextSearch).toBe('bleve');
+    expect(toCapabilities({ features: { search: 'core' } }).fullTextSearch).toBe('core');
+    // An absent or unknown backend reads as the always-available core index.
+    expect(toCapabilities({ features: {} }).fullTextSearch).toBe('core');
+    expect(toCapabilities({ features: { search: 'lucene' } }).fullTextSearch).toBe('core');
   });
 });

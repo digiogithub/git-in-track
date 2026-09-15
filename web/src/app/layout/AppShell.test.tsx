@@ -137,6 +137,25 @@ describe('AppShell', () => {
     expect(useAppStore.getState().modeNotice).toBeNull();
   });
 
+  it('lists the agent only when the runtime has one (story GIT-US-0057)', async () => {
+    renderWithRouter({ index: Blank, root: AppShell, provider: new FakeProvider() });
+
+    const nav = await screen.findByRole('navigation', { name: 'Main' });
+    expect(within(nav).queryByRole('link', { name: 'Agent' })).toBeNull();
+  });
+
+  it('shows the agent entry when the capability is on', async () => {
+    // The branch is on the capability, never on the provider kind: a fake with
+    // a scripted agent is the same shape as a companion that has one.
+    const provider = new FakeProvider({ agent: { events: [] } });
+    renderWithRouter({ index: Blank, root: AppShell, provider });
+
+    const nav = await screen.findByRole('navigation', { name: 'Main' });
+    await waitFor(() => {
+      expect(within(nav).getByRole('link', { name: 'Agent' })).toHaveAttribute('href', '/agent');
+    });
+  });
+
   it('asks for the companion token when one is missing', async () => {
     const store = useAppStore.getState();
     store.setMode('companion', '0.4.0');

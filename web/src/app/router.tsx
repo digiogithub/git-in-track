@@ -124,9 +124,7 @@ const sprintsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/sprints',
   validateSearch: (search: Record<string, unknown>): { board?: string } =>
-    typeof search['board'] === 'string' && search['board'] !== ''
-      ? { board: search['board'] }
-      : {},
+    typeof search['board'] === 'string' && search['board'] !== '' ? { board: search['board'] } : {},
   component: lazyRouteComponent(() => import('@/features/boards/SprintList'), 'SprintList'),
 });
 
@@ -163,6 +161,18 @@ const syncRoute = createRoute({
   component: SyncPanel,
 });
 
+/**
+ * The agent chat (docs/05 §19, story GIT-US-0057). Lazy, because the page
+ * pulls the AG-UI client and the Markdown pipeline in behind it and most
+ * sessions never open it; the page itself renders the unavailable state when
+ * `capabilities.agent` is false, so the route always resolves.
+ */
+const agentRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/agent',
+  component: lazyRouteComponent(() => import('@/features/agent'), 'AgentPage'),
+});
+
 const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/settings',
@@ -191,6 +201,7 @@ export const routeTree = rootRoute.addChildren([
   metricsRoute,
   sprintMetricsRoute,
   syncRoute,
+  agentRoute,
   settingsRoute,
 ]);
 

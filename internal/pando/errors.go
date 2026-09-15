@@ -1,0 +1,95 @@
+package pando
+
+import (
+	"errors"
+	"fmt"
+)
+
+// Sentinel errors. Every exported call returns one of these (or an error that
+// unwraps to one) so the HTTP layer above can map a failure onto a status code
+// without matching on strings and without importing an MCP type.
+var (
+	// ErrNotConfigured is returned when the client has no endpoint for the
+	// call: an empty MCP URL for a tool call, an empty REST URL for ReindexKB.
+	// It is the "this feature is switched off" answer, not a failure.
+	ErrNotConfigured = errors.New("pando: not configured")
+
+	// ErrInvalidOptions is returned by New for options that cannot produce a
+	// working client. It is never returned by a call.
+	ErrInvalidOptions = errors.New("pando: invalid options")
+
+	// ErrRemoteRefused is returned by New for a URL whose host is not a
+	// loopback address while Options.AllowRemote is false. It unwraps to
+	// ErrInvalidOptions.
+	ErrRemoteRefused = fmt.Errorf("%w: refusing a non-loopback Pando URL", ErrInvalidOptions)
+
+	// ErrUnreachable is returned when Pando could not be reached or answered
+	// with something this client cannot use: connection refused, a dead
+	// session that would not rebuild, a malformed result.
+	ErrUnreachable = errors.New("pando: unreachable")
+
+	// ErrUnauthorized is returned when Pando rejected the credential: a 401 or
+	// 403 from the MCP transport or from the REST surface.
+	ErrUnauthorized = errors.New("pando: unauthorized")
+
+	// ErrTimeout is returned when a call did not finish inside its deadline.
+	// It is deliberately distinct from ErrUnreachable: a slow Pando is not a
+	// missing one. It unwraps to context.DeadlineExceeded.
+	ErrTimeout = errors.New("pando: call timed out")
+
+	// ErrToolFailed is returned when Pando ran the tool and the tool itself
+	// reported an error. It is distinct from an empty result set, which is a
+	// successful call returning no hits.
+	ErrToolFailed = errors.New("pando: tool reported an error")
+
+	// ErrReindexRunning is returned by ReindexKB for HTTP 409: another reindex
+	// is already walking the corpus. The caller should retry later rather than
+	// treat it as a failure.
+	ErrReindexRunning = errors.New("pando: a knowledge base reindex is already running")
+)
+
+// toolError carries the message Pando's tool put in its text content. It
+// unwraps to ErrToolFailed.
+type toolError struct {
+	Tool    string
+	Message string
+}
+
+func (e *toolError) Error() string {
+	if e.Message == "" {
+		return "pando: tool " + e.Tool + " reported an error"
+	}
+	return "pando: tool " + e.Tool + ": " + e.Message
+}
+
+func (e *toolError) Unwrap() error { return ErrToolFailed }
+
+// httpError carries a non-2xx status from the REST surface. It unwraps to the
+// sentinel that matches the status.
+type httpError struct {
+	Status int
+	Method string
+	Path   string
+	Body   string
+}
+
+func (e *httpError) Error() string {
+	msg := "pando: " + e.Method + " " + e.Path + ": " + statusText(e.Status)
+	if e.Body != "" {
+		msg += ": " + e.Body
+	}
+	return msg
+}
+
+func (e *httpError) Unwrap() error {
+	switch e.Status {
+	case 401, 403:
+		return ErrUnauthorized
+	case 409:
+		return ErrReindexRunning
+	case 503:
+		return ErrNotConfigured
+	default:
+		return ErrUnreachable
+	}
+}

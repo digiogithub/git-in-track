@@ -2,7 +2,7 @@
 id: GIT-T-0053
 type: task
 title: Build the tool-call card and collapsed reasoning block
-status: todo
+status: done
 priority: medium
 parent: GIT-US-0057
 milestone: GIT-M-0013
@@ -10,7 +10,9 @@ author: mcp
 labels: [web]
 estimate: 3
 created: 2026-09-13T13:16:39Z
-updated: 2026-09-13T13:16:39Z
+updated: 2026-09-15T16:43:01Z
+started: 2026-09-15T15:45:47Z
+closed: 2026-09-15T16:43:01Z
 ---
 
 ## Description

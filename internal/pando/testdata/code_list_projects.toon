@@ -1,0 +1,23 @@
+count: 2
+projects[2]:
+  - created_at: "2026-09-13T11:04:58.480242866Z"
+    indexing_status: completed
+    language_stats:
+      go: 1352
+      markdown: 59
+      typescript: 89
+    last_indexed_at: "2026-09-13T11:07:18.491175931Z"
+    name: pando
+    project_id: www_MCP_Pando_pando
+    root_path: /www/MCP/Pando/pando
+    updated_at: "2026-09-13T11:07:18.491175967Z"
+  - created_at: "2026-09-04T07:28:41.84958831Z"
+    indexing_status: completed
+    language_stats:
+      go: 285
+      typescript: 794
+    last_indexed_at: "2026-09-04T07:30:30.473447569Z"
+    name: git-in-track
+    project_id: www_git-in-track
+    root_path: /www/git-in-track
+    updated_at: "2026-09-13T19:59:56.638842614Z"

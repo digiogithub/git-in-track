@@ -2,7 +2,7 @@
 id: GIT-US-0091
 type: story
 title: Pando settings card with index status and reindex
-status: backlog
+status: done
 priority: medium
 parent: GIT-EP-0019
 milestone: GIT-M-0013
@@ -10,7 +10,9 @@ author: mcp
 labels: [web, server]
 estimate: 3
 created: 2026-09-13T13:15:13Z
-updated: 2026-09-13T21:19:13Z
+updated: 2026-09-15T16:45:38Z
+started: 2026-09-15T16:05:57Z
+closed: 2026-09-15T16:45:38Z
 ---
 
 ## Description

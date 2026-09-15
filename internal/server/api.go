@@ -77,6 +77,13 @@ func (s *Server) mountAPI(api chi.Router) {
 		p.Get("/inbox", s.handleInboxList)
 
 		p.Get("/search", s.handleSearch)
+		// The semantic accelerator's own surface: where Pando is, where the
+		// corpus lives, whether it is current, and the button that rebuilds it
+		// (GIT-US-0091). They are separate paths rather than a subtree so that
+		// GET /search keeps its own route.
+		p.Get("/search/settings", s.handleSearchSettings)
+		p.Patch("/search/settings", s.handleSearchSettingsPatch)
+		p.Post("/search/reindex", s.handleSearchReindex)
 		p.Post("/validate", s.handleValidate)
 
 		// Phases 3 and 4. The routes exist so that a client learns "not yet"
@@ -96,6 +103,11 @@ func (s *Server) mountAPI(api chi.Router) {
 		// The write surface of the MCP server, as a setting rather than only a
 		// CLI flag (docs/08-mcp-server.md section 7.1).
 		p.Route("/mcp", s.mountMCPSettings)
+		// The agent proxy to a local Pando AG-UI adapter (GIT-US-0049). It
+		// sits inside this bearer-auth group: the browser presents the
+		// companion's token, and the companion — never the browser — holds the
+		// upstream one.
+		p.Route("/agent", s.mountAgent)
 		p.Route("/git", s.mountGit)
 		// The YouTrack connection: its settings, the connection test and the
 		// two discovery calls the settings UI needs (GIT-US-0052). The browser

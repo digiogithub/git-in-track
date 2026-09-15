@@ -2,7 +2,7 @@
 id: GIT-T-0163
 type: task
 title: Implement the Pando-backed searcher with id resolution
-status: todo
+status: done
 priority: medium
 parent: GIT-US-0082
 milestone: GIT-M-0013
@@ -10,7 +10,9 @@ author: mcp
 labels: [server]
 estimate: 5
 created: 2026-09-13T13:19:15Z
-updated: 2026-09-13T13:19:15Z
+updated: 2026-09-15T16:43:13Z
+started: 2026-09-15T16:04:06Z
+closed: 2026-09-15T16:43:13Z
 ---
 
 ## Description

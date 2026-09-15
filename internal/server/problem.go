@@ -109,6 +109,7 @@ func statusForCode(code string) int {
 		"project_exists", "team_exists",
 		vault.TeamProjectExistsCode, vault.TeamProjectReferencedCode,
 		codeTunnelRequiresToken, codeYouTrackNotConfigured, codeSyncJobNotRetryable,
+		codeSearchReindexRunning,
 		vault.NoTriageStatusCode, vault.SprintTargetCompletedCode:
 		// A WIP limit is advisory: the move is refused once, and the caller may
 		// repeat it with `force` (docs/04 R-COL-5). Two sprints of one board
@@ -133,6 +134,11 @@ func statusForCode(code string) int {
 		return http.StatusPreconditionRequired
 	case codeNotImplemented:
 		return http.StatusNotImplemented
+	case codeSearchNotConfigured:
+		// Nothing to reindex is a malformed request against this companion's
+		// state: the operator configures `search.pando` (or a corpus
+		// directory) and asks again (GIT-US-0091).
+		return http.StatusBadRequest
 	case codeIndexUnavailable, codeSyncEngineNotRunning:
 		return http.StatusServiceUnavailable
 	case codeYouTrackUnauthorized, codeYouTrackForbidden, codeYouTrackNotFound, codeYouTrackUnreachable:

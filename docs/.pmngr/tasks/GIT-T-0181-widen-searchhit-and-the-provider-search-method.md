@@ -2,7 +2,7 @@
 id: GIT-T-0181
 type: task
 title: Widen SearchHit and the provider search method
-status: todo
+status: done
 priority: medium
 parent: GIT-US-0086
 milestone: GIT-M-0013
@@ -10,7 +10,9 @@ author: mcp
 labels: [web, agent-ok]
 estimate: 2
 created: 2026-09-13T13:19:39Z
-updated: 2026-09-13T13:19:39Z
+updated: 2026-09-15T16:44:02Z
+started: 2026-09-15T15:50:34Z
+closed: 2026-09-15T16:44:02Z
 ---
 
 ## Description

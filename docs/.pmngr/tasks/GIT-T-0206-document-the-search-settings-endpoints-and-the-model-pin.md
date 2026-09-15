@@ -2,7 +2,7 @@
 id: GIT-T-0206
 type: task
 title: Document the search settings endpoints and the model pin
-status: todo
+status: done
 priority: medium
 parent: GIT-US-0091
 milestone: GIT-M-0013
@@ -10,7 +10,9 @@ author: mcp
 labels: [docs, agent-ok]
 estimate: 1
 created: 2026-09-13T13:20:36Z
-updated: 2026-09-13T13:20:36Z
+updated: 2026-09-15T16:45:04Z
+started: 2026-09-15T16:04:17Z
+closed: 2026-09-15T16:45:04Z
 ---
 
 ## Description

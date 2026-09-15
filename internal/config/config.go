@@ -13,6 +13,7 @@ package config
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -89,6 +90,12 @@ type Config struct {
 	Index            Index       `json:"index"                      yaml:"index"`
 	MCP              MCP         `json:"mcp"                        yaml:"mcp"`
 	Log              Log         `json:"log"                        yaml:"log"`
+	// Agent is the companion agent surface: the proxy to a local Pando AG-UI
+	// adapter served at /api/v1/agent (GIT-US-0049).
+	Agent Agent `json:"agent" yaml:"agent"`
+	// Search configures the search back ends beyond the built-in core index:
+	// today the optional semantic layer Pando provides (GIT-EP-0018).
+	Search Search `json:"search" yaml:"search"`
 	// Sync configures the background job engine that talks to the external
 	// trackers (docs/07-cli-and-api.md section 4.1).
 	Sync Sync `json:"sync" yaml:"sync"`
@@ -105,6 +112,15 @@ type Config struct {
 	youtrackToken string
 	// youtrackTokenSource is the provenance of that override.
 	youtrackTokenSource TokenSource
+
+	// pandoToken, pandoMCPToken and pandoRESTToken are the Pando credentials
+	// supplied by the environment. They are unexported for the same reason
+	// youtrackToken is: neither yaml.Marshal nor json.Marshal can reach them,
+	// so a Save can never write an environment secret into the file and no
+	// `config show --json` can print one.
+	pandoToken     string
+	pandoMCPToken  string
+	pandoRESTToken string
 }
 
 // Workspace is a named group of registered repositories. Repos holds repository
@@ -336,6 +352,157 @@ type MCP struct {
 	AllowWrite bool `json:"allowWrite" yaml:"allowWrite"`
 }
 
+// DefaultPandoURL is the shipped `agent.pando.url`: the loopback listener a
+// `pando agui-serve --port 8090 --no-tls` process answers on.
+const DefaultPandoURL = "http://127.0.0.1:8090"
+
+// DefaultPandoPath is the shipped `agent.pando.path`, which is Pando's own
+// default AG-UI mount point. Every upstream route is built under it.
+const DefaultPandoPath = "/api/v1/agui"
+
+// DefaultPandoAgent is the shipped `agent.pando.agent`: the AG-UI agent or
+// profile name POST {path}/{agent} addresses.
+const DefaultPandoAgent = "backlog-assistant"
+
+// DefaultPandoMaxRuns is the shipped `agent.pando.maxRuns`: how many agent runs
+// the proxy keeps in flight at once before it refuses with 503 and a
+// Retry-After. Pando enforces no limit of its own, so this one is the only one.
+const DefaultPandoMaxRuns = 8
+
+// MaxPandoMaxRuns bounds `agent.pando.maxRuns`. A larger value is a typo: each
+// run is a live SSE connection held open on both sides.
+const MaxPandoMaxRuns = 256
+
+// Agent is the `agent` section: the companion's agent surface.
+//
+// The feature is off by default and needs both `enabled` and a reachable
+// upstream, because turning it on hands a local agent process the ability to
+// act on the user's backlog.
+type Agent struct {
+	// Enabled mounts /api/v1/agent. `gintrack serve --agent` flips it for one
+	// process without touching the file.
+	Enabled bool `json:"enabled" yaml:"enabled"`
+	// Pando is the AG-UI adapter the proxy relays to.
+	Pando Pando `json:"pando" yaml:"pando"`
+}
+
+// Pando is the `agent.pando` section: how to reach the AG-UI adapter.
+//
+// The deployment is one `pando agui-serve` process per repository, so this
+// section is a default upstream plus a per-repository routing table (Repos).
+// A request selects its upstream by the id of the mounted repository it names;
+// an id that matches no entry falls back to this section's own URL.
+//
+// The token never leaves the companion: it is injected as an Authorization
+// header on the server-to-server hop, never rendered into a response, a log
+// line or a query parameter. Read it through Config.ResolvedPandoToken.
+type Pando struct {
+	// URL is the base URL of the adapter, scheme and host only.
+	URL string `json:"url,omitempty" yaml:"url,omitempty"`
+	// Path is the AG-UI mount point under that base, DefaultPandoPath when
+	// empty.
+	Path string `json:"path,omitempty" yaml:"path,omitempty"`
+	// Token is the bearer token of the adapter. It is excluded from JSON so no
+	// API response and no `--json` output can carry it (ADR-032).
+	Token string `json:"-" yaml:"token,omitempty"`
+	// TokenFile reads that token from a file instead, which is what a systemd
+	// credential or `pando agui-serve --token-file` produces.
+	TokenFile string `json:"-" yaml:"tokenFile,omitempty"`
+	// Agent is the AG-UI agent or profile name, DefaultPandoAgent when empty.
+	Agent string `json:"agent,omitempty" yaml:"agent,omitempty"`
+	// InsecureTLS skips certificate verification, which `agui-serve` needs when
+	// it is left on its self-signed default instead of `--no-tls`.
+	InsecureTLS bool `json:"insecureTls" yaml:"insecureTls"`
+	// AllowRemote permits a URL that is not on a loopback interface. It is
+	// opt-in: the proxy injects a token and streams an agent's output, and
+	// dialing a host on the network by accident is a far worse mistake than
+	// having to type one more key.
+	AllowRemote bool `json:"allowRemote" yaml:"allowRemote"`
+	// MaxRuns caps the runs in flight across the whole proxy,
+	// DefaultPandoMaxRuns when zero.
+	MaxRuns int `json:"maxRuns" yaml:"maxRuns"`
+	// Repos overrides the upstream for individual repositories.
+	Repos []PandoRepo `json:"repos,omitempty" yaml:"repos,omitempty"`
+}
+
+// PandoRepo is one row of the `agent.pando.repos` routing table: the AG-UI
+// adapter serving one mounted repository. Every field but Repo falls back to
+// the enclosing Pando section.
+type PandoRepo struct {
+	// Repo is the id of the mounted repository, as `gintrack ls` prints it.
+	Repo string `json:"repo" yaml:"repo"`
+	// URL is this repository's adapter.
+	URL string `json:"url,omitempty" yaml:"url,omitempty"`
+	// Token and TokenFile are this repository's credential, excluded from JSON
+	// exactly as the section-wide ones are.
+	Token     string `json:"-" yaml:"token,omitempty"`
+	TokenFile string `json:"-" yaml:"tokenFile,omitempty"`
+	// Agent overrides the agent or profile name for this repository.
+	Agent string `json:"agent,omitempty" yaml:"agent,omitempty"`
+	// InsecureTLS and AllowRemote are the per-row form of the section keys.
+	InsecureTLS bool `json:"insecureTls" yaml:"insecureTls"`
+	AllowRemote bool `json:"allowRemote" yaml:"allowRemote"`
+}
+
+// String renders a Pando section without its token, so that a %v of a Config or
+// a log attribute cannot leak one.
+func (p Pando) String() string {
+	return "Pando{url: " + p.URL + ", path: " + p.Path + ", agent: " + p.Agent + ", token: " + redacted(p.Token) + "}"
+}
+
+// String renders a routing-table row without its token.
+func (p PandoRepo) String() string {
+	return "PandoRepo{repo: " + p.Repo + ", url: " + p.URL + ", token: " + redacted(p.Token) + "}"
+}
+
+// redacted renders the presence of a secret and none of its bytes.
+func redacted(token string) string {
+	if strings.TrimSpace(token) == "" {
+		return "<unset>"
+	}
+	return "[redacted]"
+}
+
+// Search is the `search` section: the search back ends beyond the core index.
+type Search struct {
+	// Pando is the optional semantic layer. It is consumed by the search
+	// endpoints; an empty `mcpUrl` leaves them on the core index alone.
+	Pando SearchPando `json:"pando" yaml:"pando"`
+}
+
+// SearchPando is the `search.pando` section: the Pando knowledge base and code
+// index the companion asks for semantic candidates, which it then re-reads from
+// its own index before answering (ADR: candidates only, never content).
+//
+// Both tokens are excluded from JSON and resolved through
+// Config.ResolvedPandoMCPToken and Config.ResolvedPandoRESTToken.
+type SearchPando struct {
+	// MCPURL is the streamable-HTTP endpoint of `pando mcp-server`, for example
+	// http://127.0.0.1:9777/mcp. Empty turns semantic search off.
+	MCPURL string `json:"mcpUrl,omitempty" yaml:"mcpUrl,omitempty"`
+	// MCPToken is the bearer token that endpoint requires.
+	MCPToken string `json:"-" yaml:"mcpToken,omitempty"`
+	// RESTURL is the base URL of a `pando serve` process. It is optional and
+	// only enables the REST reindex call.
+	RESTURL string `json:"restUrl,omitempty" yaml:"restUrl,omitempty"`
+	// RESTToken is the X-Pando-Token of that process.
+	RESTToken string `json:"-" yaml:"restToken,omitempty"`
+	// ProjectID is the Pando code project id. Empty means Pando's own
+	// sanitized repository path.
+	ProjectID string `json:"projectId,omitempty" yaml:"projectId,omitempty"`
+	// CorpusDir is where the knowledge-base corpus is exported for Pando to
+	// import. Empty means <index.cacheDir>/pando-kb.
+	CorpusDir string `json:"corpusDir,omitempty" yaml:"corpusDir,omitempty"`
+	// AllowRemote permits non-loopback URLs, as `agent.pando.allowRemote` does.
+	AllowRemote bool `json:"allowRemote" yaml:"allowRemote"`
+}
+
+// String renders the section without either token.
+func (s SearchPando) String() string {
+	return "SearchPando{mcpUrl: " + s.MCPURL + ", restUrl: " + s.RESTURL +
+		", mcpToken: " + redacted(s.MCPToken) + ", restToken: " + redacted(s.RESTToken) + "}"
+}
+
 // Log is the logging section.
 type Log struct {
 	Level  string `json:"level"  yaml:"level"`
@@ -370,6 +537,12 @@ func Default() *Config {
 		},
 		Log:  Log{Level: "info", Format: "text"},
 		Sync: Sync{Engine: DefaultSyncEngine()},
+		Agent: Agent{Pando: Pando{
+			URL:     DefaultPandoURL,
+			Path:    DefaultPandoPath,
+			Agent:   DefaultPandoAgent,
+			MaxRuns: DefaultPandoMaxRuns,
+		}},
 	}
 }
 
@@ -388,6 +561,7 @@ func (c *Config) Clone() *Config {
 	for i, r := range c.Repos {
 		out.Repos[i].DocsFolders = append([]string(nil), r.DocsFolders...)
 	}
+	out.Agent.Pando.Repos = append([]PandoRepo(nil), c.Agent.Pando.Repos...)
 	out.Integrations = Integrations{}
 	if len(c.Integrations.YouTrack) > 0 {
 		out.Integrations.YouTrack = make(map[string]YouTrackCredential, len(c.Integrations.YouTrack))
