@@ -158,6 +158,7 @@ state is shareable by URL and survives reloads.
   /metrics/$sprintId                        SprintMetrics (as built)
 /sync                                    SyncPanel
   /sync/conflicts/$conflictId              ConflictResolver
+/agent                                   AgentPage     (as built, GIT-US-0057)
 /search                                  GlobalSearch
 ```
 
@@ -183,6 +184,8 @@ open repository at once and labels each row with the project it came from, becau
 a workspace the same title can exist in two repositories. Below the repos: "Recently edited" (from the
 index, `updated desc`, limit 20), "Assigned to me" (matching `team.yaml` identity
 or the configured git author email), and a sync health strip.
+
+Where the companion reports `fullTextSearch: 'pando'`, a second group, *Related by meaning*, follows the exact matches: each row carries the why-matched passage as escaped text with the query terms highlighted and a subdued relevance. A per-user toggle (`semanticResults` in `gintrack:ui-prefs`) hides it, and a `degraded` response says the semantic half was unreachable (docs/21).
 
 **AddRepositoryWizard (`/repos/add`)** — Three steps.
 1. *Location*: in browser-only mode, "Choose folder" invokes
@@ -734,6 +737,22 @@ export interface DataProvider {
     resolution: ConflictResolution,
   ): Promise<ConflictResolveResult>;
 
+  // agent — Pando AG-UI through the companion (GIT-EP-0018, §19)
+  // Every call takes `{ repo, signal }`: one `pando agui-serve` runs per
+  // repository and the companion routes `repo` onto its `{url, token}`, so the
+  // Pando token never reaches the browser.
+  getAgentInfo(options?: AgentRequestOptions): Promise<AguiInfo>;
+  getAgentHealth(options?: AgentRequestOptions): Promise<AgentHealth>;
+  // An async iterable rather than a callback feed, because that is what the
+  // SDK's `PandoThread` consumes. The whole transcript is resent every turn.
+  runAgent(input: RunAgentInput, options?: AgentRunOptions): AsyncIterable<AguiEvent>;
+  listAgentThreads(options?: AgentRequestOptions): Promise<AgentThreadSummary[]>;
+  getAgentThreadMessages(threadId: string, options?: AgentRequestOptions): Promise<AguiMessage[]>;
+  // Re-attaches to a thread whose run is still live, without starting one.
+  streamAgentThread(threadId: string, options?: AgentRunOptions): AsyncIterable<AguiEvent>;
+  deleteAgentThread(threadId: string, options?: AgentRequestOptions): Promise<void>;
+  cancelAgentRun(threadId: string, options?: AgentRequestOptions): Promise<void>;
+
   // events
   subscribe(handler: (e: ChangeEvent) => void): Unsubscribe;
 }
@@ -747,10 +766,11 @@ interface Capabilities {
   git: boolean;
   ssh: boolean;              // companion only
   watch: boolean;            // fsnotify push events
-  fullTextSearch: 'core' | 'bleve';
+  fullTextSearch: 'core' | 'bleve' | 'pando';
   mcp: boolean;
   openInEditor: boolean;
   maxBatchWrite: number;
+  agent: boolean;            // a Pando AG-UI adapter is configured and reachable
 }
 ```
 
@@ -1701,3 +1721,95 @@ the set.
    identically. The team is **not** in the URL yet: a shared `/boards/<slug>`
    link resolves against the active team of whoever opens it, and moving it into
    the route is the open question that replaces this one.
+
+---
+
+## 19. The agent chat (as built, GIT-US-0057)
+
+`/agent` is a conversation with a Pando agent that can read this workspace
+(epic GIT-EP-0018). It is capability-gated end to end: the sidebar entry is
+rendered only when `capabilities.agent` is true, and the route itself always
+resolves but renders "the agent is not available here" when it is false — the
+branch is on the capability, never on the provider kind, so a companion built
+without the AG-UI routes behaves like browser-only mode.
+
+### 19.1 Layout
+
+Three columns — conversations, the conversation, and a right rail — collapsing
+to one below `lg`, where the rail disappears and the list becomes a panel behind
+a toggle. The rail is a slot; the shared-state panel moves into it with
+GIT-US-0064.
+
+```
+src/features/agent/
+  index.ts              the public surface; nothing outside imports deeper
+  client.ts             the AG-UI transport over `DataProvider` (GIT-US-0053)
+  threads.ts            thread identity, the tab guard, the `AgentMessage` projection
+  store.ts              `useAgentStore` — messages, run status, interrupt, read-only
+  ui/AgentPage.tsx      the three-column shell and the route component
+  ui/ThreadList.tsx     new / select / delete, titles derived from the first prompt
+  ui/MessageList.tsx    the transcript: a polite live region, auto-scrolling when pinned
+  ui/MessageBubble.tsx  one message: Markdown, reasoning, tool calls
+  ui/ToolCallCard.tsx   a collapsed `<details>` card per tool call
+  ui/ReasoningBlock.tsx reasoning, collapsed, monospace, never Markdown
+  ui/Composer.tsx       Enter sends, Shift+Enter breaks, Stop cancels the run
+  ui/InterruptSlot.tsx  the seam the permission/question dialogs land in
+  ui/model.ts           what the transcript shows, and what the list shows
+  ui/threadMeta.ts      derived thread titles in `localStorage`
+```
+
+### 19.2 Agent output is untrusted content
+
+An agent reply goes through the same pipeline as repository Markdown (§7,
+`@/markdown` public surface only), which sanitises as its last transform. Raw
+HTML in a reply is therefore text, not markup. `externalImages` is off for this
+surface — an image URL a model chose is a request a model chose to make — and
+`wikilinks` is off, because a reply is not a vault page. Tool arguments and tool
+results never touch Markdown at all: they are escaped text inside a `<pre>`,
+with results clamped at 4 kB behind a "show more".
+
+User messages are rendered as escaped plain text as well: what someone typed is
+what they should see.
+
+### 19.3 Streaming
+
+`renderMarkdown` is a full unified pass, so re-running it per delta would burn
+the main thread on a long answer. `MessageBubble` throttles the source it parses
+(~120 ms, trailing edge) and renders the unparsed tail — always a suffix, because
+text only grows — as plain text beside it, with a caret while the run is live.
+Syntax highlighting waits for the end of the stream. The list auto-scrolls only
+while the reader is at the bottom, and offers "jump to latest" otherwise.
+
+### 19.4 What is persisted
+
+Transcripts are **not**. Pando owns the history, keyed by thread id, and the
+store restores a thread by asking for it. The browser keeps three derived
+things, all of them disposable:
+
+| Key | What |
+|---|---|
+| `gintrack:agent-threads:<repo>` | the thread ids this repository has seen |
+| `gintrack:agent-active-thread:<repo>` | which one this browser was last on |
+| `gintrack:agent:threads` | `{ [repo]: { id, title, updatedAt }[] }` — titles derived from the first user message |
+
+Losing the whole lot costs a list of labels and a starting point.
+
+### 19.5 One live run per tab
+
+A second POST on a thread that already has a run is refused by Pando with
+`session_busy`, so tabs agree among themselves over a `BroadcastChannel`
+(`threads.ts`): a tab announces the thread it wants, whoever owns it says so,
+and the newcomer falls back to read-only — everything renders, nothing runs, and
+the composer says why. It is advisory and interim, until park-on-disconnect
+lands on the Pando side.
+
+### 19.6 The interrupt slot
+
+A run parks when the agent calls a tool the browser owns (a permission prompt, a
+question, a frontend tool). Until the dialogs land (GIT-US-0061, GIT-US-0064)
+the page shows what is pending and a Cancel. Two seams exist so that wave
+changes nothing else: `AgentPage` takes a `renderInterrupt` prop of type
+`AgentInterruptRenderer` — `({ interrupt, resume, cancel, readOnly }) =>
+ReactNode` — and `ui/InterruptSlot.tsx` holds the fallback it replaces. The
+`result` string that `resume(toolCallId, result)` takes is built by the SDK's
+HITL helpers (`approve`, `deny`, `answerQuestion`, `cancelQuestion`).

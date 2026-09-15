@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, Outlet } from '@tanstack/react-router';
 import {
   BookOpen,
+  Bot,
   Boxes,
   ChartLine,
   Eye,
@@ -52,8 +53,26 @@ const navItems: NavItem[] = [
     icon: <ChartLine aria-hidden="true" className="h-4 w-4" />,
   },
   { to: '/sync', label: 'Sync', icon: <RefreshCw aria-hidden="true" className="h-4 w-4" /> },
-  { to: '/settings', label: 'Settings', icon: <Settings aria-hidden="true" className="h-4 w-4" /> },
 ];
+
+/**
+ * The agent chat (story GIT-US-0057). It is listed only when the runtime has
+ * an agent: browser-only mode has none, and neither has a companion whose
+ * adapter is not configured. The branch is on the capability, never on the
+ * provider kind — the same rule as every other optional surface here.
+ */
+const agentNavItem: NavItem = {
+  to: '/agent',
+  label: 'Agent',
+  icon: <Bot aria-hidden="true" className="h-4 w-4" />,
+};
+
+/** Always last, so the optional entries land above it. */
+const settingsNavItem: NavItem = {
+  to: '/settings',
+  label: 'Settings',
+  icon: <Settings aria-hidden="true" className="h-4 w-4" />,
+};
 
 /**
  * Sidebar link skin. Navigation is quiet by default and copper when active:
@@ -94,6 +113,11 @@ export function AppShell() {
   }, [provider, reposUpdatedAt, setCapabilities]);
 
   const rows = repos.data ?? [];
+  const mainNavItems: NavItem[] = [
+    ...navItems,
+    ...(capabilities.agent ? [agentNavItem] : []),
+    settingsNavItem,
+  ];
   const collapsed = useUiPrefs((state) => state.sidebarCollapsed);
   const setCollapsed = useUiPrefs((state) => state.setSidebarCollapsed);
 
@@ -170,7 +194,7 @@ export function AppShell() {
               <div className="flex-1 overflow-y-auto px-3 pb-4">
                 <nav aria-label="Main">
                   <ul className="space-y-0.5">
-                    {navItems.map((item) => (
+                    {mainNavItems.map((item) => (
                       <li key={item.to}>
                         <Link
                           to={item.to}
