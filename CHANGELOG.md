@@ -27,7 +27,11 @@ because a commit list cannot express them.
   configuration for one repository: `.pando.toml` with the AG-UI adapter, its tool
   allow-list, the gintrack MCP server and the exported corpus, plus a `backlog-assistant`
   persona and a search-routing skill. The generated `.pando.toml` carries the companion
-  bearer token, is written with mode 0600 and must be git-ignored.
+  bearer token **encrypted**: `agent init` runs `pando secret` and writes the `age1:`
+  ciphertext into `[MCPServers.gintrack.Auth]`, which Pando decrypts on load. Without a
+  usable `pando` binary the command refuses (exit 5) instead of writing a clear secret;
+  `--pando`, `--age-keys` and the `--plaintext-token` escape hatch control that. The file
+  is still written with mode 0600 and must be git-ignored.
   The generated file also turns Pando's MCP gateway off (`[ToolDiscovery]`, `[MCPGateway]`):
   with it on, MCP tools hide behind `tool_search` / `mcp_call_tool`, the allow-list strips
   them and no per-tool approval is ever asked.

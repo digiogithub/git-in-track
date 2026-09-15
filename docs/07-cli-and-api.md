@@ -1663,6 +1663,7 @@ written, preview included.
 
 ```
 gintrack agent init [--repo <path>] [--companion-url <url>] [--agui-port <n>] [--force] [--json]
+                    [--pando <path>] [--age-keys <set>] [--plaintext-token]
 ```
 
 Writes the Pando-side configuration for one repository so that `pando agui-serve` can act as
@@ -1680,16 +1681,26 @@ prints a token.
 | `--companion-url <url>` | the configured bind address | Where Pando reaches this companion |
 | `--agui-port <n>` | `8090` | Port written into `[AGUI] Port` |
 | `--force` | off | Overwrite files that already exist |
-| `--json` | off | Machine-readable summary of what was written |
+| `--json` | off | Machine-readable summary of what was written (`tokenEncrypted` reports which token form landed) |
+| `--pando <path>` | the `pando` on `PATH` | Binary used to encrypt the companion token with `pando secret` |
+| `--age-keys <set>` | Pando's default set | Forwarded as `pando secret --age-keys <set>` (key sets live under `~/.config/pando/keys/`) |
+| `--plaintext-token` | off | Write the token as a literal `Authorization` header instead of encrypting it |
 
 Exit code 5 when a target file exists and `--force` was not given; nothing is written in that
-case and the message names the file.
+case and the message names the file. Exit code 5 as well when `pando` cannot be found or
+`pando secret` does not return an `age1:` ciphertext — again nothing is written, and the
+message offers `--pando` and `--plaintext-token`.
 
-**The generated `.pando.toml` carries the companion bearer token** in
-`[MCPServers.gintrack.Headers]`, because Pando does not expand environment variables in MCP
-headers. It is written with mode 0600 and must be git-ignored; the command says so on stdout.
-The two commands to run next are printed: `pando agui-serve --cwd <repo> --port <n> --no-tls
---token-file <f>` and `gintrack serve --agent --mcp-http`.
+**The generated `.pando.toml` carries the companion bearer token encrypted** in
+`[MCPServers.gintrack.Auth]` (`Type = 'bearer'`, `Token = 'age1:…'`): Pando cannot expand
+environment variables in an MCP server's configuration, but it decrypts an `age1:` value on
+load and derives the `Authorization: Bearer …` header itself. `--plaintext-token` writes the
+old `[MCPServers.gintrack.Headers]` form instead. The file is mode 0600 and must be
+git-ignored; the command says so on stdout and never prints the token or the ciphertext.
+`pando secret` takes its value as an argument (it reads no stdin), so the token is briefly
+visible in the local process list. The two commands to run next are printed: `pando
+agui-serve --cwd <repo> --port <n> --no-tls --token-file <f>` and `gintrack serve --agent
+--mcp-http`.
 
 ---
 

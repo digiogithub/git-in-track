@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"embed"
 	"encoding/hex"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"text/template"
@@ -62,13 +64,21 @@ var agentTools = []string{
 	"code_find_symbol",
 }
 
+// agentSecretPrefix is the marker Pando puts in front of an age ciphertext.
+// `pando secret <value>` prints it and Pando's configuration loader decrypts
+// any value carrying it (internal/config/agecrypto.go).
+const agentSecretPrefix = "age1:"
+
 // agentInitFlags are the flags of `gintrack agent init`.
 type agentInitFlags struct {
-	repo         string
-	companionURL string
-	aguiPort     int
-	force        bool
-	asJSON       bool
+	repo           string
+	companionURL   string
+	aguiPort       int
+	force          bool
+	asJSON         bool
+	pando          string
+	ageKeys        string
+	plaintextToken bool
 }
 
 // agentTemplateData is what the embedded templates are rendered against.
@@ -83,6 +93,8 @@ type agentTemplateData struct {
 	Tools             []string
 	MCPURL            string
 	Token             bool
+	Encrypted         bool
+	AuthToken         string
 	BearerHeader      string
 	KBPath            string
 }
@@ -98,6 +110,7 @@ type agentInitPayload struct {
 	TokenFile string   `json:"tokenFile"`
 	AGUIPort  int      `json:"aguiPort"`
 	HasToken  bool     `json:"hasCompanionToken"`
+	Encrypted bool     `json:"tokenEncrypted"`
 }
 
 // newAgentCommand builds the `agent` command tree.
@@ -136,8 +149,13 @@ The deployment is one Pando process per repository, so there is exactly one
 .pando.toml per repository. Nothing is overwritten without --force.
 
 The generated file carries the companion's bearer token, because Pando does not
-expand environment variables inside an MCP server's headers. It is written with
-mode 0600 and it must not be committed: add .pando.toml to .gitignore.`,
+expand environment variables inside an MCP server's configuration. The token is
+encrypted first with "pando secret", which wraps it in an age ciphertext Pando
+decrypts on load, and the result goes into [MCPServers.gintrack.Auth]. Without a
+usable pando binary the command refuses rather than writing a clear secret; pass
+--plaintext-token to write the token as a literal Authorization header instead.
+Either way the file is mode 0600 and must not be committed: add .pando.toml to
+.gitignore.`,
 		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runAgentInit(cmd, flags, local)
@@ -150,6 +168,12 @@ mode 0600 and it must not be committed: add .pando.toml to .gitignore.`,
 	cmd.Flags().IntVar(&local.aguiPort, "agui-port", agentDefaultAGUIPort, "loopback port the AG-UI adapter listens on")
 	cmd.Flags().BoolVar(&local.force, "force", false, "overwrite files that already exist")
 	cmd.Flags().BoolVar(&local.asJSON, "json", false, "print machine-readable JSON")
+	cmd.Flags().StringVar(&local.pando, "pando", "",
+		"path to the pando binary used to encrypt the companion token (default: the one on PATH)")
+	cmd.Flags().StringVar(&local.ageKeys, "age-keys", "",
+		"name of the Pando age key set to encrypt the companion token with")
+	cmd.Flags().BoolVar(&local.plaintextToken, "plaintext-token", false,
+		"write the companion token as a literal Authorization header instead of encrypting it")
 	return cmd
 }
 
@@ -190,10 +214,6 @@ func runAgentInit(cmd *cobra.Command, flags *globalFlags, local *agentInitFlags)
 		MCPURL:            companion + "/mcp",
 		KBPath:            filepath.Join(res.Config.CacheDir(res.Path), "pando-kb", repoID),
 	}
-	if token := strings.TrimSpace(res.Config.Server.Token); token != "" {
-		data.Token = true
-		data.BearerHeader = "Bearer " + token
-	}
 
 	targets := []struct {
 		name     string
@@ -216,6 +236,22 @@ func runAgentInit(cmd *cobra.Command, flags *globalFlags, local *agentInitFlags)
 			return failf(exitConflict,
 				"%s already exists in %s: nothing was written, pass --force to overwrite",
 				strings.Join(existing, ", "), repoPath)
+		}
+	}
+
+	// The token is resolved after the overwrite check so that a refused run
+	// never spawns `pando secret` for a file it is not going to write.
+	if token := strings.TrimSpace(res.Config.Server.Token); token != "" {
+		data.Token = true
+		if local.plaintextToken {
+			data.BearerHeader = "Bearer " + token
+		} else {
+			ciphertext, encErr := agentEncryptToken(cmd.Context(), local, token)
+			if encErr != nil {
+				return encErr
+			}
+			data.Encrypted = true
+			data.AuthToken = ciphertext
 		}
 	}
 
@@ -256,6 +292,7 @@ func runAgentInit(cmd *cobra.Command, flags *globalFlags, local *agentInitFlags)
 			TokenFile: tokenFile,
 			AGUIPort:  data.AGUIPort,
 			HasToken:  data.Token,
+			Encrypted: data.Encrypted,
 		}))
 	}
 	printAgentInitReport(cmd, data, written, tokenFile, repoPath)
@@ -272,11 +309,18 @@ func printAgentInitReport(cmd *cobra.Command, data agentTemplateData, written []
 		_, _ = fmt.Fprintf(out, "  %s\n", name)
 	}
 	_, _ = fmt.Fprintln(out)
-	if data.Token {
-		_, _ = fmt.Fprintf(out, "%s now carries the companion bearer token. It is mode 0600;\n", agentPandoConfigName)
+	switch {
+	case data.Encrypted:
+		_, _ = fmt.Fprintf(out, "The companion bearer token was encrypted with `pando secret` and written to\n")
+		_, _ = fmt.Fprintf(out, "[MCPServers.gintrack.Auth]; Pando decrypts it on load with its age keys. The file\n")
+		_, _ = fmt.Fprintf(out, "is mode 0600; add it to .gitignore anyway, and note that only the machine holding\n")
+		_, _ = fmt.Fprintf(out, "those keys can read it.\n\n")
+	case data.Token:
+		_, _ = fmt.Fprintf(out, "WARNING: --plaintext-token was given, so %s carries the companion\n", agentPandoConfigName)
+		_, _ = fmt.Fprintf(out, "bearer token in clear in [MCPServers.gintrack.Headers]. It is mode 0600;\n")
 		_, _ = fmt.Fprintf(out, "add it to .gitignore so it is never committed.\n\n")
-	} else {
-		_, _ = fmt.Fprintf(out, "No companion token is configured, so [MCPServers.gintrack.Headers] is empty and\n")
+	default:
+		_, _ = fmt.Fprintf(out, "No companion token is configured, so [MCPServers.gintrack.Auth] is empty and\n")
 		_, _ = fmt.Fprintf(out, "Pando will not be able to read the backlog. Set one and re-run with --force.\n\n")
 	}
 	_, _ = fmt.Fprintf(out, "The corpus Pando indexes is %s.\n", data.KBPath)
@@ -288,6 +332,81 @@ func printAgentInitReport(cmd *cobra.Command, data agentTemplateData, written []
 	_, _ = fmt.Fprintln(out)
 	_, _ = fmt.Fprintf(out, "The AG-UI token is in %s (mode 0600). Point the companion's\n", tokenFile)
 	_, _ = fmt.Fprintln(out, "agent.pando.tokenFile at that same file; it never reaches the browser.")
+}
+
+// agentEncryptToken turns the companion's bearer token into the `age1:`
+// ciphertext that `[MCPServers.gintrack.Auth] Token` holds, by running
+// `pando secret <token>`.
+//
+// The subprocess lives here, in cmd/gintrack, and never in internal/core,
+// which stays WASM-clean and free of os/exec.
+//
+// The token travels as a command-line argument because `pando secret` reads
+// its value from argv and accepts nothing on stdin. On the local machine the
+// argument is therefore visible in the process list for the lifetime of the
+// call; that is the residual exposure this design trades for never writing the
+// secret to disk in clear. docs/20-agent-interface.md says so too.
+func agentEncryptToken(ctx context.Context, local *agentInitFlags, token string) (string, error) {
+	binary, err := agentResolvePando(local.pando)
+	if err != nil {
+		return "", err
+	}
+	args := []string{"secret", token}
+	if keys := strings.TrimSpace(local.ageKeys); keys != "" {
+		args = append(args, "--age-keys", keys)
+	}
+	run := exec.CommandContext(ctx, binary, args...)
+	run.Stdin = strings.NewReader("")
+	var stderr strings.Builder
+	run.Stderr = &stderr
+	out, err := run.Output()
+	if err != nil {
+		return "", failf(exitConflict,
+			"%s secret failed (%v): %s; nothing was written, fix the Pando age keys or re-run with --plaintext-token",
+			binary, err, agentRedact(strings.TrimSpace(stderr.String()), token))
+	}
+	ciphertext := strings.TrimSpace(string(out))
+	if !strings.HasPrefix(ciphertext, agentSecretPrefix) {
+		// Anything else is either an old pando that echoed the value back or a
+		// binary that is not Pando at all. Refusing keeps the clear token out
+		// of the file, and the value itself is never printed.
+		return "", failf(exitConflict,
+			"%s secret did not return an %s ciphertext, so the token would have been written in clear; "+
+				"nothing was written, check the binary or re-run with --plaintext-token",
+			binary, agentSecretPrefix)
+	}
+	return ciphertext, nil
+}
+
+// agentResolvePando locates the pando binary: the --pando path when it is
+// given, the one on PATH otherwise.
+func agentResolvePando(flag string) (string, error) {
+	if trimmed := strings.TrimSpace(flag); trimmed != "" {
+		binary, err := exec.LookPath(trimmed)
+		if err != nil {
+			return "", failf(exitConflict, "--pando %s is not an executable file: %v", trimmed, err)
+		}
+		return binary, nil
+	}
+	binary, err := exec.LookPath("pando")
+	if err != nil {
+		return "", failf(exitConflict,
+			"pando was not found on PATH, so the companion token cannot be encrypted: nothing was written. "+
+				"Install Pando, pass --pando <path>, or re-run with --plaintext-token to write the token in clear")
+	}
+	return binary, nil
+}
+
+// agentRedact removes a secret from a subprocess's diagnostics before it is
+// shown, so that a chatty error can never leak the token.
+func agentRedact(text, secret string) string {
+	if text == "" {
+		return "no output"
+	}
+	if secret == "" {
+		return text
+	}
+	return strings.ReplaceAll(text, secret, "<token>")
 }
 
 // renderAgentTemplate renders one embedded template.

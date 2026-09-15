@@ -99,10 +99,17 @@ place a reader looks for the current values; docs/20 explains each one.
   `:9777`, whose CORS policy is `*` with global auto-approval: binding it to 127.0.0.1
   protects nothing there, which is why the generated configuration leaves `HttpEnabled =
   false` and docs/20 says so in the security section rather than in a footnote.
-- **A secret lands in the repository's working tree.** Pando does not expand environment
-  variables inside an MCP server's headers, so `[MCPServers.gintrack.Headers]` holds the
-  companion's literal bearer token. The generator writes the file with mode 0600 and warns,
-  but the file must be git-ignored by the user; we cannot enforce that.
+- **An encrypted secret lands in the repository's working tree.** Pando does not expand
+  environment variables inside an MCP server's configuration, but it does decrypt an
+  `age1:`-prefixed value on load, so `gintrack agent init` runs `pando secret <token>` and
+  writes the ciphertext into `[MCPServers.gintrack.Auth]` (`Type = 'bearer'`) instead of a
+  literal header. Without a usable `pando` the command refuses (exit 5) rather than writing
+  a clear secret; `--plaintext-token` is an explicit, banner-marked escape hatch. Three
+  caveats remain: `pando secret` takes its value as an argument and reads no stdin, so the
+  token is momentarily visible in the local process list; anyone who can read the age keys
+  under `~/.config/pando/keys/` can read the token, which is the same trust boundary as the
+  user's own account; and the file still must be git-ignored by the user, which we cannot
+  enforce — hence mode 0600 and the banner.
 - **Two tabs on one thread fight.** A second POST on a live thread abandons the running
   one, server-side. We document it; we cannot fix it from here.
 

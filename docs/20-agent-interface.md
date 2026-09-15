@@ -94,12 +94,25 @@ value.
 | `--companion-url <url>` | the configured bind address and port | Where Pando reaches the companion's `/mcp`. |
 | `--agui-port <port>` | `8090` | The loopback port `[AGUI]` listens on. |
 | `--force` | off | Overwrite files that already exist. |
-| `--json` | off | Machine-readable output (no token value). |
+| `--json` | off | Machine-readable output (no token value; `tokenEncrypted` says which form was written). |
+| `--pando <path>` | the `pando` on `PATH` | The binary used to encrypt the companion token. |
+| `--age-keys <set>` | Pando's default set | Passed to `pando secret --age-keys`; selects the key set under `~/.config/pando/keys/`. |
+| `--plaintext-token` | off | Write the token as a literal `Authorization` header instead of encrypting it. |
 
-**`.pando.toml` carries a secret.** Pando does not expand environment variables inside an
-MCP server's headers, so the companion's bearer token is written literally into
-`[MCPServers.gintrack.Headers]`. The file is mode 0600 — add it to `.gitignore` or
-`.git/info/exclude` before you commit anything.
+**`.pando.toml` carries the companion's bearer token, encrypted.** Pando cannot expand
+environment variables inside an MCP server's configuration, but it does decrypt an
+`age1:`-prefixed value on load, so `gintrack agent init` runs `pando secret <token>` and
+writes the ciphertext into `[MCPServers.gintrack.Auth]` (`Type = 'bearer'`). Only the
+machine holding those age keys can read it. If `pando` cannot be found or `pando secret`
+fails, the command refuses with exit 5 and writes nothing rather than putting a clear
+secret in the working tree; `--plaintext-token` is the deliberate escape hatch and falls
+back to `[MCPServers.gintrack.Headers] Authorization`. Either way the file is mode 0600 —
+add it to `.gitignore` or `.git/info/exclude` before you commit anything.
+
+One caveat of the encryption path: `pando secret` takes its value as a command-line
+argument and reads nothing from stdin, so during that one call the companion token is
+visible in the local machine's process list. Nothing is printed: neither the token nor the
+ciphertext ever reaches stdout, only the file.
 
 ### 2.2 Start Pando
 
@@ -182,9 +195,12 @@ Pando's own discovery paths.
 
 ### 3.3 `[MCPServers.gintrack]`
 
-`Type = 'streamable-http'`, `URL = '<companion>/mcp'`, and the companion's bearer token in
-`[MCPServers.gintrack.Headers] Authorization`. Pando passes its MCP gateway into AG-UI runs
-automatically, so no Pando code change is needed for the tool wiring.
+`Type = 'streamable-http'`, `URL = '<companion>/mcp'`, and the companion's bearer token —
+age-encrypted by `pando secret` — in `[MCPServers.gintrack.Auth]` (`Type = 'bearer'`,
+`Token = 'age1:…'`), which Pando decrypts on load and turns into `Authorization: Bearer
+<token>`. `[MCPServers.gintrack.Headers]` is only written by `--plaintext-token`. Pando
+passes its MCP gateway into AG-UI runs automatically, so no Pando code change is needed for
+the tool wiring.
 
 ### 3.4 `[Remembrances]`
 
@@ -275,8 +291,14 @@ knowledge base and code into one ranking, hides which index answered, and takes 
 
 - **Two tokens, two directions, neither in the browser.** The AG-UI token lives in a
   0600 file the companion reads; the companion token lives in the companion's configuration
-  and in `.pando.toml`. Neither is ever put in a URL — no `?token=` — and neither is sent to
-  a page.
+  and, as an age ciphertext, in `.pando.toml`. Neither is ever put in a URL — no `?token=` —
+  and neither is sent to a page.
+- **The generated `.pando.toml` holds no clear secret.** `gintrack agent init` encrypts the
+  companion token with Pando's own age keys (`pando secret`, keys under
+  `~/.config/pando/keys/<set>`) and refuses to write anything when it cannot, so a leaked
+  copy of the file is useless without the key. `--plaintext-token` opts out of that, and
+  says so in the file, in the banner and on stdout. The residual exposure is the argv of the
+  one `pando secret` call, which is local and momentary.
 - **`Origin` is stripped, so the allow-list stays empty.** Pando checks CORS only when an
   `Origin` header is present. The proxy removes it, which means Pando's allow-list has
   nothing to get wrong, and a browser that tries to reach `:8090` directly is a CORS
@@ -341,12 +363,12 @@ server and any tool and asks no per-tool approval. Treat that as a temporary tra
 | Every request 404s | `agent.pando.path` and `[AGUI] Path` disagree | Make them equal; the generated file states `/api/v1/agui`. |
 | The agent answers but sees no items | The companion was started without `--mcp-http` | `gintrack serve --agent --mcp-http`. Check `curl -sS $COMPANION/mcp` answers at all. |
 | The agent sees items but every write fails | The companion is read-only | Add `--mcp-allow-write`, deliberately. |
-| The agent sees items but the MCP tools are missing entirely | The token in `[MCPServers.gintrack.Headers]` is stale | Re-run `gintrack agent init --force` after changing the companion token. |
+| The agent sees items but the MCP tools are missing entirely | The token in `[MCPServers.gintrack.Auth]` is stale, or the age key set that encrypted it is gone | Re-run `gintrack agent init --force` after changing the companion token or the key set. |
 | Semantic search finds nothing, structured search works | The corpus has not been imported yet, or `KBPath` is wrong | Check that `<cacheDir>/pando-kb/<repo id>` has `.md` files; auto-import runs on Pando's schedule, not on yours. |
 | Semantic search returns items with no tags or status | `KBWatch` got turned on somewhere | Set it back to `false` and let a full auto-import pass rewrite the documents. |
 | A run is refused with 503 and `Retry-After` | The concurrency cap, on either side | Wait, or raise `maxRuns` / `MaxConcurrentRuns`. |
 | Opening the panel in a second tab kills the first tab's answer | A second POST on a live thread abandons the running one — Pando's behaviour, not a bug in the panel | Use one tab per thread. |
-| `.pando.toml` shows up in `git status` | It was not excluded | Add it to `.gitignore`; it carries the companion token. |
+| `.pando.toml` shows up in `git status` | It was not excluded | Add it to `.gitignore`; it carries the companion token, encrypted. |
 
 ---
 

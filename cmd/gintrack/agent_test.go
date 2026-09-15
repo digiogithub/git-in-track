@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -9,6 +10,54 @@ import (
 
 	"github.com/digiogithub/git-in-track/internal/config"
 )
+
+// fakePandoScript is a stand-in for `pando secret <value>`: it prints the
+// `age1:` prefix Pando's loader looks for followed by base64 of the value, so a
+// test can assert the ciphertext is really the token and never the token
+// itself. It records its arguments so the --age-keys forwarding can be checked.
+const fakePandoScript = `#!/bin/sh
+printf '%s\n' "$*" > "$FAKE_PANDO_ARGS"
+if [ "$1" != secret ]; then
+  echo "unexpected command: $*" >&2
+  exit 2
+fi
+printf 'age1:'
+printf '%s' "$2" | base64
+`
+
+// writeFakePando writes a script named `pando` into a fresh directory without
+// touching PATH, and returns the script and the file its arguments land in.
+func writeFakePando(t *testing.T, script string) (binary, args string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake pando is a shell script")
+	}
+	dir := t.TempDir()
+	binary = filepath.Join(dir, "pando")
+	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
+		t.Fatalf("write the fake pando: %v", err)
+	}
+	args = filepath.Join(dir, "args")
+	t.Setenv("FAKE_PANDO_ARGS", args)
+	return binary, args
+}
+
+// installFakePando additionally puts the fake first on PATH, so that the
+// command finds it the way it would find a real Pando installation.
+func installFakePando(t *testing.T, script string) string {
+	t.Helper()
+	binary, args := writeFakePando(t, script)
+	t.Setenv("PATH", filepath.Dir(binary)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return args
+}
+
+// emptyPATH removes every directory from PATH so that no pando can be found.
+// The fake pando is never reached through this PATH, so nothing needs the
+// shell utilities it hides.
+func emptyPATH(t *testing.T) {
+	t.Helper()
+	t.Setenv("PATH", t.TempDir())
+}
 
 // readGenerated reads one generated file and fails the test when it is missing.
 func readGenerated(t *testing.T, repo, name string) string {
@@ -27,6 +76,7 @@ func TestAgentInitWritesThePandoConfiguration(t *testing.T) {
 	h := newHarness(t)
 	h.register()
 	t.Setenv("GINTRACK_TOKEN", "companion-secret")
+	installFakePando(t, fakePandoScript)
 
 	stdout := h.mustRun("agent", "init", "--repo", h.Repo)
 
@@ -55,7 +105,9 @@ func TestAgentInitWritesThePandoConfiguration(t *testing.T) {
 		"[MCPServers.gintrack]",
 		"Type = 'streamable-http'",
 		"URL = 'http://127.0.0.1:7317/mcp'",
-		"Authorization = 'Bearer companion-secret'",
+		"\n[MCPServers.gintrack.Auth]",
+		"Type = 'bearer'",
+		"Token = 'age1:",
 		"[Remembrances]",
 		"KBAutoImport = true",
 		"KBWatch = false",
@@ -111,20 +163,28 @@ func TestAgentInitWritesThePandoConfiguration(t *testing.T) {
 	}
 }
 
-// TestAgentInitKeepsTheSecretOutOfTheOtherFiles is the "no secret" criterion of
-// GIT-T-0100: only .pando.toml may carry the bearer token, it is mode 0600, and
-// the persona and the skill never see it.
+// TestAgentInitKeepsTheSecretOutOfTheOtherFiles is the "no secret in the
+// generated file" criterion of GIT-T-0100: no generated file carries the clear
+// token, .pando.toml holds only the age ciphertext, and it is mode 0600.
 func TestAgentInitKeepsTheSecretOutOfTheOtherFiles(t *testing.T) {
 	h := newHarness(t)
 	h.register()
 	t.Setenv("GINTRACK_TOKEN", "companion-secret")
+	installFakePando(t, fakePandoScript)
 
 	h.mustRun("agent", "init", "--repo", h.Repo)
 
-	for _, name := range []string{agentPersonaName, agentSkillName} {
+	for _, name := range []string{agentPersonaName, agentSkillName, agentPandoConfigName} {
 		if strings.Contains(readGenerated(t, h.Repo, name), "companion-secret") {
-			t.Errorf("%s carries the companion token", name)
+			t.Errorf("%s carries the companion token in clear", name)
 		}
+	}
+	toml := readGenerated(t, h.Repo, agentPandoConfigName)
+	if strings.Contains(toml, "\n[MCPServers.gintrack.Headers]") {
+		t.Errorf("the plaintext Headers block was written:\n%s", toml)
+	}
+	if strings.Contains(toml, "\nAuthorization = ") {
+		t.Error("a literal Authorization header was written")
 	}
 	if runtime.GOOS != "windows" {
 		info, err := os.Stat(filepath.Join(h.Repo, agentPandoConfigName))
@@ -149,11 +209,173 @@ func TestAgentInitWithoutACompanionToken(t *testing.T) {
 	if strings.Contains(toml, "\nAuthorization = ") {
 		t.Errorf("an Authorization header was written with no token configured:\n%s", toml)
 	}
-	if !strings.Contains(toml, "# Authorization = 'Bearer <companion token>'") {
-		t.Error("the commented-out header is missing")
+	if !strings.Contains(toml, "# [MCPServers.gintrack.Auth]") {
+		t.Errorf("the commented-out Auth block is missing:\n%s", toml)
+	}
+	if !strings.Contains(toml, "pando secret") {
+		t.Error("the comment does not say how to produce the ciphertext by hand")
 	}
 	if !strings.Contains(stdout, "No companion token is configured") {
 		t.Errorf("the missing token was not reported:\n%s", stdout)
+	}
+}
+
+// TestAgentInitEncryptsTheCompanionToken checks the whole encryption path: the
+// ciphertext in the file is what `pando secret` returned, --age-keys reaches
+// the subprocess, and --json reports the token as encrypted.
+func TestAgentInitEncryptsTheCompanionToken(t *testing.T) {
+	h := newHarness(t)
+	h.register()
+	t.Setenv("GINTRACK_TOKEN", "companion-secret")
+	argsFile := installFakePando(t, fakePandoScript)
+
+	stdout := h.mustRun("agent", "init", "--repo", h.Repo, "--age-keys", "work", "--json")
+
+	want := "age1:" + base64.StdEncoding.EncodeToString([]byte("companion-secret"))
+	toml := readGenerated(t, h.Repo, agentPandoConfigName)
+	if !strings.Contains(toml, "Token = '"+want+"'") {
+		t.Errorf("the ciphertext is not %q:\n%s", want, toml)
+	}
+	args, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("read the recorded arguments: %v", err)
+	}
+	if !strings.Contains(string(args), "--age-keys work") {
+		t.Errorf("--age-keys was not forwarded: %q", args)
+	}
+	if !strings.HasPrefix(string(args), "secret ") {
+		t.Errorf("pando was not called with `secret`: %q", args)
+	}
+
+	payload := decode[agentInitPayload](t, stdout)
+	if !payload.Encrypted {
+		t.Error("--json does not report tokenEncrypted: true")
+	}
+	if !payload.HasToken {
+		t.Error("--json does not report the companion token")
+	}
+	if strings.Contains(stdout, "companion-secret") || strings.Contains(stdout, want) {
+		t.Errorf("stdout carries the token or the ciphertext:\n%s", stdout)
+	}
+}
+
+// TestAgentInitPandoFlag points the command at a binary that is not on PATH.
+func TestAgentInitPandoFlag(t *testing.T) {
+	h := newHarness(t)
+	h.register()
+	t.Setenv("GINTRACK_TOKEN", "companion-secret")
+	// The fake is deliberately NOT on PATH: only --pando can find it.
+	binary, _ := writeFakePando(t, fakePandoScript)
+
+	h.mustRun("agent", "init", "--repo", h.Repo, "--pando", binary)
+
+	if !strings.Contains(readGenerated(t, h.Repo, agentPandoConfigName), "Token = 'age1:") {
+		t.Error("--pando did not encrypt the token")
+	}
+}
+
+// TestAgentInitRefusesWithoutPando is the refusal half of GIT-T-0100: with no
+// pando to encrypt with, nothing is written at all.
+func TestAgentInitRefusesWithoutPando(t *testing.T) {
+	h := newHarness(t)
+	h.register()
+	t.Setenv("GINTRACK_TOKEN", "companion-secret")
+	emptyPATH(t)
+
+	_, stderr, code := h.run("agent", "init", "--repo", h.Repo)
+
+	if code != exitConflict {
+		t.Errorf("exit %d, want %d", code, exitConflict)
+	}
+	if !strings.Contains(stderr, "--plaintext-token") {
+		t.Errorf("the refusal does not offer the escape hatch:\n%s", stderr)
+	}
+	if _, err := os.Stat(filepath.Join(h.Repo, agentPandoConfigName)); err == nil {
+		t.Error("the refused run still wrote the configuration")
+	}
+}
+
+// TestAgentInitRefusesABadSecretCommand covers the two ways `pando secret` can
+// let us down: a non-zero exit, and output that is not an age ciphertext.
+func TestAgentInitRefusesABadSecretCommand(t *testing.T) {
+	cases := map[string]string{
+		"failure":       "#!/bin/sh\necho 'no age key' >&2\nexit 1\n",
+		"clear echo":    "#!/bin/sh\nprintf '%s\\n' \"$2\"\n",
+		"empty output":  "#!/bin/sh\nexit 0\n",
+		"not a warning": "#!/bin/sh\necho 'age1 without the colon'\n",
+	}
+	for name, script := range cases {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t)
+			h.register()
+			t.Setenv("GINTRACK_TOKEN", "companion-secret")
+			installFakePando(t, script)
+
+			_, stderr, code := h.run("agent", "init", "--repo", h.Repo)
+
+			if code != exitConflict {
+				t.Errorf("exit %d, want %d", code, exitConflict)
+			}
+			if strings.Contains(stderr, "companion-secret") {
+				t.Errorf("the refusal leaked the token:\n%s", stderr)
+			}
+			if _, err := os.Stat(filepath.Join(h.Repo, agentPandoConfigName)); err == nil {
+				t.Error("the refused run still wrote the configuration")
+			}
+		})
+	}
+}
+
+// TestAgentInitPlaintextToken is the escape hatch: the old Headers form, still
+// 0600, still with the banner and a warning on stdout.
+func TestAgentInitPlaintextToken(t *testing.T) {
+	h := newHarness(t)
+	h.register()
+	t.Setenv("GINTRACK_TOKEN", "companion-secret")
+	emptyPATH(t)
+
+	stdout := h.mustRun("agent", "init", "--repo", h.Repo, "--plaintext-token", "--json")
+
+	toml := readGenerated(t, h.Repo, agentPandoConfigName)
+	for _, want := range []string{
+		"[MCPServers.gintrack.Headers]",
+		"Authorization = 'Bearer companion-secret'",
+		"SECURITY",
+		"--plaintext-token",
+	} {
+		if !strings.Contains(toml, want) {
+			t.Errorf("%s does not contain %q", agentPandoConfigName, want)
+		}
+	}
+	if strings.Contains(toml, "\n[MCPServers.gintrack.Auth]") {
+		t.Error("--plaintext-token still wrote an Auth block")
+	}
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(filepath.Join(h.Repo, agentPandoConfigName))
+		if err != nil {
+			t.Fatalf("stat: %v", err)
+		}
+		if got := info.Mode().Perm(); got != 0o600 {
+			t.Errorf("%s is mode %o, want 600", agentPandoConfigName, got)
+		}
+	}
+	payload := decode[agentInitPayload](t, stdout)
+	if payload.Encrypted {
+		t.Error("--json reports tokenEncrypted: true for a plaintext token")
+	}
+	if !payload.HasToken {
+		t.Error("--json does not report the companion token")
+	}
+
+	if _, warning, _ := h.run("agent", "init", "--repo", h.Repo, "--plaintext-token", "--force"); strings.Contains(warning, "companion-secret") {
+		t.Error("the token reached stderr")
+	}
+	text := h.mustRun("agent", "init", "--repo", h.Repo, "--plaintext-token", "--force")
+	if !strings.Contains(text, "WARNING") {
+		t.Errorf("the plaintext run printed no warning:\n%s", text)
+	}
+	if strings.Contains(text, "companion-secret") {
+		t.Errorf("the token was printed to stdout:\n%s", text)
 	}
 }
 
