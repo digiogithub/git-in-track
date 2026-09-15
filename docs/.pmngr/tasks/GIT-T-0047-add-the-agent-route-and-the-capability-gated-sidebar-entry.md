@@ -2,7 +2,7 @@
 id: GIT-T-0047
 type: task
 title: Add the /agent route and the capability-gated sidebar entry
-status: todo
+status: in_review
 priority: medium
 parent: GIT-US-0057
 milestone: GIT-M-0013
@@ -10,7 +10,8 @@ author: mcp
 labels: [web, agent-ok]
 estimate: 2
 created: 2026-09-13T13:16:27Z
-updated: 2026-09-13T13:16:27Z
+updated: 2026-09-15T16:00:42Z
+started: 2026-09-15T15:45:45Z
 ---
 
 ## Description

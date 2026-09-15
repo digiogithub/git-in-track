@@ -2,7 +2,7 @@
 id: GIT-T-0185
 type: task
 title: Render the grouped semantic results section
-status: todo
+status: in_review
 priority: medium
 parent: GIT-US-0086
 milestone: GIT-M-0013
@@ -10,7 +10,8 @@ author: mcp
 labels: [web]
 estimate: 3
 created: 2026-09-13T13:19:43Z
-updated: 2026-09-13T13:19:43Z
+updated: 2026-09-15T15:50:48Z
+started: 2026-09-15T15:50:35Z
 ---
 
 ## Description

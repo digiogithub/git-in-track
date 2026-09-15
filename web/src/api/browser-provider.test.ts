@@ -249,7 +249,10 @@ describe('BrowserProvider', () => {
     await expect(
       provider.getPage({ kind: 'project', projectKey: 'ACME' }, 'docs/index.md'),
     ).resolves.toMatchObject({ title: 'Docs' });
-    await expect(provider.search({ text: 'sso', limit: 5 })).resolves.toHaveLength(1);
+    // The browser build has no semantic index: every hit is an exact one.
+    await expect(provider.search({ text: 'sso', limit: 5 })).resolves.toEqual({
+      hits: [expect.objectContaining({ source: 'core' })],
+    });
 
     expect(call).toHaveBeenCalledWith('kb.tree', { project: 'ACME' });
     expect(call).toHaveBeenCalledWith('search', { q: 'sso', limit: 5 });

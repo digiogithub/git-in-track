@@ -2,7 +2,7 @@
 id: GIT-T-0058
 type: task
 title: Build the composer with send, stop and keyboard handling
-status: todo
+status: in_review
 priority: medium
 parent: GIT-US-0057
 milestone: GIT-M-0013
@@ -10,7 +10,8 @@ author: mcp
 labels: [web, agent-ok]
 estimate: 3
 created: 2026-09-13T13:16:44Z
-updated: 2026-09-13T13:16:44Z
+updated: 2026-09-15T16:00:46Z
+started: 2026-09-15T15:45:48Z
 ---
 
 ## Description

@@ -63,6 +63,7 @@ import type {
   RepoInfo,
   SearchHit,
   SearchQuery,
+  SearchResult,
   SnapshotRefresh,
   SnapshotResult,
   RetroDraft,
@@ -645,13 +646,19 @@ export class BrowserProvider implements DataProvider {
     return this.#vaultCall(() => mount.vault.readBinary(path));
   }
 
-  async search(query: SearchQuery): Promise<SearchHit[]> {
+  /**
+   * The browser build has no semantic index behind it: every hit comes from
+   * the core, so every hit is an exact one and nothing is ever degraded
+   * (GIT-US-0086).
+   */
+  async search(query: SearchQuery): Promise<SearchResult> {
     await this.#ensureActive();
-    return this.#call('search', {
+    const hits = await this.#call('search', {
       q: query.text,
       ...(query.limit === undefined ? {} : { limit: query.limit }),
       ...(query.projectKey === undefined ? {} : { project: query.projectKey }),
     });
+    return { hits: hits.map((hit): SearchHit => ({ ...hit, source: 'core' })) };
   }
 
   async validateItem(input: { id?: string; text?: string; path?: string }): Promise<Diagnostic[]> {

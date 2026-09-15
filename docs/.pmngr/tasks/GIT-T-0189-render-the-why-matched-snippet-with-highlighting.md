@@ -2,7 +2,7 @@
 id: GIT-T-0189
 type: task
 title: Render the why-matched snippet with highlighting
-status: todo
+status: in_review
 priority: medium
 parent: GIT-US-0086
 milestone: GIT-M-0013
@@ -10,7 +10,8 @@ author: mcp
 labels: [web, security]
 estimate: 2
 created: 2026-09-13T13:19:50Z
-updated: 2026-09-13T13:19:50Z
+updated: 2026-09-15T15:50:49Z
+started: 2026-09-15T15:50:37Z
 ---
 
 ## Description

@@ -2,7 +2,7 @@
 id: GIT-US-0082
 type: story
 title: Pando search backend behind the core search contract
-status: backlog
+status: in_review
 priority: high
 parent: GIT-EP-0019
 milestone: GIT-M-0013
@@ -10,7 +10,8 @@ author: mcp
 labels: [core, server, web, docs]
 estimate: 8
 created: 2026-09-13T13:14:19Z
-updated: 2026-09-13T21:18:05Z
+updated: 2026-09-15T16:05:21Z
+started: 2026-09-15T16:04:21Z
 ---
 
 ## Description

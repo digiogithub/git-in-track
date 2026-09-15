@@ -97,7 +97,6 @@ import type {
   RetroTheme,
   RetroThemeView,
   RetroView,
-  SearchHit,
   SnapshotInfo,
   SnapshotItemSummary,
   SnapshotResult,
@@ -206,7 +205,6 @@ export type {
   RetroTheme,
   RetroThemeView,
   RetroView,
-  SearchHit,
   SnapshotInfo,
   SnapshotItemSummary,
   SnapshotResult,
@@ -1203,7 +1201,12 @@ export type Capabilities = {
   ssh: boolean;
   /** fsnotify push events. */
   watch: boolean;
-  fullTextSearch: 'core' | 'bleve';
+  /**
+   * Which engine answers `search`. `'pando'` means the companion can also ask
+   * a Pando index for semantically related passages, which is what the search
+   * UI gates its "Related by meaning" section on (GIT-US-0086).
+   */
+  fullTextSearch: 'core' | 'bleve' | 'pando';
   mcp: boolean;
   openInEditor: boolean;
   maxBatchWrite: number;
@@ -1325,6 +1328,43 @@ export type KbScope = { kind: 'project'; projectKey: string } | { kind: 'team'; 
 export function teamScope(team?: string): { team?: string } {
   return team === undefined || team === '' ? {} : { team };
 }
+
+/**
+ * Where a hit came from. `'core'` is an exact match found by the local index;
+ * `'pando'` is a passage a semantic index considered related. A hit that
+ * carries no `source` predates GIT-US-0086 and is read as `'core'`.
+ */
+export type SearchHitSource = 'core' | 'pando';
+
+/**
+ * One search result. `snippet` is the passage that matched — repository
+ * content, so it is always rendered as escaped text — and `score` is the
+ * engine's own relevance, only ever shown as a subdued indicator.
+ */
+export type SearchHit = {
+  kind: 'item' | 'page';
+  id?: string;
+  path?: string;
+  title: string;
+  snippet?: string;
+  score?: number;
+  /** Project key the hit belongs to; the team key for a team knowledge-base page. */
+  project?: string;
+  /** Repository the hit came from, set by a workspace-wide search. */
+  vaultId?: string;
+  source: SearchHitSource;
+};
+
+/**
+ * The answer to one search. Hits arrive ordered: exact matches first, then the
+ * semantic ones that are not already among them. `degraded` says the semantic
+ * half could not be reached, so the panel can say so instead of silently
+ * dropping a section the user turned on.
+ */
+export type SearchResult = {
+  hits: SearchHit[];
+  degraded?: boolean;
+};
 
 export type SearchQuery = {
   text: string;
@@ -1539,7 +1579,7 @@ export interface DataProvider {
   listKbTree(scope: KbScope): Promise<KbNode[]>;
   getPage(scope: KbScope, path: string): Promise<KbPage>;
   readAsset(scope: KbScope, path: string): Promise<Blob>;
-  search(query: SearchQuery): Promise<SearchHit[]>;
+  search(query: SearchQuery): Promise<SearchResult>;
   validateItem(input: { id?: string; text?: string; path?: string }): Promise<Diagnostic[]>;
   /**
    * Everything that still points at an item: a child's `parent`, a story's

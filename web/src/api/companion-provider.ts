@@ -98,6 +98,7 @@ import type {
   RepoInfo,
   SearchHit,
   SearchQuery,
+  SearchResult,
   SnapshotRefresh,
   SnapshotResult,
   RetroDraft,
@@ -945,7 +946,10 @@ export function toKbPage(value: unknown, requestedPath: string): KbPage {
 
 export function toSearchHits(value: unknown): SearchHit[] {
   const record = asRecord(value);
-  const results = record ? asArray(record['results']) : asArray(value);
+  // Three shapes are accepted, so a companion older than GIT-US-0086 keeps
+  // working: the bare array it used to answer with, the `results` envelope,
+  // and the `hits` envelope that now carries `degraded` alongside.
+  const results = record ? asArray(record['hits'] ?? record['results']) : asArray(value);
   return results
     .map((entry) => {
       const hit = asRecord(entry);
@@ -956,6 +960,9 @@ export function toSearchHits(value: unknown): SearchHit[] {
         title: asString(hit['title']) ?? '',
         snippet: asString(hit['snippet']) ?? '',
         score: asNumber(hit['score']) ?? 0,
+        // A hit that names no origin comes from the local index: only the
+        // semantic half ever says `pando` (GIT-US-0086).
+        source: asString(hit['source']) === 'pando' ? 'pando' : 'core',
       };
       put(mapped, 'id', asString(hit['id']));
       // A workspace-wide search says which project — and which repository —
@@ -965,6 +972,13 @@ export function toSearchHits(value: unknown): SearchHit[] {
       return mapped;
     })
     .filter((entry): entry is SearchHit => entry !== null);
+}
+
+/** `GET /search` → the hits plus whether the semantic half answered. */
+export function toSearchResult(value: unknown): SearchResult {
+  const record = asRecord(value);
+  const hits = toSearchHits(value);
+  return asBoolean(record?.['degraded']) === true ? { hits, degraded: true } : { hits };
 }
 
 export function toIndexStats(value: unknown): IndexStats {
@@ -1019,6 +1033,16 @@ function optional<K extends string, V>(key: K, value: V | undefined): Record<K, 
   return value === undefined ? {} : { [key]: value };
 }
 
+/**
+ * Which search engine the companion reported. Anything unknown reads as the
+ * always-available core index rather than promising a surface that is not
+ * there.
+ */
+function toFullTextSearch(value: string | undefined): Capabilities['fullTextSearch'] {
+  if (value === 'bleve' || value === 'pando') return value;
+  return 'core';
+}
+
 /** `GET /capabilities` → the object the UI branches on. */
 export function toCapabilities(value: unknown): Capabilities {
   const record = asRecord(value) ?? {};
@@ -1030,7 +1054,7 @@ export function toCapabilities(value: unknown): Capabilities {
     git,
     ssh: asBoolean(features['ssh']) ?? git,
     watch: asBoolean(features['watcher']) ?? companionCapabilities.watch,
-    fullTextSearch: asString(features['search']) === 'bleve' ? 'bleve' : 'core',
+    fullTextSearch: toFullTextSearch(asString(features['search'])),
     mcp: asBoolean(features['mcpHttp']) ?? false,
     openInEditor: asBoolean(features['openInEditor']) ?? companionCapabilities.openInEditor,
     maxBatchWrite: asNumber(limits['maxBatchWrite']) ?? companionCapabilities.maxBatchWrite,
@@ -1851,14 +1875,14 @@ export class CompanionProvider implements DataProvider {
     return response.blob();
   }
 
-  async search(query: SearchQuery): Promise<SearchHit[]> {
+  async search(query: SearchQuery): Promise<SearchResult> {
     const search = buildQuery({
       q: query.text,
       scope: 'items,kb',
       project: query.projectKey,
       limit: query.limit,
     });
-    return toSearchHits(await this.#json(`${API_PREFIX}/search${search}`));
+    return toSearchResult(await this.#json(`${API_PREFIX}/search${search}`));
   }
 
   /**

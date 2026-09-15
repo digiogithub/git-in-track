@@ -78,6 +78,7 @@ import type {
   RepoInfo,
   SearchHit,
   SearchQuery,
+  SearchResult,
   SnapshotInfo,
   SnapshotItemSummary,
   SnapshotRefresh,
@@ -149,8 +150,21 @@ import type {
 import { ProviderError, readOnlyCapabilities } from '@/api/provider';
 import { DEFAULT_COMMIT_TEMPLATE, validateCommitTemplate } from '@/git/message';
 
+/**
+ * The search engine this fake stands in for: the capability it reports, the
+ * semantic hits every query appends after the exact ones, and whether the
+ * semantic half answers at all (GIT-US-0086).
+ */
+export type FakeSearch = {
+  fullTextSearch?: Capabilities['fullTextSearch'];
+  semantic?: SearchHit[];
+  degraded?: boolean;
+};
+
 export type FakeData = {
   projects?: ProjectSummary[];
+  /** Overrides on the search engine; omit for the plain core index. */
+  search?: FakeSearch;
   items?: Item[];
   comments?: Comment[];
   pages?: KbPage[];
@@ -1307,6 +1321,14 @@ export class FakeProvider implements DataProvider {
   readonly agentCancels: string[] = [];
   /** Every thread id `deleteAgentThread` was called with, in order. */
   readonly agentDeletes: string[] = [];
+  /**
+   * Semantic hits every `search` appends after the exact ones, so a test can
+   * script the Pando half without an index. They are stamped `pando` on the
+   * way out whatever the fixture says.
+   */
+  semanticHits: SearchHit[] = [];
+  /** Makes every `search` report that the semantic half could not be reached. */
+  searchDegraded = false;
 
   constructor(data: FakeData = {}, opts: { readOnly?: boolean } = {}) {
     const base = opts.readOnly ? readOnlyCapabilities : writableCapabilities;
@@ -1349,8 +1371,11 @@ export class FakeProvider implements DataProvider {
             running: true,
             ...this.syncEngine.settings,
           };
+    this.semanticHits = structuredClone(data.search?.semantic ?? []);
+    this.searchDegraded = data.search?.degraded ?? false;
     this.capabilities = {
       ...base,
+      fullTextSearch: data.search?.fullTextSearch ?? base.fullTextSearch,
       youtrackSupported: this.youtrack !== null,
       youtrack: this.youtrack !== null && this.youtrackSettings.configured,
       agent: this.agent !== null,
@@ -1774,7 +1799,13 @@ export class FakeProvider implements DataProvider {
     return Promise.reject(new ProviderError('not_found', `Asset ${path} not found`, path));
   }
 
-  search(query: SearchQuery): Promise<SearchHit[]> {
+  /**
+   * Exact hits come from the seeded items and pages; the semantic half is
+   * scripted, because a fake has no embedding index to ask. Hits are ordered
+   * the way the companion orders them: exact first, then the semantic ones
+   * that are not already among them (GIT-US-0086).
+   */
+  search(query: SearchQuery): Promise<SearchResult> {
     const needle = query.text.toLowerCase();
     const hits: SearchHit[] = [];
     for (const item of this.items.values()) {
@@ -1786,6 +1817,7 @@ export class FakeProvider implements DataProvider {
           title: item.title,
           snippet: '',
           score: 2,
+          source: 'core',
         });
       } else if (item.body.toLowerCase().includes(needle)) {
         hits.push({
@@ -1795,16 +1827,33 @@ export class FakeProvider implements DataProvider {
           title: item.title,
           snippet: '',
           score: 1,
+          source: 'core',
         });
       }
     }
     for (const page of this.pages.values()) {
       if (`${page.title} ${page.body}`.toLowerCase().includes(needle)) {
-        hits.push({ kind: 'page', path: page.path, title: page.title, snippet: '', score: 1 });
+        hits.push({
+          kind: 'page',
+          path: page.path,
+          title: page.title,
+          snippet: '',
+          score: 1,
+          source: 'core',
+        });
       }
     }
-    hits.sort((a, b) => b.score - a.score || a.title.localeCompare(b.title));
-    return Promise.resolve(hits.slice(0, query.limit ?? 20));
+    hits.sort((a, b) => (b.score ?? 0) - (a.score ?? 0) || a.title.localeCompare(b.title));
+    const exact = hits.slice(0, query.limit ?? 20);
+    const seen = new Set(exact.map((hit) => hit.id ?? hit.path ?? hit.title));
+    const semantic = this.semanticHits
+      .filter((hit) => !seen.has(hit.id ?? hit.path ?? hit.title))
+      .map((hit): SearchHit => ({ ...hit, source: 'pando' }));
+    return Promise.resolve(
+      this.searchDegraded
+        ? { hits: [...exact, ...semantic], degraded: true }
+        : { hits: [...exact, ...semantic] },
+    );
   }
 
   validateItem(): Promise<Diagnostic[]> {

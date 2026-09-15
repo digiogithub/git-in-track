@@ -28,6 +28,12 @@ type StoredPrefs = {
    */
   sidebarBeforeMaximize: boolean | null;
   hiddenRepos: string[];
+  /**
+   * Whether the search panel shows the "Related by meaning" section on a
+   * runtime that has a semantic index (GIT-US-0086). On by default: the
+   * section only ever exists where the capability says it can.
+   */
+  semanticResults: boolean;
 };
 
 export type UiPrefsState = StoredPrefs & {
@@ -37,6 +43,7 @@ export type UiPrefsState = StoredPrefs & {
   setKbTocOpen: (open: boolean) => void;
   setKbMaximized: (maximized: boolean) => void;
   toggleRepoHidden: (repoId: string) => void;
+  setSemanticResults: (enabled: boolean) => void;
 };
 
 export function clampKbTreeWidth(width: number): number {
@@ -56,6 +63,7 @@ function defaults(): StoredPrefs {
     kbMaximized: false,
     sidebarBeforeMaximize: null,
     hiddenRepos: [],
+    semanticResults: true,
   };
 }
 
@@ -83,6 +91,7 @@ function readPrefs(): StoredPrefs {
       hiddenRepos: Array.isArray(parsed.hiddenRepos)
         ? parsed.hiddenRepos.filter((id): id is string => typeof id === 'string')
         : base.hiddenRepos,
+      semanticResults: bool(parsed.semanticResults, base.semanticResults),
     };
   } catch {
     // Private modes and sandboxes can throw, and old values can be malformed:
@@ -111,6 +120,7 @@ export const useUiPrefs = create<UiPrefsState>((set, get) => {
       kbMaximized: state.kbMaximized,
       sidebarBeforeMaximize: state.sidebarBeforeMaximize,
       hiddenRepos: state.hiddenRepos,
+      semanticResults: state.semanticResults,
     });
   };
 
@@ -138,6 +148,7 @@ export const useUiPrefs = create<UiPrefsState>((set, get) => {
         });
       }
     },
+    setSemanticResults: (semanticResults) => update({ semanticResults }),
     toggleRepoHidden: (repoId) => {
       const hidden = get().hiddenRepos;
       update({

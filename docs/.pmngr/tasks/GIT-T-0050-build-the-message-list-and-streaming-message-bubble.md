@@ -2,7 +2,7 @@
 id: GIT-T-0050
 type: task
 title: Build the message list and streaming message bubble
-status: todo
+status: in_review
 priority: medium
 parent: GIT-US-0057
 milestone: GIT-M-0013
@@ -10,7 +10,8 @@ author: mcp
 labels: [web]
 estimate: 5
 created: 2026-09-13T13:16:33Z
-updated: 2026-09-13T13:16:33Z
+updated: 2026-09-15T16:00:43Z
+started: 2026-09-15T15:45:46Z
 ---
 
 ## Description

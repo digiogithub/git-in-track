@@ -2,7 +2,7 @@
 id: GIT-T-0130
 type: task
 title: Run the full export on start without blocking startup
-status: in_progress
+status: in_review
 priority: medium
 parent: GIT-US-0073
 milestone: GIT-M-0013
@@ -10,7 +10,7 @@ author: mcp
 labels: [server, performance]
 estimate: 3
 created: 2026-09-13T13:18:31Z
-updated: 2026-09-15T15:16:23Z
+updated: 2026-09-15T16:04:33Z
 started: 2026-09-15T15:16:23Z
 ---
 

@@ -267,11 +267,14 @@ describe('CompanionProvider reads', () => {
       frontMatter: { tags: ['architecture'] },
     });
 
-    const hits = await client.search({ text: 'oidc', projectKey: 'ACME', limit: 20 });
+    const found = await client.search({ text: 'oidc', projectKey: 'ACME', limit: 20 });
     expect(lastCall(fetchImpl).url).toBe(
       `${BASE}/api/v1/search?q=oidc&scope=items%2Ckb&project=ACME&limit=20`,
     );
-    expect(hits.map((hit) => hit.kind)).toEqual(['item', 'page']);
+    expect(found.hits.map((hit) => hit.kind)).toEqual(['item', 'page']);
+    // A companion that names no origin is answering with its local index.
+    expect(found.hits.every((hit) => hit.source === 'core')).toBe(true);
+    expect(found.degraded).toBeUndefined();
   });
 
   it('reads capabilities from GET /api/v1/capabilities', async () => {
