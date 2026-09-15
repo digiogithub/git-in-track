@@ -100,6 +100,7 @@ Start with:
 		newDoctorCommand(flags),
 		newConfigCommand(flags),
 		newYouTrackCommand(flags),
+		newAgentCommand(flags),
 	)
 	return cmd
 }

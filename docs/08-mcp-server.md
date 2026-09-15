@@ -1158,7 +1158,39 @@ Use this when `gintrack serve` is already running (a single index, a single watc
 with the web UI) or when the agent runs in a container that reaches the host over the
 network.
 
-### 8.5 Verifying a connection
+### 8.5 Pando as an MCP client of gintrack
+
+The agent panel (docs/20-agent-interface.md) makes Pando a client of this server, and the
+direction is easy to get backwards: the browser talks to the companion, the companion
+proxies to Pando's AG-UI endpoint, and **Pando calls back into the companion's `/mcp`** to
+read and write the backlog. Two tokens, two directions, neither of them in the browser.
+
+`gintrack agent init` writes the client half into the repository's `.pando.toml`:
+
+```toml
+[MCPServers.gintrack]
+Type = 'streamable-http'
+URL = 'http://127.0.0.1:7317/mcp'
+Timeout = '60s'
+
+[MCPServers.gintrack.Headers]
+Authorization = 'Bearer <companion token>'
+```
+
+Three things follow from Pando's side of the contract:
+
+- **The token is literal.** Pando does not expand environment variables inside an MCP
+  server's headers, so the value in that file is the real companion token. The generated
+  file is mode 0600 and must not be committed — see docs/20 section 6.
+- **Tool names are prefixed.** Pando exposes a gateway tool as `<server>_<tool>`, so this
+  server's `list_items` reaches the agent as `gintrack_list_items`. The `[AGUI] Tools`
+  allow-list in the generated file is written as `gintrack_*` for that reason.
+- **Writes still need `--mcp-allow-write`.** The companion serves `/mcp` read-only unless
+  it was started with that flag (section 7.1), so a Pando agent cannot change an item that
+  the companion itself would refuse to change. The persona asks before writing; the flag is
+  what enforces it.
+
+### 8.6 Verifying a connection
 
 ```bash
 gintrack mcp --help                 # flags

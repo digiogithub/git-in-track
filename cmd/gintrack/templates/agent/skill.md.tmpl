@@ -1,0 +1,73 @@
+---
+name: gintrack-search
+description: Routes a question about the git-in-track backlog to the right search tool - structured queries to the gintrack MCP server, meaning-based ones to the knowledge base, code ones to the code index.
+when-to-use: The user asks anything about items, sprints, milestones, knowledge-base pages or the code of this repository.
+when-not-to-use: The user asks about something outside this repository, or asks you to change a file.
+version: 1
+---
+
+# Routing a question about `{{ .RepoID }}`
+
+Three indexes answer three different kinds of question, and picking the wrong
+one is the usual reason an answer is vague. Decide first, then call **one**
+tool, then widen only if it comes back empty.
+
+| The question is… | Route it to | Because |
+|---|---|---|
+| **Structured** — an id, a status, an assignee, a sprint, a parent, a label, a date range | `gintrack` MCP: `get_item`, `list_items`, `search_items` | These read the front matter directly. They are exact, they are cheap, and they return a `rev` you need for any write. |
+| **Semantic** — a topic, a decision, "where did we say…", wording the user half-remembers | `kb_search_documents` with a `path_prefix` | The exported corpus is indexed by meaning; a `path_prefix` keeps the search inside this repository's items or pages instead of every document Pando has ever seen. |
+| **Code** — a symbol, a call site, "how is X implemented" | `code_hybrid_search`, then `code_find_symbol` | The code index is the only one that sees Go, TypeScript and their symbol graph. The backlog corpus is Markdown only. |
+
+## One example per row
+
+**Structured.** "Which tasks of GIT-US-0069 are still open?"
+
+```
+list_items(parent: "GIT-US-0069", status: ["todo", "in_progress"],
+           fields: ["id", "title", "status", "assignees"])
+```
+
+Not `kb_search_documents("open tasks of GIT-US-0069")`: the status lives in front
+matter, so an exact filter beats a similarity score every time.
+
+**Semantic.** "Where did we decide how the CORS proxy is allowed to forward?"
+
+```
+kb_search_documents(query: "CORS proxy allow-list git smart HTTP",
+                    path_prefix: "kb/")
+```
+
+`file_path` is relative to the corpus root, so the two prefixes that matter are
+`items/` (one document per backlog item) and `kb/` (one per knowledge-base
+page). An empty prefix searches every document Pando has indexed, this
+repository's corpus included — that is rarely what you want.
+
+Then read the winner with `kb_get_document` and, if it is an item, confirm it
+with `get_item` — the exported copy can lag the repository by one export.
+
+**Code.** "How does the companion decide which repositories to serve?"
+
+```
+code_hybrid_search(query: "workspace repos resolution companion serve")
+code_find_symbol(name: "WorkspaceRepos")
+```
+
+## Prefer separate calls over one combined one
+
+`hybrid_search_remembrances` searches memories, knowledge base and code at once
+and returns a blended ranking. That is the wrong shape here: it hides which
+index answered, it mixes Pando's own memories into a question about this
+repository, and it takes no `path_prefix`. Call the specific tool, and call the
+second one only when the first returns nothing.
+
+## After a semantic hit, go back to the source
+
+`kb_search_documents` returns **candidates**. The corpus is a mirror; the
+repository is the authority. Take the item id out of the snippet, call
+`get_item`, and answer from that. Cite the id, not the snippet.
+
+## Nothing found
+
+Say so. Name the tool you used and the query you used, and offer the next
+narrower or wider query. Do not guess an id, and do not answer from memory of
+another repository.
