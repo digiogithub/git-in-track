@@ -2,7 +2,7 @@
 id: GIT-T-0114
 type: task
 title: Write ADR-035 for the AG-UI choice
-status: in_review
+status: done
 priority: medium
 parent: GIT-US-0069
 milestone: GIT-M-0013
@@ -10,8 +10,9 @@ author: mcp
 labels: [docs]
 estimate: 2
 created: 2026-09-13T13:18:05Z
-updated: 2026-09-15T15:32:35Z
+updated: 2026-09-15T16:46:19Z
 started: 2026-09-15T15:18:57Z
+closed: 2026-09-15T16:46:19Z
 ---
 
 ## Description

@@ -2,7 +2,7 @@
 id: GIT-T-0128
 type: task
 title: Implement the atomic corpus writer with path guarding
-status: in_review
+status: done
 priority: medium
 parent: GIT-US-0073
 milestone: GIT-M-0013
@@ -10,8 +10,9 @@ author: mcp
 labels: [server, security]
 estimate: 3
 created: 2026-09-13T13:18:25Z
-updated: 2026-09-15T15:25:30Z
+updated: 2026-09-15T16:44:15Z
 started: 2026-09-15T15:16:22Z
+closed: 2026-09-15T16:44:15Z
 ---
 
 ## Description

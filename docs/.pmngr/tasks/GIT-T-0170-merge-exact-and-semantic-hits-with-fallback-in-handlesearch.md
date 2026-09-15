@@ -2,7 +2,7 @@
 id: GIT-T-0170
 type: task
 title: Merge exact and semantic hits with fallback in handleSearch
-status: in_review
+status: done
 priority: medium
 parent: GIT-US-0082
 milestone: GIT-M-0013
@@ -10,8 +10,9 @@ author: mcp
 labels: [server]
 estimate: 3
 created: 2026-09-13T13:19:24Z
-updated: 2026-09-15T16:04:25Z
+updated: 2026-09-15T16:43:26Z
 started: 2026-09-15T16:04:07Z
+closed: 2026-09-15T16:43:26Z
 ---
 
 ## Description

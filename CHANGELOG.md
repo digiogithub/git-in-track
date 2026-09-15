@@ -28,6 +28,9 @@ because a commit list cannot express them.
   allow-list, the gintrack MCP server and the exported corpus, plus a `backlog-assistant`
   persona and a search-routing skill. The generated `.pando.toml` carries the companion
   bearer token, is written with mode 0600 and must be git-ignored.
+  The generated file also turns Pando's MCP gateway off (`[ToolDiscovery]`, `[MCPGateway]`):
+  with it on, MCP tools hide behind `tool_search` / `mcp_call_tool`, the allow-list strips
+  them and no per-tool approval is ever asked.
 - **The web app speaks AG-UI through the companion** (`GIT-US-0053`). `@pando-ai/sdk`
   0.2.0 is pinned (browser-safe `agui/client` entry, +1 kB gzipped); the `DataProvider`
   gains eight agent methods and the `agent` capability; a Zustand store owns threads,

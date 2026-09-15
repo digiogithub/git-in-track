@@ -2,7 +2,7 @@
 id: GIT-T-0138
 type: task
 title: Document the corpus layout and the Pando KBPath warning
-status: in_review
+status: done
 priority: medium
 parent: GIT-US-0073
 milestone: GIT-M-0013
@@ -10,8 +10,9 @@ author: mcp
 labels: [docs, agent-ok]
 estimate: 1
 created: 2026-09-13T13:18:41Z
-updated: 2026-09-15T15:25:31Z
+updated: 2026-09-15T16:44:39Z
 started: 2026-09-15T15:16:25Z
+closed: 2026-09-15T16:44:39Z
 ---
 
 ## Description

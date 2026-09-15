@@ -161,6 +161,7 @@ Pando's `internal/config/config.go`; `pando-schema.json` is stale and omits `AGU
 | `MaxConcurrentRuns` | `4` | Pando's own backstop; a run over the cap is refused with 503 and `Retry-After`. The companion caps in front of it too. |
 | `Persona` | `'backlog-assistant'` | Applied as a per-session override, so a `agui-serve` process can run a different persona than the TUI sharing the same configuration. |
 | `Tools` | `['gintrack_*', 'kb_search_documents', 'kb_get_document', 'code_hybrid_search', 'code_find_symbol']` | A glob allow-list (`path.Match` against each tool's name), applied after the tool set is built. Subtractive only. |
+| `[ToolDiscovery] Enabled = false`, `Mode = 'off'`; `[MCPGateway] Enabled = false` | written explicitly | Keeps Pando's MCP gateway off. With an `[MCPServers]` entry present, ToolDiscovery (default `true`) would activate the gateway, and MCP tools would stop being registered as `gintrack_<tool>`: they would sit behind `tool_search` or the generic `mcp_call_tool` proxy, which the allow-list strips and the per-tool permission prompt never sees. Found on the first live run (GIT-T-0118). |
 | `Mesnada` | `false` | Drops every `mesnada_*` delegation tool. The assistant answers, it does not spawn sub-agents. |
 
 MCP gateway tools are named `<server>_<tool>`, so this server's `list_items` reaches the
@@ -320,6 +321,17 @@ in an item body.
 ---
 
 ## 7. Troubleshooting
+
+**The agent says it cannot access the gintrack tools, and no `TOOL_CALL_START` names a `gintrack_*` tool.** Pando's MCP gateway is on: check that the repository's `.pando.toml` carries `[ToolDiscovery] Enabled = false` / `Mode = 'off'` and `[MCPGateway] Enabled = false` (files generated before 2026-09-15 lack them; re-run `gintrack agent init --force` or add the two sections). Behind the gateway the tools are reachable only through `tool_search` or `mcp_call_tool`, which the `[AGUI] Tools` allow-list removes on purpose: `mcp_call_tool` is a generic proxy to any server and any tool, and it bypasses the per-tool approval prompt.
+
+**A `gintrack_*` tool call starts and the run never finishes** (`TOOL_CALL_END` and then
+keep-alives only, whatever `AutoApprove` says). Pando-side, v0.705.1: with the gateway off, the
+MCP tools are cached at startup bound to the process-wide permission service, so a call from an
+AG-UI run waits for a terminal prompt that `agui-serve` cannot show. Tracked as a Pando fix
+(`PANDO-US-0031`); until it ships, the only configuration that completes such a turn is the
+gateway back on (`[ToolDiscovery] Enabled = true`) with `'tool_search'`, `'mcp_query_catalog'`
+and `'mcp_call_tool'` added to `[AGUI] Tools` — coarse, because `mcp_call_tool` reaches any
+server and any tool and asks no per-tool approval. Treat that as a temporary trade, not a setup.
 
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|

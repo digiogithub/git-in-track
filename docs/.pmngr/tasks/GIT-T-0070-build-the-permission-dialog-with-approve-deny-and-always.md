@@ -2,7 +2,7 @@
 id: GIT-T-0070
 type: task
 title: Build the permission dialog with approve, deny and always
-status: in_review
+status: done
 priority: medium
 parent: GIT-US-0061
 milestone: GIT-M-0013
@@ -10,8 +10,9 @@ author: mcp
 labels: [web, security]
 estimate: 3
 created: 2026-09-13T13:17:03Z
-updated: 2026-09-15T16:30:37Z
+updated: 2026-09-15T16:43:52Z
 started: 2026-09-15T16:13:33Z
+closed: 2026-09-15T16:43:52Z
 ---
 
 ## Description

@@ -63,11 +63,23 @@ export function safeKbPath(raw: string): { path: string } | { reason: string } {
   return { path };
 }
 
-/** Walks the DOM for a board card, retrying while the board is still painting. */
+/**
+ * Walks the DOM for a board card, retrying while the board is still painting.
+ *
+ * The hook is `data-item-id`, the bare item id a board card carries alongside
+ * its project-qualified `data-ref` (`web/src/features/boards/BoardCardTile.tsx`).
+ * A qualified argument is reduced to the bare id first, so `GIT/GIT-US-0061`
+ * and `GIT-US-0061` find the same card.
+ */
 export async function focusBoardCardInDom(itemId: string): Promise<boolean> {
   const deadline = Date.now() + FOCUS_TIMEOUT_MS;
-  const escape = globalThis.CSS?.escape ?? ((value: string) => value.replace(/["\\]/g, ''));
-  const selector = `[data-item-id="${escape(itemId)}"]`;
+  // `CSS.escape` is a static method that checks its receiver, so it has to be
+  // called on `CSS` rather than pulled off it.
+  const escape = (value: string): string =>
+    globalThis.CSS?.escape === undefined
+      ? value.replace(/["\\]/g, '')
+      : globalThis.CSS.escape(value);
+  const selector = `[data-item-id="${escape(bareItemId(itemId))}"]`;
   for (;;) {
     const node = globalThis.document?.querySelector(selector);
     if (node instanceof HTMLElement) {

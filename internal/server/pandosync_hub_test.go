@@ -150,6 +150,14 @@ func TestCorpusFollowsHubEvents(t *testing.T) {
 	_ = root
 }
 
+// TestCorpusReExportsAfterAnOverflow drives the real hub, not the exporter.
+//
+// The branch that matters is the one nobody sees fail: the hub drops a
+// subscriber that cannot keep up (`hub.go`, deliver -> markOverflow), and a
+// corpus follower that simply reconnected would be wrong forever about every
+// change it missed. So the test fills the follower's queue through Publish,
+// and then asserts that a document *no published event mentions* comes back —
+// which only a full re-export can do.
 func TestCorpusReExportsAfterAnOverflow(t *testing.T) {
 	t.Parallel()
 
@@ -166,16 +174,130 @@ func TestCorpusReExportsAfterAnOverflow(t *testing.T) {
 		t.Fatalf("first export: %v", err)
 	}
 
+	followed := make(chan struct{})
+	go func() {
+		defer close(followed)
+		s.search.followHub(ctx)
+	}()
+	if !waitFor(func() bool { return s.hub.clientCount() == 1 }) {
+		t.Fatal("the corpus follower never subscribed to the hub")
+	}
+
 	// Delete a corpus file behind the exporter's back, the way a lost event
-	// leaves the corpus wrong, then declare the overflow.
+	// leaves the corpus wrong. Every event below is about another item, so
+	// nothing short of a full re-export brings this one back.
 	target := corpusItemPath(corpus, "DEMO-US-0001")
 	if err := os.Remove(target); err != nil {
 		t.Fatalf("remove the corpus file: %v", err)
 	}
-	s.search.applyToAll(ctx, pandosync.Event{Kind: pandosync.Overflow})
+
+	// Park the follower inside a flush: applyTo resolves the exporter under
+	// the state's own lock, so holding that lock stops it draining. One event
+	// plus the debounce is what gets it there.
+	changed := func() {
+		s.hub.Publish(eventItemChanged,
+			itemChangedData{Repo: testRepoID, ID: "DEMO-T-0001", Op: "updated"})
+	}
+	s.search.mu.Lock()
+	changed()
+	time.Sleep(corpusDebounce + 150*time.Millisecond)
+
+	// With the follower parked, a burst larger than its queue is exactly the
+	// back-pressure case: deliver gives up and marks the client overflowed.
+	for range clientBuffer * 2 {
+		changed()
+	}
+	s.search.mu.Unlock()
+
 	if !waitForFile(t, target, exists) {
 		t.Fatal("an overflow did not trigger a full re-export")
 	}
+	// The follower re-subscribes rather than dying with the dropped client.
+	if !waitFor(func() bool { return s.hub.clientCount() == 1 }) {
+		t.Error("the corpus follower did not re-subscribe after the overflow")
+	}
+
+	cancel()
+	select {
+	case <-followed:
+	case <-time.After(5 * time.Second):
+		t.Error("followHub did not stop with its context")
+	}
+}
+
+// TestCorpusSyncStartsWhenTheSettingsEnableIt covers the companion started
+// without a corpus. Turning one on through PATCH /api/v1/search/settings has
+// to start both halves — the full export and the hub follower — in the running
+// process; a setting that only takes effect after a restart is a setting that
+// looks broken (GIT-US-0073).
+func TestCorpusSyncStartsWhenTheSettingsEnableIt(t *testing.T) {
+	t.Parallel()
+
+	// No corpus root at all: nothing to export, so nothing follows the hub.
+	s, _ := newPandoSearchServer(t, searchServerOptions{})
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	s.startCorpusSync(ctx)
+
+	if len(s.search.allExporters()) != 0 {
+		t.Fatal("a companion with no corpus directory must have no exporter")
+	}
+	if s.hub.clientCount() != 0 {
+		t.Fatal("nothing should follow the hub while there is nothing to export")
+	}
+
+	corpus := t.TempDir()
+	decode(t, send(t, s, request{
+		method: http.MethodPatch,
+		target: "/api/v1/search/settings",
+		body:   map[string]any{"corpusDir": corpus},
+	}), http.StatusOK, nil)
+
+	if !waitForFile(t, corpusItemPath(corpus, "DEMO-US-0001"), exists) {
+		t.Fatal("enabling the corpus did not run the full export")
+	}
+	if !waitFor(func() bool { return s.hub.clientCount() == 1 }) {
+		t.Fatal("enabling the corpus did not start the hub follower")
+	}
+
+	// And the follower is a live one: an edit lands in the corpus without a
+	// restart.
+	rev, _ := getItem(t, s, "DEMO-US-0001")
+	decode(t, send(t, s, request{
+		method: http.MethodPatch,
+		target: "/api/v1/items/DEMO-US-0001",
+		header: map[string]string{"If-Match": rev},
+		body:   map[string]any{"set": map[string]any{"title": "Enabled after the fact"}},
+	}), http.StatusOK, nil)
+
+	if !waitForFile(t, corpusItemPath(corpus, "DEMO-US-0001"), func(data string, err error) bool {
+		return err == nil && strings.Contains(data, "Enabled after the fact")
+	}) {
+		t.Fatal("the follower started by the settings change never saw the edit")
+	}
+
+	// A second settings change must not start a second follower.
+	decode(t, send(t, s, request{
+		method: http.MethodPatch,
+		target: "/api/v1/search/settings",
+		body:   map[string]any{"allowRemote": false},
+	}), http.StatusOK, nil)
+	if got := s.hub.clientCount(); got != 1 {
+		t.Errorf("hub clients = %d, want exactly one follower however often the settings change", got)
+	}
+}
+
+// waitFor polls a condition, so an assertion about a background goroutine
+// needs no fixed sleep.
+func waitFor(want func() bool) bool {
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if want() {
+			return true
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return false
 }
 
 func TestCorpusChangeOf(t *testing.T) {

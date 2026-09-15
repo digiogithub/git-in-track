@@ -183,6 +183,33 @@ describe('the conversation list', () => {
       expect(globalThis.localStorage.getItem(THREAD_META_KEY)).not.toContain('doomed question');
     });
   });
+
+  it('selects a neighbouring conversation when the open one is deleted', async () => {
+    const user = userEvent.setup();
+    renderAgent({
+      events: simpleTurn,
+      threads: [
+        { id: 'thread-a', title: 'The first one' },
+        { id: 'thread-b', title: 'The doomed one' },
+        { id: 'thread-c', title: 'The third one' },
+      ],
+    });
+
+    await ready();
+    await user.click(await screen.findByRole('button', { name: 'The doomed one' }));
+    await waitFor(() => {
+      expect(useAgentStore.getState().threadId).toBe('thread-b');
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Delete The doomed one' }));
+    await user.click(screen.getByRole('button', { name: 'Confirm deleting The doomed one' }));
+
+    // The row that took the deleted one's place, not a blank conversation.
+    await waitFor(() => {
+      expect(useAgentStore.getState().threadId).toBe('thread-c');
+    });
+    expect(screen.queryByRole('button', { name: 'The doomed one' })).toBeNull();
+  });
 });
 
 describe('restoring a conversation on mount', () => {

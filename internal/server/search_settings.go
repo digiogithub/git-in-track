@@ -85,6 +85,16 @@ type searchState struct {
 	jobMu   sync.Mutex
 	running *reindexJob
 	last    *reindexJob
+
+	// syncMu guards the corpus-sync lifecycle below.
+	syncMu sync.Mutex
+	// syncCtx is the server's lifetime context, handed over by Start. It is
+	// nil until then, which is what keeps a state built at construction from
+	// exporting before the server is up.
+	syncCtx context.Context //nolint:containedctx // the lifetime of a background follower, not of a request
+	// following reports whether the hub follower is already running, so that a
+	// settings change starts at most one.
+	following bool
 }
 
 // reindexJob is one run of POST /api/v1/search/reindex.
@@ -158,7 +168,7 @@ func (s *searchState) rebuild() {
 			Token:       settings.MCPToken,
 			RESTURL:     settings.RESTURL,
 			RESTToken:   settings.RESTToken,
-			ProjectID:   settings.ProjectID,
+			ProjectID:   s.projectID(),
 			AllowRemote: settings.AllowRemote,
 		})
 		if err != nil {
@@ -214,6 +224,42 @@ func (s *searchState) rebuildExporters() {
 	s.mu.Lock()
 	s.exporters = next
 	s.mu.Unlock()
+	// Exporters that appear after start — a corpus enabled through the
+	// settings — still have to be exported and followed.
+	s.syncNow()
+}
+
+// projectID is the Pando code project the semantic surface talks to.
+//
+// An empty `search.pando.projectId` is not "no project": docs/07 section 4 and
+// config.SearchPando both promise the identifier Pando itself would derive
+// from the repository path. There is one Pando per repository, so the default
+// is derived here from the mount this state serves, rather than left empty and
+// turned into ErrNotConfigured at the first SearchCode call (GIT-T-0142).
+func (s *searchState) projectID() string {
+	s.mu.RLock()
+	configured := strings.TrimSpace(s.settings.ProjectID)
+	s.mu.RUnlock()
+	if configured != "" {
+		return configured
+	}
+	return derivedProjectID(s.repos)
+}
+
+// derivedProjectID sanitizes the path of the repository the workspace is built
+// around — the first ready mount, in mount order — with Pando's own rule. A
+// workspace with no ready mount has no path to derive one from, and answers
+// the empty string.
+func derivedProjectID(repos *registry) string {
+	if repos == nil {
+		return ""
+	}
+	for _, m := range repos.ready() {
+		if id := pando.SanitizeProjectID(m.path); id != "" {
+			return id
+		}
+	}
+	return ""
 }
 
 // corpusRoot is the directory the per-repository corpora live under:
@@ -391,7 +437,7 @@ func (s *searchState) view(ctx context.Context, probe bool) searchSettingsView {
 		Configured:  strings.TrimSpace(settings.MCPURL) != "",
 		MCPURL:      settings.MCPURL,
 		RESTURL:     settings.RESTURL,
-		ProjectID:   settings.ProjectID,
+		ProjectID:   s.projectID(),
 		CorpusDir:   s.corpusRoot(),
 		AllowRemote: settings.AllowRemote,
 		Corpora:     []searchCorpusView{},

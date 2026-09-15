@@ -2,7 +2,7 @@
 id: GIT-T-0174
 type: task
 title: Extend the fullTextSearch capability to pando
-status: in_review
+status: done
 priority: medium
 parent: GIT-US-0082
 milestone: GIT-M-0013
@@ -10,8 +10,9 @@ author: mcp
 labels: [server, web, agent-ok]
 estimate: 2
 created: 2026-09-13T13:19:30Z
-updated: 2026-09-15T16:04:42Z
+updated: 2026-09-15T16:59:59Z
 started: 2026-09-15T16:04:08Z
+closed: 2026-09-15T16:59:59Z
 ---
 
 ## Description

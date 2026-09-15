@@ -2,7 +2,7 @@
 id: GIT-T-0016
 type: task
 title: Mount the agent routes and exempt them from the request timeout
-status: in_review
+status: done
 priority: medium
 parent: GIT-US-0049
 milestone: GIT-M-0013
@@ -10,8 +10,9 @@ author: mcp
 labels: [server, agent-ok]
 estimate: 2
 created: 2026-09-13T13:15:37Z
-updated: 2026-09-15T15:28:41Z
+updated: 2026-09-15T16:42:57Z
 started: 2026-09-15T15:28:31Z
+closed: 2026-09-15T16:42:57Z
 ---
 
 ## Description

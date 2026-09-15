@@ -2,7 +2,7 @@
 id: GIT-T-0148
 type: task
 title: Build the internal/pando MCP session with lifecycle and timeouts
-status: in_review
+status: done
 priority: medium
 parent: GIT-US-0077
 milestone: GIT-M-0013
@@ -10,8 +10,9 @@ author: mcp
 labels: [server]
 estimate: 3
 created: 2026-09-13T13:18:54Z
-updated: 2026-09-15T15:36:58Z
+updated: 2026-09-15T16:45:09Z
 started: 2026-09-15T15:20:12Z
+closed: 2026-09-15T16:45:09Z
 ---
 
 ## Description

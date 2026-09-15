@@ -2,7 +2,7 @@
 id: GIT-T-0100
 type: task
 title: Write the gintrack agent init command
-status: in_progress
+status: in_review
 priority: medium
 parent: GIT-US-0069
 milestone: GIT-M-0013
@@ -10,7 +10,7 @@ author: mcp
 labels: [cli]
 estimate: 3
 created: 2026-09-13T13:17:47Z
-updated: 2026-09-15T15:18:54Z
+updated: 2026-09-15T16:45:33Z
 started: 2026-09-15T15:18:54Z
 ---
 

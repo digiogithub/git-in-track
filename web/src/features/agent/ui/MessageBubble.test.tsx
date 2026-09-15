@@ -1,4 +1,5 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 
 import type { AgentMessage } from '@/features/agent/types';
@@ -133,5 +134,39 @@ describe('MessageList', () => {
     );
 
     expect(screen.queryByTestId('stream-caret')).toBeNull();
+  });
+
+  // jsdom lays nothing out, so the three numbers the pin test depends on are
+  // stubbed: a tall document, a short viewport, and a scroll position the
+  // reader chose.
+  it('offers "jump to latest" once the reader scrolls away from the bottom', async () => {
+    const user = userEvent.setup();
+    render(
+      <MessageList
+        runStatus="idle"
+        messages={[
+          message({ id: 'a1', role: 'assistant', text: 'first' }),
+          message({ id: 'a2', role: 'assistant', text: 'second' }),
+        ]}
+      />,
+    );
+
+    const scroller = screen.getByTestId('message-scroll');
+    Object.defineProperty(scroller, 'scrollHeight', { value: 2000, configurable: true });
+    Object.defineProperty(scroller, 'clientHeight', { value: 400, configurable: true });
+    Object.defineProperty(scroller, 'scrollTop', { value: 0, writable: true, configurable: true });
+
+    // Pinned to the bottom to start with: nothing is offered.
+    expect(screen.queryByRole('button', { name: /Jump to latest/ })).toBeNull();
+
+    fireEvent.scroll(scroller);
+    const jump = await screen.findByRole('button', { name: /Jump to latest/ });
+
+    await user.click(jump);
+
+    expect(scroller.scrollTop).toBe(2000);
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: /Jump to latest/ })).toBeNull();
+    });
   });
 });

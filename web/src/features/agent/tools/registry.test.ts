@@ -4,7 +4,7 @@ import { z } from 'zod';
 
 import type { Item } from '@/api/provider';
 import { toItemSearchParams } from '@/features/agent/tools/backlog';
-import { safeKbPath } from '@/features/agent/tools/navigation';
+import { focusBoardCardInDom, safeKbPath } from '@/features/agent/tools/navigation';
 import {
   assertNoHitlShadowing,
   createToolRunner,
@@ -212,6 +212,28 @@ describe('focus_board_card', () => {
       await run(ctx, 'focus_board_card', { board: '../admin', itemId: 'GIT-US-0061' }),
     ).toMatchObject({ error: 'invalid_arguments', field: 'board' });
     expect(navigate).not.toHaveBeenCalled();
+  });
+
+  // The default focus walks the real DOM, so it has to agree with the attribute
+  // a board card actually renders: `data-item-id`, the bare id next to the
+  // project-qualified `data-ref` (BoardCardTile).
+  it('finds the card a board renders and scrolls it into view', async () => {
+    const card = document.createElement('li');
+    card.setAttribute('data-ref', 'GIT/GIT-US-0061');
+    card.setAttribute('data-item-id', 'GIT-US-0061');
+    const scrollIntoView = vi.fn();
+    card.scrollIntoView = scrollIntoView;
+    document.body.append(card);
+
+    try {
+      expect(await focusBoardCardInDom('GIT-US-0061')).toBe(true);
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: 'center' });
+      // A project-qualified argument reaches the same card.
+      expect(await focusBoardCardInDom('GIT/GIT-US-0061')).toBe(true);
+      expect(scrollIntoView).toHaveBeenCalledTimes(2);
+    } finally {
+      card.remove();
+    }
   });
 });
 

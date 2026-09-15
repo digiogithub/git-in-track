@@ -2,7 +2,7 @@
 id: GIT-T-0190
 type: task
 title: Add the semantic results toggle to the UI preferences
-status: in_review
+status: done
 priority: medium
 parent: GIT-US-0086
 milestone: GIT-M-0013
@@ -10,8 +10,9 @@ author: mcp
 labels: [web, agent-ok]
 estimate: 1
 created: 2026-09-13T13:19:54Z
-updated: 2026-09-15T15:50:50Z
+updated: 2026-09-15T16:44:41Z
 started: 2026-09-15T15:50:38Z
+closed: 2026-09-15T16:44:41Z
 ---
 
 ## Description

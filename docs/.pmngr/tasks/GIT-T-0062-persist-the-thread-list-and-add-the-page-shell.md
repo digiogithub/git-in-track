@@ -2,7 +2,7 @@
 id: GIT-T-0062
 type: task
 title: Persist the thread list and add the page shell
-status: in_review
+status: done
 priority: medium
 parent: GIT-US-0057
 milestone: GIT-M-0013
@@ -10,8 +10,9 @@ author: mcp
 labels: [web]
 estimate: 3
 created: 2026-09-13T13:16:49Z
-updated: 2026-09-15T16:00:47Z
+updated: 2026-09-15T16:59:57Z
 started: 2026-09-15T15:45:50Z
+closed: 2026-09-15T16:59:57Z
 ---
 
 ## Description

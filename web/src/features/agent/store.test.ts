@@ -330,6 +330,56 @@ describe('threads', () => {
     expect(provider.agentDeletes).toEqual(['thread-1']);
     expect(state().threads).toEqual([]);
   });
+
+  it('selects the next thread when the open one is deleted', async () => {
+    const { state } = await attached({
+      turns: [simpleTurn],
+      threads: [
+        { id: 'thread-1', title: 'First' },
+        { id: 'thread-2', title: 'Second' },
+        { id: 'thread-3', title: 'Third' },
+      ],
+    });
+
+    await state().refreshThreads();
+    await state().selectThread('thread-2');
+    await state().deleteThread('thread-2');
+
+    // The row that moved into the deleted one's place.
+    expect(state().threadId).toBe('thread-3');
+    expect(state().threads.map((row) => row.id)).toEqual(['thread-1', 'thread-3']);
+  });
+
+  it('falls back to the thread above when the deleted one was last', async () => {
+    const { state } = await attached({
+      turns: [simpleTurn],
+      threads: [
+        { id: 'thread-1', title: 'First' },
+        { id: 'thread-2', title: 'Second' },
+      ],
+    });
+
+    await state().refreshThreads();
+    await state().selectThread('thread-2');
+    await state().deleteThread('thread-2');
+
+    expect(state().threadId).toBe('thread-1');
+  });
+
+  it('starts a fresh thread only when nothing survives the deletion', async () => {
+    const { state } = await attached({
+      turns: [simpleTurn],
+      threads: [{ id: 'thread-1', title: 'First' }],
+    });
+
+    await state().refreshThreads();
+    await state().selectThread('thread-1');
+    await state().deleteThread('thread-1');
+
+    expect(state().threads).toEqual([]);
+    expect(state().threadId).not.toBeNull();
+    expect(state().threadId).not.toBe('thread-1');
+  });
 });
 
 describe('the one-thread-per-tab guard', () => {

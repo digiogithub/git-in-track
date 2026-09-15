@@ -2,7 +2,7 @@
 id: GIT-US-0057
 type: story
 title: Chat route and message UI in the shadcn design system
-status: in_review
+status: done
 priority: high
 parent: GIT-EP-0018
 milestone: GIT-M-0013
@@ -10,8 +10,9 @@ author: mcp
 labels: [web, docs]
 estimate: 8
 created: 2026-09-13T13:12:23Z
-updated: 2026-09-15T16:00:48Z
+updated: 2026-09-15T17:00:48Z
 started: 2026-09-15T15:45:56Z
+closed: 2026-09-15T17:00:48Z
 ---
 
 ## Description

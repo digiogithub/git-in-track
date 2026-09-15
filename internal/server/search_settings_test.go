@@ -11,6 +11,7 @@ import (
 
 	"github.com/digiogithub/git-in-track/internal/config"
 	"github.com/digiogithub/git-in-track/internal/pando"
+	"github.com/digiogithub/git-in-track/internal/vault"
 )
 
 // searchServerOptions are the knobs the search tests vary on top of the fixture
@@ -419,4 +420,87 @@ func recorderProblemCode(t *testing.T, rec *httptest.ResponseRecorder) string {
 		t.Fatalf("decode the problem document %s: %v", rec.Body.Bytes(), err)
 	}
 	return problem.Code
+}
+
+// TestSearchProjectIDDefaultsToTheSanitizedMountPath covers the promise docs/07
+// section 4 and config.SearchPando make: an empty `search.pando.projectId` is
+// the id Pando itself derives from the repository path, not "no project"
+// (GIT-T-0142).
+func TestSearchProjectIDDefaultsToTheSanitizedMountPath(t *testing.T) {
+	t.Parallel()
+
+	s, root := newPandoSearchServer(t, searchServerOptions{corpusDir: t.TempDir()})
+	want := pando.SanitizeProjectID(root)
+	if want == "" {
+		t.Fatalf("the fixture path %q sanitizes to nothing", root)
+	}
+
+	var view settingsView
+	decode(t, send(t, s, request{method: http.MethodGet, target: "/api/v1/search/settings"}),
+		http.StatusOK, &view)
+	if view.ProjectID != want {
+		t.Errorf("projectId = %q, want the derived %q", view.ProjectID, want)
+	}
+
+	// Configuring an endpoint builds the client SearchCode runs against, and
+	// that client carries the derived id as its default project: SearchCode
+	// with an empty project id falls back to exactly this value.
+	decode(t, send(t, s, request{
+		method: http.MethodPatch,
+		target: "/api/v1/search/settings",
+		body:   map[string]any{"mcpUrl": "http://127.0.0.1:9777/mcp"},
+	}), http.StatusOK, &view)
+	if view.ProjectID != want {
+		t.Errorf("projectId after the patch = %q, want the derived %q", view.ProjectID, want)
+	}
+	client, ok := s.search.pando().(*pando.Client)
+	if !ok {
+		t.Fatalf("the configured endpoint built no Pando client: %T", s.search.pando())
+	}
+	if client.ProjectID() != want {
+		t.Errorf("the client searches code in project %q, want %q", client.ProjectID(), want)
+	}
+
+	// An explicit id wins, and it is the one persisted — the derived default
+	// must never be frozen into the file behind the operator's back.
+	decode(t, send(t, s, request{
+		method: http.MethodPatch,
+		target: "/api/v1/search/settings",
+		body:   map[string]any{"projectId": "chosen_by_hand"},
+	}), http.StatusOK, &view)
+	if view.ProjectID != "chosen_by_hand" {
+		t.Errorf("projectId = %q, want the configured value to win", view.ProjectID)
+	}
+	client, ok = s.search.pando().(*pando.Client)
+	if !ok {
+		t.Fatalf("the configured endpoint built no Pando client: %T", s.search.pando())
+	}
+	if client.ProjectID() != "chosen_by_hand" {
+		t.Errorf("the client searches code in project %q, want the configured one", client.ProjectID())
+	}
+}
+
+// TestDerivedProjectIDMatchesPandoSanitisation pins the derivation itself over
+// the sample paths the task names.
+func TestDerivedProjectIDMatchesPandoSanitisation(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		path string
+		want string
+	}{
+		{"/www/git-in-track", "www_git-in-track"},
+		{"/home/jose/src/acme.api", "home_jose_src_acme_api"},
+		{"/srv/repos/My Project", "srv_repos_My_Project"},
+		{"relative/path", "relative_path"},
+	}
+	for _, tc := range cases {
+		repos := &registry{mounts: []*mount{{id: "r", path: tc.path, vlt: &vault.Vault{}}}}
+		if got := derivedProjectID(repos); got != tc.want {
+			t.Errorf("derivedProjectID(%q) = %q, want %q", tc.path, got, tc.want)
+		}
+	}
+	if got := derivedProjectID(&registry{}); got != "" {
+		t.Errorf("a workspace with no ready mount derived %q, want the empty string", got)
+	}
 }

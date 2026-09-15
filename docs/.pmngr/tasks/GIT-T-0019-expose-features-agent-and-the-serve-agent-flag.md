@@ -2,7 +2,7 @@
 id: GIT-T-0019
 type: task
 title: Expose features.agent and the serve --agent flag
-status: in_progress
+status: done
 priority: medium
 parent: GIT-US-0049
 milestone: GIT-M-0013
@@ -10,8 +10,9 @@ author: mcp
 labels: [server, cli, agent-ok]
 estimate: 2
 created: 2026-09-13T13:15:44Z
-updated: 2026-09-15T15:28:32Z
+updated: 2026-09-15T16:43:05Z
 started: 2026-09-15T15:28:32Z
+closed: 2026-09-15T16:43:05Z
 ---
 
 ## Description

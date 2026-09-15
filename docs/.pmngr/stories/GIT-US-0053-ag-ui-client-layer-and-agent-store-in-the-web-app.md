@@ -2,7 +2,7 @@
 id: GIT-US-0053
 type: story
 title: AG-UI client layer and agent store in the web app
-status: in_review
+status: done
 priority: high
 parent: GIT-EP-0018
 milestone: GIT-M-0013
@@ -10,8 +10,9 @@ author: mcp
 labels: [web]
 estimate: 8
 created: 2026-09-13T13:12:06Z
-updated: 2026-09-15T15:35:47Z
+updated: 2026-09-15T16:44:36Z
 started: 2026-09-15T15:19:30Z
+closed: 2026-09-15T16:44:36Z
 ---
 
 ## Description

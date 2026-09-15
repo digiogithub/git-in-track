@@ -45,11 +45,7 @@ describe('BoardView', () => {
     expect(await screen.findByRole('heading', { name: 'Delivery' })).toBeInTheDocument();
     const todo = await column('todo');
     // Listed refs first, then whatever the board shows but does not order.
-    expect(refsIn(todo)).toEqual([
-      'ACME/ACME-T-0107',
-      'WEB/WEB-US-0031',
-      'ACME/ACME-US-0043',
-    ]);
+    expect(refsIn(todo)).toEqual(['ACME/ACME-T-0107', 'WEB/WEB-US-0031', 'ACME/ACME-US-0043']);
 
     const doing = await column('in_progress');
     expect(refsIn(doing)).toEqual(['ACME/ACME-US-0042']);
@@ -66,6 +62,10 @@ describe('BoardView', () => {
     expect(within(doing).getByText('frontend')).toBeInTheDocument();
     expect(within(doing).getByText('high')).toBeInTheDocument();
     expect(within(doing).getByText('8 pts')).toBeInTheDocument();
+    // `focus_board_card` looks a card up by its bare id, so the card carries
+    // one next to the project-qualified `data-ref` (GIT-T-0086).
+    const card = doing.querySelector('[data-ref="ACME/ACME-US-0042"]');
+    expect(card).toHaveAttribute('data-item-id', 'ACME-US-0042');
   });
 
   it('marks a card whose project nobody cloned and refuses to drag it', async () => {
@@ -75,7 +75,9 @@ describe('BoardView', () => {
     const remote = todo.querySelector('[data-ref="WEB/WEB-US-0031"]');
     expect(remote).not.toBeNull();
     expect(remote).toHaveAttribute('data-remote', 'true');
-    expect(within(remote as HTMLElement).getByText(/not cloned on this machine/)).toBeInTheDocument();
+    expect(
+      within(remote as HTMLElement).getByText(/not cloned on this machine/),
+    ).toBeInTheDocument();
     // No drag handle and no keyboard move for a card we cannot write.
     expect(within(remote as HTMLElement).queryByLabelText(/^Drag /)).not.toBeInTheDocument();
     expect(within(remote as HTMLElement).queryByLabelText(/^Move .* to$/)).not.toBeInTheDocument();

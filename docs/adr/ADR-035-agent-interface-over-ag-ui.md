@@ -115,6 +115,12 @@ approval to defence in depth, it does not replace it. Pando has no per-thread pe
 the browser's "always allow for this thread" is an in-memory, per-thread, non-persisted client
 memory that auto-answers the next prompt for the same tool name and is forgotten on reload.
 
+The allow-list only sees a tool by name, and Pando's MCP gateway takes the names away: with
+`ToolDiscovery` on (its default once an `[MCPServers]` entry exists) every MCP tool sits behind
+`tool_search` or the generic `mcp_call_tool` proxy, which the list strips and which asks no
+per-tool approval. `gintrack agent init` therefore writes `[ToolDiscovery] Enabled = false` and
+`[MCPGateway] Enabled = false`; the boundary above assumes both.
+
 ## Alternatives considered
 
 **CopilotKit with a Node sidecar.** Pando ships CopilotKit glue and an example that uses

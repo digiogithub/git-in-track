@@ -124,6 +124,11 @@ export type AgentState = {
   /** Revokes a grant made by {@link allowToolForThread}. */
   revokeToolForThread(toolName: string): void;
   refreshThreads(): Promise<void>;
+  /**
+   * Deletes a thread. Deleting the open one selects a neighbour — the row that
+   * moved into its place, else the one before it — and only starts a fresh
+   * thread when nothing survives.
+   */
   deleteThread(threadId: string): Promise<void>;
   dispose(): void;
 };
@@ -528,8 +533,21 @@ export const agentStoreCreator: StateCreator<AgentState> = (set, get) => {
         return;
       }
       if (repo !== null) set({ knownThreadIds: forgetThreadId(repo, threadId) });
-      set({ threads: get().threads.filter((row) => row.id !== threadId) });
-      if (get().threadId === threadId) await get().newThread();
+      const before = get().threads;
+      const at = before.findIndex((row) => row.id === threadId);
+      const remaining = before.filter((row) => row.id !== threadId);
+      set({ threads: remaining });
+      if (get().threadId !== threadId) return;
+      // Deleting the open thread selects a neighbour — the row that took its
+      // place, else the one above it — rather than always starting a blank
+      // conversation. A fresh thread is the fallback, not the behaviour
+      // (GIT-T-0062).
+      const neighbour = at < 0 ? undefined : (remaining[at] ?? remaining[at - 1]);
+      if (neighbour !== undefined && repo !== null) {
+        await get().selectThread(neighbour.id);
+        return;
+      }
+      await get().newThread();
     },
 
     dispose(): void {

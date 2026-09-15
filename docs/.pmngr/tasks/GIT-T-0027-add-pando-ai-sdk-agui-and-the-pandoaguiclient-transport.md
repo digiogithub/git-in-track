@@ -2,7 +2,7 @@
 id: GIT-T-0027
 type: task
 title: Add @pando-ai/sdk/agui and the PandoAguiClient transport
-status: in_review
+status: done
 priority: medium
 parent: GIT-US-0053
 milestone: GIT-M-0013
@@ -10,8 +10,9 @@ author: mcp
 labels: [web]
 estimate: 3
 created: 2026-09-13T13:15:57Z
-updated: 2026-09-15T15:35:40Z
+updated: 2026-09-15T16:43:48Z
 started: 2026-09-15T15:19:21Z
+closed: 2026-09-15T16:43:48Z
 ---
 
 ## Description

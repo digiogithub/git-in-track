@@ -2,7 +2,7 @@
 id: GIT-T-0159
 type: task
 title: Extract a Searcher contract in internal/core
-status: in_review
+status: done
 priority: medium
 parent: GIT-US-0082
 milestone: GIT-M-0013
@@ -10,8 +10,9 @@ author: mcp
 labels: [core, agent-ok]
 estimate: 2
 created: 2026-09-13T13:19:10Z
-updated: 2026-09-15T16:04:22Z
+updated: 2026-09-15T16:43:02Z
 started: 2026-09-15T16:04:04Z
+closed: 2026-09-15T16:43:02Z
 ---
 
 ## Description

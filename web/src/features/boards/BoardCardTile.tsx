@@ -56,6 +56,10 @@ export function BoardCardTile({ card, project, show, actions, draggable }: Board
       ref={setNodeRef}
       style={style}
       data-ref={card.ref}
+      // The bare id is what a caller holding only an item id can look up:
+      // `data-ref` is qualified with the project, so it is the wrong hook for
+      // `focus_board_card` (GIT-T-0086).
+      data-item-id={bareItemId(card.item)}
       data-remote={card.remote ? 'true' : undefined}
       className={cn(
         'rounded-md border border-border bg-card p-2 text-sm shadow-xs',

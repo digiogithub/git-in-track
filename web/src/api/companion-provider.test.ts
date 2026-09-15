@@ -2333,4 +2333,15 @@ describe('CompanionProvider semantic search settings (story GIT-US-0091)', () =>
     expect(toCapabilities({ features: {} }).searchSettings).toBe(true);
     expect(toCapabilities({ features: { searchSettings: false } }).searchSettings).toBe(false);
   });
+
+  // `features.search` is the one capability with three values; the UI branches
+  // on the third to show semantic results (GIT-T-0174).
+  it('maps features.search onto fullTextSearch, pando included', () => {
+    expect(toCapabilities({ features: { search: 'pando' } }).fullTextSearch).toBe('pando');
+    expect(toCapabilities({ features: { search: 'bleve' } }).fullTextSearch).toBe('bleve');
+    expect(toCapabilities({ features: { search: 'core' } }).fullTextSearch).toBe('core');
+    // An absent or unknown backend reads as the always-available core index.
+    expect(toCapabilities({ features: {} }).fullTextSearch).toBe('core');
+    expect(toCapabilities({ features: { search: 'lucene' } }).fullTextSearch).toBe('core');
+  });
 });

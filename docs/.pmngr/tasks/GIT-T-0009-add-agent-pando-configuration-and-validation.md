@@ -2,7 +2,7 @@
 id: GIT-T-0009
 type: task
 title: Add agent.pando configuration and validation
-status: in_review
+status: done
 priority: medium
 parent: GIT-US-0049
 milestone: GIT-M-0013
@@ -10,8 +10,9 @@ author: mcp
 labels: [server, agent-ok]
 estimate: 2
 created: 2026-09-13T13:15:24Z
-updated: 2026-09-15T15:28:39Z
+updated: 2026-09-15T16:42:54Z
 started: 2026-09-15T15:28:29Z
+closed: 2026-09-15T16:42:54Z
 ---
 
 ## Description

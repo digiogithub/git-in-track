@@ -2,7 +2,7 @@
 id: GIT-T-0156
 type: task
 title: Document the Pando client contract and its caveats
-status: in_review
+status: done
 priority: medium
 parent: GIT-US-0077
 milestone: GIT-M-0013
@@ -10,8 +10,9 @@ author: mcp
 labels: [docs, agent-ok]
 estimate: 1
 created: 2026-09-13T13:19:05Z
-updated: 2026-09-15T15:37:01Z
+updated: 2026-09-15T16:45:12Z
 started: 2026-09-15T15:20:15Z
+closed: 2026-09-15T16:45:12Z
 ---
 
 ## Description

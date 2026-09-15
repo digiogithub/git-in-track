@@ -2,7 +2,7 @@
 id: GIT-US-0064
 type: story
 title: Frontend tools registry so the agent can drive the UI
-status: in_review
+status: done
 priority: medium
 parent: GIT-EP-0018
 milestone: GIT-M-0013
@@ -10,8 +10,9 @@ author: mcp
 labels: [web]
 estimate: 5
 created: 2026-09-13T13:12:59Z
-updated: 2026-09-15T16:30:48Z
+updated: 2026-09-15T17:00:44Z
 started: 2026-09-15T16:13:54Z
+closed: 2026-09-15T17:00:44Z
 ---
 
 ## Description

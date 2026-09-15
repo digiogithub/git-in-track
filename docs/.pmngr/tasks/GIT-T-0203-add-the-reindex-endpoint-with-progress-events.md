@@ -2,7 +2,7 @@
 id: GIT-T-0203
 type: task
 title: Add the reindex endpoint with progress events
-status: in_review
+status: done
 priority: medium
 parent: GIT-US-0091
 milestone: GIT-M-0013
@@ -10,8 +10,9 @@ author: mcp
 labels: [server]
 estimate: 3
 created: 2026-09-13T13:20:27Z
-updated: 2026-09-15T16:04:31Z
+updated: 2026-09-15T16:44:36Z
 started: 2026-09-15T16:04:16Z
+closed: 2026-09-15T16:44:36Z
 ---
 
 ## Description

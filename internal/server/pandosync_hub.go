@@ -20,11 +20,53 @@ const corpusDebounce = 250 * time.Millisecond
 // answers requests while a ten-thousand-item corpus is still being written, and
 // it is cancelled by the server's shutdown context (GIT-T-0130).
 func (s *Server) startCorpusSync(ctx context.Context) {
-	if s.search == nil || len(s.search.allExporters()) == 0 {
+	if s.search == nil {
 		return
 	}
-	go s.search.exportAll(ctx)
-	go s.search.followHub(ctx)
+	s.search.armSync(ctx)
+}
+
+// armSync adopts the server's lifetime context and brings the corpus sync up.
+func (s *searchState) armSync(ctx context.Context) {
+	s.syncMu.Lock()
+	s.syncCtx = ctx
+	s.syncMu.Unlock()
+	s.syncNow()
+}
+
+// syncNow starts whatever half of the corpus sync is not running yet. It is
+// idempotent, and it is the path a settings change takes: a companion started
+// without a corpus and given one through PATCH /search/settings has to start
+// exporting and following the hub there and then — waiting for a restart is
+// how a setting looks broken (GIT-US-0073).
+//
+// A full export runs every time exporters appear or are rebuilt, because the
+// new ones know nothing of what is already on disk; it is cheap over an
+// unchanged corpus, which the exporter skips by content hash. The hub follower
+// is started at most once per process: it resolves the exporter of a
+// repository per event, so it never holds a stale one.
+//
+// Both goroutines run under the server's lifetime context rather than the
+// caller's — a corpus export must outlive the settings request that enabled
+// it, and end with the server.
+func (s *searchState) syncNow() {
+	s.syncMu.Lock()
+	run := s.syncCtx
+	s.syncMu.Unlock()
+
+	if run == nil || run.Err() != nil || len(s.allExporters()) == 0 {
+		return
+	}
+
+	s.syncMu.Lock()
+	follow := !s.following
+	s.following = true
+	s.syncMu.Unlock()
+
+	go s.exportAll(run) //nolint:contextcheck // the server lifetime, deliberately not the caller's
+	if follow {
+		go s.followHub(run) //nolint:contextcheck // same: the follower outlives any one request
+	}
 }
 
 // exportAll runs one full export of every repository's corpus.
