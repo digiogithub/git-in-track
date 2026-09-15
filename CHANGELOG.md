@@ -12,6 +12,10 @@ because a commit list cannot express them.
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [1.6.0] — 2026-09-15
+
 ### Added
 
 - **An agent proxy to a local Pando AG-UI adapter** (`GIT-US-0049`, docs/07 §5.5).
@@ -93,6 +97,25 @@ because a commit list cannot express them.
   sub-agents from the shared state. Five frontend tools (`open_item`, `open_kb_page`,
   `focus_board_card`, `apply_backlog_filter`, `show_items`) let the agent drive the UI
   through the interrupt protocol.
+
+## [1.5.0] — 2026-09-14
+
+### Added
+
+- **Unlinking from YouTrack.** `PATCH /api/v1/items/{id}` accepts
+  `{"removeExternal": [{"system": "youtrack"}]}` to forget the issue an item mirrors, and
+  `POST /api/v1/youtrack/kb/unlink?key=…` forgets the article a knowledge-base page mirrors
+  (it answers `unlinked: false` rather than failing when there was nothing to forget).
+  Publishing the page afterwards creates a fresh article. docs/07 §5.5.
+- **Testing a connection before saving it.** `POST /api/v1/youtrack/projects` lists the
+  instance's projects for a connection typed in the settings card but not yet saved, so the
+  project picker works during the first setup.
+
+### Changed
+
+- The YouTrack knowledge-base sync and the per-project link (`config.projectlink`) report
+  their state more precisely after a page or item is unlinked; the roadmap and the phase 9
+  plan were realigned to the Pando gap analysis of 2026-09-13 (`docs/research/`).
 
 ## [1.4.0] — 2026-09-13
 
@@ -693,12 +716,38 @@ because a commit list cannot express them.
   *is* a commit, so a rebase carries it along instead of overwriting a checkout
   (`GIT-US-0041`).
 
-## [1.0.0] — unreleased, prepared
+## [1.3.0] — 2026-09-11
 
-> **This entry is prepared, not published.** No `v1.0.0` tag has been pushed; the
-> repository carries no tags at all. The maintainer cuts the tag, and the release
-> workflow does everything else. The remaining steps are listed in
-> [docs/12-release-readiness-1-0.md](docs/12-release-readiness-1-0.md) §6.
+### Added
+
+- **Feedback mode.** Select any text in an item body or a knowledge-base page and write a
+  note about it: on an item it lands as a comment, on a page it is appended to a
+  `## Feedback` block (ADR-030). The notes stay in the repository and are never published
+  to an external tracker.
+
+## [1.2.0] — 2026-09-10
+
+### Changed
+
+- **Web UI refinements** across the backlog, boards and knowledge-base screens: layout,
+  navigation and rendering polish, with no change to the API or the data model.
+
+## [1.1.3] — 2026-09-10
+
+### Added
+
+- Task comments render as Markdown in the web app.
+
+### Fixed
+
+- The file watcher no longer misses newly created tasks, and the UI refreshes when they
+  appear; the watcher and the companion API were tightened along the way.
+- CI: the version step's redirects are grouped so actionlint passes.
+
+## [1.0.0] — 2026-09-07
+
+> Released as `v1.0.0` on 2026-09-07. The readiness evidence behind it is in
+> [docs/12-release-readiness-1-0.md](docs/12-release-readiness-1-0.md).
 
 First stable release. git-in-track is a project management tool with **no server and no
 database**: epics, stories, tasks, milestones, comments, boards, sprints, retrospectives
@@ -892,6 +941,11 @@ each, `Contents: read and write`. GHCR needs no secret. The release workflow ver
 tokens before it builds anything and fails with the fix in the message when either is
 missing. Full procedure: [docs/09](docs/09-ci-cd-and-releases.md) §9 and §10.
 
-[Unreleased]: https://github.com/digiogithub/git-in-track/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/digiogithub/git-in-track/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/digiogithub/git-in-track/compare/v1.5.0...v1.6.0
+[1.5.0]: https://github.com/digiogithub/git-in-track/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/digiogithub/git-in-track/compare/v1.3.0...v1.4.0
+[1.3.0]: https://github.com/digiogithub/git-in-track/compare/v1.2.0...v1.3.0
+[1.2.0]: https://github.com/digiogithub/git-in-track/compare/v1.1.3...v1.2.0
+[1.1.3]: https://github.com/digiogithub/git-in-track/compare/v1.0.0...v1.1.3
 [1.0.0]: https://github.com/digiogithub/git-in-track/releases/tag/v1.0.0
