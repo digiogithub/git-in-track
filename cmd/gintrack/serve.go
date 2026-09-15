@@ -195,6 +195,12 @@ func runServe(cmd *cobra.Command, build buildInfo, flags *serveFlags) error {
 		// process (GIT-US-0049).
 		Agent: pickBool(cmd, "agent", flags.agent, cfg.Agent.Enabled),
 		Pando: cfg.PandoTargets(),
+		// Semantic search. The tokens are resolved here the same way, and the
+		// corpus base is the cache directory unless the section overrides it;
+		// the per-repository corpus is `<base>/<mount id>`, which is what
+		// `gintrack agent init` writes into Pando's KBPath (GIT-US-0082).
+		Search:          searchSettings(cfg),
+		SearchCorpusDir: filepath.Join(cfg.CacheDir(res.Path), "pando-kb"),
 		// The public tunnel. Only the startup path may turn it on implicitly;
 		// a toggle made in the web UI is never written back to the file.
 		Tunnel: config.Tunnel{Enabled: tunnelOn, Provider: cfg.Server.Tunnel.Provider},
@@ -578,4 +584,13 @@ func pickEnvFloat(cmd *cobra.Command, name string, flag float64, key string, env
 		return file, nil
 	}
 	return flag, nil
+}
+
+// searchSettings copies the `search` section with its tokens resolved, so the
+// server never reads the environment or a token file itself.
+func searchSettings(cfg *config.Config) config.Search {
+	out := cfg.Search
+	out.Pando.MCPToken, _ = cfg.ResolvedPandoMCPToken()
+	out.Pando.RESTToken, _ = cfg.ResolvedPandoRESTToken()
+	return out
 }

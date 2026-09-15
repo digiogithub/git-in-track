@@ -322,10 +322,13 @@ func TestSearchSpansEveryRepository(t *testing.T) {
 	}
 
 	t.Run("across repositories", func(t *testing.T) {
-		var hits []hit
+		var body struct {
+			Hits []hit `json:"hits"`
+		}
 		decode(t, send(t, s, request{
 			method: http.MethodGet, target: "/api/v1/search?q=done&limit=20",
-		}), http.StatusOK, &hits)
+		}), http.StatusOK, &body)
+		hits := body.Hits
 		sources := map[string]bool{}
 		for _, h := range hits {
 			if h.VaultID == "" {
@@ -339,10 +342,13 @@ func TestSearchSpansEveryRepository(t *testing.T) {
 	})
 
 	t.Run("scoped to a project", func(t *testing.T) {
-		var hits []hit
+		var body struct {
+			Hits []hit `json:"hits"`
+		}
 		decode(t, send(t, s, request{
 			method: http.MethodGet, target: "/api/v1/search?q=checkout&project=DEMO&limit=20",
-		}), http.StatusOK, &hits)
+		}), http.StatusOK, &body)
+		hits := body.Hits
 		if len(hits) == 0 {
 			t.Fatal("search found nothing in the DEMO project")
 		}

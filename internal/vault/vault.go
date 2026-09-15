@@ -1571,9 +1571,13 @@ func (v *Vault) search(raw []byte) (any, error) {
 		if p.Project != "" && string(h.Project) != p.Project {
 			continue
 		}
+		source := h.Source
+		if source == "" {
+			source = core.SearchSourceCore
+		}
 		out = append(out, searchHit{
 			Kind: h.Kind, ID: string(h.ID), Path: h.Path, Title: h.Title,
-			Snippet: h.Snippet, Score: h.Score, Project: string(h.Project),
+			Snippet: h.Snippet, Score: h.Score, Project: string(h.Project), Source: source,
 		})
 		if p.Limit > 0 && len(out) >= p.Limit {
 			break

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"net/http"
 	"reflect"
 	"strconv"
@@ -515,12 +516,74 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	// which repository — it came from, so a workspace holding a team repository
 	// and several clones answers one query instead of one per repository
 	// (GIT-US-0016).
-	hits, err := s.repos.workspace().Search(r.Context(), q.Get("q"), limit, project)
+	text := q.Get("q")
+	hits, err := s.repos.workspace().Search(r.Context(), text, limit, project)
 	if err != nil {
 		writeVaultError(w, r, err)
 		return
 	}
-	writeJSON(w, r, http.StatusOK, hits)
+	hits, degraded := s.mergeSemantic(r.Context(), hits, text, limit, project)
+	writeJSON(w, r, http.StatusOK, map[string]any{
+		"query":    text,
+		"hits":     hits,
+		"total":    len(hits),
+		"engine":   s.search.backend(),
+		"degraded": degraded,
+	})
+}
+
+// mergeSemantic appends the semantic half of a search to the exact one.
+//
+// The order is the contract (GIT-US-0082): exact matches lead, in the order the
+// substring index ranked them, and semantic candidates the index did not
+// already find follow. The two score spaces are never sorted against each
+// other — a Pando fusion score sits around 0.016 while a core score counts
+// field weights — so the merge is a concatenation, not a re-ranking.
+//
+// A Pando that is switched off, unreachable, unauthorized or too slow costs the
+// caller nothing but the semantic half: the exact hits are returned unchanged
+// and `degraded` says the answer is partial. Search never fails over its
+// accelerator.
+func (s *Server) mergeSemantic(
+	ctx context.Context, exact []vault.SearchHit, text string, limit int, project string,
+) ([]vault.SearchHit, bool) {
+	if s.search == nil || s.search.semantic() == nil || strings.TrimSpace(text) == "" {
+		return exact, false
+	}
+	semantic, err := s.repos.workspace().SearchSemantic(ctx, vault.SemanticQuery{
+		Q: text, Limit: limit, Project: project,
+	})
+	if degraded := s.search.noteDegraded(err); degraded {
+		return exact, true
+	}
+	if err != nil || len(semantic) == 0 {
+		return exact, false
+	}
+	seen := make(map[string]bool, len(exact))
+	for _, hit := range exact {
+		seen[searchHitKey(hit)] = true
+	}
+	out := exact
+	for _, hit := range semantic {
+		if seen[searchHitKey(hit)] {
+			continue
+		}
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+		seen[searchHitKey(hit)] = true
+		out = append(out, hit)
+	}
+	return out, false
+}
+
+// searchHitKey identifies the document a hit is about, so that a semantic
+// candidate the exact half already found is not shown twice.
+func searchHitKey(hit vault.SearchHit) string {
+	if hit.ID != "" {
+		return "item\x00" + hit.ID
+	}
+	return "page\x00" + hit.VaultID + "\x00" + hit.Path
 }
 
 // ------------------------------------------------------- result inspection --

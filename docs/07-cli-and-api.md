@@ -1929,7 +1929,7 @@ GET /api/v1/capabilities
     "mcpHttp": false,
     "mcpWrite": false,
     "mcpTools": [],
-    "search": "bleve",
+    "search": "pando",
     "renderer": "goldmark",
     "tunnel": true,
     "agent": false,
@@ -1958,6 +1958,16 @@ switched on (`gintrack serve --agent` or `agent.enabled: true`) **and** an
 upstream URL is configured. It is a companion-only capability — browser-only mode
 has no server to proxy through and reports `false`. Nothing about the upstream
 token is reported here or anywhere else.
+
+`features.search` names the search backend that will answer the **next** query:
+`"core"` for the substring index every mode ships with, `"pando"` when the
+optional semantic accelerator of GIT-US-0082 is configured **and** answering.
+A Pando that is configured but unreachable, unauthorized or over its latency
+budget reports `"core"`, so a client never promises an accelerator that is down;
+it flips back to `"pando"` by itself on the first query that succeeds again.
+The web client maps this value onto `Capabilities.fullTextSearch`, whose union is
+`'core' | 'bleve' | 'pando'` — `bleve` is documented, not shipped (docs/02 §8) —
+and browser-only mode always reports `"core"`.
 
 #### Workspaces and repositories
 
@@ -2780,16 +2790,37 @@ GET /api/v1/search?q=oidc+discovery&scope=items,kb&project=ACME&limit=20
 ```json
 {
   "query":"oidc discovery",
-  "results":[
-    {"kind":"item","id":"ACME-T-0311","project":"ACME","title":"Wire OIDC discovery endpoint",
-     "score":8.42,"snippet":"Fetch /.well-known/<em>openid-configuration</em> and cache…",
-     "path":"docs/.pmngr/tasks/…"},
-    {"kind":"kb","project":"ACME","path":"architecture/auth.md","title":"Authentication",
-     "score":5.10,"snippet":"…<em>OIDC</em> <em>discovery</em> is cached for one hour…"}
+  "hits":[
+    {"kind":"item","id":"ACME-T-0311","project":"ACME","vaultId":"acme","title":"Wire OIDC discovery endpoint",
+     "score":8.42,"snippet":"Fetch /.well-known/openid-configuration and cache…",
+     "path":"docs/.pmngr/tasks/…","source":"core"},
+    {"kind":"page","project":"ACME","vaultId":"acme","path":"docs/architecture/auth.md","title":"Authentication",
+     "score":0.0163,"snippet":"…discovery documents are cached for one hour…","source":"pando"}
   ],
-  "total":7,"tookMs":9,"engine":"bleve"
+  "total":7,"engine":"pando","degraded":false
 }
 ```
+
+Every hit carries `source`, the backend that produced it (GIT-US-0082):
+
+- `"core"` — the substring index. Every term must match; the score is the sum of
+  the field weights it matched (id 100, title 3, label 2, body 1).
+- `"pando"` — a semantic candidate from the optional accelerator, **resolved back
+  into this companion's own index**: the title, path and project are re-read
+  locally, and a candidate that no longer resolves is dropped rather than
+  returned. The score is Pando's reciprocal-rank-fusion value, which lives in a
+  different space from the core one and must never be compared with it.
+
+**The order is the contract.** Exact hits lead, in the order the substring index
+ranked them; semantic hits the exact half did not already find follow. The two
+lists are concatenated, never re-ranked together.
+
+`engine` repeats the `features.search` capability for this one answer, and
+`degraded` is `true` when the semantic half could not be obtained — Pando
+unreachable, unauthorized, or over its 300 ms budget. A degraded answer is still
+a `200` with the exact hits in it: **search never fails over its accelerator**.
+A companion with no Pando configured answers `engine: "core"`,
+`degraded: false`, and every hit `source: "core"`.
 
 Without `?project=`, the query spans **every mounted repository** — the team knowledge base
 included — and each hit carries the `project` it belongs to (the team key for a team
@@ -2797,6 +2828,106 @@ knowledge-base page) plus the `vaultId` of the repository that answered, so a wo
 returns a row whose source is ambiguous (GIT-US-0016). With `?project=<KEY>`, only the repository
 exposing that key is searched, and an unknown key is a `404`.
 
+
+#### Semantic search settings and reindex (GIT-US-0091)
+
+Three companion-only endpoints, inside the bearer-auth group. They are what makes
+the exported corpus diagnosable: where Pando is, where the corpus lives, whether
+it is current, and a button to rebuild it.
+
+```http
+GET   /api/v1/search/settings
+PATCH /api/v1/search/settings   {"mcpUrl":"http://127.0.0.1:9777/mcp","projectId":"acme-api"}
+POST  /api/v1/search/reindex
+```
+
+`GET` answers:
+
+```json
+{
+  "backend":"pando",
+  "configured":true,
+  "mcpUrl":"http://127.0.0.1:9777/mcp",
+  "restUrl":"http://127.0.0.1:9778",
+  "projectId":"acme-api",
+  "corpusDir":"/home/dana/.local/state/gintrack/pando-kb",
+  "allowRemote":false,
+  "reachable":true,
+  "reachableError":"",
+  "corpora":[
+    {"repo":"acme-api","dir":"/home/dana/.local/state/gintrack/pando-kb/acme-api",
+     "last":{"items":412,"pages":38,"written":3,"removed":0,"skipped":447,
+             "duration":91000000,"at":"2026-09-15T10:02:11Z","full":true}}
+  ],
+  "documents":450,
+  "lastExport":"2026-09-15T10:02:11Z",
+  "reindex":null,
+  "persisted":false
+}
+```
+
+- `backend` is the value `features.search` reports, and `reachable` is a **live
+  probe** of the MCP endpoint run while answering (`null` when none is
+  configured, with `reachableError` saying why a probe failed).
+- `corpora` is one entry per mounted repository: the directory its corpus is
+  written to — `<corpusDir>/<repo id>`, the same path `gintrack agent init`
+  writes into Pando's `KBPath` — and the statistics of its last full export.
+  `documents` and `lastExport` summarize them.
+- Neither Pando token is ever reported. They are resolved from
+  `GINTRACK_PANDO_MCP_TOKEN` / `GINTRACK_PANDO_REST_TOKEN` or the configuration
+  file (docs/07 §3.3) and stay in the companion process.
+
+`PATCH` takes any subset of `mcpUrl`, `restUrl`, `projectId`, `corpusDir` and
+`allowRemote`; an absent field is left alone. **Tokens are not patchable**: a
+credential enters the process from the environment or the file, never over the
+API. The change is adopted by the running process immediately — the Pando client
+and every corpus exporter are rebuilt — and then written to the configuration
+file, with the tokens already in that file left untouched. The response repeats
+the settings and adds `persisted`, exactly as `PATCH /api/v1/git/settings` does:
+`false` means the companion was started without a configuration path (a test, or
+`serve --repo`) and the change lives only until it exits. A non-loopback URL
+without `allowRemote`, a URL that is not one, or a relative `corpusDir` is
+refused with `invalid_request` (400) and nothing is adopted.
+
+`POST /api/v1/search/reindex` answers `202` with the job, then runs in the
+background and publishes `search.progress` (§5.6). Per repository it re-exports
+the whole corpus and asks Pando to index the source tree; then it reindexes the
+knowledge base once:
+
+```json
+202
+{"jobId":"reindex-1","startedAt":"2026-09-15T10:04:00Z","phase":"export","repos":[]}
+```
+
+Poll `GET /api/v1/search/settings`, whose `reindex` field carries the running job
+and, afterwards, the last finished one:
+
+```json
+{"jobId":"reindex-1","phase":"completed","kbNote":"Reindexed.",
+ "kb":{"scanned":450,"added":3,"updated":0,"unchanged":447,"deleted":0},
+ "repos":[{"repo":"acme-api","export":{"items":412,"pages":38,"written":3},"codeJob":"idx-7741"}]}
+```
+
+- The three halves are independent. A Pando that is down never invalidates an
+  export that worked: `exportError` and `codeError` are reported per repository,
+  and the job ends `failed` with the successful halves still in it.
+- **The knowledge-base half is honest.** Pando has no filesystem watcher for the
+  corpus (`KBWatch` is off by design), so without a REST URL the corpus is
+  re-exported and `kbNote` says *"Re-exported, awaiting Pando's next import
+  pass"* — not that anything was reindexed. With `restUrl` configured the job
+  calls Pando's reindex route and `kb` carries the real
+  `scanned/added/updated/unchanged/deleted` counts.
+- A second call while one is running is refused with `search_reindex_running`
+  (409) and the running job is untouched. A companion with neither a corpus
+  directory nor a Pando endpoint answers `search_not_configured` (400).
+
+> **Operations: the embedding model is pinned configuration.** Pando skips any
+> chunk whose vector length differs from the query's — silently, with no
+> dimension guard and no error — and the model is configured **per Pando
+> instance, not per corpus**. Changing it therefore degrades recall invisibly for
+> *every* consumer of that instance, not just git-in-track, until a full reindex
+> has re-embedded everything. Treat the model as a pinned value and reindex
+> deliberately when it changes.
 
 #### The inbox (GIT-US-0056, ADR-033)
 
@@ -3834,6 +3965,15 @@ Event types and `data` schemas:
             "phase":"fetch|commit|integrate|push|done|failed",
             "percent":60, "message":"rebasing 1 commit onto origin/main",
             "ahead":1, "behind":0 } }
+
+// search.progress — the Pando corpus export and the reindex of GIT-US-0091.
+// `operationId` is "startup" for the export the server runs at boot, and the
+// reindex job id otherwise; `repo` is empty for the whole-workspace phases.
+{ "type":"search.progress",
+  "data": { "operationId":"reindex-1", "repo":"ACME",
+            "phase":"export|code|kb|completed|failed",
+            "percent":72, "done":324, "total":450,
+            "message":"indexing the source tree" } }
 
 // conflict.detected — a merge/rebase produced conflicts
 { "type":"conflict.detected",

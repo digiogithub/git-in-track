@@ -607,6 +607,11 @@ type SearchHit struct {
 	Project ProjectKey `json:"project,omitempty"`
 	Score   float64    `json:"score"`
 	Snippet string     `json:"snippet,omitempty"`
+	// Source names the backend that produced the hit: [SearchSourceCore] for
+	// this index, [SearchSourcePando] for the optional native accelerator. It
+	// is always set by Index.Search, so a caller never has to infer it from an
+	// empty value.
+	Source string `json:"source,omitempty"`
 }
 
 // Search weights per field, from the ranking rules of docs/02 section 8: a title
@@ -672,6 +677,7 @@ func (ix *Index) Search(q string, limit int) []SearchHit {
 		hits = append(hits, SearchHit{
 			Kind: "item", ID: it.ID, Path: it.Path, Title: it.Title,
 			Project: ix.projectOf(it), Score: score, Snippet: snippet(it.Body, terms[0]),
+			Source: SearchSourceCore,
 		})
 	}
 
@@ -703,6 +709,7 @@ func (ix *Index) Search(q string, limit int) []SearchHit {
 		hits = append(hits, SearchHit{
 			Kind: "page", Path: page.Path, Title: page.Title,
 			Project: page.Project, Score: score, Snippet: snippet(page.Body, terms[0]),
+			Source: SearchSourceCore,
 		})
 	}
 

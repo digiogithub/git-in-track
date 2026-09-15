@@ -42,7 +42,32 @@ because a commit list cannot express them.
   sources are pruned; a dropped event subscription triggers a full re-export. Configure
   Pando with `[Remembrances] KBPath` pointing at the corpus directory — never at a
   repository root — plus `KBAutoImport = true` and `KBWatch = false`. The corpus is derived
-  data: never committed, safe to delete.
+  data: never committed, safe to delete. The companion now runs that export from
+  `Server.Start` in the background — the listener answers while it writes — and then keeps
+  the corpus current from the event hub, with a slow-subscriber drop mapped onto a full
+  re-export (`GIT-T-0130`, `GIT-T-0134`).
+- **Semantic search behind the core search contract** (`GIT-US-0082`, docs/02 §8.1, docs/07).
+  `internal/core` gains a `Searcher` interface `*core.Index` already satisfied, and the
+  companion adds a Pando-backed implementation next to it. `GET /api/v1/search` now answers
+  `{"hits":[…],"engine":…,"degraded":…}`: exact matches first in their existing order, then
+  semantic candidates the substring index did not find, each hit tagged `source: "core"` or
+  `"pando"`. Pando returns candidates only — every field shown is re-read from git-in-track's
+  own index and an unresolvable candidate is dropped — and the semantic leg has a 300 ms
+  budget, so a Pando that is down, slow or unconfigured degrades the answer instead of
+  failing the request. `features.search` reports `"pando"` only while that backend is
+  actually answering. Browser-only mode is unchanged: always the core index.
+  `search.semantic` joins the core contract for every caller, the MCP tools included.
+- **Search settings and a reindex button** (`GIT-US-0091`, backend half, docs/07).
+  `GET|PATCH /api/v1/search/settings` reports and persists `search.pando` — the endpoint, the
+  corpus directory, the project id, the last export of every repository, a live reachability
+  probe and the selected backend — with the `persisted` semantics of `PATCH /api/v1/git/settings`
+  and without ever carrying a token. `POST /api/v1/search/reindex` re-exports every corpus,
+  triggers Pando's code index of each source tree and reindexes the knowledge base, streaming
+  `search.progress` on the event hub and refusing a second concurrent run with
+  `search_reindex_running` (409). Without Pando's REST URL the knowledge-base half honestly
+  reports "re-exported, awaiting Pando's next import pass". Note that the embedding model is
+  pinned configuration: it is global to a Pando instance, and changing it silently degrades
+  recall for every consumer until a full reindex.
 
 ## [1.4.0] — 2026-09-13
 

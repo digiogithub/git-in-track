@@ -581,17 +581,33 @@ func TestSearchAndValidate(t *testing.T) {
 
 	s, _ := newAPIServer(t)
 
-	var hits []struct {
-		Kind  string  `json:"kind"`
-		ID    string  `json:"id"`
-		Path  string  `json:"path"`
-		Score float64 `json:"score"`
+	// The response is the envelope of GIT-US-0082: the hits, and whether the
+	// semantic half of the answer is missing. A companion with no Pando
+	// configured answers every hit from the core index and is never degraded.
+	var search struct {
+		Hits []struct {
+			Kind   string  `json:"kind"`
+			ID     string  `json:"id"`
+			Path   string  `json:"path"`
+			Score  float64 `json:"score"`
+			Source string  `json:"source"`
+		} `json:"hits"`
+		Engine   string `json:"engine"`
+		Degraded bool   `json:"degraded"`
 	}
 	decode(t, send(t, s, request{
 		method: http.MethodGet, target: "/api/v1/search?q=checkout&scope=items,kb&limit=10",
-	}), http.StatusOK, &hits)
-	if len(hits) == 0 {
+	}), http.StatusOK, &search)
+	if len(search.Hits) == 0 {
 		t.Fatal("the search found nothing")
+	}
+	if search.Engine != "core" || search.Degraded {
+		t.Errorf("engine = %q degraded = %v, want core and not degraded", search.Engine, search.Degraded)
+	}
+	for _, hit := range search.Hits {
+		if hit.Source != "core" {
+			t.Errorf("hit %s came from %q, want core", hit.Path, hit.Source)
+		}
 	}
 
 	var diagnostics []struct {

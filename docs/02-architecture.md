@@ -687,7 +687,47 @@ Search runs entirely locally, over the same index, in both modes.
   not compile comfortably to WASM, and it would create exactly the native/browser
   divergence [ADR-003](adr/ADR-003-shared-go-core-wasm.md) exists to prevent. If
   native corpora outgrow the in-memory index, bleve becomes an *optional native
-  accelerator* behind the same `core/search` interface, never the only backend.
+  accelerator* behind the same `core/search` interface, never the only backend. It
+  is not shipped; the capability value is documented so a client written against
+  it keeps compiling.
+
+### 8.1 Pando, the optional semantic accelerator (GIT-US-0082)
+
+Pando is the accelerator that *is* shipped, and it sits in exactly the seat the
+paragraph above reserves for bleve: an optional native backend behind the same
+contract, never the only one.
+
+- **The contract.** `core.Searcher` (`internal/core/search.go`) is one method,
+  `Search(q string, limit int) []SearchHit`, which `*core.Index` already
+  satisfied. The Pando-backed implementation lives in `internal/server` and is
+  native-only, because it needs `net/http` — which is precisely why it may not
+  live in `internal/core`.
+- **What it adds.** Hybrid lexical-plus-embedding ranking over a corpus the
+  companion exports for a local Pando instance (see
+  [21-semantic-search.md](21-semantic-search.md)). It finds documents whose words
+  the substring engine cannot match: "how do we handle a stale write" reaches the
+  rev-protocol stories that never use those words.
+- **Candidates only.** Pando answers with a corpus path and a score. The
+  companion maps that path back to an item id or a knowledge-base page and
+  **re-reads every field it shows — title, path, project — from its own index**.
+  The corpus keeps only `tags` and `aliases` of the front matter and is always at
+  least one export behind, so nothing it holds is authoritative. A candidate that
+  no longer resolves is dropped rather than shown dangling.
+- **Why it stays optional.** Browser-only mode has no reach to a local Pando at
+  all and `internal/core` must compile to WASM (ADR-003), so browser sessions
+  always answer from the core index alone. A companion whose Pando is down, slow
+  or unconfigured answers from the core index too: the semantic leg has a 300 ms
+  budget and a failure degrades the answer instead of failing the request.
+- **Never one ranking.** Pando's knowledge-base scores are reciprocal-rank-fusion
+  values around 0.016 while the core score counts field weights; the two are
+  incommensurable. The merge is therefore a concatenation — exact matches first in
+  their own order, then semantic hits the exact half did not already find — never
+  a re-ranking of one list.
+- **How a client learns which backend answered.** Two ways, both reported by the
+  companion: the `features.search` capability is `"core"` or `"pando"` and names
+  the backend the *next* query will use, and every hit of
+  `GET /api/v1/search` carries `source: "core" | "pando"` with the response's
+  `degraded` flag saying whether the semantic half is missing from this answer.
 
 ---
 

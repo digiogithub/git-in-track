@@ -1,7 +1,8 @@
 # 21 — Semantic Search and the Pando Corpus
 
-Status: **as built** for the corpus exporter (`internal/pandosync`, `GIT-US-0073`);
-**planning specification** for the search surface that reads it (`GIT-US-0082`, `GIT-US-0091`).
+Status: **as built** for the corpus exporter (`internal/pandosync`, `GIT-US-0073`), its wiring
+into the companion (`GIT-T-0130`, `GIT-T-0134`) and the search and settings surface over it
+(`GIT-US-0082`, and the backend half of `GIT-US-0091`).
 Phase: **Phase 9 — agent interface and semantic search** (`GIT-M-0013`)
 Audience: contributors working on `internal/pandosync` and on the search features; anyone
 configuring Pando against a git-in-track workspace.
@@ -129,9 +130,36 @@ KBWatch = false
 
 `KBWatch` stays **false** on purpose. The watcher is the component that erases `tags`, and
 fsnotify on a large corpus is expensive for no benefit: the exporter has already written
-complete files by the time an import pass runs. Forcing a re-sync today means waiting for the
-next auto-import pass. Once Pando exposes `POST /api/v1/remembrances/kb/reindex`, the companion
-will call it and "reindex now" becomes an awaitable operation with real counters.
+complete files by the time an import pass runs. Forcing a re-sync means
+`POST /api/v1/search/reindex`: it re-exports the corpus and, when `search.pando.restUrl` is
+configured, calls Pando's `POST /api/v1/remembrances/kb/reindex` and reports its real
+scanned/added/updated/deleted counters. Without a REST URL there is nothing to call — the
+corpus is re-exported and the job says so, rather than claiming a reindex that did not happen.
+
+### 4.0 How the companion drives it (GIT-T-0130, GIT-T-0134)
+
+The wiring lives in `internal/server`, which is the only package that knows both the exporter
+and the hub:
+
+- **One exporter per mounted repository**, rooted at `<corpusDir>/<repo id>`, where `corpusDir`
+  is `search.pando.corpusDir` or, unset, `<index.cacheDir>/pando-kb`. That is exactly the path
+  `gintrack agent init` writes into Pando's `KBPath`, so the two never drift. Under it the
+  layout of §2 applies unchanged: `<PROJECT>/items/…` and `<PROJECT>/kb/…`.
+- **The first full export starts from `Server.Start`, in a goroutine**, carrying the server's
+  shutdown context. The listener answers requests while it runs, and a shutdown cancels it
+  cleanly: every file already written is complete, and the next start finishes the job.
+- **Then the exporter follows the hub** as an ordinary in-process subscriber of `item.changed`
+  and `file.changed` (`IsKb`), coalescing a burst per document over a 250 ms window. An
+  `op: "deleted"` item and an `op: "remove"` page become `ItemRemoved` and `PageRemoved`.
+- **The hub's slow-subscriber drop is the overflow.** When the hub declares the subscriber too
+  far behind, the companion re-exports everything and subscribes again — the contract of §4.2,
+  mapped onto the one failure mode the hub actually has.
+- **Progress is published as `search.progress`**, shaped like `sync.progress`: the startup
+  export reports under the operation id `startup`, a reindex under its job id
+  (docs/07 §5.6, and `POST /api/v1/search/reindex`).
+
+A write failure is logged and dropped, never fatal: the exporter is not poisoned by it and the
+next event over the same document retries.
 
 ### 4.1 ⚠️ Never point `KBPath` at a repository
 
@@ -191,13 +219,20 @@ over an in-memory file system.
 
 Search itself is specified with `GIT-US-0082`. The contract the corpus imposes on it is short:
 
-- A Pando hit is a **candidate**, not a record. Resolve it to an item id — from the tags when
-  they survived, otherwise from the identity line of the chunk — and read every field the UI
+- A Pando hit is a **candidate**, not a record. Resolve it to an item id or a page from its
+  corpus path — `<PROJECT>/items/<ID>.md` and `<PROJECT>/kb/<path>.md`, parsed from the right so
+  a deployment that reports the path with a prefix still resolves — and read every field the UI
   shows from git-in-track's own index.
 - An id that no longer resolves is a stale hit from a corpus Pando has not re-imported yet.
   Drop it rather than rendering a ghost.
 - Do not use `code_index_project` for this corpus: `code_hybrid_search` excludes Markdown by
-  default.
+  default. The code index of `POST /api/v1/search/reindex` is over the repository's **source
+  tree**, which is a different thing from the corpus.
+- The companion reaches all of this through `vault.Workspace`: the host installs a
+  `vault.SemanticSearcher` with `SetSemanticSearcher`, and every caller of the core contract —
+  the REST endpoint, the MCP `search_semantic` tool — reaches it through the `search.semantic`
+  method. A session with no backend installed (every browser-only one) answers `unavailable`
+  rather than an empty result.
 
 ---
 
