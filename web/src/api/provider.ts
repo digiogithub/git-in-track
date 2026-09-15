@@ -13,6 +13,15 @@
  * land with their stories.
  */
 
+/**
+ * AG-UI protocol types (GIT-US-0053). They are imported from the browser-safe
+ * entry `@pando-ai/sdk/agui/client`, never from the package root or the
+ * `/agui` index, which pull Node-only code and CopilotKit. Every one of them
+ * is a type, so the import is erased at build time and the provider boundary
+ * stays free of a runtime dependency on the SDK.
+ */
+import type { AguiEvent, AguiInfo, AguiMessage, RunAgentInput } from '@pando-ai/sdk/agui/client';
+
 import type {
   CommentPushEntry,
   CommentPushInput,
@@ -1207,6 +1216,14 @@ export type Capabilities = {
   youtrackSupported: boolean;
   /** At least one mounted project declares an `integrations.youtrack` block. */
   youtrack: boolean;
+  /**
+   * The companion can reach a Pando AG-UI adapter for at least one repository
+   * (GIT-EP-0018). Everything the agent feature renders branches on this flag,
+   * never on the provider kind: a companion built without the agent routes,
+   * or configured with no `agui-serve` behind it, answers `false` and the chat
+   * surface simply is not there.
+   */
+  agent: boolean;
 };
 
 export type RepoKind = 'project' | 'team';
@@ -1393,6 +1410,13 @@ export type ProviderErrorCode =
   | 'sync_job_not_retryable'
   /** The engine has been closed, or was never started. */
   | 'sync_engine_not_running'
+  /**
+   * The runtime cannot do this at all — browser-only mode asked for the agent,
+   * say. It is a permanent property of the runtime, not a failure to retry and
+   * not a permission the user could be granted, so it is its own code rather
+   * than `read_only` (GIT-US-0053).
+   */
+  | 'not_supported'
   | 'internal';
 
 export type ChangeEvent =
@@ -1920,8 +1944,90 @@ export interface DataProvider {
     resolution: ConflictResolution,
   ): Promise<ConflictResolveResult>;
 
+  // agent (Pando AG-UI, GIT-EP-0018 / GIT-US-0053)
+  /**
+   * The adapter's discovery document: which agents exist and which optional
+   * halves of the protocol — frontend tools, human-in-the-loop, shared state,
+   * interrupts — this deployment implements.
+   */
+  getAgentInfo(options?: AgentRequestOptions): Promise<AguiInfo>;
+  /** Liveness of the adapter behind the companion, for the settings card. */
+  getAgentHealth(options?: AgentRequestOptions): Promise<AgentHealth>;
+  /**
+   * Runs the agent and yields AG-UI events as they arrive.
+   *
+   * It is an async iterable rather than a callback feed because that is the
+   * shape `PandoThread` consumes (`client.run`), so the SDK's own reducer can
+   * be dropped straight onto this seam. The HTTP failure surfaces on the first
+   * `next()`, as a `ProviderError`; aborting `options.signal` ends the
+   * iteration.
+   *
+   * The whole transcript is resent on every turn: Pando forwards only the
+   * trailing user message, and a trailing `tool` message is what resumes an
+   * interrupted run rather than starting a new one.
+   */
+  runAgent(input: RunAgentInput, options?: AgentRunOptions): AsyncIterable<AguiEvent>;
+  /** Every thread the adapter remembers for a repository, newest first. */
+  listAgentThreads(options?: AgentRequestOptions): Promise<AgentThreadSummary[]>;
+  /** The stored transcript of one thread, for restoring it after a reload. */
+  getAgentThreadMessages(threadId: string, options?: AgentRequestOptions): Promise<AguiMessage[]>;
+  /**
+   * Re-attaches to a thread whose run is still live — the tab that owned it
+   * reloaded, say. It yields the same event stream `runAgent` does, without
+   * starting a run.
+   */
+  streamAgentThread(threadId: string, options?: AgentRunOptions): AsyncIterable<AguiEvent>;
+  /** Forgets a thread and its transcript. */
+  deleteAgentThread(threadId: string, options?: AgentRequestOptions): Promise<void>;
+  /**
+   * Cancels the run in flight on a thread. The stream then ends with a
+   * `RUN_ERROR` carrying `code: 'cancelled'`.
+   */
+  cancelAgentRun(threadId: string, options?: AgentRequestOptions): Promise<void>;
+
   subscribe(handler: (event: ChangeEvent) => void): Unsubscribe;
 }
+
+// ------------------------------------------------------------------- agent
+
+/**
+ * What every agent call needs: which repository's adapter to talk to, and a
+ * signal to give up with. One `agui-serve` runs per repository and the
+ * companion routes `repo` onto `{url, token}` of its own, so the Pando token
+ * never reaches the browser (decision of 2026-09-13).
+ */
+export type AgentRequestOptions = {
+  /** Repository id; the companion's default repository when omitted. */
+  repo?: string;
+  signal?: AbortSignal;
+};
+
+/** A streaming agent call. Same shape; named apart so the docs stay honest. */
+export type AgentRunOptions = AgentRequestOptions;
+
+/** `GET /api/v1/agent/health` → is there an adapter answering at all. */
+export type AgentHealth = {
+  ok: boolean;
+  /** Adapter version, when it reports one. */
+  version?: string;
+  /** Why it is not ok; absent when it is. */
+  detail?: string;
+};
+
+/** One row of `GET /api/v1/agent/threads`. */
+export type AgentThreadSummary = {
+  id: string;
+  /** A title the adapter derived, usually the opening message. */
+  title?: string;
+  /** RFC 3339. */
+  createdAt?: string;
+  updatedAt?: string;
+  messageCount?: number;
+  /** True while a run is still attached to this thread. */
+  running?: boolean;
+};
+
+export type { AguiEvent, AguiInfo, AguiMessage, RunAgentInput };
 
 /** How a retro listing is narrowed; the filters are ANDed. */
 /** A draft filed straight into the triage queue (ADR-033). */
@@ -2067,4 +2173,5 @@ export const readOnlyCapabilities: Capabilities = {
   maxBatchWrite: 0,
   youtrackSupported: false,
   youtrack: false,
+  agent: false,
 };

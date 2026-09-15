@@ -7,6 +7,13 @@
  */
 
 import type {
+  AgentHealth,
+  AgentRunOptions,
+  AgentThreadSummary,
+  AguiEvent,
+  AguiInfo,
+  AguiMessage,
+  RunAgentInput,
   CommentPushEntry,
   CommentPushInput,
   CommentPushResult,
@@ -190,6 +197,50 @@ export type FakeData = {
    * `unlinked`, which is what a page nobody has published looks like.
    */
   kbSync?: FakeKbSync;
+  /**
+   * The Pando agent, in memory. Absent — the default — makes this fake a
+   * runtime with no agent at all: the `agent` capability is false and every
+   * agent call fails, which is what a browser does. Supplying it opts a test
+   * into the companion behaviour.
+   */
+  agent?: FakeAgent;
+};
+
+/**
+ * A scripted AG-UI stream (story GIT-US-0053).
+ *
+ * Nothing here simulates an agent: a test supplies the exact event array each
+ * turn should yield, in order, and asserts on `runs`, the inputs the store
+ * actually posted. That keeps the fake honest — it replays a recording, it
+ * does not invent a protocol.
+ */
+export type FakeAgent = {
+  /**
+   * One event array per turn, consumed in order. When the queue runs dry the
+   * last entry is replayed, so a test that only cares about the first turn
+   * does not have to script the rest.
+   */
+  turns?: AguiEvent[][];
+  /** Shorthand for a single-turn `turns`. */
+  events?: AguiEvent[];
+  /** What `getAgentInfo` answers. */
+  info?: AguiInfo;
+  /** What `getAgentHealth` answers. */
+  health?: AgentHealth;
+  /** What `listAgentThreads` answers. */
+  threads?: AgentThreadSummary[];
+  /** Stored transcripts, keyed by thread id, for `getAgentThreadMessages`. */
+  messages?: Record<string, AguiMessage[]>;
+  /** Events `streamAgentThread` replays; falls back to the current turn. */
+  reattach?: AguiEvent[];
+  /** When set, starting a run fails with this before any event arrives. */
+  runError?: { code: ProviderErrorCode; message: string };
+  /**
+   * When set, the stream throws this after `throwAfter` events — the
+   * mid-stream transport failure a terminal error state has to survive.
+   */
+  streamError?: { code: ProviderErrorCode; message: string };
+  throwAfter?: number;
 };
 
 /**
@@ -779,6 +830,49 @@ const sampleGintrackFields = [
   'sprint',
 ];
 
+/** The discovery document a fake with no `info` override answers with. */
+export const sampleAgentInfo: AguiInfo = {
+  protocol: 'ag-ui',
+  version: 'fake',
+  path: '/api/v1/agent',
+  agents: [{ name: 'coder', url: '/api/v1/agent/run', description: 'The fake coder agent.' }],
+  capabilities: {
+    frontendTools: true,
+    humanInTheLoop: true,
+    sharedState: true,
+    interrupts: true,
+  },
+};
+
+/**
+ * Replays a scripted event array as an AG-UI stream.
+ *
+ * It yields between microtasks so a consumer can abort mid-stream, which is
+ * what the cancel and the mid-stream-failure tests need.
+ */
+async function* replayAgentEvents(
+  script: AguiEvent[],
+  agent: FakeAgent,
+  signal?: AbortSignal,
+): AsyncGenerator<AguiEvent> {
+  let seen = 0;
+  for (const event of script) {
+    if (signal?.aborted === true) {
+      throw new DOMException('The run was aborted.', 'AbortError');
+    }
+    if (agent.streamError && agent.throwAfter !== undefined && seen === agent.throwAfter) {
+      throw new ProviderError(agent.streamError.code, agent.streamError.message);
+    }
+    // A real stream never resolves synchronously; neither does this one.
+    await Promise.resolve();
+    seen += 1;
+    yield structuredClone(event);
+  }
+  if (agent.streamError && agent.throwAfter === undefined) {
+    throw new ProviderError(agent.streamError.code, agent.streamError.message);
+  }
+}
+
 const writableCapabilities: Capabilities = {
   ...readOnlyCapabilities,
   write: true,
@@ -1203,6 +1297,16 @@ export class FakeProvider implements DataProvider {
   private engineSettings: SyncEngineSettings | null;
   /** The knowledge-base synchronization fixture; null on a runtime with none. */
   private kbSync: FakeKbSync | null;
+  /** The scripted agent; null on a runtime that has none. */
+  private agent: FakeAgent | null;
+  /** Turns consumed so far, so each `runAgent` takes the next script. */
+  private agentTurn = 0;
+  /** Every `RunAgentInput` posted, in order, for a test to assert on. */
+  readonly agentRuns: RunAgentInput[] = [];
+  /** Every thread id `cancelAgentRun` was called with, in order. */
+  readonly agentCancels: string[] = [];
+  /** Every thread id `deleteAgentThread` was called with, in order. */
+  readonly agentDeletes: string[] = [];
 
   constructor(data: FakeData = {}, opts: { readOnly?: boolean } = {}) {
     const base = opts.readOnly ? readOnlyCapabilities : writableCapabilities;
@@ -1229,6 +1333,7 @@ export class FakeProvider implements DataProvider {
     };
     this.youtrackEnvToken = this.youtrackSettings.tokenSource === 'env';
     this.kbSync = data.kbSync ?? null;
+    this.agent = data.agent ?? null;
     this.syncEngine = data.syncEngine ?? null;
     this.syncJobs = structuredClone(data.syncEngine?.jobs ?? []);
     this.engineSettings =
@@ -1248,6 +1353,7 @@ export class FakeProvider implements DataProvider {
       ...base,
       youtrackSupported: this.youtrack !== null,
       youtrack: this.youtrack !== null && this.youtrackSettings.configured,
+      agent: this.agent !== null,
     };
     this.projects = data.projects ?? [sampleProject];
     this.items = new Map((data.items ?? sampleItems).map((i) => [i.id, structuredClone(i)]));
@@ -4300,6 +4406,81 @@ export class FakeProvider implements DataProvider {
       merge: { ...merge, clean: true, conflicted: 0 },
       result: { staged: true, continued: resolution.continue !== false, remaining: [] },
     });
+  }
+
+  // ------------------------------------------------------------------ agent
+
+  getAgentInfo(): Promise<AguiInfo> {
+    return this.withAgent((agent) => agent.info ?? sampleAgentInfo);
+  }
+
+  getAgentHealth(): Promise<AgentHealth> {
+    return this.withAgent((agent) => agent.health ?? { ok: true, version: 'fake' });
+  }
+
+  async *runAgent(input: RunAgentInput, options: AgentRunOptions = {}): AsyncIterable<AguiEvent> {
+    const agent = this.requireAgent();
+    this.agentRuns.push(structuredClone(input));
+    if (agent.runError) {
+      throw new ProviderError(agent.runError.code, agent.runError.message);
+    }
+    const script = this.nextAgentTurn(agent);
+    yield* replayAgentEvents(script, agent, options.signal);
+  }
+
+  listAgentThreads(): Promise<AgentThreadSummary[]> {
+    return this.withAgent((agent) => structuredClone(agent.threads ?? []));
+  }
+
+  getAgentThreadMessages(threadId: string): Promise<AguiMessage[]> {
+    return this.withAgent((agent) => structuredClone(agent.messages?.[threadId] ?? []));
+  }
+
+  async *streamAgentThread(
+    threadId: string,
+    options: AgentRunOptions = {},
+  ): AsyncIterable<AguiEvent> {
+    const agent = this.requireAgent();
+    void threadId;
+    const script = agent.reattach ?? this.nextAgentTurn(agent);
+    yield* replayAgentEvents(script, agent, options.signal);
+  }
+
+  deleteAgentThread(threadId: string): Promise<void> {
+    return this.withAgent(() => {
+      this.agentDeletes.push(threadId);
+    });
+  }
+
+  cancelAgentRun(threadId: string): Promise<void> {
+    return this.withAgent(() => {
+      this.agentCancels.push(threadId);
+    });
+  }
+
+  /** Runs `fn` against the scripted agent, rejecting when there is none. */
+  private withAgent<T>(fn: (agent: FakeAgent) => T): Promise<T> {
+    try {
+      return Promise.resolve(fn(this.requireAgent()));
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
+  /** The next scripted turn; the last one repeats once the queue runs dry. */
+  private nextAgentTurn(agent: FakeAgent): AguiEvent[] {
+    const turns = agent.turns ?? (agent.events ? [agent.events] : []);
+    const script = turns[Math.min(this.agentTurn, turns.length - 1)] ?? [];
+    this.agentTurn += 1;
+    return script;
+  }
+
+  /** The refusal a runtime with no agent gives, matching `BrowserProvider`. */
+  private requireAgent(): FakeAgent {
+    if (this.agent === null) {
+      throw new ProviderError('not_supported', 'This runtime has no agent.');
+    }
+    return this.agent;
   }
 
   subscribe(handler: (event: ChangeEvent) => void): Unsubscribe {

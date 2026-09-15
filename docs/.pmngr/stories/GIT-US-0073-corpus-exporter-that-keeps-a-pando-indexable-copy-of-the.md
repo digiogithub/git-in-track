@@ -2,7 +2,7 @@
 id: GIT-US-0073
 type: story
 title: Corpus exporter that keeps a Pando-indexable copy of the backlog
-status: backlog
+status: in_progress
 priority: high
 parent: GIT-EP-0019
 milestone: GIT-M-0013
@@ -10,7 +10,8 @@ author: mcp
 labels: [server, performance]
 estimate: 8
 created: 2026-09-13T13:13:42Z
-updated: 2026-09-13T21:17:27Z
+updated: 2026-09-15T15:16:32Z
+started: 2026-09-15T15:16:32Z
 ---
 
 ## Description

@@ -2,7 +2,7 @@
 id: GIT-T-0118
 type: task
 title: Verify the end-to-end setup against a live Pando instance
-status: todo
+status: in_progress
 priority: medium
 parent: GIT-US-0069
 milestone: GIT-M-0013
@@ -10,7 +10,8 @@ author: mcp
 labels: [docs, ci]
 estimate: 3
 created: 2026-09-13T13:18:11Z
-updated: 2026-09-13T13:18:11Z
+updated: 2026-09-15T15:18:59Z
+started: 2026-09-15T15:18:59Z
 ---
 
 ## Description

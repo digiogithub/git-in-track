@@ -2,7 +2,7 @@
 id: GIT-T-0152
 type: task
 title: Implement SearchKB, SearchCode and ListProjects with result parsing
-status: todo
+status: in_review
 priority: medium
 parent: GIT-US-0077
 milestone: GIT-M-0013
@@ -10,7 +10,8 @@ author: mcp
 labels: [server]
 estimate: 3
 created: 2026-09-13T13:19:00Z
-updated: 2026-09-13T13:19:00Z
+updated: 2026-09-15T15:36:59Z
+started: 2026-09-15T15:20:14Z
 ---
 
 ## Description

@@ -2,7 +2,7 @@
 id: GIT-T-0030
 type: task
 title: Add getAgentInfo and runAgent to the DataProvider seam
-status: todo
+status: in_review
 priority: medium
 parent: GIT-US-0053
 milestone: GIT-M-0013
@@ -10,7 +10,8 @@ author: mcp
 labels: [web]
 estimate: 3
 created: 2026-09-13T13:16:02Z
-updated: 2026-09-13T13:16:02Z
+updated: 2026-09-15T15:35:42Z
+started: 2026-09-15T15:19:22Z
 ---
 
 ## Description

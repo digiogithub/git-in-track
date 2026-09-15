@@ -2,7 +2,7 @@
 id: GIT-US-0049
 type: story
 title: Companion agent proxy to Pando AG-UI
-status: backlog
+status: in_progress
 priority: high
 parent: GIT-EP-0018
 milestone: GIT-M-0013
@@ -10,7 +10,8 @@ author: mcp
 labels: [server, security, docs]
 estimate: 8
 created: 2026-09-13T13:11:47Z
-updated: 2026-09-13T21:15:07Z
+updated: 2026-09-15T15:28:37Z
+started: 2026-09-15T15:28:37Z
 ---
 
 ## Description

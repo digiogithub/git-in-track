@@ -2,7 +2,7 @@
 id: GIT-T-0106
 type: task
 title: Write the backlog-assistant persona and the routing skill
-status: todo
+status: in_review
 priority: medium
 parent: GIT-US-0069
 milestone: GIT-M-0013
@@ -10,7 +10,8 @@ author: mcp
 labels: [docs, agent-ok]
 estimate: 2
 created: 2026-09-13T13:17:55Z
-updated: 2026-09-13T13:17:55Z
+updated: 2026-09-15T15:32:33Z
+started: 2026-09-15T15:18:55Z
 ---
 
 ## Description

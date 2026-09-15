@@ -2,7 +2,7 @@
 id: GIT-T-0142
 type: task
 title: Add search.pando configuration with a loopback guard
-status: todo
+status: in_review
 priority: medium
 parent: GIT-US-0077
 milestone: GIT-M-0013
@@ -10,7 +10,8 @@ author: mcp
 labels: [server, security, agent-ok]
 estimate: 2
 created: 2026-09-13T13:18:46Z
-updated: 2026-09-13T13:18:46Z
+updated: 2026-09-15T15:36:56Z
+started: 2026-09-15T15:20:11Z
 ---
 
 ## Description

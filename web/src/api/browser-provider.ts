@@ -165,6 +165,29 @@ const BROWSER_YOUTRACK_REASON =
   'YouTrack is not available in browser-only mode: there is no process to hold the credential and no way to reach the instance from a tab. Run `gintrack serve` to connect a project.';
 
 /**
+ * Why browser-only mode can never run the agent. The AG-UI adapter is a local
+ * Pando process the companion starts, routes to and holds the token for; a tab
+ * has none of the three. This is a property of the runtime, not a permission,
+ * so it is `not_supported` rather than `read_only`.
+ */
+const BROWSER_AGENT_REASON =
+  'The agent is not available in browser-only mode: it needs a local Pando adapter, which only the companion can start and reach. Run `gintrack serve` to use it.';
+
+/**
+ * A stream that refuses on the first pull rather than on construction, so a
+ * caller that never iterates does not get an unhandled rejection.
+ */
+function refusedStream(): AsyncIterable<never> {
+  return {
+    [Symbol.asyncIterator](): AsyncIterator<never> {
+      return {
+        next: () => Promise.reject(new ProviderError('not_supported', BROWSER_AGENT_REASON)),
+      };
+    },
+  };
+}
+
+/**
  * Why browser-only mode has no background job queue. The engine is a worker
  * pool with a journal on disk, owned by the companion process; a tab has
  * neither, and an empty table would claim a queue exists and happens to be
@@ -297,6 +320,7 @@ export class BrowserProvider implements DataProvider {
       maxBatchWrite: write ? 50 : 0,
       youtrackSupported: false,
       youtrack: false,
+      agent: false,
     };
     return this.#capabilities;
   }
@@ -1583,6 +1607,45 @@ export class BrowserProvider implements DataProvider {
   }
 
   // ------------------------------------------------------------------- events
+
+  // ------------------------------------------------------------------ agent
+
+  /**
+   * Every agent call fails the same way here. The `agent` capability is
+   * `false` in this mode, so a call that reaches one of these is a caller that
+   * forgot to branch on it — which is worth a loud, typed refusal.
+   */
+  getAgentInfo(): Promise<never> {
+    return Promise.reject(new ProviderError('not_supported', BROWSER_AGENT_REASON));
+  }
+
+  getAgentHealth(): Promise<never> {
+    return Promise.reject(new ProviderError('not_supported', BROWSER_AGENT_REASON));
+  }
+
+  runAgent(): AsyncIterable<never> {
+    return refusedStream();
+  }
+
+  listAgentThreads(): Promise<never> {
+    return Promise.reject(new ProviderError('not_supported', BROWSER_AGENT_REASON));
+  }
+
+  getAgentThreadMessages(): Promise<never> {
+    return Promise.reject(new ProviderError('not_supported', BROWSER_AGENT_REASON));
+  }
+
+  streamAgentThread(): AsyncIterable<never> {
+    return refusedStream();
+  }
+
+  deleteAgentThread(): Promise<never> {
+    return Promise.reject(new ProviderError('not_supported', BROWSER_AGENT_REASON));
+  }
+
+  cancelAgentRun(): Promise<never> {
+    return Promise.reject(new ProviderError('not_supported', BROWSER_AGENT_REASON));
+  }
 
   subscribe(handler: (event: ChangeEvent) => void): Unsubscribe {
     this.#handlers.add(handler);

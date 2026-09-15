@@ -23,8 +23,18 @@
  * interval refresh signal when the socket cannot be opened at all.
  */
 
+import { parseSSE } from '@pando-ai/sdk/agui/client';
+
 import { resolveCompanionBaseUrl } from '@/api/detect';
 import type {
+  AgentHealth,
+  AgentRequestOptions,
+  AgentRunOptions,
+  AgentThreadSummary,
+  AguiEvent,
+  AguiInfo,
+  AguiMessage,
+  RunAgentInput,
   CommentPushEntry,
   CommentPushInput,
   CommentPushResult,
@@ -215,6 +225,7 @@ export const companionCapabilities: Capabilities = {
   maxBatchWrite: 50,
   youtrackSupported: true,
   youtrack: false,
+  agent: false,
 };
 
 /** State of the event socket, surfaced in Settings. */
@@ -1029,6 +1040,9 @@ export function toCapabilities(value: unknown): Capabilities {
     youtrackSupported:
       asBoolean(features['youtrackSupported']) ?? companionCapabilities.youtrackSupported,
     youtrack: asBoolean(features['youtrack']) ?? companionCapabilities.youtrack,
+    // A companion that does not report the flag has no agent routes: the chat
+    // surface stays hidden rather than failing on the first call.
+    agent: asBoolean(features['agent']) ?? companionCapabilities.agent,
   };
 }
 
@@ -1481,7 +1495,64 @@ type RequestOptions = {
   /** Sent as `If-Match`; `undefined` on reads. */
   rev?: string;
   accept?: string;
+  /**
+   * Aborts the request. Only the agent routes pass one: an aborted fetch is
+   * re-thrown untouched instead of being dressed up as "the companion is
+   * unreachable", which it is not.
+   */
+  signal?: AbortSignal;
 };
+
+/** Companion routes that proxy one repository's Pando AG-UI adapter. */
+export const AGENT_PREFIX = `${API_PREFIX}/agent`;
+
+/**
+ * Turns an SSE response into AG-UI events with the SDK's own parser.
+ *
+ * Nothing here re-implements the protocol: `parseSSE` reassembles frames
+ * across chunk boundaries and decodes each `data:` line, and `PandoThread`
+ * (in `features/agent`) reduces what comes out. This function only guards the
+ * two ways a proxy can hand back something that is not a stream at all.
+ */
+async function* agentEvents(response: Response, path: string): AsyncGenerator<AguiEvent> {
+  const contentType = response.headers.get('content-type') ?? '';
+  if (!contentType.includes('text/event-stream')) {
+    throw new ProviderError(
+      'internal',
+      `The agent answered with "${contentType || '(no content type)'}" instead of an SSE stream; something between the app and the companion intercepted the request.`,
+      path,
+    );
+  }
+  if (!response.body) {
+    throw new ProviderError('internal', 'The agent stream carried no body.', path);
+  }
+  yield* parseSSE(response.body);
+}
+
+/** The `RequestOptions` half of an `AgentRequestOptions`. */
+function agentRequest(options: AgentRequestOptions): RequestOptions {
+  return options.signal === undefined ? {} : { signal: options.signal };
+}
+
+/** One `GET /agent/threads` row; anything without an id is dropped. */
+function toAgentThreadSummary(value: unknown): AgentThreadSummary | null {
+  const record = asRecord(value);
+  const id = record ? asString(record['id']) : undefined;
+  if (id === undefined) return null;
+  const title = asString(record?.['title']);
+  const createdAt = asString(record?.['createdAt']);
+  const updatedAt = asString(record?.['updatedAt']);
+  const messageCount = asNumber(record?.['messageCount']);
+  const running = asBoolean(record?.['running']);
+  return {
+    id,
+    ...(title === undefined ? {} : { title }),
+    ...(createdAt === undefined ? {} : { createdAt }),
+    ...(updatedAt === undefined ? {} : { updatedAt }),
+    ...(messageCount === undefined ? {} : { messageCount }),
+    ...(running === undefined ? {} : { running }),
+  };
+}
 
 export class CompanionProvider implements DataProvider {
   readonly kind = 'companion' as const;
@@ -2718,6 +2789,105 @@ export class CompanionProvider implements DataProvider {
     })) as ConflictResolveResult;
   }
 
+  // ------------------------------------------------------------------ agent
+
+  async getAgentInfo(options: AgentRequestOptions = {}): Promise<AguiInfo> {
+    return (await this.#json(
+      `${AGENT_PREFIX}/info${buildQuery({ repo: options.repo })}`,
+      agentRequest(options),
+    )) as AguiInfo;
+  }
+
+  async getAgentHealth(options: AgentRequestOptions = {}): Promise<AgentHealth> {
+    const body = asRecord(
+      await this.#json(
+        `${AGENT_PREFIX}/health${buildQuery({ repo: options.repo })}`,
+        agentRequest(options),
+      ),
+    );
+    const version = asString(body?.['version']);
+    const detail = asString(body?.['detail']);
+    return {
+      ok: asBoolean(body?.['ok']) ?? true,
+      ...(version === undefined ? {} : { version }),
+      ...(detail === undefined ? {} : { detail }),
+    };
+  }
+
+  /**
+   * POSTs a `RunAgentInput` and streams back the AG-UI events.
+   *
+   * It is `async *` rather than a callback feed on purpose: `PandoThread`
+   * consumes exactly this shape, so the SDK's reducer plugs onto the provider
+   * seam with no adapter in between. The bearer token is the companion's own
+   * (`token.ts`); the Pando token lives on the companion side and never
+   * reaches the browser.
+   */
+  async *runAgent(input: RunAgentInput, options: AgentRunOptions = {}): AsyncIterable<AguiEvent> {
+    const path = `${AGENT_PREFIX}/run${buildQuery({ repo: options.repo })}`;
+    const response = await this.#send(path, {
+      ...agentRequest(options),
+      method: 'POST',
+      body: input,
+      accept: 'text/event-stream',
+    });
+    yield* agentEvents(response, path);
+  }
+
+  async listAgentThreads(options: AgentRequestOptions = {}): Promise<AgentThreadSummary[]> {
+    const body = await this.#json(
+      `${AGENT_PREFIX}/threads${buildQuery({ repo: options.repo })}`,
+      agentRequest(options),
+    );
+    const rows = Array.isArray(body) ? body : (asRecord(body)?.['threads'] ?? []);
+    if (!Array.isArray(rows)) return [];
+    return rows.map(toAgentThreadSummary).filter((row): row is AgentThreadSummary => row !== null);
+  }
+
+  async getAgentThreadMessages(
+    threadId: string,
+    options: AgentRequestOptions = {},
+  ): Promise<AguiMessage[]> {
+    const body = await this.#json(
+      `${AGENT_PREFIX}/threads/${encodeURIComponent(threadId)}/messages${buildQuery({
+        repo: options.repo,
+      })}`,
+      agentRequest(options),
+    );
+    const rows = Array.isArray(body) ? body : (asRecord(body)?.['messages'] ?? []);
+    return Array.isArray(rows) ? (rows as AguiMessage[]) : [];
+  }
+
+  async *streamAgentThread(
+    threadId: string,
+    options: AgentRunOptions = {},
+  ): AsyncIterable<AguiEvent> {
+    const path = `${AGENT_PREFIX}/threads/${encodeURIComponent(threadId)}/stream${buildQuery({
+      repo: options.repo,
+    })}`;
+    const response = await this.#send(path, {
+      ...agentRequest(options),
+      accept: 'text/event-stream',
+    });
+    yield* agentEvents(response, path);
+  }
+
+  async deleteAgentThread(threadId: string, options: AgentRequestOptions = {}): Promise<void> {
+    await this.#send(
+      `${AGENT_PREFIX}/threads/${encodeURIComponent(threadId)}${buildQuery({ repo: options.repo })}`,
+      { ...agentRequest(options), method: 'DELETE' },
+    );
+  }
+
+  async cancelAgentRun(threadId: string, options: AgentRequestOptions = {}): Promise<void> {
+    await this.#send(
+      `${AGENT_PREFIX}/runs/${encodeURIComponent(threadId)}/cancel${buildQuery({
+        repo: options.repo,
+      })}`,
+      { ...agentRequest(options), method: 'POST' },
+    );
+  }
+
   subscribe(handler: (event: ChangeEvent) => void): Unsubscribe {
     this.#handlers.add(handler);
     if (this.#handlers.size === 1) this.#connect();
@@ -2757,9 +2927,14 @@ export class CompanionProvider implements DataProvider {
         mode: 'cors',
         credentials: 'omit',
         headers,
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
         ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
       });
     } catch (error) {
+      // The caller aborted on purpose. Reporting that as an unreachable
+      // companion would send the UI hunting for a connection problem that is
+      // not there.
+      if (options.signal?.aborted === true) throw error;
       throw new ProviderError(
         'internal',
         `The companion at ${this.baseUrl} is unreachable (${

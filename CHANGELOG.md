@@ -12,7 +12,37 @@ because a commit list cannot express them.
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- **An agent proxy to a local Pando AG-UI adapter** (`GIT-US-0049`, docs/07 §5.5).
+  `gintrack serve --agent` mounts `/api/v1/agent`, which relays AG-UI runs, threads and
+  cancellations to a `pando agui-serve` process configured under `agent.pando`. The
+  browser holds only the companion's own bearer token: the Pando credential is injected
+  server-side, the browser `Origin` is stripped, and the discovery document is rewritten
+  so no response names the Pando origin. Runs stream unbuffered, a disconnect cancels the
+  upstream run, and `agent.pando.maxRuns` caps the runs in flight with a `503` and a
+  `Retry-After`. `GINTRACK_PANDO_TOKEN` overrides the configured token; `features.agent`
+  reports the capability.
+- **`gintrack agent init`** (`GIT-US-0069`, docs/20, ADR-035) writes the Pando-side
+  configuration for one repository: `.pando.toml` with the AG-UI adapter, its tool
+  allow-list, the gintrack MCP server and the exported corpus, plus a `backlog-assistant`
+  persona and a search-routing skill. The generated `.pando.toml` carries the companion
+  bearer token, is written with mode 0600 and must be git-ignored.
+- **The web app speaks AG-UI through the companion** (`GIT-US-0053`). `@pando-ai/sdk`
+  0.2.0 is pinned (browser-safe `agui/client` entry, +1 kB gzipped); the `DataProvider`
+  gains eight agent methods and the `agent` capability; a Zustand store owns threads,
+  runs, interrupts and reattachment. No chat surface ships yet.
+- **A typed client for Pando's search tools** (`GIT-US-0077`, `internal/pando`) over the
+  MCP streamable-HTTP transport, plus the REST corpus resync. URLs that are not loopback
+  are refused unless `search.pando.allowRemote` is set.
+- **Pando corpus exporter** (`GIT-US-0073`, docs/21). The companion mirrors every item and
+  knowledge-base page into a Markdown corpus outside the repository
+  (`<cache dir>/pando-kb/<repo>/<project>/items/…` and `/kb/…`), which Pando imports for
+  semantic search. Writes are atomic and skipped when content is unchanged; vanished
+  sources are pruned; a dropped event subscription triggers a full re-export. Configure
+  Pando with `[Remembrances] KBPath` pointing at the corpus directory — never at a
+  repository root — plus `KBAutoImport = true` and `KBWatch = false`. The corpus is derived
+  data: never committed, safe to delete.
 
 ## [1.4.0] — 2026-09-13
 

@@ -2,7 +2,7 @@
 id: GIT-T-0034
 type: task
 title: Write the AG-UI event reducer
-status: todo
+status: in_review
 priority: medium
 parent: GIT-US-0053
 milestone: GIT-M-0013
@@ -10,7 +10,8 @@ author: mcp
 labels: [web]
 estimate: 5
 created: 2026-09-13T13:16:08Z
-updated: 2026-09-13T13:16:08Z
+updated: 2026-09-15T15:35:43Z
+started: 2026-09-15T15:19:24Z
 ---
 
 ## Description

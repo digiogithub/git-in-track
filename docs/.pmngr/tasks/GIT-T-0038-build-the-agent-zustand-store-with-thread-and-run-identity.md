@@ -2,7 +2,7 @@
 id: GIT-T-0038
 type: task
 title: Build the agent Zustand store with thread and run identity
-status: todo
+status: in_review
 priority: medium
 parent: GIT-US-0053
 milestone: GIT-M-0013
@@ -10,7 +10,8 @@ author: mcp
 labels: [web]
 estimate: 3
 created: 2026-09-13T13:16:14Z
-updated: 2026-09-13T13:16:14Z
+updated: 2026-09-15T15:35:44Z
+started: 2026-09-15T15:19:25Z
 ---
 
 ## Description

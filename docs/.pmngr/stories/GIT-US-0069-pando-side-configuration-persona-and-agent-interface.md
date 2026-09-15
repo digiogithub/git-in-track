@@ -2,7 +2,7 @@
 id: GIT-US-0069
 type: story
 title: Pando side configuration, persona and agent interface documentation
-status: backlog
+status: in_progress
 priority: medium
 parent: GIT-EP-0018
 milestone: GIT-M-0013
@@ -10,7 +10,8 @@ author: mcp
 labels: [cli, docs]
 estimate: 5
 created: 2026-09-13T13:13:20Z
-updated: 2026-09-13T21:16:16Z
+updated: 2026-09-15T15:19:05Z
+started: 2026-09-15T15:19:05Z
 ---
 
 ## Description

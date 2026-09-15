@@ -303,6 +303,7 @@ describe('CompanionProvider reads', () => {
       maxBatchWrite: 200,
       youtrackSupported: true,
       youtrack: false,
+      agent: false,
     });
     expect(client.version).toBe('0.4.0');
   });
@@ -1976,5 +1977,162 @@ describe('CompanionProvider YouTrack knowledge base and comment push', () => {
       },
     ]);
     client.dispose();
+  });
+});
+
+// --------------------------------------------------------------------- agent
+
+/** An SSE response whose body is a real `ReadableStream`, split mid-frame. */
+function sseResponse(chunks: string[]): Response {
+  const encoder = new TextEncoder();
+  return {
+    ok: true,
+    status: 200,
+    statusText: 'OK',
+    headers: { get: (name: string) => (name === 'content-type' ? 'text/event-stream' : null) },
+    body: new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+        controller.close();
+      },
+    }),
+  } as unknown as Response;
+}
+
+describe('CompanionProvider agent', () => {
+  it('reads the discovery document for a repository', async () => {
+    const info = {
+      protocol: 'ag-ui',
+      path: '/api/v1/agent',
+      agents: [{ name: 'coder', url: '/api/v1/agent/run' }],
+      capabilities: {
+        frontendTools: true,
+        humanInTheLoop: true,
+        sharedState: true,
+        interrupts: true,
+      },
+    };
+    const fetchImpl = vi.fn().mockResolvedValue(response(info));
+
+    await expect(provider(fetchImpl).getAgentInfo({ repo: 'repo-1' })).resolves.toEqual(info);
+    expect(lastCall(fetchImpl).url).toBe(`${BASE}/api/v1/agent/info?repo=repo-1`);
+  });
+
+  it('reads health, filling in what the companion left out', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(response({ version: '0.705.1' }));
+    await expect(provider(fetchImpl).getAgentHealth()).resolves.toEqual({
+      ok: true,
+      version: '0.705.1',
+    });
+    expect(lastCall(fetchImpl).url).toBe(`${BASE}/api/v1/agent/health`);
+  });
+
+  it('POSTs a RunAgentInput with the bearer token and streams the events back', async () => {
+    setToken('secret');
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(
+        sseResponse([
+          'data: {"type":"RUN_STARTED","threadId":"t1","runId":"r1"}\n\n',
+          'data: {"type":"TEXT_MESSAGE_CO',
+          'NTENT","messageId":"m1","delta":"hi"}\n\n',
+          'data: {"type":"RUN_FINISHED","threadId":"t1","runId":"r1","outcome":"success"}\n\n',
+        ]),
+      );
+
+    const input = { threadId: 't1', runId: 'r1', messages: [] };
+    const seen = [];
+    for await (const event of provider(fetchImpl).runAgent(input, { repo: 'repo-1' })) {
+      seen.push(event);
+    }
+
+    expect(seen.map((event) => event.type)).toEqual([
+      'RUN_STARTED',
+      'TEXT_MESSAGE_CONTENT',
+      'RUN_FINISHED',
+    ]);
+    const { url, init } = lastCall(fetchImpl);
+    expect(url).toBe(`${BASE}/api/v1/agent/run?repo=repo-1`);
+    expect(init.method).toBe('POST');
+    expect(headerOf(init, 'Authorization')).toBe('Bearer secret');
+    expect(headerOf(init, 'Accept')).toBe('text/event-stream');
+    expect(bodyOf(init)).toEqual(input);
+    clearToken();
+  });
+
+  it('refuses a run the proxy answered with something that is not a stream', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(response({ hello: 'world' }));
+    const stream = provider(fetchImpl).runAgent({ threadId: 't', runId: 'r', messages: [] });
+
+    await expect(
+      (async () => {
+        for await (const event of stream) void event;
+      })(),
+    ).rejects.toBeInstanceOf(ProviderError);
+  });
+
+  it('maps a problem document on the run route onto a typed error', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(
+        response({ code: 'conflict', detail: 'a run is already attached' }, { status: 409 }),
+      );
+    const stream = provider(fetchImpl).runAgent({ threadId: 't', runId: 'r', messages: [] });
+
+    await expect(
+      (async () => {
+        for await (const event of stream) void event;
+      })(),
+    ).rejects.toMatchObject({ code: 'stale_revision' });
+  });
+
+  it('re-throws an abort untouched instead of calling the companion unreachable', async () => {
+    const controller = new AbortController();
+    const fetchImpl = vi.fn().mockImplementation(() => {
+      controller.abort();
+      return Promise.reject(new DOMException('aborted', 'AbortError'));
+    });
+    const stream = provider(fetchImpl).runAgent(
+      { threadId: 't', runId: 'r', messages: [] },
+      { signal: controller.signal },
+    );
+
+    await expect(
+      (async () => {
+        for await (const event of stream) void event;
+      })(),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
+  it('lists threads, reads their messages, deletes and cancels', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        response({ threads: [{ id: 't1', title: 'First', messageCount: 4, running: true }, {}] }),
+      )
+      .mockResolvedValueOnce(response({ messages: [{ id: 'm1', role: 'user', content: 'hi' }] }))
+      .mockResolvedValueOnce(response(null, { status: 204 }))
+      .mockResolvedValueOnce(response(null, { status: 202 }));
+    const client = provider(fetchImpl);
+
+    await expect(client.listAgentThreads({ repo: 'repo-1' })).resolves.toEqual([
+      { id: 't1', title: 'First', messageCount: 4, running: true },
+    ]);
+    await expect(client.getAgentThreadMessages('t1')).resolves.toEqual([
+      { id: 'm1', role: 'user', content: 'hi' },
+    ]);
+
+    await client.deleteAgentThread('t 1');
+    expect(lastCall(fetchImpl).url).toBe(`${BASE}/api/v1/agent/threads/t%201`);
+    expect(lastCall(fetchImpl).init.method).toBe('DELETE');
+
+    await client.cancelAgentRun('t1');
+    expect(lastCall(fetchImpl).url).toBe(`${BASE}/api/v1/agent/runs/t1/cancel`);
+    expect(lastCall(fetchImpl).init.method).toBe('POST');
+  });
+
+  it('reads the agent capability from GET /capabilities', () => {
+    expect(toCapabilities({ features: { agent: true } }).agent).toBe(true);
+    expect(toCapabilities({ features: {} }).agent).toBe(false);
   });
 });

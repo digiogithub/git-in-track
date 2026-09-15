@@ -2,7 +2,7 @@
 id: GIT-T-0110
 type: task
 title: Write docs/20-agent-interface.md
-status: todo
+status: in_review
 priority: medium
 parent: GIT-US-0069
 milestone: GIT-M-0013
@@ -10,7 +10,8 @@ author: mcp
 labels: [docs]
 estimate: 3
 created: 2026-09-13T13:18:00Z
-updated: 2026-09-13T13:18:00Z
+updated: 2026-09-15T15:32:34Z
+started: 2026-09-15T15:18:56Z
 ---
 
 ## Description

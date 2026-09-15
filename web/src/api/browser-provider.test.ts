@@ -774,4 +774,35 @@ describe('BrowserProvider — what a tab cannot do (GIT-EP-0012, GIT-EP-0015)', 
     const settings = await provider.getSyncSettings();
     expect(settings.engine).toBeUndefined();
   });
+
+  it('refuses every agent call with a typed `not_supported`, and never claims the capability', async () => {
+    const { provider: browser } = await mount();
+    const provider: DataProvider = browser;
+
+    expect(provider.capabilities.agent).toBe(false);
+
+    await expect(provider.getAgentInfo()).rejects.toBeInstanceOf(ProviderError);
+    await expect(provider.getAgentInfo()).rejects.toMatchObject({ code: 'not_supported' });
+    await expect(provider.getAgentHealth()).rejects.toMatchObject({ code: 'not_supported' });
+    await expect(provider.listAgentThreads()).rejects.toMatchObject({ code: 'not_supported' });
+    await expect(provider.getAgentThreadMessages('t1')).rejects.toMatchObject({
+      code: 'not_supported',
+    });
+    await expect(provider.deleteAgentThread('t1')).rejects.toMatchObject({
+      code: 'not_supported',
+    });
+    await expect(provider.cancelAgentRun('t1')).rejects.toMatchObject({ code: 'not_supported' });
+
+    // The streams refuse on first pull, not on construction.
+    for (const stream of [
+      provider.runAgent({ threadId: 't', runId: 'r', messages: [] }),
+      provider.streamAgentThread('t1'),
+    ]) {
+      await expect(
+        (async () => {
+          for await (const event of stream) void event;
+        })(),
+      ).rejects.toMatchObject({ code: 'not_supported' });
+    }
+  });
 });

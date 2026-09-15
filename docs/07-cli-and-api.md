@@ -263,6 +263,42 @@ mcp:
                          # (the Settings page writes this field; section 5.5)
                          # over stdio as well as for POST /mcp
 
+# The agent surface: the proxy at /api/v1/agent that relays a chat turn to a
+# local `pando agui-serve` process (§5.5). It is off by default, and the token
+# below never leaves the companion — it is injected as an Authorization header
+# on the server-to-server hop and appears in no response, log line or URL.
+agent:
+  enabled: false                 # same switch as `gintrack serve --agent`
+  pando:
+    url: http://127.0.0.1:8090   # agui-serve base; loopback unless allowRemote
+    path: /api/v1/agui           # Pando's AG-UI mount point
+    token: ""                    # GINTRACK_PANDO_TOKEN overrides it
+    tokenFile: ""                # read the token from a file instead
+    agent: backlog-assistant     # AG-UI agent or profile: POST {path}/{agent}
+    insecureTls: false           # for an agui-serve left on its self-signed cert
+    allowRemote: false           # true to dial a host that is not loopback
+    maxRuns: 8                   # runs in flight before a 503 + Retry-After, 0-256
+    repos:                       # per-repository upstreams, matched on the mounted id
+      - repo: git-in-track
+        url: http://127.0.0.1:8091
+        token: ""
+        tokenFile: ""
+        agent: ""                # empty inherits the section's
+
+# Semantic search over Pando's knowledge base and code index. An empty `mcpUrl`
+# leaves search on the built-in core index alone; the section is consumed by the
+# search endpoints, which return candidates and then re-read every field from
+# this companion's own index.
+search:
+  pando:
+    mcpUrl: ""                   # e.g. http://127.0.0.1:9777/mcp; empty = off
+    mcpToken: ""                 # GINTRACK_PANDO_MCP_TOKEN overrides it
+    restUrl: ""                  # `pando serve` base; optional, enables REST reindex
+    restToken: ""                # GINTRACK_PANDO_REST_TOKEN overrides it
+    projectId: ""                # code project id; empty = Pando's sanitised repo path
+    corpusDir: ""                # empty = <index.cacheDir>/pando-kb
+    allowRemote: false
+
 # The credentials of the external trackers this machine is linked to. It is the
 # only place git-in-track stores a secret it did not generate itself, which is
 # why the whole file is 0600 (ADR-032). The committed half of the connection —
@@ -315,6 +351,9 @@ Effective value = flag > environment variable > config file > built-in default.
 | `GINTRACK_SYNC_MAX_ATTEMPTS` | `sync.engine.maxAttempts` |
 | `GINTRACK_GIT_COMMIT_ON_SAVE` | `git.commitOnSave` |
 | `GINTRACK_YOUTRACK_TOKEN` | `integrations.youtrack.<key>.token`, for every project |
+| `GINTRACK_PANDO_TOKEN`   | `agent.pando.token`, for every upstream |
+| `GINTRACK_PANDO_MCP_TOKEN` | `search.pando.mcpToken` |
+| `GINTRACK_PANDO_REST_TOKEN` | `search.pando.restToken` |
 | `GINTRACK_LOG_LEVEL`     | `log.level`         |
 | `GINTRACK_LOG_FORMAT`    | `log.format`        |
 | `NO_COLOR`               | disables ANSI color |
@@ -333,6 +372,37 @@ which is what a CI checkout with a single linked project wants; a machine
 serving two linked projects should use the file instead. The provenance of the
 effective token is reported — never its value — as `env`, `file`, `flag` or
 `none` by `gintrack youtrack status` and by `GET /api/v1/youtrack/settings`.
+
+The three `GINTRACK_PANDO_*` variables are separate names for the same reason,
+and each one overrides exactly one key. Within the file half, an inline `token`
+beats a `tokenFile`, and a row of `agent.pando.repos` beats the section-wide
+value for the repository it names. All three are read through accessors
+(`config.ResolvedPandoToken(repoID)` and its two siblings) rather than copied
+into a struct, so no `Save` can write an environment secret back into the file
+and no `gintrack config show --json` can print one.
+
+#### `search.pando`
+
+Semantic search is served by a local [Pando](https://github.com/digiogithub/pando) instance.
+`mcpUrl` is Pando's streamable-HTTP MCP endpoint (typically `http://127.0.0.1:9777/mcp`) and
+`mcpToken` the bearer token it requires (`MCPServer.HttpToken` in Pando's own configuration).
+`projectId` names the indexed code project and defaults to the repository path sanitised the
+way Pando does it — `/www/git-in-track` becomes `www_git-in-track`. `restUrl` and `restToken`
+are optional and only enable the corpus resync (`POST /api/v1/remembrances/kb/reindex`,
+authenticated with `X-Pando-Token`); they need `pando serve`, not `pando mcp-server`, so with
+them unset the resync reports "not configured" rather than failing. `corpusDir` is where the
+exported corpus is written (docs/21). Leaving `mcpUrl` empty switches semantic search off.
+
+**A URL whose host is not a loopback address is refused, and there is no override but
+`allowRemote`.** Pando's MCP transport exposes far more than search — file writes, shell
+execution, agent spawning — so a companion that could be pointed at a remote Pando would be a
+remote-code-execution gadget wearing a search feature's clothes. `allowRemote` exists for a
+future authenticated deployment and should stay off.
+
+**Loopback is not a boundary against your own browser.** Until Pando's MCP CORS policy stops
+being `*`, any web page you visit can reach `127.0.0.1:9777` from the browser with no companion
+involved. Binding to loopback keeps the network out; it does not keep a hostile page out. That
+is Pando's to fix (its backlog item PANDO-EP-0006), not the companion's.
 
 ### 3.4 Git backend selection
 
@@ -390,6 +460,8 @@ gintrack serve [flags]
   --mcp-http          Serve the Model Context Protocol at POST /mcp (doc 08 §2.2)
   --mcp-allow-write   Advertise the MCP write tools; without it /mcp is read-only
   --mcp-agent name    Agent name recorded as the author of comments written through /mcp
+  --agent             Serve the agent proxy at /api/v1/agent, relaying to the
+                      configured Pando AG-UI adapter (§5.5, off by default)
   --tunnel            Publish this server through a Cloudflare quick tunnel and print
                       the temporary public https URL (off by default; refused with
                       --token none). See the warning below before using it.
@@ -1586,6 +1658,38 @@ sync. A project that sets the option and declares no triage status has no inbox,
 so the whole import is refused with `no_triage_status` before anything is
 written, preview included.
 
+### 4.18 `gintrack agent init`
+
+```
+gintrack agent init [--repo <path>] [--companion-url <url>] [--agui-port <n>] [--force] [--json]
+```
+
+Writes the Pando-side configuration for one repository so that `pando agui-serve` can act as
+the agent behind the companion's `/api/v1/agent` proxy (docs/20, ADR-035). At the repository
+root it creates `.pando.toml` (the `[AGUI]` adapter with its profile and tool allow-list,
+`[MCPServers.gintrack]` pointing at this companion's `/mcp`, `[Remembrances]` pointing at the
+exported corpus with `KBWatch = false`, `[MCPServer]` HTTP off), `agents/personas/
+backlog-assistant.md` and `agents/skills/gintrack-search/SKILL.md`. Outside the repository it
+creates, once, the AG-UI token file `<stateDir>/agui/<repo id>.token` (mode 0600). It never
+prints a token.
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--repo <path>` | `.` | The repository to configure; must be a mounted repository |
+| `--companion-url <url>` | the configured bind address | Where Pando reaches this companion |
+| `--agui-port <n>` | `8090` | Port written into `[AGUI] Port` |
+| `--force` | off | Overwrite files that already exist |
+| `--json` | off | Machine-readable summary of what was written |
+
+Exit code 5 when a target file exists and `--force` was not given; nothing is written in that
+case and the message names the file.
+
+**The generated `.pando.toml` carries the companion bearer token** in
+`[MCPServers.gintrack.Headers]`, because Pando does not expand environment variables in MCP
+headers. It is written with mode 0600 and must be git-ignored; the command says so on stdout.
+The two commands to run next are printed: `pando agui-serve --cwd <repo> --port <n> --no-tls
+--token-file <f>` and `gintrack serve --agent --mcp-http`.
+
 ---
 
 ## 5. Local REST API
@@ -1828,6 +1932,7 @@ GET /api/v1/capabilities
     "search": "bleve",
     "renderer": "goldmark",
     "tunnel": true,
+    "agent": false,
     "youtrackSupported": true,
     "youtrack": false,
     "write": true
@@ -1847,6 +1952,12 @@ the token — and `features.youtrack` says at least one served project actually
 declares an `integrations.youtrack` block. The settings card is shown on the
 first flag and filled from the second; browser-only mode reports neither and
 hides the whole feature (GIT-US-0048).
+
+`features.agent` is true only when **both** halves are in place: the feature is
+switched on (`gintrack serve --agent` or `agent.enabled: true`) **and** an
+upstream URL is configured. It is a companion-only capability — browser-only mode
+has no server to proxy through and reports `false`. Nothing about the upstream
+token is reported here or anywhere else.
 
 #### Workspaces and repositories
 
@@ -3358,6 +3469,112 @@ gets both halves from one call instead of hard-coding the list in the frontend.
 
 Each call is bounded by a 15 s timeout inside the router's 30 s one and honours
 request cancellation: closing the settings card cancels the call in flight.
+
+#### The agent proxy (GIT-US-0049)
+
+`gintrack serve --agent` mounts a relay to a local Pando AG-UI adapter
+(`pando agui-serve`). The browser talks AG-UI to the companion; the companion
+talks AG-UI to Pando. The point of the hop is that **the browser never holds the
+Pando token and never learns the Pando origin**: the credential is injected as an
+`Authorization: Bearer` header server-side, and the discovery document is
+rewritten before it is forwarded.
+
+The whole group sits inside the bearer-auth group of §5.1, so every request below
+needs this run's companion token, and every one of them answers `401` without it.
+
+```http
+GET    /api/v1/agent/info                     # discovery, rewritten (see below)
+GET    /api/v1/agent/health                   # upstream liveness probe
+POST   /api/v1/agent/run?repo=<id>            # run a turn; SSE response
+GET    /api/v1/agent/threads
+GET    /api/v1/agent/threads/{id}/messages
+GET    /api/v1/agent/threads/{id}/stream      # reattach to a live run; SSE
+DELETE /api/v1/agent/threads/{id}
+POST   /api/v1/agent/runs/{id}/cancel
+```
+
+Every route maps one-to-one onto the upstream route of the same name under
+`agent.pando.path` (default `/api/v1/agui`), except two: `/health` probes the
+adapter's unauthenticated `{path}/healthz` and is the only hop that carries no
+token, and `/run` posts to `{path}/{agent}`, where `{agent}` is the configured
+`agent.pando.agent` — the browser does not choose which agent runs.
+
+**Routing.** The deployment is one `agui-serve` process per repository, so
+`?repo=<id>` selects the upstream from the `agent.pando.repos` table, falling
+back to the section-wide URL. An id that names neither a table row nor a mounted
+repository is an `agent_repo_unknown` **404** — never a silent fallback to
+another repository's agent.
+
+**Streaming.** `POST /run` and `/threads/{id}/stream` answer
+`Content-Type: text/event-stream` with `Cache-Control: no-cache` and
+`X-Accel-Buffering: no`. Frames are Pando's own: bare `data: {json}` lines whose
+discriminator is the JSON `type` field (`RUN_STARTED`, `TEXT_MESSAGE_CONTENT`,
+`RUN_FINISHED`, `RUN_ERROR`, …), not the SSE `event:` field. The relay flushes
+every write as it arrives (`httputil.ReverseProxy` with `FlushInterval: -1`),
+both streaming routes are exempt from the 30 s request deadline of §5.3, and the
+inbound request context is passed straight through: **closing the browser
+connection cancels the upstream run**.
+
+**Header hygiene.** The browser's `Origin`, `Referer`, `Cookie` and
+`Authorization` headers are dropped before dialling Pando — Pando skips its CORS
+check when no `Origin` is present, which is why its allow-list is deliberately
+left empty — and no `X-Forwarded-*` header is added. The `repo` parameter and
+anything that looks like a credential (`token`, `access_token`, `api_key`) are
+stripped from the forwarded query string: the Pando token travels in a header, in
+one direction, and never in a URL. The upstream's own CORS headers are removed
+from the response, since they describe the Pando listener's policy and not this
+one's.
+
+**`GET /info`** is the one route that is not a byte-for-byte relay. Pando answers
+with absolute URLs into its own origin, so the proxy rewrites every
+`agents[].url` to the companion-relative `/api/v1/agent/run`, rewrites `path` to
+`/api/v1/agent`, and **removes** every remaining string anywhere in the document
+that parses as an absolute URL. Removing rather than rewriting is deliberate: a
+key the browser never sees cannot leak an origin.
+
+```http
+GET /api/v1/agent/info
+200
+{
+  "protocol": "ag-ui",
+  "path": "/api/v1/agent",
+  "capabilities": { "humanInTheLoop": true, "sharedState": true },
+  "agents": [
+    { "name": "backlog-assistant", "description": "…", "url": "/api/v1/agent/run" }
+  ]
+}
+```
+
+**Concurrency.** Pando enforces no limit of its own, so the companion does:
+`agent.pando.maxRuns` (default 8) caps the runs in flight across the whole
+proxy. Over the cap a run is refused immediately rather than queued:
+
+```http
+POST /api/v1/agent/run
+503
+Retry-After: 5
+{ "code": "agent_busy", "status": 503, "detail": "This companion already has 8 agent runs in flight…" }
+```
+
+**Problem codes.** Every failure is an RFC 7807 document (§5.4), never a
+half-written stream without a terminal frame:
+
+| Code | Status | Meaning |
+| --- | --- | --- |
+| `not_implemented` | 501 | the feature is off, or no upstream is configured |
+| `unauthorized` | 401 | the companion bearer token is missing or wrong |
+| `agent_repo_unknown` | 404 | `?repo=` names no upstream and no mounted repository |
+| `invalid_request` | 400 | the request body is above the 1 MiB cap |
+| `agent_busy` | 503 | the in-flight run cap is reached; retry after `Retry-After` |
+| `agent_upstream` | 502 | the adapter could not be reached or refused the hop |
+
+An `agent_upstream` detail never echoes the upstream body or names the upstream
+host: the browser is not supposed to learn either, and the full error goes to the
+companion's log instead. No response, header or log line this feature writes ever
+contains the Pando token.
+
+The feature is **companion-only**. Browser-only mode has no server to proxy
+through, reports `features.agent: false` and offers nothing to enable.
 
 #### The CORS proxy (GIT-US-0042, docs/06 §6.3, ADR-025)
 

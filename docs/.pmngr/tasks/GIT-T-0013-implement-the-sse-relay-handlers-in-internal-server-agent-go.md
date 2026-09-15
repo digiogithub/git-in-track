@@ -2,7 +2,7 @@
 id: GIT-T-0013
 type: task
 title: Implement the SSE relay handlers in internal/server/agent.go
-status: todo
+status: in_review
 priority: medium
 parent: GIT-US-0049
 milestone: GIT-M-0013
@@ -10,7 +10,8 @@ author: mcp
 labels: [server]
 estimate: 5
 created: 2026-09-13T13:15:32Z
-updated: 2026-09-13T13:15:32Z
+updated: 2026-09-15T15:28:40Z
+started: 2026-09-15T15:28:30Z
 ---
 
 ## Description

@@ -2,7 +2,7 @@
 id: GIT-US-0077
 type: story
 title: Companion MCP client to the Pando search tools
-status: backlog
+status: in_review
 priority: high
 parent: GIT-EP-0019
 milestone: GIT-M-0013
@@ -10,7 +10,8 @@ author: mcp
 labels: [server]
 estimate: 5
 created: 2026-09-13T13:14:00Z
-updated: 2026-09-13T21:18:40Z
+updated: 2026-09-15T15:37:24Z
+started: 2026-09-15T15:20:21Z
 ---
 
 ## Description
