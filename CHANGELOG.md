@@ -12,7 +12,40 @@ because a commit list cannot express them.
 
 ## [Unreleased]
 
-Nothing yet.
+### Changed
+
+- **`gintrack agent init` merges into an existing `.pando.toml` instead of refusing**
+  (`GIT-T-0227`, docs/07 §4.18, docs/20 §2.1). A Pando configuration is a Pando-wide file
+  that a repository may well have owned before the agent panel existed, so an existing one
+  is no longer a conflict: the command folds its tables and keys into it and exits 0. The
+  merge is a line-level text edit, never a decode/re-encode round trip — no TOML library
+  available here preserves comments — so every table, key, comment, blank line and
+  array-of-tables entry gintrack does not own survives byte for byte, and the blocks it
+  inserts keep the template's comments.
+  `[MCPServers.gintrack]` (with its `Auth`/`Headers` sub-tables) and
+  `[AGUI.Profiles.backlog-assistant]` are gintrack's outright and are replaced whole, which
+  is what keeps the three mutually exclusive token branches from piling up across re-runs.
+  In the tables it shares with the user (`[AGUI]`, `[ToolDiscovery]`, `[MCPGateway]`,
+  `[PersonaAutoSelect]`, `[Skills]`, `[Remembrances]`, `[MCPServer]`) a missing key is added
+  and **a key that is already there with another value is left alone** and reported on
+  stdout with the recommended value and the reason: in a live configuration
+  `[ToolDiscovery] Enabled` and `[MCPGateway] Enabled` are load bearing, and overwriting
+  them would break a working setup. `[AGUI]` is the one exception: Pando rewrites that
+  section with every key at its zero value the moment anything touches it, so `''`, `0`,
+  `false` or `[]` there counts as unset and the template's value is written in place. A
+  backup `.pando.toml.<timestamp>.bak` is written
+  before the first edit and its path is printed; the merged file keeps mode 0600; an
+  unparsable table header aborts the run with exit 5 without writing anything, naming the
+  line. `--json` gains `skipped`, `pandoConfigMerged`, `pandoConfigBackup` and
+  `divergences`.
+- **`gintrack agent init` no longer refuses a re-run** (`GIT-T-0227`). Re-running is now the
+  normal way to pick up a change — a new companion URL, a new token, a newer template — so
+  an existing persona or skill file is no longer exit 5: those two are gintrack's own files
+  and may have been edited by hand, so each is left untouched and named on stdout with the
+  note that `--force` overwrites it, and the run continues with the `.pando.toml` merge and
+  exits 0. `--force` still replaces all three wholesale. **Breaking for scripts** that
+  relied on exit 5 to detect an already-configured repository: check the `skipped` array of
+  `--json` instead.
 
 ## [1.6.0] — 2026-09-15
 

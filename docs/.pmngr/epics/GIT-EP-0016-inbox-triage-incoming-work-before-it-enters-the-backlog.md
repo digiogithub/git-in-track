@@ -2,13 +2,15 @@
 id: GIT-EP-0016
 type: epic
 title: "Inbox: triage incoming work before it enters the backlog"
-status: backlog
+status: done
 priority: medium
 milestone: GIT-M-0012
 author: mcp
 labels: [core, server, web, mcp]
 created: 2026-09-13T13:08:07Z
-updated: 2026-09-13T13:08:07Z
+updated: 2026-09-15T21:45:46Z
+started: 2026-09-15T21:45:41Z
+closed: 2026-09-15T21:45:46Z
 ---
 
 ## Description

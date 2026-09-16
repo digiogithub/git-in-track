@@ -379,36 +379,48 @@ func TestAgentInitPlaintextToken(t *testing.T) {
 	}
 }
 
-// TestAgentInitRefusesToOverwrite is the re-run criterion: non-zero exit,
-// nothing changed, and the message names the file that is in the way.
-func TestAgentInitRefusesToOverwrite(t *testing.T) {
+// TestAgentInitSkipsTheFilesItWouldOverwrite is the re-run criterion: a re-run
+// is the normal way to pick up a template or a token change, so nothing in the
+// way is an error any more. The configuration is merged into, the persona and
+// the skill — gintrack's own files, which the user may have edited — are left
+// exactly as they are and named on stdout together with the way to replace
+// them, and the run exits 0.
+func TestAgentInitSkipsTheFilesItWouldOverwrite(t *testing.T) {
 	h := newHarness(t)
 	h.register()
 	h.mustRun("agent", "init", "--repo", h.Repo)
 
 	marker := "# edited by hand\n"
-	target := filepath.Join(h.Repo, agentPandoConfigName)
-	if err := os.WriteFile(target, []byte(marker), 0o600); err != nil {
-		t.Fatalf("edit: %v", err)
+	for _, name := range []string{agentPersonaName, agentSkillName} {
+		if err := os.WriteFile(filepath.Join(h.Repo, filepath.FromSlash(name)), []byte(marker), 0o644); err != nil {
+			t.Fatalf("edit %s: %v", name, err)
+		}
 	}
 
-	_, stderr, code := h.run("agent", "init", "--repo", h.Repo)
-	if code == exitOK {
-		t.Fatal("a second run without --force succeeded")
+	stdout, stderr, code := h.run("agent", "init", "--repo", h.Repo, "--companion-url", "http://127.0.0.1:9999")
+	if code != exitOK {
+		t.Fatalf("exit %d, want %d\n%s", code, exitOK, stderr)
 	}
-	if code != exitConflict {
-		t.Errorf("exit %d, want %d", code, exitConflict)
+	for _, name := range []string{agentPersonaName, agentSkillName} {
+		if !strings.Contains(stdout, name) {
+			t.Errorf("the report does not name the skipped %s:\n%s", name, stdout)
+		}
+		if got := readGenerated(t, h.Repo, name); got != marker {
+			t.Errorf("the re-run rewrote %s:\n%s", name, got)
+		}
 	}
-	if !strings.Contains(stderr, agentPandoConfigName) {
-		t.Errorf("the refusal does not name the file:\n%s", stderr)
+	if !strings.Contains(stdout, "--force") {
+		t.Errorf("the report does not say how to overwrite them:\n%s", stdout)
 	}
-	if got := readGenerated(t, h.Repo, agentPandoConfigName); got != marker {
-		t.Errorf("the refused run rewrote the file:\n%s", got)
+	// The whole point of letting the run continue: the configuration picks the
+	// change up.
+	if !strings.Contains(readGenerated(t, h.Repo, agentPandoConfigName), "URL = 'http://127.0.0.1:9999/mcp'") {
+		t.Error("the re-run did not merge the new companion URL into the configuration")
 	}
 }
 
 // TestAgentInitForceOverwrites completes the previous test: --force is the only
-// way to replace the files, and it restores the mode as well.
+// way to replace the files wholesale, and it restores the mode as well.
 func TestAgentInitForceOverwrites(t *testing.T) {
 	h := newHarness(t)
 	h.register()

@@ -83,17 +83,22 @@ It writes three files into the repository:
 | `agents/personas/backlog-assistant.md` | The persona injected into the system prompt of every run. |
 | `agents/skills/gintrack-search/SKILL.md` | The routing table: which search tool answers which kind of question. |
 
-Nothing is overwritten without `--force`; a re-run that would clobber a file exits 5 and
-names it. The command also creates an AG-UI bearer token, once, under the companion's state
-directory (`<stateDir>/agui/<repo id>.token`, mode 0600) and prints the path — never the
-value.
+**Re-running is the normal way to pick up a change** — a new companion URL, a new token, a
+newer template — so nothing already in place is an error. `.pando.toml` is a Pando-wide
+configuration file that a repository may well have owned before this feature existed, so
+**an existing one is merged into** (see *Merging into an existing `.pando.toml`* below). The
+persona and the skill are gintrack's own files and may have been edited by hand, so an
+existing one is **left untouched and named on stdout**, with the note that `--force`
+overwrites it; the run carries on and exits 0. The command also creates an AG-UI bearer token, once, under
+the companion's state directory (`<stateDir>/agui/<repo id>.token`, mode 0600) and prints
+the path — never the value.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
 | `--repo <path>` | `.` | The repository to configure. |
 | `--companion-url <url>` | the configured bind address and port | Where Pando reaches the companion's `/mcp`. |
 | `--agui-port <port>` | `8090` | The loopback port `[AGUI]` listens on. |
-| `--force` | off | Overwrite files that already exist. |
+| `--force` | off | Replace all three files wholesale, `.pando.toml` included, instead of merging. |
 | `--json` | off | Machine-readable output (no token value; `tokenEncrypted` says which form was written). |
 | `--pando <path>` | the `pando` on `PATH` | The binary used to encrypt the companion token. |
 | `--age-keys <set>` | Pando's default set | Passed to `pando secret --age-keys`; selects the key set under `~/.config/pando/keys/`. |
@@ -113,6 +118,55 @@ One caveat of the encryption path: `pando secret` takes its value as a command-l
 argument and reads nothing from stdin, so during that one call the companion token is
 visible in the local machine's process list. Nothing is printed: neither the token nor the
 ciphertext ever reaches stdout, only the file.
+
+#### Merging into an existing `.pando.toml`
+
+A `.pando.toml` is Pando's configuration, not gintrack's artifact: this repository's own is
+450-odd lines of settings that predate the agent panel. So `gintrack agent init` folds its
+configuration into the file that is there instead of refusing or replacing it (GIT-T-0227).
+
+The merge is a **line-level text edit**, never a decode/re-encode round trip. No TOML library
+available to this repository preserves comments — `go-toml/v2` and `BurntSushi/toml` have no
+comment API, and `go-toml` v1's `SetWithComment` is never populated by its parser — and the
+template's comments carry the reasoning for nearly every key it writes. The merge therefore
+finds a table by its header line, rewrites only the lines of the keys gintrack owns, and
+inserts a missing block verbatim from the rendered template, comments included.
+
+What that guarantees:
+
+- Every table, key, comment, blank line and `[[array.of.tables]]` entry the file already had
+  and gintrack does not own survives byte for byte, including root-level keys written before
+  the first table header and sections whose keys are lower-cased.
+- `[MCPServers.gintrack]` (with its `Auth` and `Headers` sub-tables) and
+  `[AGUI.Profiles.backlog-assistant]` are gintrack's outright: they are replaced whole, at
+  the position the first of them had. That is also what keeps the three mutually exclusive
+  token branches — encrypted `Auth`, plaintext `Headers`, commented-out stub — from piling up
+  when a re-run changes the token mode.
+- In the tables gintrack shares with the user — `[AGUI]`, `[ToolDiscovery]`, `[MCPGateway]`,
+  `[PersonaAutoSelect]`, `[Skills]`, `[Remembrances]`, `[MCPServer]` — a key gintrack owns
+  and the file lacks is added with the template's comment above it.
+- **`[AGUI]` is the one exception to that.** Pando rewrites the section with every key at
+  its zero value the moment anything touches it, so a key there that is `''`, `0`, `false`
+  or `[]` is the absence of a choice rather than a choice: it counts as unset, the
+  template's value is written in place and nothing is reported. Only warning about them
+  would leave `Enabled = false` and the panel broken. The rule stops at that table: a
+  `false` in `[ToolDiscovery]`, `[MCPGateway]` or `[MCPServer]` is a setting somebody
+  relies on.
+- **A key that is already there with another value is left alone**, and reported on stdout
+  with the recommended value and a one-line reason. This is the conflict policy: warn, do not
+  overwrite. In a live configuration these values are load bearing — `[ToolDiscovery]
+  Enabled = true` and `[MCPGateway] Enabled = true` are what make `gintrack_*` calls work in
+  this repository today, because with the gateway off Pando v0.705.1 deadlocks (PANDO-US-0031)
+  — so imposing the template's values would break a working setup. Read the report and decide
+  key by key.
+- A copy of the previous version is written as `.pando.toml.<timestamp>.bak` before the first
+  edit, and its path is printed. `.pando.toml` is git-ignored, so git is not a safety net.
+- The merged file keeps mode 0600.
+- A line that opens a table and cannot be parsed aborts the whole run with exit 5, naming the
+  line number and the line. Nothing is written, not even the backup: guessing would move the
+  user's keys into the wrong table.
+
+`--force` bypasses all of it and writes the template over all three files, as it always did.
 
 ### 2.2 Start Pando
 
@@ -344,7 +398,7 @@ in an item body.
 
 ## 7. Troubleshooting
 
-**The agent says it cannot access the gintrack tools, and no `TOOL_CALL_START` names a `gintrack_*` tool.** Pando's MCP gateway is on: check that the repository's `.pando.toml` carries `[ToolDiscovery] Enabled = false` / `Mode = 'off'` and `[MCPGateway] Enabled = false` (files generated before 2026-09-15 lack them; re-run `gintrack agent init --force` or add the two sections). Behind the gateway the tools are reachable only through `tool_search` or `mcp_call_tool`, which the `[AGUI] Tools` allow-list removes on purpose: `mcp_call_tool` is a generic proxy to any server and any tool, and it bypasses the per-tool approval prompt.
+**The agent says it cannot access the gintrack tools, and no `TOOL_CALL_START` names a `gintrack_*` tool.** Pando's MCP gateway is on: check that the repository's `.pando.toml` carries `[ToolDiscovery] Enabled = false` / `Mode = 'off'` and `[MCPGateway] Enabled = false` (files generated before 2026-09-15 lack them; re-run `gintrack agent init`, which merges the two sections in — but note that if you already have them set the other way round the merge reports them and leaves them alone, so flip them by hand). Behind the gateway the tools are reachable only through `tool_search` or `mcp_call_tool`, which the `[AGUI] Tools` allow-list removes on purpose: `mcp_call_tool` is a generic proxy to any server and any tool, and it bypasses the per-tool approval prompt.
 
 **A `gintrack_*` tool call starts and the run never finishes** (`TOOL_CALL_END` and then
 keep-alives only, whatever `AutoApprove` says). Pando-side, v0.705.1: with the gateway off, the
@@ -359,11 +413,11 @@ server and any tool and asks no per-tool approval. Treat that as a temporary tra
 |---------|--------------|-----|
 | `/healthz` answers but `/info` returns 401 | The token file the companion reads is not the one `agui-serve` was started with | Compare `agent.pando.tokenFile` with `--token-file`; they must be the same file. |
 | `/info` lists `coder` but not `backlog-assistant` | Pando did not read your `.pando.toml` | It reads the file in its `--cwd`. Check the path, and check `maxConcurrentRuns` on `/healthz`: `0` means the file was not applied. |
-| `/info` reports `"frontendTools": false` | An `[AGUI]` section without an explicit `FrontendTools` key | Regenerate with `gintrack agent init --force`; the template states the key. |
+| `/info` reports `"frontendTools": false` | An `[AGUI]` section without an explicit `FrontendTools` key | Re-run `gintrack agent init`; the template states the key, and a `false` in `[AGUI]` counts as unset, so the merge writes it. |
 | Every request 404s | `agent.pando.path` and `[AGUI] Path` disagree | Make them equal; the generated file states `/api/v1/agui`. |
 | The agent answers but sees no items | The companion was started without `--mcp-http` | `gintrack serve --agent --mcp-http`. Check `curl -sS $COMPANION/mcp` answers at all. |
 | The agent sees items but every write fails | The companion is read-only | Add `--mcp-allow-write`, deliberately. |
-| The agent sees items but the MCP tools are missing entirely | The token in `[MCPServers.gintrack.Auth]` is stale, or the age key set that encrypted it is gone | Re-run `gintrack agent init --force` after changing the companion token or the key set. |
+| The agent sees items but the MCP tools are missing entirely | The token in `[MCPServers.gintrack.Auth]` is stale, or the age key set that encrypted it is gone | Re-run `gintrack agent init` after changing the companion token or the key set; `[MCPServers.gintrack]` is gintrack's outright, so the merge rewrites it. |
 | Semantic search finds nothing, structured search works | The corpus has not been imported yet, or `KBPath` is wrong | Check that `<cacheDir>/pando-kb/<repo id>` has `.md` files; auto-import runs on Pando's schedule, not on yours. |
 | Semantic search returns items with no tags or status | `KBWatch` got turned on somewhere | Set it back to `false` and let a full auto-import pass rewrite the documents. |
 | A run is refused with 503 and `Retry-After` | The concurrency cap, on either side | Wait, or raise `maxRuns` / `MaxConcurrentRuns`. |

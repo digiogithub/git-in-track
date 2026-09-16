@@ -121,7 +121,8 @@ Timeout = '60s'
 # into `Authorization: Bearer <token>` itself, so the secret never sits in clear
 # on disk. The ciphertext below was produced by `pando secret <companion token>`
 # and only the machine holding those age keys can read it; re-run
-# `gintrack agent init --force` after changing the companion token.
+# `gintrack agent init` after changing the companion token: a re-run merges into
+# this file rather than replacing it.
 [MCPServers.gintrack.Auth]
 Type = 'bearer'
 Token = {{ toml .AuthToken }}
@@ -129,7 +130,7 @@ Token = {{ toml .AuthToken }}
 
 # WARNING: --plaintext-token was given, so the companion token is written here
 # in clear. The encrypted form is `[MCPServers.gintrack.Auth]` with an `age1:`
-# value from `pando secret`; re-run `gintrack agent init --force` without
+# value from `pando secret`; re-run `gintrack agent init` without
 # --plaintext-token once a pando binary is available.
 [MCPServers.gintrack.Headers]
 Authorization = {{ toml .BearerHeader }}
@@ -137,7 +138,7 @@ Authorization = {{ toml .BearerHeader }}
 
 # No companion token was configured when this file was generated. Start the
 # companion with `gintrack serve --token <value>` (or set server.token in the
-# gintrack configuration) and re-run `gintrack agent init --force`, or fill the
+# gintrack configuration) and re-run `gintrack agent init`, or fill the
 # block in by hand with the output of `pando secret '<companion token>'`:
 # [MCPServers.gintrack.Auth]
 # Type = 'bearer'
