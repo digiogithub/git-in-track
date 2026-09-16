@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"text/template"
 
@@ -105,12 +106,19 @@ type agentInitPayload struct {
 	Repo      string   `json:"repo"`
 	RepoID    string   `json:"repoId"`
 	Written   []string `json:"written"`
+	Skipped   []string `json:"skipped,omitempty"`
 	KBPath    string   `json:"kbPath"`
 	MCPURL    string   `json:"mcpUrl"`
 	TokenFile string   `json:"tokenFile"`
 	AGUIPort  int      `json:"aguiPort"`
 	HasToken  bool     `json:"hasCompanionToken"`
 	Encrypted bool     `json:"tokenEncrypted"`
+	// Merged is set when an existing .pando.toml was merged into rather than
+	// written from scratch; Backup is the copy taken before the first edit and
+	// Divergences are the keys the merge refused to overwrite.
+	Merged      bool              `json:"pandoConfigMerged"`
+	Backup      string            `json:"pandoConfigBackup,omitempty"`
+	Divergences []agentDivergence `json:"divergences,omitempty"`
 }
 
 // newAgentCommand builds the `agent` command tree.
@@ -146,7 +154,21 @@ func newAgentInitCommand(flags *globalFlags) *cobra.Command {
   agents/skills/gintrack-search/SKILL.md      how the assistant picks a search tool
 
 The deployment is one Pando process per repository, so there is exactly one
-.pando.toml per repository. Nothing is overwritten without --force.
+.pando.toml per repository. Re-running is the normal way to pick up a change --
+a new companion URL, a new token, a newer template -- and nothing in the way is
+an error:
+
+  .pando.toml   is MERGED into. A Pando configuration is a Pando-wide file, so
+                every table, key and comment it already had survives, the tables
+                and keys gintrack owns are written, and a key gintrack would set
+                that already has another value is left alone and reported. A copy
+                of the previous version is kept next to it. Inside [AGUI] only, a
+                key left at its zero value ('', 0, false, []) counts as unset and
+                is written.
+  the persona   are gintrack's own files and may have been edited by hand, so an
+  the skill     existing one is left alone and reported.
+
+--force replaces all three wholesale instead.
 
 The generated file carries the companion's bearer token, because Pando does not
 expand environment variables inside an MCP server's configuration. The token is
@@ -166,7 +188,8 @@ Either way the file is mode 0600 and must not be committed: add .pando.toml to
 	cmd.Flags().StringVar(&local.companionURL, "companion-url", "",
 		"base URL of the running companion (default: the configured bind address and port)")
 	cmd.Flags().IntVar(&local.aguiPort, "agui-port", agentDefaultAGUIPort, "loopback port the AG-UI adapter listens on")
-	cmd.Flags().BoolVar(&local.force, "force", false, "overwrite files that already exist")
+	cmd.Flags().BoolVar(&local.force, "force", false,
+		"replace all three files wholesale instead of merging and skipping")
 	cmd.Flags().BoolVar(&local.asJSON, "json", false, "print machine-readable JSON")
 	cmd.Flags().StringVar(&local.pando, "pando", "",
 		"path to the pando binary used to encrypt the companion token (default: the one on PATH)")
@@ -225,22 +248,31 @@ func runAgentInit(cmd *cobra.Command, flags *globalFlags, local *agentInitFlags)
 		{agentSkillName, "skill.md.tmpl", 0o644},
 	}
 
+	// A re-run is the normal way to pick up a change: to the companion URL, to
+	// the token, to the template itself. So nothing in the way is a refusal any
+	// more (GIT-T-0227).
+	//
+	// `.pando.toml` is a Pando-wide configuration file, not a gintrack artifact,
+	// so an existing one is merged into. The persona and the skill are gintrack's
+	// own files and may have been edited by hand, so an existing one is skipped
+	// and said so — replacing them stays an explicit --force.
+	mergePando := false
+	skipped := make([]string, 0, len(targets))
 	if !local.force {
-		var existing []string
 		for _, t := range targets {
-			if _, statErr := os.Stat(filepath.Join(repoPath, t.name)); statErr == nil {
-				existing = append(existing, t.name)
+			if _, statErr := os.Stat(filepath.Join(repoPath, t.name)); statErr != nil {
+				continue
 			}
-		}
-		if len(existing) > 0 {
-			return failf(exitConflict,
-				"%s already exists in %s: nothing was written, pass --force to overwrite",
-				strings.Join(existing, ", "), repoPath)
+			if t.name == agentPandoConfigName {
+				mergePando = true
+				continue
+			}
+			skipped = append(skipped, t.name)
 		}
 	}
 
-	// The token is resolved after the overwrite check so that a refused run
-	// never spawns `pando secret` for a file it is not going to write.
+	// The token is resolved after the existing files are surveyed so that a run
+	// that is going to fail never spawns `pando secret` for nothing.
 	if token := strings.TrimSpace(res.Config.Server.Token); token != "" {
 		data.Token = true
 		if local.plaintextToken {
@@ -255,8 +287,13 @@ func runAgentInit(cmd *cobra.Command, flags *globalFlags, local *agentInitFlags)
 		}
 	}
 
+	var backup string
+	var divergences []agentDivergence
 	written := make([]string, 0, len(targets))
 	for _, t := range targets {
+		if slices.Contains(skipped, t.name) {
+			continue
+		}
 		rendered, renderErr := renderAgentTemplate(t.template, data)
 		if renderErr != nil {
 			return renderErr
@@ -264,6 +301,17 @@ func runAgentInit(cmd *cobra.Command, flags *globalFlags, local *agentInitFlags)
 		dest := filepath.Join(repoPath, filepath.FromSlash(t.name))
 		if mkErr := os.MkdirAll(filepath.Dir(dest), 0o755); mkErr != nil {
 			return fmt.Errorf("create %s: %w", filepath.Dir(dest), mkErr)
+		}
+		if mergePando && t.name == agentPandoConfigName {
+			// A merge that cannot parse the file fails here, before the backup
+			// and before any file is touched.
+			mergeBackup, mergeDivergences, mergeErr := agentMergePandoConfig(dest, rendered, data.Persona)
+			if mergeErr != nil {
+				return mergeErr
+			}
+			backup, divergences = mergeBackup, mergeDivergences
+			written = append(written, t.name)
+			continue
 		}
 		if writeErr := os.WriteFile(dest, rendered, t.mode); writeErr != nil {
 			return fmt.Errorf("write %s: %w", dest, writeErr)
@@ -287,26 +335,65 @@ func runAgentInit(cmd *cobra.Command, flags *globalFlags, local *agentInitFlags)
 			Repo:      repoPath,
 			RepoID:    repoID,
 			Written:   written,
+			Skipped:   skipped,
 			KBPath:    data.KBPath,
 			MCPURL:    data.MCPURL,
 			TokenFile: tokenFile,
 			AGUIPort:  data.AGUIPort,
 			HasToken:  data.Token,
 			Encrypted: data.Encrypted,
+
+			Merged:      mergePando,
+			Backup:      backup,
+			Divergences: divergences,
 		}))
 	}
-	printAgentInitReport(cmd, data, written, tokenFile, repoPath)
+	printAgentInitReport(cmd, data, written, skipped, tokenFile, repoPath)
+	printAgentMergeReport(cmd, backup, divergences)
 	return nil
 }
 
-// printAgentInitReport prints what was written and the two commands to run
-// next. It never prints a token value: the AG-UI token stays in its file and
+// printAgentMergeReport says what the merge did to a configuration file that was
+// already there: where the copy of the previous version is, and every key
+// gintrack would have set that the file already had with another value. Those
+// are reported and never overwritten — in a live configuration they are load
+// bearing (this repository's own [ToolDiscovery] and [MCPGateway] settings are
+// what keep `gintrack_*` reachable), so imposing the template's values would
+// break a working setup.
+func printAgentMergeReport(cmd *cobra.Command, backup string, divergences []agentDivergence) {
+	if backup == "" {
+		return
+	}
+	out := cmd.OutOrStdout()
+	_, _ = fmt.Fprintf(out, "\n%s already existed and was merged into, not replaced.\n", agentPandoConfigName)
+	_, _ = fmt.Fprintf(out, "The previous version is in %s.\n", backup)
+	if len(divergences) == 0 {
+		return
+	}
+	_, _ = fmt.Fprintf(out, "\n%d key(s) already had another value and were left alone. Review them by hand:\n",
+		len(divergences))
+	for _, d := range divergences {
+		_, _ = fmt.Fprintf(out, "  [%s] %s: kept %s, recommended %s\n", d.Table, d.Key, d.Have, d.Recommended)
+		_, _ = fmt.Fprintf(out, "    %s\n", d.Reason)
+	}
+}
+
+// printAgentInitReport prints what was written, what was left alone and the two
+// commands to run next. It never prints a token value: the AG-UI token stays in its file and
 // the companion token stays in the configuration.
-func printAgentInitReport(cmd *cobra.Command, data agentTemplateData, written []string, tokenFile, repoPath string) {
+func printAgentInitReport(cmd *cobra.Command, data agentTemplateData, written, skipped []string, tokenFile, repoPath string) {
 	out := cmd.OutOrStdout()
 	_, _ = fmt.Fprintf(out, "Wrote the Pando agent configuration for %s:\n", data.RepoID)
 	for _, name := range written {
 		_, _ = fmt.Fprintf(out, "  %s\n", name)
+	}
+	if len(skipped) > 0 {
+		_, _ = fmt.Fprintln(out)
+		_, _ = fmt.Fprintln(out, "Left alone, because these are gintrack's own files and you may have edited them:")
+		for _, name := range skipped {
+			_, _ = fmt.Fprintf(out, "  %s\n", name)
+		}
+		_, _ = fmt.Fprintln(out, "Pass --force to overwrite them with the current templates.")
 	}
 	_, _ = fmt.Fprintln(out)
 	switch {
@@ -321,7 +408,8 @@ func printAgentInitReport(cmd *cobra.Command, data agentTemplateData, written []
 		_, _ = fmt.Fprintf(out, "add it to .gitignore so it is never committed.\n\n")
 	default:
 		_, _ = fmt.Fprintf(out, "No companion token is configured, so [MCPServers.gintrack.Auth] is empty and\n")
-		_, _ = fmt.Fprintf(out, "Pando will not be able to read the backlog. Set one and re-run with --force.\n\n")
+		_, _ = fmt.Fprintf(out, "Pando will not be able to read the backlog. Set one and run this command again:\n")
+		_, _ = fmt.Fprintf(out, "a re-run merges into the file rather than replacing it.\n\n")
 	}
 	_, _ = fmt.Fprintf(out, "The corpus Pando indexes is %s.\n", data.KBPath)
 	_, _ = fmt.Fprintf(out, "`gintrack serve --agent --mcp-http` exports it and serves /mcp; it is outside the repository on purpose.\n\n")

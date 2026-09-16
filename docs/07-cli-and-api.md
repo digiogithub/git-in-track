@@ -1680,14 +1680,50 @@ prints a token.
 | `--repo <path>` | `.` | The repository to configure; must be a mounted repository |
 | `--companion-url <url>` | the configured bind address | Where Pando reaches this companion |
 | `--agui-port <n>` | `8090` | Port written into `[AGUI] Port` |
-| `--force` | off | Overwrite files that already exist |
-| `--json` | off | Machine-readable summary of what was written (`tokenEncrypted` reports which token form landed) |
+| `--force` | off | Replace all three files wholesale instead of merging and skipping |
+| `--json` | off | Machine-readable summary (`tokenEncrypted` reports which token form landed; `skipped`, `pandoConfigMerged`, `pandoConfigBackup` and `divergences` report the re-run) |
 | `--pando <path>` | the `pando` on `PATH` | Binary used to encrypt the companion token with `pando secret` |
 | `--age-keys <set>` | Pando's default set | Forwarded as `pando secret --age-keys <set>` (key sets live under `~/.config/pando/keys/`) |
 | `--plaintext-token` | off | Write the token as a literal `Authorization` header instead of encrypting it |
 
-Exit code 5 when a target file exists and `--force` was not given; nothing is written in that
-case and the message names the file. Exit code 5 as well when `pando` cannot be found or
+**Re-running is the normal way to pick up a change** — a new companion URL, a new token, a
+newer template — and nothing already in place is an error. `.pando.toml` is merged into; the
+persona and the skill are gintrack's own files that may have been edited by hand, so an
+existing one is left untouched, named on stdout with the note that `--force` overwrites it,
+and the run continues and exits 0.
+
+**An existing `.pando.toml` is merged into, never replaced** (GIT-T-0227). A Pando
+configuration is a Pando-wide file that long predates this feature, so the merge is a
+line-level text edit: it finds each table by its header line, writes the keys gintrack owns,
+and inserts the tables the file lacks verbatim from the template with their comments. Every
+other table, key, comment, blank line and array-of-tables entry — including root-level keys
+before the first table header — survives byte for byte. The file is never decoded and
+re-encoded, because no TOML library available here preserves comments.
+
+`[MCPServers.gintrack]` (with its `Auth`/`Headers` sub-tables) and `[AGUI.Profiles.<persona>]`
+are gintrack's outright and are rewritten whole, which is also what keeps the three mutually
+exclusive token branches — encrypted `Auth`, plaintext `Headers`, commented-out stub — from
+accumulating across re-runs. In the tables gintrack shares with the user (`[AGUI]`,
+`[ToolDiscovery]`, `[MCPGateway]`, `[PersonaAutoSelect]`, `[Skills]`, `[Remembrances]`,
+`[MCPServer]`) a missing key is added and **a key that is already there with another value is
+left alone** and reported on stdout with the recommended value and a one-line reason. That
+conflict policy is deliberate: in a live configuration `[ToolDiscovery] Enabled` and
+`[MCPGateway] Enabled` are load bearing, and imposing the template's values would break a
+working setup.
+
+`[AGUI]` is the one exception to it. Pando rewrites that section with every key at its zero
+value the moment anything touches it, so a key there that is `''`, `0`, `false` or `[]` is
+the absence of a choice rather than a choice: it counts as unset and the template's value is
+written in place, with no divergence reported. The rule stops at that table — a `false` in
+`[ToolDiscovery]`, `[MCPGateway]` or `[MCPServer]` is a setting somebody relies on and still
+only produces a warning.
+
+A copy of the previous version is written next to the file as
+`.pando.toml.<timestamp>.bak` before the first edit — `.pando.toml` is git-ignored, so git is
+not a safety net — and its path is printed. The merged file keeps mode 0600.
+
+Exit code 5 when the merge cannot parse a line that opens a table (nothing is written, not even the backup, and the
+message names the line number and the line), when `pando` cannot be found, or when
 `pando secret` does not return an `age1:` ciphertext — again nothing is written, and the
 message offers `--pando` and `--plaintext-token`.
 
