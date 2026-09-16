@@ -57,12 +57,30 @@ const agentDefaultMaxRuns = 4
 // closer to a backlog assistant. MCP gateway tools are named
 // `<server>_<tool>`, which is why the gintrack entry is `gintrack_*` and not
 // `gintrack__*`.
+//
+// Only the KB tools that READ are listed. `kb_add_document`,
+// `kb_delete_document` and the memory `remember`/`forget` path mirror a
+// document back to disk through a serializer that emits Pando's typed keys
+// alone, so a call against a file of this repository would rewrite it without
+// `id`, `status` or `parent` (GIT-EP-0020). The watcher is not in that set: it
+// performs no file write at all.
 var agentTools = []string{
 	"gintrack_*",
 	"kb_search_documents",
 	"kb_get_document",
+	"kb_related_documents",
 	"code_hybrid_search",
 	"code_find_symbol",
+}
+
+// agentWritingKBTools are the Pando tools that mirror a document to disk. They
+// are named here so a test can assert the allow-list above admits none of them,
+// and so that adding one to Pando cannot silently widen it.
+var agentWritingKBTools = []string{
+	"kb_add_document",
+	"kb_delete_document",
+	"remember",
+	"forget",
 }
 
 // agentSecretPrefix is the marker Pando puts in front of an age ciphertext.
@@ -80,6 +98,7 @@ type agentInitFlags struct {
 	pando          string
 	ageKeys        string
 	plaintextToken bool
+	kbPath         string
 }
 
 // agentTemplateData is what the embedded templates are rendered against.
@@ -149,7 +168,7 @@ func newAgentInitCommand(flags *globalFlags) *cobra.Command {
 		Long: `Write everything Pando needs to serve the agent panel for one repository:
 
   .pando.toml                                 the AG-UI adapter, the gintrack MCP
-                                              server and the corpus index
+                                              server and the knowledge-base index
   agents/personas/backlog-assistant.md        the persona every run is given
   agents/skills/gintrack-search/SKILL.md      how the assistant picks a search tool
 
@@ -197,6 +216,8 @@ Either way the file is mode 0600 and must not be committed: add .pando.toml to
 		"name of the Pando age key set to encrypt the companion token with")
 	cmd.Flags().BoolVar(&local.plaintextToken, "plaintext-token", false,
 		"write the companion token as a literal Authorization header instead of encrypting it")
+	cmd.Flags().StringVar(&local.kbPath, "kb-path", "",
+		"directory Pando indexes as its knowledge base (default: the repository's documentation folder)")
 	return cmd
 }
 
@@ -235,7 +256,10 @@ func runAgentInit(cmd *cobra.Command, flags *globalFlags, local *agentInitFlags)
 		Persona:           agentPersonaID,
 		Tools:             agentTools,
 		MCPURL:            companion + "/mcp",
-		KBPath:            filepath.Join(res.Config.CacheDir(res.Path), "pando-kb", repoID),
+	}
+	data.KBPath, err = agentKBPath(local, res.Config, repoPath, flags)
+	if err != nil {
+		return err
 	}
 
 	targets := []struct {
@@ -411,8 +435,8 @@ func printAgentInitReport(cmd *cobra.Command, data agentTemplateData, written, s
 		_, _ = fmt.Fprintf(out, "Pando will not be able to read the backlog. Set one and run this command again:\n")
 		_, _ = fmt.Fprintf(out, "a re-run merges into the file rather than replacing it.\n\n")
 	}
-	_, _ = fmt.Fprintf(out, "The corpus Pando indexes is %s.\n", data.KBPath)
-	_, _ = fmt.Fprintf(out, "`gintrack serve --agent --mcp-http` exports it and serves /mcp; it is outside the repository on purpose.\n\n")
+	_, _ = fmt.Fprintf(out, "Pando indexes %s: this repository's own documentation folder,\n", data.KBPath)
+	_, _ = fmt.Fprintf(out, "backlog under .pmngr/ included, with the watcher on so an edit is reindexed as it happens.\n\n")
 	_, _ = fmt.Fprintln(out, "Next, in two terminals:")
 	_, _ = fmt.Fprintf(out, "  pando agui-serve --cwd %s --port %d --no-tls --token-file %s\n",
 		repoPath, data.AGUIPort, tokenFile)
@@ -511,7 +535,7 @@ func renderAgentTemplate(name string, data agentTemplateData) ([]byte, error) {
 	return []byte(buf.String()), nil
 }
 
-// agentRepoID is the id the corpus directory and the companion route are keyed
+// agentRepoID is the id the AG-UI token file and the companion route are keyed
 // by: the registration's id when the folder is registered, and the folder name
 // otherwise, so that `agent init` works before `gintrack add`.
 func agentRepoID(cfg *config.Config, repoPath string) string {
@@ -522,6 +546,41 @@ func agentRepoID(cfg *config.Config, repoPath string) string {
 		}
 	}
 	return slugifyRepoID(filepath.Base(clean))
+}
+
+// agentKBPath is the directory written into `[Remembrances] KBPath`: the
+// repository's documentation folder, which is what holds both the backlog
+// (under .pmngr/) and the knowledge-base pages. Pando's KB walk applies no
+// exclusions of any kind, so pointing it at the repository root would index the
+// whole working tree; the documentation folder is exactly the half Pando's code
+// indexer cannot reach, because that one skips dot-directories.
+//
+// --kb-path overrides it for a layout this cannot guess.
+func agentKBPath(local *agentInitFlags, cfg *config.Config, repoPath string, flags *globalFlags) (string, error) {
+	if trimmed := strings.TrimSpace(local.kbPath); trimmed != "" {
+		expanded, err := config.Expand(trimmed, flags.reader())
+		if err != nil {
+			return "", usagef("resolve --kb-path %s: %v", trimmed, err)
+		}
+		return expanded, nil
+	}
+	return filepath.Join(repoPath, filepath.FromSlash(agentDocsFolder(cfg, repoPath))), nil
+}
+
+// agentDocsFolder is the repository-relative documentation folder: the one the
+// registration declares when the repository is registered, and the one
+// detection prefers otherwise, so `agent init` works before `gintrack add`.
+func agentDocsFolder(cfg *config.Config, repoPath string) string {
+	clean := filepath.Clean(repoPath)
+	for _, repo := range cfg.Repos {
+		if filepath.Clean(repo.Path) == clean && strings.TrimSpace(repo.DocsFolder) != "" {
+			return repo.DocsFolder
+		}
+	}
+	if candidates := config.DocsCandidates(repoPath); len(candidates) > 0 {
+		return candidates[0]
+	}
+	return "docs"
 }
 
 // slugifyRepoID lowercases a folder name and keeps only what an id may contain,

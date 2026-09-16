@@ -16,8 +16,8 @@ import (
 //
 // The backend returns candidates only. Every field a caller shows is re-read
 // from this workspace's own index by the backend before it answers, so nothing
-// a Pando corpus holds can reach a user as if it were backlog state
-// (GIT-US-0082).
+// Pando's copy of a document holds can reach a user as if it were backlog
+// state (GIT-US-0082).
 
 // SemanticQuery is the input of the "search.semantic" method.
 type SemanticQuery struct {
@@ -37,8 +37,9 @@ type SemanticQuery struct {
 // [Workspace.SetSemanticSearcher]. The companion's implementation wraps
 // internal/pando; a test installs a stub.
 //
-// An implementation must resolve every candidate back to a live item or page of
-// this workspace and drop the ones that no longer resolve, and it must set
+// An implementation must resolve every candidate back to a live document of
+// this workspace — an item, a page, or a plain file it owns neither way — and
+// drop the ones that no longer resolve, and it must set
 // [core.SearchHit.Source] to [core.SearchSourcePando].
 type SemanticSearcher interface {
 	SearchSemantic(ctx context.Context, q SemanticQuery) ([]core.SearchHit, error)
@@ -97,6 +98,7 @@ func (w *Workspace) semanticHit(h core.SearchHit) searchHit {
 	out := searchHit{
 		Kind: h.Kind, ID: string(h.ID), Path: h.Path, Title: h.Title,
 		Snippet: h.Snippet, Score: h.Score, Project: string(h.Project), Source: source,
+		Index: h.Index, Match: h.Match, MoreMatches: h.MoreMatches,
 	}
 	if m, ok := w.MountForProject(h.Project); ok {
 		out.VaultID = m.ID

@@ -1421,13 +1421,19 @@ export class FakeProvider implements DataProvider {
             mcpUrl: 'http://127.0.0.1:9777/mcp',
             restUrl: '',
             projectId: '',
-            corpusDir: '/home/dana/.local/state/gintrack/pando-kb',
             allowRemote: false,
             reachable: true,
             reachableError: '',
-            corpora: [],
-            documents: 0,
-            lastExport: null,
+            indexed: [
+              {
+                repo: 'demo',
+                root: '/home/dana/src/demo',
+                docs: ['docs'],
+                items: 5,
+                pages: 2,
+                comments: 1,
+              },
+            ],
             reindex: null,
             persisted: data.search.persisted ?? true,
             ...data.search.settings,
@@ -3713,7 +3719,7 @@ export class FakeProvider implements DataProvider {
     }
     this.searchSettings = {
       ...next,
-      configured: next.mcpUrl !== '' || next.corpusDir !== '',
+      configured: next.mcpUrl !== '',
       persisted: this.searchPersisted,
     };
     return Promise.resolve(structuredClone(this.searchSettings));
@@ -3735,7 +3741,7 @@ export class FakeProvider implements DataProvider {
     const job: SearchReindexJob = {
       jobId: `reindex-${String(this.searchReindexCount)}`,
       startedAt: '2026-09-15T10:04:00Z',
-      phase: 'export',
+      phase: 'code',
       repos: [],
       ...this.searchReindexJob,
     };

@@ -705,9 +705,10 @@ or a documented promise get an ADR in their story.
   its schemas drop Pando's `outcome: interrupt` and reasoning events (2026-09-13 gap analysis
   in `docs/research/`, backlog in the `PANDO` project).
 - **Semantic search is an optional native accelerator** behind the existing `core/search`
-  contract, exactly as `docs/02-architecture.md` §8 prescribes for bleve. The companion
-  exports items and pages to a corpus Pando indexes and queries Pando over MCP; the core
-  matcher stays the fallback.
+  contract, exactly as `docs/02-architecture.md` §8 prescribes for bleve. Pando indexes the
+  repository's own files in place — the documentation folder as its knowledge base, the
+  working tree as a code project (`GIT-EP-0020`, ADR-036) — and the companion queries it over
+  MCP; the core matcher stays the fallback.
 
 ### 7.2 Milestones at a glance
 
@@ -781,8 +782,10 @@ history Plane's cycles have.
   human-in-the-loop dialogs, shared-state panel, frontend tools that drive the UI.
 - Pando configuration template, `backlog-assistant` persona and routing skill;
   `docs/20-agent-interface.md`.
-- Corpus exporter, MCP client to `pando mcp-server`, `pando` search backend, semantic results
-  in the search UI, `search_semantic` MCP tool, Pando settings card.
+- MCP client to `pando mcp-server`, `pando` search backend, semantic results in the search
+  UI, `search_semantic` MCP tool, Pando settings card. The corpus exporter this phase first
+  shipped was retired inside the phase by `GIT-EP-0020` (ADR-036): Pando indexes the
+  repository's own files instead.
 
 **Exit criteria**
 
@@ -892,6 +895,10 @@ docs, most of them labelled `agent-ok`. Counts are shown per story.
 | `GIT-US-0088` | Semantic search as an agent tool and a routing skill              | 5  | medium   | 4     |
 | `GIT-US-0091` | Pando settings card with index status and reindex                 | 3  | medium   | 4     |
 
+> `GIT-US-0073`'s corpus exporter was **reversed** by `GIT-EP-0020` — *Pando indexes the
+> repository directly; retire the exported corpus* — inside the same phase and milestone. See
+> [ADR-036](./adr/ADR-036-pando-indexes-the-repository-directly.md).
+
 ### 7.5 Dependencies
 
 ```mermaid
@@ -936,7 +943,16 @@ epic is sequenced first: the agent's value depends on the search tools it can ca
 - **R12 — The sync engine becomes a second git.** A queue that persists state next to the
   repository is a step away from "git is the only sync" (ADR-002). Mitigation: the journal
   holds only job bookkeeping, never content; every effect is a normal commit.
-- **R13 — Pando coupling.** Pando is per-project, has no REST search API, no auth on its
-  MCP HTTP transport and a single `KBPath`. Mitigation: loopback only, feature flags,
-  core fallback, and a short list of Pando changes we would upstream (REST search, KB
-  reindex trigger, per-agent tool allow-list).
+- **R13 — Pando coupling.** Pando is per-project, has no REST search API and a single
+  `KBPath`, and its knowledge-base walk applies no exclusions, so `KBPath` is the
+  repository's documentation folder rather than its root. Mitigation: loopback only, a
+  bearer token on the MCP transport, feature flags, core fallback, and a short list of Pando
+  changes we would upstream (REST search, per-agent tool allow-list — the KB reindex trigger
+  and the tool allow-list have since landed).
+- **R14 — Pando's writing tools reach repository files.** Since `GIT-EP-0020` Pando indexes
+  the repository itself, and `kb_add_document`, `kb_delete_document` and the memory
+  `remember`/`forget` path mirror a document to disk with Pando's typed front-matter keys
+  alone — which would strip an item's `id` and drop it from the index. Mitigation: the
+  `[AGUI] Tools` allow-list `gintrack agent init` writes admits none of them. That is a
+  configuration boundary, not a code boundary, so the risk is accepted and stated in
+  ADR-036 and docs/20 §6.2; git is the recovery path.

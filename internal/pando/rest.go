@@ -24,9 +24,10 @@ type reindexStatsWire struct {
 }
 
 // ReindexKB asks Pando to re-sync its knowledge-base filesystem mirror into the
-// database. This is the resync path for a corpus exported with KBWatch off:
-// the companion writes the corpus files, then calls this, instead of hoping a
-// watcher noticed.
+// database. Pando's KBPath is the repository's own documentation directory
+// (GIT-EP-0020) and its watcher follows it, so this is the catch-up pass — for
+// a companion that was started after a batch of commits landed, or a Pando
+// whose watcher was off — rather than the only way its index ever changes.
 //
 // It is the one call that does not go over MCP. Pando exposes the reindex on
 // its REST surface only (POST /api/v1/remembrances/kb/reindex, authenticated

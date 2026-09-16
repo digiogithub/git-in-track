@@ -1344,13 +1344,21 @@ export function teamScope(team?: string): { team?: string } {
  */
 export type SearchHitSource = 'core' | 'pando';
 
+/** Which Pando indexation a semantic hit came from (story GIT-US-0098). */
+export type SearchHitIndex = 'kb' | 'code';
+
 /**
  * One search result. `snippet` is the passage that matched — repository
  * content, so it is always rendered as escaped text — and `score` is the
  * engine's own relevance, only ever shown as a subdued indicator.
  */
 export type SearchHit = {
-  kind: 'item' | 'page';
+  /**
+   * `file` is a document a semantic backend found inside the indexed tree that
+   * the index owns neither as an item nor as a page. It carries a path and a
+   * snippet and nothing else (story GIT-US-0096).
+   */
+  kind: 'item' | 'page' | 'file';
   id?: string;
   path?: string;
   title: string;
@@ -1361,6 +1369,24 @@ export type SearchHit = {
   /** Repository the hit came from, set by a workspace-wide search. */
   vaultId?: string;
   source: SearchHitSource;
+  /**
+   * Which of Pando's two indexations produced the hit: `kb` for the
+   * knowledge-base indexation of the documentation directory, which holds the
+   * backlog, `code` for the code indexation of the repository root, which holds
+   * the source and the Markdown outside the knowledge base. Absent on a core
+   * hit, which has one index to come from (story GIT-US-0098).
+   *
+   * A row is labelled with it so a code hit is never read as a backlog item.
+   */
+  index?: SearchHitIndex;
+  /**
+   * Where in the document the fragment was found: absent for the document
+   * itself, `comment` for a semantic hit inside an item's comment thread that
+   * resolved back to the item.
+   */
+  match?: 'comment';
+  /** Further comments of the same item collapsed into this hit. */
+  moreMatches?: number;
 };
 
 /**
@@ -1381,30 +1407,47 @@ export type SearchQuery = {
 };
 
 /**
- * The statistics of one full corpus export (`pandosync.Stats`, docs/21).
+ * What Pando indexes for one mounted repository.
  *
- * `written`, `removed` and `skipped` are what makes an export diagnosable: a
- * run that skipped everything wrote nothing because nothing changed, which is
- * a very different thing from a run that found nothing to export.
+ * There is no exported copy to date any more (epic GIT-EP-0020): Pando's
+ * `KBPath` is the repository's own documentation directory and its root is
+ * registered as a code project. So the diagnosable thing is where Pando was
+ * pointed and how much this companion's index finds there — a documentation
+ * directory holding no items is a misconfigured `KBPath`, and the row says so.
  */
-export type SearchCorpusStats = {
+export type SearchIndexedRepo = {
+  repo: string;
+  /** The working tree, registered with Pando as a code project. */
+  root: string;
+  /** The documentation directories; the backlog lives under them in `.pmngr/`. */
+  docs: string[];
   items: number;
   pages: number;
-  written: number;
-  removed: number;
-  skipped: number;
-  /** Nanoseconds, as Go encodes a `time.Duration`. */
-  duration: number;
-  /** RFC 3339; empty when the corpus has never been exported. */
-  at: string;
-  full: boolean;
+  comments: number;
+  /**
+   * The repository's code-project registration, which the companion performs
+   * in the background when it starts (story GIT-US-0098). It is absent until
+   * that pass has run, and `note` is why there is no code search when there is
+   * none — a Pando that is down never fails the companion, so the reason has to
+   * be readable here.
+   */
+  code?: SearchCodeIndex;
 };
 
-/** One mounted repository's corpus: where it is written and how it last went. */
-export type SearchCorpus = {
-  repo: string;
-  dir: string;
-  last: SearchCorpusStats;
+/** What became of one repository's code-project registration. */
+export type SearchCodeIndex = {
+  /** The Pando project the repository root was registered under. */
+  project: string;
+  /**
+   * `off` — nothing is configured; `registered` — Pando already had it and was
+   * not asked to index it again; `indexing` — a job is filling the index;
+   * `unavailable` — Pando refused or did not answer.
+   */
+  status: 'off' | 'registered' | 'indexing' | 'unavailable';
+  /** The Pando indexing job, when one was started. */
+  job?: string;
+  /** What happened, in words, including why there is no code search. */
+  note?: string;
 };
 
 /** What Pando's REST reindex route counted (`pando.ReindexStats`). */
@@ -1416,26 +1459,21 @@ export type SearchReindexKbStats = {
   deleted: number;
 };
 
-/**
- * The reindex of one repository. The halves are independent on purpose: a
- * Pando that is down never invalidates an export that worked, so `exportError`
- * and `codeError` are reported apart and either may be empty.
- */
+/** The source-tree half of a reindex, for one repository. */
 export type SearchReindexRepo = {
   repo: string;
-  export: SearchCorpusStats;
-  exportError?: string;
   /** The Pando code-index job the repository's source tree was handed to. */
   codeJob?: string;
+  /** This repository's code-index failure alone; the job carries on. */
   codeError?: string;
 };
 
 /**
- * Where a reindex is. The three working phases are walked in this order and
- * the job settles into `completed` or `failed`; the same values arrive on the
+ * Where a reindex is. The two working phases are walked in this order and the
+ * job settles into `completed` or `failed`; the same values arrive on the
  * `search.progress` topic.
  */
-export type SearchReindexPhase = 'export' | 'code' | 'kb' | 'completed' | 'failed';
+export type SearchReindexPhase = 'code' | 'kb' | 'completed' | 'failed';
 
 /** `POST /api/v1/search/reindex` → the job, and `settings.reindex` afterwards. */
 export type SearchReindexJob = {
@@ -1447,18 +1485,17 @@ export type SearchReindexJob = {
   /** Real counts, only when a REST URL made a true reindex possible. */
   kb?: SearchReindexKbStats;
   /**
-   * What happened to the knowledge-base half in words. Without a REST URL it
-   * says the corpus was re-exported and awaits Pando's next import pass —
-   * `KBWatch` is off by design, so nothing was indexed and the card must not
-   * claim otherwise.
+   * What happened to the knowledge-base half in words. Without a REST URL
+   * there is no route to ask for a reindex at all, and the note says so rather
+   * than letting the card claim an index operation that never ran.
    */
   kbNote?: string;
   error?: string;
 };
 
 /**
- * `GET|PATCH /api/v1/search/settings` — where Pando is, where the corpus lives
- * and whether it is current (story GIT-US-0091, docs/07).
+ * `GET|PATCH /api/v1/search/settings` — where Pando is, what it indexes and
+ * whether it answers (story GIT-US-0091, docs/07).
  *
  * Neither Pando token is ever part of this shape. They are resolved from the
  * environment or the configuration file and stay in the companion process, so
@@ -1472,7 +1509,6 @@ export type SearchSettings = {
   mcpUrl: string;
   restUrl: string;
   projectId: string;
-  corpusDir: string;
   allowRemote: boolean;
   /**
    * A live probe of the MCP endpoint, run while answering. `null` means no
@@ -1481,11 +1517,8 @@ export type SearchSettings = {
    */
   reachable: boolean | null;
   reachableError: string;
-  corpora: SearchCorpus[];
-  /** Exported documents across every corpus. */
-  documents: number;
-  /** RFC 3339 of the most recent export, or null when there has been none. */
-  lastExport: string | null;
+  /** What Pando indexes, one row per mounted repository. */
+  indexed: SearchIndexedRepo[];
   /** The running job, or the last finished one; null before the first. */
   reindex: SearchReindexJob | null;
   /**
@@ -1505,7 +1538,6 @@ export type SearchSettingsPatch = {
   mcpUrl?: string;
   restUrl?: string;
   projectId?: string;
-  corpusDir?: string;
   allowRemote?: boolean;
 };
 
@@ -1593,7 +1625,7 @@ export type ProviderErrorCode =
    * keeps following the job that is already there (GIT-US-0091).
    */
   | 'search_reindex_running'
-  /** Neither a corpus directory nor a Pando endpoint: there is nothing to index. */
+  /** No Pando endpoint: there is nothing to index. */
   | 'search_not_configured'
   /**
    * The runtime cannot do this at all — browser-only mode asked for the agent,
@@ -1941,17 +1973,17 @@ export interface DataProvider {
 
   // semantic search settings (`GET|PATCH /api/v1/search/settings`, GIT-US-0091)
   /**
-   * Where Pando is, where the exported corpus lives, how current it is and
-   * whether the endpoint answers right now. The reachability probe runs while
-   * the request is answered, so a call is a diagnosis and not a cached one.
+   * Where Pando is, what it indexes and whether the endpoint answers right
+   * now. The reachability probe runs while the request is answered, so a call
+   * is a diagnosis and not a cached one.
    */
   getSearchSettings(): Promise<SearchSettings>;
   /**
    * Changes them. The running process adopts the patch first and the
    * configuration file is written afterwards, and `persisted` says whether the
-   * second half happened. A non-loopback URL without `allowRemote`, a URL that
-   * is not one, or a relative `corpusDir` is refused with `validation_failed`
-   * and nothing is adopted.
+   * second half happened. A non-loopback URL without `allowRemote`, or a URL
+   * that is not one, is refused with `validation_failed` and nothing is
+   * adopted.
    */
   updateSearchSettings(patch: SearchSettingsPatch): Promise<SearchSettings>;
   /**

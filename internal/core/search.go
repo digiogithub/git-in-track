@@ -18,6 +18,20 @@ const (
 	SearchSourcePando = "pando"
 )
 
+// The indexes a [SearchSourcePando] hit can have come from. Pando keeps two
+// (GIT-US-0098): the knowledge-base indexation of the documentation directory,
+// which reaches the backlog under `.pmngr/`, and the code indexation of the
+// repository root, which cannot see a dot-directory but does cover the source
+// and the Markdown outside the knowledge base. They are the values of
+// [SearchHit.Index], and a client labels a row with them so a code hit is never
+// mistaken for a backlog item.
+const (
+	// SearchIndexKB is Pando's knowledge-base indexation (`kb_search_documents`).
+	SearchIndexKB = "kb"
+	// SearchIndexCode is Pando's code indexation (`code_hybrid_search`).
+	SearchIndexCode = "code"
+)
+
 // Searcher is the search contract: one query, one bounded list of hits, ranked
 // by the backend's own scale.
 //

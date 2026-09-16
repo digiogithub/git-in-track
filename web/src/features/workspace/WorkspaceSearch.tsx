@@ -128,15 +128,40 @@ function Snippet({ text, terms }: { text: string; terms: string[] }) {
   );
 }
 
+/**
+ * What a semantic hit is labelled with: the Pando indexation it came from.
+ *
+ * Pando keeps two and they answer different questions — the knowledge base
+ * holds the backlog and the documentation, the code index holds the source and
+ * the Markdown outside it — so a row says which one found it and a code hit is
+ * never read as a backlog item (story GIT-US-0098).
+ */
+function indexLabel(hit: SearchHit): string | null {
+  switch (hit.index) {
+    case 'code':
+      return 'code index';
+    case 'kb':
+      return 'knowledge base';
+    default:
+      return null;
+  }
+}
+
 /** One result row, with the snippet and relevance only on a semantic hit. */
 function HitRow({ hit, terms }: { hit: SearchHit; terms: string[] }) {
   const semantic = hit.source === 'pando';
   const relevance = semantic ? relevanceLabel(hit.score) : null;
+  const origin = semantic ? indexLabel(hit) : null;
   return (
     <li className="flex flex-wrap items-baseline gap-2 rounded-md border border-border px-3 py-2 text-sm">
       <span className="font-medium">{hit.title || hit.path}</span>
       {hit.project ? <Badge variant="outline">{hit.project}</Badge> : null}
       <Badge size="sm">{hit.kind}</Badge>
+      {origin ? (
+        <Badge size="sm" variant="info" title="Which Pando index found this">
+          {origin}
+        </Badge>
+      ) : null}
       <span className="text-xs text-muted-foreground">{hit.path}</span>
       {relevance ? (
         <span className="text-xs text-muted-foreground/70" title="How close the passage is">
@@ -197,8 +222,8 @@ export function WorkspaceSearch() {
             Search every open repository
           </CardTitle>
           <CardDescription>
-            Items and knowledge-base pages from every folder you have open, each labelled with the
-            project it belongs to.
+            Items, knowledge-base pages and — where Pando indexes the repository — source files,
+            each labelled with the project it belongs to and the index it came from.
           </CardDescription>
         </CardHeader>
 

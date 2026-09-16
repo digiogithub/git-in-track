@@ -1517,6 +1517,12 @@ Types: `string`, `text` (multi-line), `number`, `bool`, `date`, `timestamp`, `en
 - **R-CF-3** A declared field with a wrong type is `E-CF-TYPE`.
 - **R-CF-4** Top-level keys prefixed `x-` are reserved for third-party tools; `gintrack` preserves
   them verbatim and never validates them.
+  > **They are visible to semantic search.** Pando indexes these files in place (docs/21,
+  > ADR-036) and keeps only a fixed reserved list of front-matter keys for itself; every other
+  > key, `x-` ones included, reaches a hit's `metadata` verbatim through
+  > `MergeUnknownFrontMatterKeys`. So an `x-` key is searchable and readable by anything that
+  > can query Pando. That is useful — it is how `labels` survives into a hit — and it is also a
+  > reason not to put anything confidential in one.
 
 ### 13.3 Defaults
 

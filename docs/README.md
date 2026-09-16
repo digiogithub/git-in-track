@@ -29,7 +29,7 @@ model described in [03-data-model.md](./03-data-model.md).
 | 12 | [1.0 release readiness](./12-release-readiness-1-0.md) | Evidence for every milestone exit criterion and vision goal; the known gaps shipped in 1.0; what the maintainer must still do |
 | 13 | [Design system](./13-design-system.md) | Tokens, themes, the component rules the UI is built from, and the contrast checks that keep them honest |
 | 20 | [Agent interface](./20-agent-interface.md) | The agent panel over Pando's AG-UI: architecture, `gintrack agent init`, configuration on both sides, the security posture, troubleshooting |
-| 21 | [Semantic search](./21-semantic-search.md) | The Pando corpus: layout, front matter, the `KBPath` warning and the sync model |
+| 21 | [Semantic search](./21-semantic-search.md) | Pando's two indexations over the repository's own files: configuration, how a hit resolves, reindexing, and the corpus that was retired |
 | — | [ADRs](./adr/README.md) | Architecture decision records |
 | — | [Research notes](./research/README.md) | Dated code reviews of YouTrack, Plane and Pando behind the phase 7–9 plan (roadmap §7) |
 | — | [CHANGELOG](../CHANGELOG.md) | Release notes, compatibility promise, known limitations, operational notes |

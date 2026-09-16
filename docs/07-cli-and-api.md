@@ -296,7 +296,6 @@ search:
     restUrl: ""                  # `pando serve` base; optional, enables REST reindex
     restToken: ""                # GINTRACK_PANDO_REST_TOKEN overrides it
     projectId: ""                # code project id; empty = Pando's sanitised repo path
-    corpusDir: ""                # empty = <index.cacheDir>/pando-kb
     allowRemote: false
 
 # The credentials of the external trackers this machine is linked to. It is the
@@ -388,10 +387,17 @@ Semantic search is served by a local [Pando](https://github.com/digiogithub/pand
 `mcpToken` the bearer token it requires (`MCPServer.HttpToken` in Pando's own configuration).
 `projectId` names the indexed code project and defaults to the repository path sanitised the
 way Pando does it — `/www/git-in-track` becomes `www_git-in-track`. `restUrl` and `restToken`
-are optional and only enable the corpus resync (`POST /api/v1/remembrances/kb/reindex`,
+are optional and only enable the knowledge-base reindex (`POST /api/v1/remembrances/kb/reindex`,
 authenticated with `X-Pando-Token`); they need `pando serve`, not `pando mcp-server`, so with
-them unset the resync reports "not configured" rather than failing. `corpusDir` is where the
-exported corpus is written (docs/21). Leaving `mcpUrl` empty switches semantic search off.
+them unset the reindex reports "not configured" rather than failing. Leaving `mcpUrl` empty
+switches semantic search off.
+
+There is **no `corpusDir` key**. The exported corpus was retired in `GIT-EP-0020` (ADR-036):
+Pando indexes the repository's own files, so there is nothing to write. A configuration that
+still sets `search.pando.corpusDir` is **refused by name** with a message citing the epic,
+rather than ignored — "my corpus stopped being written" is answered by the parser instead of by
+silence. A corpus directory left behind by an older version is not read any more and is safe to
+delete by hand.
 
 **A URL whose host is not a loopback address is refused, and there is no override but
 `allowRemote`.** Pando's MCP transport exposes far more than search — file writes, shell
@@ -1662,16 +1668,16 @@ written, preview included.
 ### 4.18 `gintrack agent init`
 
 ```
-gintrack agent init [--repo <path>] [--companion-url <url>] [--agui-port <n>] [--force] [--json]
-                    [--pando <path>] [--age-keys <set>] [--plaintext-token]
+gintrack agent init [--repo <path>] [--companion-url <url>] [--agui-port <n>] [--kb-path <dir>]
+                    [--force] [--json] [--pando <path>] [--age-keys <set>] [--plaintext-token]
 ```
 
 Writes the Pando-side configuration for one repository so that `pando agui-serve` can act as
 the agent behind the companion's `/api/v1/agent` proxy (docs/20, ADR-035). At the repository
 root it creates `.pando.toml` (the `[AGUI]` adapter with its profile and tool allow-list,
 `[MCPServers.gintrack]` pointing at this companion's `/mcp`, `[Remembrances]` pointing at the
-exported corpus with `KBWatch = false`, `[MCPServer]` HTTP off), `agents/personas/
-backlog-assistant.md` and `agents/skills/gintrack-search/SKILL.md`. Outside the repository it
+repository's own documentation folder with `KBWatch = true`, `[MCPServer]` HTTP off),
+`agents/personas/backlog-assistant.md` and `agents/skills/gintrack-search/SKILL.md`. Outside the repository it
 creates, once, the AG-UI token file `<stateDir>/agui/<repo id>.token` (mode 0600). It never
 prints a token.
 
@@ -1680,11 +1686,28 @@ prints a token.
 | `--repo <path>` | `.` | The repository to configure; must be a mounted repository |
 | `--companion-url <url>` | the configured bind address | Where Pando reaches this companion |
 | `--agui-port <n>` | `8090` | Port written into `[AGUI] Port` |
+| `--kb-path <dir>` | the repository's documentation folder | Directory written into `[Remembrances] KBPath` — the folder Pando indexes as its knowledge base |
 | `--force` | off | Replace all three files wholesale instead of merging and skipping |
 | `--json` | off | Machine-readable summary (`tokenEncrypted` reports which token form landed; `skipped`, `pandoConfigMerged`, `pandoConfigBackup` and `divergences` report the re-run) |
 | `--pando <path>` | the `pando` on `PATH` | Binary used to encrypt the companion token with `pando secret` |
 | `--age-keys <set>` | Pando's default set | Forwarded as `pando secret --age-keys <set>` (key sets live under `~/.config/pando/keys/`) |
 | `--plaintext-token` | off | Write the token as a literal `Authorization` header instead of encrypting it |
+
+**What Pando indexes is the repository itself** (GIT-EP-0020). `[Remembrances] KBPath` is the
+repository's documentation folder — the one the registration declares, `docs` by default —
+and not a directory outside the repository: Pando's KB walk applies no exclusions of any kind,
+so a repository root would be indexed whole, while the documentation folder reaches the
+backlog under `.pmngr/` and the knowledge-base pages and nothing else. That is also precisely
+the half Pando's code indexer cannot see, because it skips dot-directories. `--kb-path` writes
+another directory for a layout this cannot guess; the value is expanded (`~`, relative paths)
+before it is written.
+
+`KBWatch = true`, Pando's own default, so an edit is reindexed as it happens. The watcher
+performs no file write of any kind; the tools that do mirror a document back to disk are
+`kb_add_document`, `kb_delete_document` and the memory `remember`/`forget` path, which emit
+Pando's typed front-matter keys alone and would strip an item's `id`, `status` and `parent`.
+The generated `[AGUI] Tools` allow-list therefore admits the KB tools that read
+(`kb_search_documents`, `kb_get_document`, `kb_related_documents`) and none that writes.
 
 **Re-running is the normal way to pick up a change** — a new companion URL, a new token, a
 newer template — and nothing already in place is an error. `.pando.toml` is merged into; the
@@ -2843,7 +2866,12 @@ GET /api/v1/search?q=oidc+discovery&scope=items,kb&project=ACME&limit=20
      "score":8.42,"snippet":"Fetch /.well-known/openid-configuration and cache…",
      "path":"docs/.pmngr/tasks/…","source":"core"},
     {"kind":"page","project":"ACME","vaultId":"acme","path":"docs/architecture/auth.md","title":"Authentication",
-     "score":0.0163,"snippet":"…discovery documents are cached for one hour…","source":"pando"}
+     "score":0.0163,"snippet":"…discovery documents are cached for one hour…","source":"pando","index":"kb"},
+    {"kind":"item","id":"ACME-US-0042","project":"ACME","vaultId":"acme","title":"Login with SSO",
+     "score":0.0141,"snippet":"…we settled on rotating the refresh token…","source":"pando","index":"kb",
+     "match":"comment","moreMatches":2},
+    {"kind":"file","project":"ACME","vaultId":"acme","path":"internal/auth/oidc.go",
+     "score":0.88,"snippet":"func discoverOIDC(ctx context.Context…","source":"pando","index":"code"}
   ],
   "total":7,"engine":"pando","degraded":false
 }
@@ -2858,6 +2886,21 @@ Every hit carries `source`, the backend that produced it (GIT-US-0082):
   locally, and a candidate that no longer resolves is dropped rather than
   returned. The score is Pando's reciprocal-rank-fusion value, which lives in a
   different space from the core one and must never be compared with it.
+
+A Pando hit carries three more fields (GIT-US-0096, GIT-US-0098):
+
+- `index` — which of Pando's two indexations produced it, `"kb"` or `"code"`. It
+  is absent on a core hit, which has only one index to come from. A `docs/*.md`
+  file both indexations returned is shown once, merged by resolved path with each
+  leg normalised by its own top score (docs/21 §0.2).
+- `match: "comment"` — the fragment came from a comment file, and the hit was
+  resolved back to the **item the comment belongs to**. `moreMatches` counts the
+  further comments of the same item that also matched and were collapsed into
+  this row, so a thread that answers a query in five places does not fill the
+  result list with one item.
+- `kind: "file"` — a path inside the indexed tree that this index owns neither as
+  an item nor as a page. It carries a path and a snippet and nothing else. Only a
+  path that is gone from disk is dropped.
 
 **The order is the contract.** Exact hits lead, in the order the substring index
 ranked them; semantic hits the exact half did not already find follow. The two
@@ -2880,8 +2923,8 @@ exposing that key is searched, and an unknown key is a `404`.
 #### Semantic search settings and reindex (GIT-US-0091)
 
 Three companion-only endpoints, inside the bearer-auth group. They are what makes
-the exported corpus diagnosable: where Pando is, where the corpus lives, whether
-it is current, and a button to rebuild it.
+semantic search diagnosable: where Pando is, what it was pointed at for every
+mounted repository, whether it answered, and a button to reindex.
 
 ```http
 GET   /api/v1/search/settings
@@ -2897,18 +2940,16 @@ POST  /api/v1/search/reindex
   "configured":true,
   "mcpUrl":"http://127.0.0.1:9777/mcp",
   "restUrl":"http://127.0.0.1:9778",
-  "projectId":"acme-api",
-  "corpusDir":"/home/dana/.local/state/gintrack/pando-kb",
+  "projectId":"home_dana_src_acme-api",
   "allowRemote":false,
   "reachable":true,
   "reachableError":"",
-  "corpora":[
-    {"repo":"acme-api","dir":"/home/dana/.local/state/gintrack/pando-kb/acme-api",
-     "last":{"items":412,"pages":38,"written":3,"removed":0,"skipped":447,
-             "duration":91000000,"at":"2026-09-15T10:02:11Z","full":true}}
+  "indexed":[
+    {"repo":"acme-api","root":"/home/dana/src/acme-api","docs":["docs"],
+     "items":412,"pages":38,"comments":167,
+     "code":{"project":"home_dana_src_acme-api","status":"indexing","job":"idx-7741",
+             "note":"Indexing the repository root."}}
   ],
-  "documents":450,
-  "lastExport":"2026-09-15T10:02:11Z",
   "reindex":null,
   "persisted":false
 }
@@ -2917,34 +2958,49 @@ POST  /api/v1/search/reindex
 - `backend` is the value `features.search` reports, and `reachable` is a **live
   probe** of the MCP endpoint run while answering (`null` when none is
   configured, with `reachableError` saying why a probe failed).
-- `corpora` is one entry per mounted repository: the directory its corpus is
-  written to — `<corpusDir>/<repo id>`, the same path `gintrack agent init`
-  writes into Pando's `KBPath` — and the statistics of its last full export.
-  `documents` and `lastExport` summarize them.
+- `indexed` is one entry per mounted repository, and it replaces the report on
+  the exported corpus that used to live here (`corpusDir`, `corpora`,
+  `documents` and `lastExport` are gone with it — GIT-EP-0020, ADR-036). There is
+  no second copy to date any more, so the honest answer to *"is my search
+  current?"* is **where Pando was pointed and what git-in-track's own index found
+  there**: `root` is the working tree registered as a Pando code project, `docs`
+  are the repository's documentation directories — one of them is Pando's
+  `KBPath`, and the backlog lives under it in `.pmngr/` — and `items`, `pages`
+  and `comments` are what this companion indexed underneath them. A row reporting
+  0 items is a misconfigured `KBPath`, and that is what this makes visible.
+- `indexed[].code` is the repository's code-project registration, which runs when
+  the server starts (docs/21 §0.1). `status` is `off` (no Pando endpoint),
+  `registered` (Pando already knew the project and was not asked again),
+  `indexing` (this start handed Pando a job, whose id is in `job`) or
+  `unavailable` (Pando refused or did not answer). `note` says it in words, so
+  the reason there is no code search is readable in the UI rather than only in
+  the log. The field is absent until that pass has run.
 - Neither Pando token is ever reported. They are resolved from
   `GINTRACK_PANDO_MCP_TOKEN` / `GINTRACK_PANDO_REST_TOKEN` or the configuration
   file (docs/07 §3.3) and stay in the companion process.
 
-`PATCH` takes any subset of `mcpUrl`, `restUrl`, `projectId`, `corpusDir` and
-`allowRemote`; an absent field is left alone. **Tokens are not patchable**: a
-credential enters the process from the environment or the file, never over the
-API. The change is adopted by the running process immediately — the Pando client
-and every corpus exporter are rebuilt — and then written to the configuration
-file, with the tokens already in that file left untouched. The response repeats
-the settings and adds `persisted`, exactly as `PATCH /api/v1/git/settings` does:
-`false` means the companion was started without a configuration path (a test, or
-`serve --repo`) and the change lives only until it exits. A non-loopback URL
-without `allowRemote`, a URL that is not one, or a relative `corpusDir` is
-refused with `invalid_request` (400) and nothing is adopted.
+`PATCH` takes any subset of `mcpUrl`, `restUrl`, `projectId` and `allowRemote`;
+an absent field is left alone, and an unknown one — `corpusDir` included — is
+ignored and changes nothing. **Tokens are not patchable**: a credential enters
+the process from the environment or the file, never over the API. The change is
+adopted by the running process immediately — the Pando client and the semantic
+searcher are rebuilt — and then written to the configuration file, with the
+tokens already in that file left untouched. The response repeats the settings and
+adds `persisted`, exactly as `PATCH /api/v1/git/settings` does: `false` means the
+companion was started without a configuration path (a test, or `serve --repo`)
+and the change lives only until it exits. A non-loopback URL without
+`allowRemote`, or a URL that is not one, is refused with `invalid_request` (400)
+and nothing is adopted.
 
 `POST /api/v1/search/reindex` answers `202` with the job, then runs in the
-background and publishes `search.progress` (§5.6). Per repository it re-exports
-the whole corpus and asks Pando to index the source tree; then it reindexes the
-knowledge base once:
+background and publishes `search.progress` (§5.6). It asks Pando to index each
+repository's source tree, then reindexes the knowledge base once. It is a
+**catch-up pass**, not how the index normally changes: Pando's watcher follows
+the documentation folder and reindexes an edit as it happens.
 
 ```json
 202
-{"jobId":"reindex-1","startedAt":"2026-09-15T10:04:00Z","phase":"export","repos":[]}
+{"jobId":"reindex-1","startedAt":"2026-09-15T10:04:00Z","phase":"code","repos":[]}
 ```
 
 Poll `GET /api/v1/search/settings`, whose `reindex` field carries the running job
@@ -2953,21 +3009,23 @@ and, afterwards, the last finished one:
 ```json
 {"jobId":"reindex-1","phase":"completed","kbNote":"Reindexed.",
  "kb":{"scanned":450,"added":3,"updated":0,"unchanged":447,"deleted":0},
- "repos":[{"repo":"acme-api","export":{"items":412,"pages":38,"written":3},"codeJob":"idx-7741"}]}
+ "repos":[{"repo":"acme-api","codeJob":"idx-7741"}]}
 ```
 
-- The three halves are independent. A Pando that is down never invalidates an
-  export that worked: `exportError` and `codeError` are reported per repository,
-  and the job ends `failed` with the successful halves still in it.
-- **The knowledge-base half is honest.** Pando has no filesystem watcher for the
-  corpus (`KBWatch` is off by design), so without a REST URL the corpus is
-  re-exported and `kbNote` says *"Re-exported, awaiting Pando's next import
-  pass"* — not that anything was reindexed. With `restUrl` configured the job
-  calls Pando's reindex route and `kb` carries the real
+- `phase` walks `code` → `kb` → `completed` or `failed`.
+- The halves are independent. One repository whose source tree Pando refused must
+  not stop the knowledge base being reindexed: `codeError` is reported per
+  repository in `repos[]`, and the job ends `failed` with the successful halves
+  still in it.
+- **The knowledge-base half is honest.** The reindex route lives on Pando's REST
+  surface only, so without a `restUrl` there is nothing to call and `kbNote` says
+  so, adding that Pando's own watcher still follows the documentation directory —
+  it never claims a reindex that did not happen. With `restUrl` configured the
+  job calls the route and `kb` carries the real
   `scanned/added/updated/unchanged/deleted` counts.
 - A second call while one is running is refused with `search_reindex_running`
-  (409) and the running job is untouched. A companion with neither a corpus
-  directory nor a Pando endpoint answers `search_not_configured` (400).
+  (409) and the running job is untouched. A companion with no Pando endpoint
+  answers `search_not_configured` (400).
 
 > **Operations: the embedding model is pinned configuration.** Pando skips any
 > chunk whose vector length differs from the query's — silently, with no
@@ -4014,12 +4072,12 @@ Event types and `data` schemas:
             "percent":60, "message":"rebasing 1 commit onto origin/main",
             "ahead":1, "behind":0 } }
 
-// search.progress — the Pando corpus export and the reindex of GIT-US-0091.
-// `operationId` is "startup" for the export the server runs at boot, and the
-// reindex job id otherwise; `repo` is empty for the whole-workspace phases.
+// search.progress — the reindex of GIT-US-0091 (GIT-EP-0020 retired the export
+// that used to report here). `operationId` is the reindex job id; `repo` is
+// empty for the whole-workspace phases.
 { "type":"search.progress",
   "data": { "operationId":"reindex-1", "repo":"ACME",
-            "phase":"export|code|kb|completed|failed",
+            "phase":"code|kb|completed|failed",
             "percent":72, "done":324, "total":450,
             "message":"indexing the source tree" } }
 

@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/go-chi/chi/v5"
 
@@ -522,11 +523,16 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		writeVaultError(w, r, err)
 		return
 	}
-	hits, degraded := s.mergeSemantic(r.Context(), hits, text, limit, project)
+	hits, degraded, dropped := s.mergeSemantic(r.Context(), hits, text, limit, project)
 	writeJSON(w, r, http.StatusOK, map[string]any{
-		"query":    text,
-		"hits":     hits,
-		"total":    len(hits),
+		"query": text,
+		"hits":  hits,
+		"total": len(hits),
+		// dropped is how many semantic candidates named a document this index
+		// no longer holds. It is reported rather than only logged so that a
+		// Pando index one pass behind the repository is visible in the answer
+		// instead of looking like a thin result (GIT-US-0096).
+		"dropped":  dropped,
 		"engine":   s.search.backend(),
 		"degraded": degraded,
 	})
@@ -544,20 +550,24 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 // caller nothing but the semantic half: the exact hits are returned unchanged
 // and `degraded` says the answer is partial. Search never fails over its
 // accelerator.
+// It also answers how many semantic candidates resolved to nothing, which the
+// response reports: a stale Pando index must be visible to the caller, not
+// only in the companion's log.
 func (s *Server) mergeSemantic(
 	ctx context.Context, exact []vault.SearchHit, text string, limit int, project string,
-) ([]vault.SearchHit, bool) {
+) (merged []vault.SearchHit, degraded bool, dropped int) {
 	if s.search == nil || s.search.semantic() == nil || strings.TrimSpace(text) == "" {
-		return exact, false
+		return exact, false, 0
 	}
-	semantic, err := s.repos.workspace().SearchSemantic(ctx, vault.SemanticQuery{
-		Q: text, Limit: limit, Project: project,
-	})
-	if degraded := s.search.noteDegraded(err); degraded {
-		return exact, true
+	var drops atomic.Int64
+	semantic, err := s.repos.workspace().SearchSemantic(withSemanticDrops(ctx, &drops),
+		vault.SemanticQuery{Q: text, Limit: limit, Project: project})
+	dropped = int(drops.Load())
+	if s.search.noteDegraded(err) {
+		return exact, true, dropped
 	}
 	if err != nil || len(semantic) == 0 {
-		return exact, false
+		return exact, false, dropped
 	}
 	seen := make(map[string]bool, len(exact))
 	for _, hit := range exact {
@@ -574,7 +584,7 @@ func (s *Server) mergeSemantic(
 		seen[searchHitKey(hit)] = true
 		out = append(out, hit)
 	}
-	return out, false
+	return out, false, dropped
 }
 
 // searchHitKey identifies the document a hit is about, so that a semantic

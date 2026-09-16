@@ -144,11 +144,6 @@ type Options struct {
 	// are expected already resolved through Config.ResolvedPandoMCPToken and
 	// Config.ResolvedPandoRESTToken; they are never marshaled into a response.
 	Search config.Search
-	// SearchCorpusDir is the corpus root used when `search.pando.corpusDir` is
-	// empty: `<index.cacheDir>/pando-kb`. One subdirectory per mounted
-	// repository is written under it, which is the path `gintrack agent init`
-	// writes into Pando's KBPath. Empty disables the corpus export entirely.
-	SearchCorpusDir string
 
 	// SyncEngine configures the background job engine: the worker pool, the
 	// batch size, the shared outbound rate limit, the retry budget and the
@@ -197,9 +192,9 @@ type Server struct {
 	// `sync.job.*` events (GIT-US-0074, GIT-US-0084). It exists from New so
 	// that a handler can be registered before Start replays the journal.
 	sync *syncState
-	// search owns the semantic half of GET /api/v1/search: the Pando client,
-	// the corpus exporter of every mounted repository and the settings surface
-	// at /api/v1/search/settings (GIT-US-0082, GIT-US-0091).
+	// search owns the semantic half of GET /api/v1/search: the Pando client
+	// and the settings surface at /api/v1/search/settings (GIT-US-0082,
+	// GIT-US-0091).
 	search *searchState
 	// youtrack owns the YouTrack connection of every mounted project: the
 	// committed link in project.yaml, the machine-local token and the clients
@@ -298,9 +293,8 @@ func New(opts Options) (*Server, error) {
 	s.installYouTrackSeams()
 	s.agent = newAgentState(opts)
 	// The search accelerator is built here so that the semantic backend is
-	// installed on the workspace before the first request, and so that a
-	// handler can read the corpus statistics before Start has exported
-	// anything.
+	// installed on the workspace before the first request rather than when the
+	// listener comes up.
 	s.search = newSearchState(opts, s.repos, s.hub, s.log, now)
 	s.proxy = newCORSProxy(s)
 	s.tunnel = newTunnelState(opts)
@@ -371,10 +365,10 @@ func (s *Server) Start(ctx context.Context) error {
 
 	s.startWatch(ctx)
 	defer s.stopWatch()
-	// The corpus export runs in the background, cancelled by the same context
-	// that stops the listener: a ten-thousand-item repository must not delay
-	// the first request by one second (GIT-T-0130, GIT-T-0134).
-	s.startCorpusSync(ctx)
+	// The repository root is registered with Pando as a code project here, in
+	// the background: a fresh clone becomes searchable by starting the server,
+	// and a Pando that is down or slow never holds this up (GIT-US-0098).
+	s.search.startRegistration(ctx)
 	// The tunnel forwards to the address the listener just resolved, so it can
 	// only be opened here, and it is closed before the process exits so that no
 	// published workspace outlives the server.

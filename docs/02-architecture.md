@@ -702,17 +702,19 @@ contract, never the only one.
   satisfied. The Pando-backed implementation lives in `internal/server` and is
   native-only, because it needs `net/http` — which is precisely why it may not
   live in `internal/core`.
-- **What it adds.** Hybrid lexical-plus-embedding ranking over a corpus the
-  companion exports for a local Pando instance (see
-  [21-semantic-search.md](21-semantic-search.md)). It finds documents whose words
-  the substring engine cannot match: "how do we handle a stale write" reaches the
+- **What it adds.** Hybrid lexical-plus-embedding ranking over the repository's
+  own files, which a local Pando indexes in place — the documentation folder as
+  its knowledge base, the working tree as a code project (see
+  [21-semantic-search.md](21-semantic-search.md) and
+  [ADR-036](adr/ADR-036-pando-indexes-the-repository-directly.md); the exported
+  corpus this used to describe is retired). It finds documents whose words the
+  substring engine cannot match: "how do we handle a stale write" reaches the
   rev-protocol stories that never use those words.
-- **Candidates only.** Pando answers with a corpus path and a score. The
-  companion maps that path back to an item id or a knowledge-base page and
+- **Candidates only.** Pando answers with a path and a score. The companion maps
+  that path back to an item id, a knowledge-base page or a plain file and
   **re-reads every field it shows — title, path, project — from its own index**.
-  The corpus keeps only `tags` and `aliases` of the front matter and is always at
-  least one export behind, so nothing it holds is authoritative. A candidate that
-  no longer resolves is dropped rather than shown dangling.
+  Nothing Pando holds is authoritative, and a candidate whose path is gone from
+  disk is dropped rather than shown dangling.
 - **Why it stays optional.** Browser-only mode has no reach to a local Pando at
   all and `internal/core` must compile to WASM (ADR-003), so browser sessions
   always answer from the core index alone. A companion whose Pando is down, slow

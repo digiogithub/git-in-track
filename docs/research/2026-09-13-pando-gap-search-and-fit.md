@@ -12,6 +12,38 @@ Pando at `/www/MCP/Pando/pando`, HEAD `d805b77a` (uncommitted changes confined t
 affected by them). Pando paths below are relative to that root; git-in-track paths to `/www/git-in-track`.
 Line numbers verified by reading the files.
 
+> ## ⚠️ Superseded — annotation added 2026-09-16 (`GIT-US-0099`)
+>
+> **This note is kept as written. It was accurate on 2026-09-13 against Pando `d805b77a`, and it
+> is not edited.** Two of its findings no longer hold against the Pando installed today
+> (commit `710a39281`), and its central recommendation was reversed by
+> [ADR-036](../adr/ADR-036-pando-indexes-the-repository-directly.md) / `GIT-EP-0020`:
+>
+> - **A5 — "the KB watcher never parses front matter, so a modify erases the tags" — no longer
+>   true.** `internal/rag/kb/watcher.go` now contains no write call at all: it stats, reads and
+>   updates the database. The damage this note measured (523 of 539 documents) was to **metadata
+>   in Pando's database, not to files on disk**; Pando documents the historical bug itself in
+>   `internal/rag/kb/repair.go:22-40`. Fixed under PANDO-US-0003/0004, which also share
+>   `buildDocumentMetadata` between the watcher and the sync path and add a startup repair.
+>   `KBWatch = true` is Pando's own default and is what `gintrack agent init` now writes.
+> - **A7 — the mirror ⇄ watcher feedback loop — fixed.** Self-writes are suppressed for three
+>   seconds.
+> - **A9 — "the KB sync + watch walk has no hidden-dir / `node_modules` exclusion" — still
+>   true**, and still the reason `KBPath` names a documentation folder rather than a repository
+>   root. Its recommended workaround (a dedicated corpus directory outside the repository) is
+>   **not** the conclusion drawn from it any more: the documentation folder is inside the
+>   repository. The exclusion-free walk is the *knowledge-base* walk only — the code indexer
+>   (`internal/rag/code/indexer.go:234-240`) skips dot-directories, `node_modules`, `vendor`,
+>   `dist`, `build`, `__pycache__` and `.git`, which is what makes registering the repository
+>   root as a code project safe.
+> - **The Part B recommendation — export a corpus, `KBAutoImport = true`, `KBWatch = false` — is
+>   withdrawn.** `internal/pandosync` and `search.pando.corpusDir` are deleted; Pando indexes
+>   the repository's own committed files. See [docs/21](../21-semantic-search.md) §5 for what was
+>   removed and ADR-036 for why.
+>
+> Everything else below — the transport findings, the measurements, the tool inventory — stands
+> as a record of that date.
+
 ---
 
 ## Summary table

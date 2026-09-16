@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,8 +20,6 @@ type searchServerOptions struct {
 	// configPath, when set, is the configuration file a settings PATCH is
 	// persisted to. Empty is a companion started with `serve --repo`.
 	configPath string
-	// corpusDir is the corpus root; empty means no corpus is exported.
-	corpusDir string
 	// port makes the server startable. Zero leaves it unstarted.
 	port int
 }
@@ -32,15 +30,14 @@ func newPandoSearchServer(t *testing.T, opts searchServerOptions) (*Server, stri
 
 	root := copyTree(t, fixtureRoot)
 	s, err := New(Options{
-		Bind:            "127.0.0.1",
-		Port:            opts.port,
-		Token:           "test-token",
-		Version:         "0.0.1-test",
-		Workspace:       "test",
-		Repos:           []Repo{{ID: testRepoID, Path: root, Role: "project", DocsFolder: "docs"}},
-		ConfigPath:      opts.configPath,
-		SearchCorpusDir: opts.corpusDir,
-		Now:             func() time.Time { return time.Date(2026, 9, 15, 10, 0, 0, 0, time.UTC) },
+		Bind:       "127.0.0.1",
+		Port:       opts.port,
+		Token:      "test-token",
+		Version:    "0.0.1-test",
+		Workspace:  "test",
+		Repos:      []Repo{{ID: testRepoID, Path: root, Role: "project", DocsFolder: "docs"}},
+		ConfigPath: opts.configPath,
+		Now:        func() time.Time { return time.Date(2026, 9, 15, 10, 0, 0, 0, time.UTC) },
 	})
 	if err != nil {
 		t.Fatalf("New(): %v", err)
@@ -55,22 +52,24 @@ type settingsView struct {
 	MCPURL      string `json:"mcpUrl"`
 	RESTURL     string `json:"restUrl"`
 	ProjectID   string `json:"projectId"`
-	CorpusDir   string `json:"corpusDir"`
 	AllowRemote bool   `json:"allowRemote"`
 	Reachable   *bool  `json:"reachable"`
-	Corpora     []struct {
-		Repo string `json:"repo"`
-		Dir  string `json:"dir"`
-		Last struct {
-			Items int    `json:"items"`
-			Pages int    `json:"pages"`
-			At    string `json:"at"`
-		} `json:"last"`
-	} `json:"corpora"`
-	Documents  int          `json:"documents"`
-	LastExport *string      `json:"lastExport"`
-	Reindex    *reindexWire `json:"reindex"`
-	Persisted  bool         `json:"persisted"`
+	Indexed     []struct {
+		Repo     string   `json:"repo"`
+		Root     string   `json:"root"`
+		Docs     []string `json:"docs"`
+		Items    int      `json:"items"`
+		Pages    int      `json:"pages"`
+		Comments int      `json:"comments"`
+		Code     *struct {
+			Project string `json:"project"`
+			Status  string `json:"status"`
+			Job     string `json:"job"`
+			Note    string `json:"note"`
+		} `json:"code"`
+	} `json:"indexed"`
+	Reindex   *reindexWire `json:"reindex"`
+	Persisted bool         `json:"persisted"`
 }
 
 type reindexWire struct {
@@ -78,23 +77,20 @@ type reindexWire struct {
 	Phase  string `json:"phase"`
 	KBNote string `json:"kbNote"`
 	Repos  []struct {
-		Repo        string `json:"repo"`
-		CodeJob     string `json:"codeJob"`
-		CodeError   string `json:"codeError"`
-		ExportError string `json:"exportError"`
-		Export      struct {
-			Items   int `json:"items"`
-			Pages   int `json:"pages"`
-			Written int `json:"written"`
-		} `json:"export"`
+		Repo      string `json:"repo"`
+		CodeJob   string `json:"codeJob"`
+		CodeError string `json:"codeError"`
 	} `json:"repos"`
 }
 
-func TestSearchSettingsReportsTheCorpusAndTheBackend(t *testing.T) {
+// TestSearchSettingsReportsWhatPandoIndexes replaces the corpus report the
+// card used to read: with Pando indexing the repository itself there is no
+// second tree to date, so the honest answer is where Pando was pointed and
+// what this companion's own index holds there (GIT-US-0095).
+func TestSearchSettingsReportsWhatPandoIndexes(t *testing.T) {
 	t.Parallel()
 
-	corpus := t.TempDir()
-	s, _ := newPandoSearchServer(t, searchServerOptions{corpusDir: corpus})
+	s, root := newPandoSearchServer(t, searchServerOptions{})
 
 	var view settingsView
 	decode(t, send(t, s, request{method: http.MethodGet, target: "/api/v1/search/settings"}),
@@ -106,18 +102,18 @@ func TestSearchSettingsReportsTheCorpusAndTheBackend(t *testing.T) {
 	if view.Reachable != nil {
 		t.Error("there is nothing to probe, so reachability must be null")
 	}
-	if view.CorpusDir != corpus {
-		t.Errorf("corpusDir = %q, want %q", view.CorpusDir, corpus)
+	if len(view.Indexed) != 1 || view.Indexed[0].Repo != testRepoID {
+		t.Fatalf("indexed = %+v, want one entry per mounted repository", view.Indexed)
 	}
-	if len(view.Corpora) != 1 || view.Corpora[0].Repo != testRepoID {
-		t.Fatalf("corpora = %+v, want one entry per mounted repository", view.Corpora)
+	row := view.Indexed[0]
+	if row.Root != root {
+		t.Errorf("root = %q, want the working tree %q", row.Root, root)
 	}
-	if want := filepath.Join(corpus, testRepoID); view.Corpora[0].Dir != want {
-		t.Errorf("corpus dir = %q, want %q — it must match the KBPath `gintrack agent init` writes",
-			view.Corpora[0].Dir, want)
+	if len(row.Docs) != 1 || row.Docs[0] != "docs" {
+		t.Errorf("docs = %v, want the documentation directory Pando's KBPath points at", row.Docs)
 	}
-	if view.LastExport != nil {
-		t.Error("nothing has been exported yet, so lastExport must be null")
+	if row.Items == 0 || row.Pages == 0 {
+		t.Errorf("the row reports %d items and %d pages; an empty row cannot diagnose a bad KBPath", row.Items, row.Pages)
 	}
 
 	// With a Pando installed the probe runs and the backend flips.
@@ -132,6 +128,26 @@ func TestSearchSettingsReportsTheCorpusAndTheBackend(t *testing.T) {
 	}
 }
 
+// TestSearchSettingsPatchIgnoresTheRetiredCorpusDir pins that the field is
+// gone from the surface rather than merely unused: an old client still sending
+// it changes nothing, and nothing about a corpus comes back.
+func TestSearchSettingsPatchIgnoresTheRetiredCorpusDir(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newPandoSearchServer(t, searchServerOptions{})
+	rec := send(t, s, request{
+		method: http.MethodPatch,
+		target: "/api/v1/search/settings",
+		body:   map[string]any{"corpusDir": "/tmp/pando-kb"},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if body := rec.Body.String(); strings.Contains(body, "corpusDir") || strings.Contains(body, "corpora") {
+		t.Errorf("the settings payload still mentions the corpus: %s", body)
+	}
+}
+
 func TestSearchSettingsPatchPersists(t *testing.T) {
 	t.Parallel()
 
@@ -140,8 +156,7 @@ func TestSearchSettingsPatchPersists(t *testing.T) {
 	if err := config.Save(configPath, config.Default()); err != nil {
 		t.Fatalf("write the configuration: %v", err)
 	}
-	corpus := filepath.Join(dir, "corpus")
-	s, _ := newPandoSearchServer(t, searchServerOptions{configPath: configPath, corpusDir: corpus})
+	s, _ := newPandoSearchServer(t, searchServerOptions{configPath: configPath})
 
 	var view settingsView
 	decode(t, send(t, s, request{
@@ -183,7 +198,7 @@ func TestSearchSettingsPatchPersists(t *testing.T) {
 func TestSearchSettingsPatchWithoutAConfigFile(t *testing.T) {
 	t.Parallel()
 
-	s, _ := newPandoSearchServer(t, searchServerOptions{corpusDir: t.TempDir()})
+	s, _ := newPandoSearchServer(t, searchServerOptions{})
 
 	var view settingsView
 	decode(t, send(t, s, request{
@@ -203,11 +218,10 @@ func TestSearchSettingsPatchWithoutAConfigFile(t *testing.T) {
 func TestSearchSettingsPatchRejectsBadValues(t *testing.T) {
 	t.Parallel()
 
-	s, _ := newPandoSearchServer(t, searchServerOptions{corpusDir: t.TempDir()})
+	s, _ := newPandoSearchServer(t, searchServerOptions{})
 
 	cases := map[string]map[string]any{
 		"a non-loopback endpoint without allowRemote": {"mcpUrl": "http://pando.example.com/mcp"},
-		"a relative corpus directory":                 {"corpusDir": "relative/corpus"},
 		"a URL that is not one":                       {"mcpUrl": "://nonsense"},
 	}
 	for name, body := range cases {
@@ -229,11 +243,13 @@ func TestSearchSettingsPatchRejectsBadValues(t *testing.T) {
 	}
 }
 
-func TestSearchReindexExportsAndIndexes(t *testing.T) {
+// TestSearchReindexIndexesTheCodeAndTheKnowledgeBase pins what is left of the
+// job now that there is no export half: the source tree goes to Pando's code
+// index, and the knowledge base to its REST reindex (GIT-US-0095).
+func TestSearchReindexIndexesTheCodeAndTheKnowledgeBase(t *testing.T) {
 	t.Parallel()
 
-	corpus := t.TempDir()
-	s, root := newPandoSearchServer(t, searchServerOptions{corpusDir: corpus})
+	s, root := newPandoSearchServer(t, searchServerOptions{})
 	fake := &fakePando{reindex: pando.ReindexStats{Scanned: 7, Added: 7}}
 	installPando(t, s, fake)
 
@@ -250,11 +266,8 @@ func TestSearchReindexExportsAndIndexes(t *testing.T) {
 	if view.Phase != searchPhaseDone {
 		t.Fatalf("phase = %q (%+v)", view.Phase, view)
 	}
-	if len(view.Repos) != 1 || view.Repos[0].Export.Items == 0 {
-		t.Fatalf("the corpus was not exported: %+v", view.Repos)
-	}
-	if view.Repos[0].CodeJob != "job-1" {
-		t.Errorf("the source tree was not indexed: %+v", view.Repos[0])
+	if len(view.Repos) != 1 || view.Repos[0].CodeJob != "job-1" {
+		t.Fatalf("the source tree was not indexed: %+v", view.Repos)
 	}
 	fake.mu.Lock()
 	indexed := append([]string(nil), fake.indexed...)
@@ -264,16 +277,6 @@ func TestSearchReindexExportsAndIndexes(t *testing.T) {
 	}
 	if view.KBNote != "Reindexed." {
 		t.Errorf("kbNote = %q, want the REST reindex outcome", view.KBNote)
-	}
-
-	// The corpus is on disk under <corpusDir>/<repo id>/<PROJECT>/…
-	item := filepath.Join(corpus, testRepoID, "DEMO", "items", "DEMO-US-0001.md")
-	if _, err := os.Stat(item); err != nil {
-		t.Errorf("the exported item is missing: %v", err)
-	}
-	page := filepath.Join(corpus, testRepoID, "DEMO", "kb", "architecture", "overview.md")
-	if _, err := os.Stat(page); err != nil {
-		t.Errorf("the exported page is missing: %v", err)
 	}
 
 	if !waitForEvent(t, events, func(ev Event) bool {
@@ -287,7 +290,7 @@ func TestSearchReindexExportsAndIndexes(t *testing.T) {
 func TestSearchReindexRefusesASecondRun(t *testing.T) {
 	t.Parallel()
 
-	s, _ := newPandoSearchServer(t, searchServerOptions{corpusDir: t.TempDir()})
+	s, _ := newPandoSearchServer(t, searchServerOptions{})
 	gate := make(chan struct{})
 	installPando(t, s, &fakePando{indexGate: gate})
 
@@ -317,7 +320,7 @@ func TestSearchReindexRefusesASecondRun(t *testing.T) {
 func TestSearchReindexReportsAPartialFailure(t *testing.T) {
 	t.Parallel()
 
-	s, _ := newPandoSearchServer(t, searchServerOptions{corpusDir: t.TempDir()})
+	s, _ := newPandoSearchServer(t, searchServerOptions{})
 	installPando(t, s, &fakePando{
 		indexErr:   pando.ErrUnreachable,
 		reindexErr: pando.ErrNotConfigured,
@@ -334,17 +337,13 @@ func TestSearchReindexReportsAPartialFailure(t *testing.T) {
 	if len(view.Repos) != 1 {
 		t.Fatalf("repos = %+v", view.Repos)
 	}
-	// The export is intact and only the code half failed, reported separately.
-	if view.Repos[0].ExportError != "" || view.Repos[0].Export.Items == 0 {
-		t.Errorf("a Pando failure invalidated the corpus export: %+v", view.Repos[0])
-	}
 	if view.Repos[0].CodeError == "" {
 		t.Error("the code-index failure was not reported")
 	}
-	// Without Pando's REST reindex route the KB half is honest about what it
-	// did: it re-exported and is waiting for the next import pass.
+	// Without Pando's REST reindex route the KB half says so rather than
+	// claiming an index operation that never ran.
 	if view.KBNote == "" || view.KBNote == "Reindexed." {
-		t.Errorf("kbNote = %q, want the awaiting-import wording", view.KBNote)
+		t.Errorf("kbNote = %q, want the not-reindexed wording", view.KBNote)
 	}
 }
 
@@ -429,7 +428,7 @@ func recorderProblemCode(t *testing.T, rec *httptest.ResponseRecorder) string {
 func TestSearchProjectIDDefaultsToTheSanitizedMountPath(t *testing.T) {
 	t.Parallel()
 
-	s, root := newPandoSearchServer(t, searchServerOptions{corpusDir: t.TempDir()})
+	s, root := newPandoSearchServer(t, searchServerOptions{})
 	want := pando.SanitizeProjectID(root)
 	if want == "" {
 		t.Fatalf("the fixture path %q sanitizes to nothing", root)

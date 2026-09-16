@@ -600,7 +600,12 @@ func (ix *Index) KbTree() *TreeNode {
 
 // SearchHit is one result of Search.
 type SearchHit struct {
-	Kind    string     `json:"kind"` // "item" or "page"
+	// Kind is "item", "page", or "file" for a document a semantic backend
+	// found inside the indexed tree that this index owns neither as an item
+	// nor as a page. A file hit carries a path and a snippet and nothing
+	// else, so a client can tell the three apart without guessing from which
+	// fields happen to be empty (GIT-US-0096).
+	Kind    string     `json:"kind"`
 	ID      ItemID     `json:"id,omitempty"`
 	Path    string     `json:"path"`
 	Title   string     `json:"title"`
@@ -612,7 +617,23 @@ type SearchHit struct {
 	// is always set by Index.Search, so a caller never has to infer it from an
 	// empty value.
 	Source string `json:"source,omitempty"`
+	// Index names which of Pando's two indexations produced the hit,
+	// [SearchIndexKB] or [SearchIndexCode]. It is empty on a core hit, which
+	// has only one index to come from (GIT-US-0098).
+	Index string `json:"index,omitempty"`
+	// Match names where in the document the fragment was found: empty for the
+	// document itself, [SearchMatchComment] when a semantic backend matched
+	// inside the item's comment thread and resolved it back to the item.
+	Match string `json:"match,omitempty"`
+	// MoreMatches counts the further comments of the same item that also
+	// matched and were collapsed into this hit, so a thread that answers a
+	// query in five places does not fill the result list with one item.
+	MoreMatches int `json:"moreMatches,omitempty"`
 }
+
+// SearchMatchComment is the [SearchHit.Match] value of a hit whose fragment
+// came from a comment rather than from the item body.
+const SearchMatchComment = "comment"
 
 // Search weights per field, from the ranking rules of docs/02 section 8: a title
 // match outranks a label match, which outranks a body match, and an exact id

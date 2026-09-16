@@ -17,7 +17,7 @@ func TestPagesAreClonedNotLeaked(t *testing.T) {
 		t.Fatal("the fixture has no knowledge-base pages")
 	}
 
-	// The exporter walks these while a watcher pass can be rewriting the index;
+	// A caller walks these while a watcher pass can be rewriting the index;
 	// a leaked pointer would be a data race, so the copy has to be real.
 	first := pages[0]
 	title := first.Title
@@ -68,8 +68,8 @@ func TestPageByProjectPath(t *testing.T) {
 
 	v := openFixture(t, fixtureRoot)
 
-	// This is the reverse of the corpus layout: a hit names the project and the
-	// documentation-folder relative path, and the vault finds the live page.
+	// This is how a Pando hit resolves: the hit names the documentation-folder
+	// relative path, and the vault finds the live page behind it.
 	page, ok := v.PageByProjectPath("DEMO", "architecture/overview.md")
 	if !ok {
 		t.Fatal("the page did not resolve from its project and relative path")

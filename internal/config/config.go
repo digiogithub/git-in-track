@@ -490,9 +490,6 @@ type SearchPando struct {
 	// ProjectID is the Pando code project id. Empty means Pando's own
 	// sanitized repository path.
 	ProjectID string `json:"projectId,omitempty" yaml:"projectId,omitempty"`
-	// CorpusDir is where the knowledge-base corpus is exported for Pando to
-	// import. Empty means <index.cacheDir>/pando-kb.
-	CorpusDir string `json:"corpusDir,omitempty" yaml:"corpusDir,omitempty"`
 	// AllowRemote permits non-loopback URLs, as `agent.pando.allowRemote` does.
 	AllowRemote bool `json:"allowRemote" yaml:"allowRemote"`
 }

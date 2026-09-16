@@ -172,13 +172,12 @@ const BROWSER_YOUTRACK_REASON =
  * so it is `not_supported` rather than `read_only`.
  */
 /**
- * Why browser-only mode has no semantic-search settings. The corpus is
- * exported by a process with a filesystem and Pando is reached by a process
- * holding a token; a tab has neither, and the local index it does have has
- * nothing to configure.
+ * Why browser-only mode has no semantic-search settings. Pando is reached by
+ * a process holding a token, which a tab is not, and the local index a tab does
+ * have has nothing to configure.
  */
 const BROWSER_SEARCH_REASON =
-  'Semantic search is not available in browser-only mode: exporting a corpus and reaching Pando both need a local process. Run `gintrack serve` to configure it.';
+  'Semantic search is not available in browser-only mode: reaching Pando needs a local process. Run `gintrack serve` to configure it.';
 
 const BROWSER_AGENT_REASON =
   'The agent is not available in browser-only mode: it needs a local Pando adapter, which only the companion can start and reach. Run `gintrack serve` to use it.';

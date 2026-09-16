@@ -132,7 +132,7 @@ func TestAgentInitMergesIntoAnExistingPandoConfig(t *testing.T) {
 		"Token = 'age1:",
 		// The keys the shared tables did not have, added with their comments.
 		"MaxConcurrentRuns = 4",
-		"KBWatch = false",
+		"KBWatch = true",
 		"HttpEnabled = false",
 		"Persona = 'backlog-assistant'",
 		"'gintrack_*'",
@@ -141,7 +141,7 @@ func TestAgentInitMergesIntoAnExistingPandoConfig(t *testing.T) {
 		// "strips the browser" one rides on AllowedOrigins, which this fixture
 		// already has at the value the template wants, so it is not inserted
 		// here; TestAgentInitWritesThePandoConfiguration covers it.)
-		"strips the metadata",
+		"performs no file write",
 		":9777",
 	} {
 		if !strings.Contains(toml, want) {
@@ -220,7 +220,11 @@ func TestAgentInitMergeReportsDivergingKeys(t *testing.T) {
 		"[Remembrances] KBPath: kept KBPath = '/www/example/docs'",
 		"[MCPServer] StdioEnabled: kept StdioEnabled = false",
 		"tool_search",
+		// The KBPath reason of GIT-EP-0020: a path outside the repository
+		// indexes a copy nobody edits, and a root would be indexed whole.
+		"no exclusions at all",
 		"would be indexed whole",
+		"indexes a copy nobody edits",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("the divergence report does not mention %q:\n%s", want, stdout)
@@ -243,6 +247,35 @@ func TestAgentInitMergeReportsDivergingKeys(t *testing.T) {
 	}
 }
 
+// TestAgentInitMergeAcceptsAWatcherAlreadyOn is the other half of the KBWatch
+// reversal: `KBWatch = true` is now the generated value and Pando's own
+// default, so a user who already has it must not be reported as diverging.
+func TestAgentInitMergeAcceptsAWatcherAlreadyOn(t *testing.T) {
+	h := newHarness(t)
+	h.register()
+	path := writeExistingPandoConfig(t, h.Repo)
+	current, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read the fixture: %v", err)
+	}
+	updated := strings.Replace(string(current), "KBAutoImport = true", "KBAutoImport = true\nKBWatch = true", 1)
+	if updated == string(current) {
+		t.Fatal("the fixture no longer has KBAutoImport in [Remembrances]")
+	}
+	if err := os.WriteFile(path, []byte(updated), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	stdout := h.mustRun("agent", "init", "--repo", h.Repo)
+
+	if strings.Contains(stdout, "KBWatch") {
+		t.Errorf("a KBWatch already at the generated value was reported as a divergence:\n%s", stdout)
+	}
+	if !strings.Contains(readGenerated(t, h.Repo, agentPandoConfigName), "KBWatch = true") {
+		t.Error("the merged configuration lost KBWatch = true")
+	}
+}
+
 // TestAgentInitMergeSwapsTheAuthBranch covers the three mutually exclusive
 // [MCPServers.gintrack] auth branches: a re-run that changes the token mode
 // must leave exactly one of them behind, not two.
@@ -250,7 +283,7 @@ func TestAgentInitMergeSwapsTheAuthBranch(t *testing.T) {
 	base := agentTemplateData{
 		AGUIPath: agentDefaultAGUIPath, AGUIHost: "127.0.0.1", AGUIPort: agentDefaultAGUIPort,
 		MaxConcurrentRuns: agentDefaultMaxRuns, Persona: agentPersonaID, Tools: agentTools,
-		MCPURL: "http://127.0.0.1:7317/mcp", KBPath: "/tmp/corpus",
+		MCPURL: "http://127.0.0.1:7317/mcp", KBPath: "/www/example/repo/docs",
 	}
 	render := func(t *testing.T, mutate func(*agentTemplateData)) string {
 		t.Helper()

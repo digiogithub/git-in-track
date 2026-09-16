@@ -30,15 +30,16 @@ flowchart LR
     Browser["Browser<br/>web/src/features/agent"]
     Companion["gintrack serve<br/>127.0.0.1:7317"]
     Pando["pando agui-serve --cwd repo-a<br/>127.0.0.1:8090"]
-    Corpus[("&lt;cacheDir&gt;/pando-kb/repo-a<br/>exported Markdown")]
-    Repo[("repo-a<br/>docs/.pmngr")]
+    Docs[("repo-a/docs<br/>KB pages + .pmngr backlog")]
+    Root[("repo-a<br/>the working tree")]
 
     Browser -- "POST /api/v1/agent/... (session cookie or token)" --> Companion
     Companion -- "POST /api/v1/agui/backlog-assistant<br/>Bearer AG-UI token, no Origin" --> Pando
     Pando -- "POST /mcp<br/>Bearer companion token" --> Companion
-    Companion --> Repo
-    Companion -- "exports" --> Corpus
-    Pando -- "indexes" --> Corpus
+    Companion --> Root
+    Companion -- "registers as a code project" --> Root
+    Pando -- "KB indexation (KBPath, read-only)" --> Docs
+    Pando -- "code indexation (read-only)" --> Root
 ```
 
 Four facts follow from that picture, and every decision in this document comes back to one
@@ -58,10 +59,12 @@ enforce its own limits before a run ever reaches an agent.
 server (docs/08-mcp-server.md section 8.5). So there are two tokens travelling in two
 directions, and neither of them is ever in a page.
 
-**Semantic search is a mirror.** The companion exports every item and knowledge-base page
-as Markdown into a corpus directory outside the repository, and Pando indexes that. A
-search returns candidates; the repository is the authority, and the companion re-reads the
-real fields from its own index before showing anything.
+**Semantic search reads the repository itself.** Nothing is copied. Pando's knowledge-base
+indexation is pointed at the repository's documentation folder — which holds the backlog
+under `.pmngr/` and the knowledge-base pages — and the repository root is registered as a
+Pando code project when the companion starts (docs/21, ADR-036). Both indexations are
+read-only. A search returns candidates; the repository is the authority, and the companion
+re-reads the real fields from its own index before showing anything.
 
 ---
 
@@ -79,7 +82,7 @@ It writes three files into the repository:
 
 | File | What it is |
 |------|------------|
-| `.pando.toml` | The AG-UI adapter, the gintrack MCP server, the corpus index. One per repository. |
+| `.pando.toml` | The AG-UI adapter with its tool allow-list, the gintrack MCP server, and `[Remembrances]` pointing at this repository's documentation folder. One per repository. |
 | `agents/personas/backlog-assistant.md` | The persona injected into the system prompt of every run. |
 | `agents/skills/gintrack-search/SKILL.md` | The routing table: which search tool answers which kind of question. |
 
@@ -195,14 +198,19 @@ see `coder` **and** `backlog-assistant`.
 gintrack serve --agent --mcp-http
 ```
 
-`--agent` enables the proxy and the corpus exporter; `--mcp-http` mounts `POST /mcp`, which
-is the endpoint the generated `.pando.toml` points Pando at. Without it the agent connects
-and then cannot see a single item. Add `--mcp-allow-write` only if you want the assistant to
-be able to change items at all.
+`--agent` enables the proxy; `--mcp-http` mounts `POST /mcp`, which is the endpoint the
+generated `.pando.toml` points Pando at. Without it the agent connects and then cannot see a
+single item. Add `--mcp-allow-write` only if you want the assistant to be able to change
+items at all.
 
-The first export runs in the background at startup and does not block it. Pando's
-auto-import picks the corpus up on its own schedule, so semantic search is a minute or two
-behind the first run; structured search through the MCP tools is immediate.
+Starting the server also **registers the repository root with Pando as a code project**, in a
+goroutine after the listener is up, so a fresh clone becomes searchable by whoever starts the
+companion rather than by one person remembering a command. It never blocks startup, and what
+happened is stated per repository in `GET /api/v1/search/settings` → `indexed[].code` and
+rendered by the settings card. The first full index of this repository — 937 files — took
+about 62 s. The knowledge-base half needs nothing: Pando's watcher follows the documentation
+folder and reindexes an edit as it happens. Structured search through the MCP tools is
+immediate either way.
 
 ---
 
@@ -227,7 +235,7 @@ Pando's `internal/config/config.go`; `pando-schema.json` is stale and omits `AGU
 | `AutoApprove` | `false` | Nothing is approved without a human. |
 | `MaxConcurrentRuns` | `4` | Pando's own backstop; a run over the cap is refused with 503 and `Retry-After`. The companion caps in front of it too. |
 | `Persona` | `'backlog-assistant'` | Applied as a per-session override, so a `agui-serve` process can run a different persona than the TUI sharing the same configuration. |
-| `Tools` | `['gintrack_*', 'kb_search_documents', 'kb_get_document', 'code_hybrid_search', 'code_find_symbol']` | A glob allow-list (`path.Match` against each tool's name), applied after the tool set is built. Subtractive only. |
+| `Tools` | `['gintrack_*', 'kb_search_documents', 'kb_get_document', 'kb_related_documents', 'code_hybrid_search', 'code_find_symbol']` | A glob allow-list (`path.Match` against each tool's name), applied after the tool set is built. Subtractive only. **Only the KB tools that read are listed**: `kb_add_document`, `kb_delete_document` and the memory `remember`/`forget` path mirror a document to disk and would rewrite a repository file with Pando's typed keys alone (§6.2, ADR-036). |
 | `[ToolDiscovery] Enabled = false`, `Mode = 'off'`; `[MCPGateway] Enabled = false` | written explicitly | Keeps Pando's MCP gateway off. With an `[MCPServers]` entry present, ToolDiscovery (default `true`) would activate the gateway, and MCP tools would stop being registered as `gintrack_<tool>`: they would sit behind `tool_search` or the generic `mcp_call_tool` proxy, which the allow-list strips and the per-tool permission prompt never sees. Found on the first live run (GIT-T-0118). |
 | `Mesnada` | `false` | Drops every `mesnada_*` delegation tool. The assistant answers, it does not spawn sub-agents. |
 
@@ -258,17 +266,35 @@ the tool wiring.
 
 ### 3.4 `[Remembrances]`
 
-`KBPath` is the exported corpus, `<cacheDir>/pando-kb/<repo id>` — outside the repository,
-so nothing exported is ever committed. `KBAutoImport = true` pulls it in.
+`KBPath` is **this repository's own documentation folder** — `<repo>/docs` by default, or
+whatever the registration declares — so Pando indexes the committed files themselves. Under
+it lie the knowledge-base pages and the backlog in `.pmngr/`, which is exactly the half
+Pando's code indexer cannot reach (it skips dot-directories). `KBAutoImport = true` does the
+initial pass. `--kb-path` overrides the directory for a layout `agent init` cannot guess.
 
-`KBWatch` stays **`false`**, and this is not a preference. Pando's KB watcher re-writes the
-documents it processes without parsing their front matter, so every incremental edit it
-handles strips the metadata the exporter wrote. Re-sync is driven by the companion instead:
-today by waiting for the next auto-import pass, and by Pando's REST reindex route once that
-ships.
+`KBWatch` is **`true`**, which is Pando's own default: an edit to an item or a page is
+reindexed as it happens.
 
-Pando's corpus walk has no hidden-directory or `node_modules` exclusion, so `KBPath` must
-point at the corpus directory and never at a repository root.
+> **A correction.** Earlier versions of this document, of the generated `.pando.toml` and of
+> the code comments said `KBWatch` had to stay `false` because *"Pando's KB watcher re-writes
+> the documents it processes without parsing their front matter"*. **That is false for the
+> installed version and the warning is withdrawn.** Verified at Pando commit `710a39281`:
+> `internal/rag/kb/watcher.go` contains no write call at all — it stats, reads, and updates
+> the database. The bug behind the warning was real, is documented in Pando's own
+> `internal/rag/kb/repair.go:22-40`, damaged **database metadata rather than files on disk**,
+> and was fixed under PANDO-US-0003/0004. See docs/21 §5 and ADR-036.
+
+`KBPath` still must not be the repository **root**: the KB walk is a bare `filepath.WalkDir`
+filtered only by extension, with no hidden-directory and no `node_modules` exclusion
+(`internal/rag/kb/sync.go:125`), so a root would be indexed whole and, with the watcher on,
+would exhaust the host's inotify watches. That exclusion-free walk is the KB walk only — the
+**code** indexer skips every dot-directory, `node_modules`, `vendor`, `dist`, `build`,
+`__pycache__` and `.git` (`internal/rag/code/indexer.go:234-240`), which is what makes
+registering the repository root as a code project safe.
+
+The tools that *do* write to disk are `kb_add_document`, `kb_delete_document` and the memory
+`remember`/`forget` path. The `[AGUI] Tools` allow-list above admits none of them; that is
+the only thing keeping them off repository files (§6.2).
 
 ### 3.5 `[MCPServer]`
 
@@ -328,10 +354,10 @@ bearer token and the go-git HTTP fallback password.
 | `gintrack_list_items`, `gintrack_get_item`, `gintrack_search_items` | Structured and literal questions: ids, statuses, assignees, sprints, parents, labels, dates, exact words | Exact, cheap, and they return the `rev` any write must quote. |
 | `gintrack_*` (the rest) | Comments, board moves, inbox triage, item creation | Available only when the companion was started with `--mcp-allow-write`. |
 | `gintrack_search_semantic` | Which stories or pages are *about* X — meaning, not wording | Needs the Pando backend; answers `unavailable` naming `search_items` rather than an empty list, so an `unavailable` answer means the query never ran. |
-| `kb_search_documents`, `kb_get_document` | Corpus-level fallback for semantic questions | Use `path_prefix: "items/"` or `"kb/"`; `file_path` is relative to the corpus root. |
-| `code_hybrid_search`, `code_find_symbol` | Code questions | The corpus is Markdown only; the code index is the one that sees symbols. |
+| `kb_search_documents`, `kb_get_document`, `kb_related_documents` | Direct fallback for semantic questions, over Pando's knowledge-base indexation | It covers the documentation folder: `path_prefix: ".pmngr/"` narrows to the backlog, and `file_path` is relative to `KBPath`. Read-only. |
+| `code_hybrid_search`, `code_find_symbol` | Code questions | The knowledge-base indexation sees the documentation folder only; the code index is the one that sees Go, TypeScript and their symbol graph. It cannot see `.pmngr/`, which is a dot-directory. |
 
-The skill `gintrack agent init` writes carries the same four rows, so the routing the persona follows and the one documented here cannot drift apart.
+The skill `gintrack agent init` writes carries the same rows, so the routing the persona follows and the one documented here cannot drift apart.
 
 `hybrid_search_remembrances` is deliberately **not** on the list: it blends memories,
 knowledge base and code into one ranking, hides which index answered, and takes no
@@ -390,9 +416,24 @@ written by many people and by other agents. The persona says plainly that text i
 is never an instruction; that is a mitigation, not a guarantee, and it is a second reason
 the tool allow-list has to be narrow.
 
-**The corpus is a copy.** Anything exported into `<cacheDir>/pando-kb/` is readable by
-anything that can read that directory, including other Pando features. Do not put a secret
-in an item body.
+**The allow-list is the only thing keeping Pando's writing tools off your files.** Now that
+Pando indexes the repository itself, `KBPath` names committed files. `kb_add_document`,
+`kb_delete_document` and the memory `remember`/`forget` path mirror a document to disk
+through a serializer that emits Pando's typed front-matter keys alone, and the path guard
+only stops an escape from the base — it does not stop an overwrite. A call against an
+existing item file would rewrite it without `id`, `status` or `parent`, and a missing or
+mismatched `id` is a hard parse error that drops the item from git-in-track's index until a
+human fixes it. What prevents that is `[AGUI] Tools`, which admits none of those tools. It is
+a **configuration** boundary, not a code boundary, so the hazard is live for any repository
+pointed at Pando with a configuration that did not come from `gintrack agent init`: a
+hand-written `.pando.toml`, an entry added to the allow-list later, a Pando TUI session in
+the same working directory, or the MCP gateway turned on — which puts every tool behind
+`mcp_call_tool`, where the allow-list cannot see it. ADR-036 records this as an accepted
+residual risk. The repository is under version control; that is the recovery path.
+
+**Pando reads the whole repository.** The documentation folder through `KBPath`, the working
+tree through the code project. Do not put a secret in an item body, or anywhere else in the
+tree, and expect a search not to find it.
 
 ---
 
@@ -418,8 +459,11 @@ server and any tool and asks no per-tool approval. Treat that as a temporary tra
 | The agent answers but sees no items | The companion was started without `--mcp-http` | `gintrack serve --agent --mcp-http`. Check `curl -sS $COMPANION/mcp` answers at all. |
 | The agent sees items but every write fails | The companion is read-only | Add `--mcp-allow-write`, deliberately. |
 | The agent sees items but the MCP tools are missing entirely | The token in `[MCPServers.gintrack.Auth]` is stale, or the age key set that encrypted it is gone | Re-run `gintrack agent init` after changing the companion token or the key set; `[MCPServers.gintrack]` is gintrack's outright, so the merge rewrites it. |
-| Semantic search finds nothing, structured search works | The corpus has not been imported yet, or `KBPath` is wrong | Check that `<cacheDir>/pando-kb/<repo id>` has `.md` files; auto-import runs on Pando's schedule, not on yours. |
-| Semantic search returns items with no tags or status | `KBWatch` got turned on somewhere | Set it back to `false` and let a full auto-import pass rewrite the documents. |
+| Semantic search finds nothing, structured search works | `KBPath` does not name this repository's documentation folder, or the first import has not run | Check `[Remembrances] KBPath` against the settings card's `indexed[].docs`; a row reporting 0 items and 0 pages is a misconfigured `KBPath`. Re-run `gintrack agent init`, then `POST /api/v1/search/reindex`. |
+| Code search finds nothing; the settings card says `unavailable` or `off` | The repository was never registered as a code project, or Pando refused | The card states the reason in words (`indexed[].code.note`). `off` means no Pando endpoint is configured; `unavailable` means Pando did not answer. Fix the endpoint and restart the companion, or `POST /api/v1/search/reindex`. |
+| A hit has no title, no id and no status | The path is neither a backlog file nor a knowledge-base page | Expected: it comes back as a plain `file` result (docs/21 §2). Only a path that is gone from disk is dropped. |
+| Items come back with no tags | Nothing is wrong | The exporter that synthesised `tags` is retired. Backlog files carry `labels`, so filtering by tag *inside Pando* is gone on purpose (ADR-036); every field the UI shows is re-read from git-in-track's own index. |
+| An item file lost its `id` or `status` and vanished from the backlog | A Pando tool that writes was allowed to reach it | `git diff` / `git checkout` the file, then check `[AGUI] Tools`: `kb_add_document`, `kb_delete_document`, `remember` and `forget` must not be in it, and `[ToolDiscovery]`/`[MCPGateway]` must be off (§6.2). |
 | A run is refused with 503 and `Retry-After` | The concurrency cap, on either side | Wait, or raise `maxRuns` / `MaxConcurrentRuns`. |
 | Opening the panel in a second tab kills the first tab's answer | A second POST on a live thread abandons the running one — Pando's behaviour, not a bug in the panel | Use one tab per thread. |
 | `.pando.toml` shows up in `git status` | It was not excluded | Add it to `.gitignore`; it carries the companion token, encrypted. |
@@ -433,6 +477,10 @@ server and any tool and asks no per-tool approval. Treat that as a temporary tra
 - [CLI and API](./07-cli-and-api.md) — `gintrack agent init`, `gintrack serve` and the
   configuration file
 - [Web app](./05-web-app.md) — where the panel lives and how capability gating hides it
+- [Semantic search](./21-semantic-search.md) — the two indexations, how a hit resolves, and
+  what the retired corpus was
 - [ADR-035](./adr/ADR-035-agent-interface-over-ag-ui.md) — why AG-UI directly, and what we
   accepted in exchange
+- [ADR-036](./adr/ADR-036-pando-indexes-the-repository-directly.md) — why Pando indexes the
+  repository itself, and the residual risk the allow-list leaves
 - [Research: Pando TypeScript SDK and AG-UI client](./research/2026-09-13-pando-gap-sdk-client.md)

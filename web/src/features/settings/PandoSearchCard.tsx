@@ -3,9 +3,9 @@
  *
  * The card exists to answer one complaint: "semantic search returns nothing".
  * Everything it renders is a step of that diagnosis — where Pando is, whether
- * it answered *just now*, where the corpus was written, when it was last
- * exported and what the last reindex actually did — so that the answer is read
- * here rather than out of the companion's log.
+ * it answered *just now*, which directories it was pointed at, how much this
+ * companion's own index finds there and what the last reindex actually did —
+ * so that the answer is read here rather than out of the companion's log.
  *
  * Three things shape it.
  *
@@ -15,11 +15,11 @@
  * card says where a token comes from and offers no input for it, which is a
  * stronger promise than a masked field.
  *
- * **The knowledge-base half is honest.** Pando has no filesystem watcher for
- * the corpus (`KBWatch` is off by design), so without a REST URL a reindex
- * re-exports the corpus and waits for Pando's next import pass. The job says so
- * in `kbNote` and this card repeats it word for word rather than reporting a
- * completed index operation that did not happen.
+ * **The knowledge-base half is honest.** Pando's reindex lives on its REST
+ * surface only, so without a REST URL there is no route to ask for one and
+ * nothing is reindexed on demand. The job says so in `kbNote` and this card
+ * repeats it word for word rather than reporting an index operation that did
+ * not happen.
  *
  * **Progress arrives, it is not polled.** `POST /search/reindex` answers `202`
  * with a job and the work runs in the background, reporting on the hub's
@@ -32,6 +32,7 @@ import { useCallback, useEffect, useId, useState } from 'react';
 
 import {
   ProviderError,
+  type SearchCodeIndex,
   type SearchReindexPhase,
   type SearchSettings,
   type SearchSettingsPatch,
@@ -56,7 +57,6 @@ import { useToast } from '@/components/ui/toast';
 
 /** What a reindex phase is called on screen. */
 const PHASE_LABELS: Record<SearchReindexPhase, string> = {
-  export: 'Exporting the corpus',
   code: 'Indexing the source tree',
   kb: 'Knowledge base',
   completed: 'Finished',
@@ -65,7 +65,7 @@ const PHASE_LABELS: Record<SearchReindexPhase, string> = {
 
 /** The phases a job is still working in. */
 function isRunning(phase: SearchReindexPhase | undefined): boolean {
-  return phase === 'export' || phase === 'code' || phase === 'kb';
+  return phase === 'code' || phase === 'kb';
 }
 
 /**
@@ -81,7 +81,7 @@ function searchSettingsMessage(error: unknown): string {
     case 'search_reindex_running':
       return 'A reindex is already running. It was left alone — wait for it to finish, then start another one.';
     case 'search_not_configured':
-      return 'There is nothing to index yet: this companion has neither a corpus directory nor a Pando endpoint. Fill in the MCP URL below and save, then reindex.';
+      return 'There is nothing to index yet: this companion has no Pando endpoint. Fill in the MCP URL below and save, then reindex.';
     case 'not_supported':
       return 'This runtime cannot configure semantic search. Run `gintrack serve` to use it.';
     case 'validation_failed':
@@ -103,7 +103,6 @@ type Draft = {
   mcpUrl: string;
   restUrl: string;
   projectId: string;
-  corpusDir: string;
   allowRemote: boolean;
 };
 
@@ -112,16 +111,44 @@ function draftOf(settings: SearchSettings): Draft {
     mcpUrl: settings.mcpUrl,
     restUrl: settings.restUrl,
     projectId: settings.projectId,
-    corpusDir: settings.corpusDir,
     allowRemote: settings.allowRemote,
   };
 }
 
 /**
  * Gate: the card exists only where the runtime has the settings surface at
- * all. Browser-only mode has no process to export a corpus or hold a Pando
- * token, so it has no card — not an empty one.
+ * all. Browser-only mode has no process to reach Pando or hold a token, so it
+ * has no card — not an empty one.
  */
+/**
+ * What became of one repository's code-project registration.
+ *
+ * Registration happens in the background when the companion starts, so a Pando
+ * that is down or slow never holds the server up — and the reason there is no
+ * code search has to be readable somewhere. This is that somewhere
+ * (story GIT-US-0098).
+ */
+function CodeIndexCell({ code }: { code: SearchCodeIndex | undefined }) {
+  if (code === undefined) {
+    return <span className="text-muted-foreground">Not registered yet</span>;
+  }
+  const tone =
+    code.status === 'unavailable' ? 'destructive' : code.status === 'off' ? 'outline' : 'success';
+  return (
+    <span className="flex flex-col gap-1">
+      <Badge variant={tone} size="sm">
+        {code.status}
+      </Badge>
+      {code.project === '' ? null : (
+        <code className="break-all text-2xs text-muted-foreground">{code.project}</code>
+      )}
+      {code.note === undefined || code.note === '' ? null : (
+        <span className="text-2xs text-muted-foreground">{code.note}</span>
+      )}
+    </span>
+  );
+}
+
 export function PandoSearchCard() {
   const provider = useOptionalProvider();
   if (!provider?.capabilities.searchSettings) return null;
@@ -136,7 +163,6 @@ function PandoSearchSettings() {
     mcpUrl: '',
     restUrl: '',
     projectId: '',
-    corpusDir: '',
     allowRemote: false,
   });
   const [error, setError] = useState<string | null>(null);
@@ -152,7 +178,6 @@ function PandoSearchSettings() {
   const mcpId = useId();
   const restId = useId();
   const projectFieldId = useId();
-  const corpusId = useId();
   const remoteId = useId();
 
   const load = useCallback(async () => {
@@ -199,7 +224,6 @@ function PandoSearchSettings() {
       mcpUrl: draft.mcpUrl.trim(),
       restUrl: draft.restUrl.trim(),
       projectId: draft.projectId.trim(),
-      corpusDir: draft.corpusDir.trim(),
       allowRemote: draft.allowRemote,
     };
     provider
@@ -270,8 +294,8 @@ function PandoSearchSettings() {
         <div className="space-y-1">
           <CardTitle>Semantic search (Pando)</CardTitle>
           <CardDescription>
-            Where Pando is, where the exported corpus lives and whether it is current. Search falls
-            back to the built-in index whenever this half is not answering.
+            Where Pando is, what it indexes and whether it answers. Search falls back to the
+            built-in index whenever this half is not answering.
           </CardDescription>
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -321,8 +345,8 @@ function PandoSearchSettings() {
               />
               <p className="text-muted-foreground">
                 Optional, and it needs <code>pando serve</code>. With it, a reindex really reindexes
-                the knowledge base and reports the counts; without it, the corpus is re-exported and
-                waits for Pando&rsquo;s next import pass.
+                the knowledge base and reports the counts; without it there is no route to ask for
+                one, and Pando&rsquo;s own watcher is what keeps its index current.
               </p>
             </div>
 
@@ -340,23 +364,6 @@ function PandoSearchSettings() {
               <p className="text-muted-foreground">
                 The project the source-tree index lives under. Empty means Pando&rsquo;s own
                 sanitized repository path.
-              </p>
-            </div>
-
-            <div className="space-y-1">
-              <Label htmlFor={corpusId}>Corpus directory</Label>
-              <Input
-                id={corpusId}
-                value={draft.corpusDir}
-                spellCheck={false}
-                onChange={(event) => {
-                  setDraft((current) => ({ ...current, corpusDir: event.target.value }));
-                }}
-              />
-              <p className="text-muted-foreground">
-                An absolute path. Each repository gets a folder of its own under it, which is the
-                same path <code>gintrack agent init</code> writes into Pando&rsquo;s{' '}
-                <code>KBPath</code>.
               </p>
             </div>
           </div>
@@ -421,10 +428,10 @@ function PandoSearchSettings() {
         </p>
 
         <div className="space-y-2">
-          <h3 className="font-medium">Exported corpus</h3>
-          {settings.corpora.length === 0 ? (
+          <h3 className="font-medium">What Pando indexes</h3>
+          {settings.indexed.length === 0 ? (
             <p className="text-muted-foreground">
-              No repository has exported a corpus yet. Reindex to write one.
+              No repository is mounted, so there is nothing to index.
             </p>
           ) : (
             <div className="overflow-x-auto">
@@ -432,33 +439,41 @@ function PandoSearchSettings() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Repository</TableHead>
-                    <TableHead>Directory</TableHead>
-                    <TableHead>Last export</TableHead>
-                    <TableHead>Documents</TableHead>
-                    <TableHead>Written</TableHead>
-                    <TableHead>Removed</TableHead>
-                    <TableHead>Skipped</TableHead>
+                    <TableHead>Code project (working tree)</TableHead>
+                    <TableHead>Code index</TableHead>
+                    <TableHead>Knowledge base (KBPath)</TableHead>
+                    <TableHead>Items</TableHead>
+                    <TableHead>Pages</TableHead>
+                    <TableHead>Comments</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {settings.corpora.map((corpus) => (
-                    <TableRow key={corpus.repo}>
-                      <TableCell className="font-medium">{corpus.repo}</TableCell>
-                      <TableCell className="break-all font-mono text-xs">{corpus.dir}</TableCell>
-                      <TableCell>{when(corpus.last.at)}</TableCell>
-                      <TableCell>{corpus.last.items + corpus.last.pages}</TableCell>
-                      <TableCell>{corpus.last.written}</TableCell>
-                      <TableCell>{corpus.last.removed}</TableCell>
-                      <TableCell>{corpus.last.skipped}</TableCell>
+                  {settings.indexed.map((repo) => (
+                    <TableRow key={repo.repo}>
+                      <TableCell className="font-medium">{repo.repo}</TableCell>
+                      <TableCell className="break-all font-mono text-xs">{repo.root}</TableCell>
+                      <TableCell>
+                        <CodeIndexCell code={repo.code} />
+                      </TableCell>
+                      <TableCell className="break-all font-mono text-xs">
+                        {repo.docs.length === 0 ? '—' : repo.docs.join(', ')}
+                      </TableCell>
+                      <TableCell>{repo.items}</TableCell>
+                      <TableCell>{repo.pages}</TableCell>
+                      <TableCell>{repo.comments}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
               </Table>
             </div>
           )}
-          <p className="text-muted-foreground" data-testid="pando-corpus-summary">
-            {settings.documents} exported document{settings.documents === 1 ? '' : 's'}, last
-            written {when(settings.lastExport ?? '')}.
+          <p className="text-muted-foreground" data-testid="pando-index-summary">
+            Pando reads these files where they are committed; nothing is copied anywhere else. The
+            backlog lives under <code>.pmngr/</code> inside the knowledge-base directory, so one
+            indexation covers items, comments and pages, and the working tree is registered
+            separately as a code project when this companion starts. The code indexation skips
+            dot-directories, so it never sees the backlog — the two do not overlap except on the
+            documentation itself, where a file found twice is shown once.
           </p>
         </div>
 
@@ -490,13 +505,10 @@ function PandoSearchSettings() {
             )}
             {job.repos.map((repo) => (
               <p key={repo.repo} className="text-muted-foreground">
-                {repo.repo}: {repo.export.written} written, {repo.export.removed} removed
+                {repo.repo}:{' '}
                 {repo.codeJob === undefined || repo.codeJob === ''
-                  ? ''
-                  : `, code job ${repo.codeJob}`}
-                {repo.exportError === undefined || repo.exportError === ''
-                  ? ''
-                  : ` — export failed: ${repo.exportError}`}
+                  ? 'no code job'
+                  : `code job ${repo.codeJob}`}
                 {repo.codeError === undefined || repo.codeError === ''
                   ? ''
                   : ` — code index failed: ${repo.codeError}`}

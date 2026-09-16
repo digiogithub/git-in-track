@@ -5,7 +5,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -15,28 +14,26 @@ import (
 	"github.com/digiogithub/git-in-track/internal/config"
 	"github.com/digiogithub/git-in-track/internal/core"
 	"github.com/digiogithub/git-in-track/internal/pando"
-	"github.com/digiogithub/git-in-track/internal/pandosync"
 )
 
 // The problem codes of the search surface.
 const (
-	// codeSearchReindexRunning means a reindex is already walking the corpus.
-	// It is a 409: the caller waits for the running job rather than starting a
-	// second one that would fight it for the same files.
+	// codeSearchReindexRunning means a reindex is already running. It is a
+	// 409: the caller waits for the running job rather than starting a second
+	// one that would fight it for the same index.
 	codeSearchReindexRunning = "search_reindex_running"
-	// codeSearchNotConfigured means no Pando endpoint and no corpus directory
-	// are configured, so there is nothing to reindex.
+	// codeSearchNotConfigured means no Pando endpoint is configured, so there
+	// is nothing to reindex.
 	codeSearchNotConfigured = "search_not_configured"
 )
 
-// eventSearchProgress is the hub topic both the startup export and a reindex
-// report on. Its payload is shaped like sync.progress (docs/07 section 5.6) so
-// that a client already following that stream needs no second renderer.
+// eventSearchProgress is the hub topic a reindex reports on. Its payload is
+// shaped like sync.progress (docs/07 section 5.6) so that a client already
+// following that stream needs no second renderer.
 const eventSearchProgress = "search.progress"
 
 // The phases eventSearchProgress reports, in the order a reindex walks them.
 const (
-	searchPhaseExport = "export"
 	searchPhaseCode   = "code"
 	searchPhaseKB     = "kb"
 	searchPhaseDone   = "completed"
@@ -48,8 +45,7 @@ const (
 var searchJobCounter atomic.Uint64
 
 // searchState owns everything behind /api/v1/search: the Pando client, the
-// corpus exporter of every mounted repository, the running `search.pando`
-// settings and the single reindex slot.
+// running `search.pando` settings and the single reindex slot.
 //
 // It always exists. A companion with no Pando configured holds a state whose
 // client is nil, which answers "core" for the backend and `not_configured` for
@@ -60,10 +56,6 @@ type searchState struct {
 	hub        *Hub
 	now        func() time.Time
 	configPath string
-	// corpusBase is the default corpus root, `<index.cacheDir>/pando-kb`. The
-	// per-repository directory under it is what `gintrack agent init` writes
-	// into Pando's KBPath, so the two must agree: <base>/<repo id>.
-	corpusBase string
 
 	mu sync.RWMutex
 	// settings is the running `search.pando` section. It carries the resolved
@@ -73,9 +65,13 @@ type searchState struct {
 	// was refused (a non-loopback host without allowRemote).
 	client   pandoAPI
 	searcher *pandoSearcher
-	// exporters is one corpus exporter per ready mount, keyed by mount id. It
-	// is empty when no corpus directory could be resolved.
-	exporters map[string]*pandosync.Exporter
+	// codeIndex is what became of each repository's code-project registration,
+	// keyed by mount id. It is what the settings card states when there is no
+	// code search (GIT-US-0098).
+	codeIndex map[string]codeIndexView
+
+	// registering guards the one registration pass this process runs.
+	registering atomic.Bool
 
 	// degraded remembers whether the last search fell back, so the log line is
 	// written once per state change rather than once per request.
@@ -85,16 +81,6 @@ type searchState struct {
 	jobMu   sync.Mutex
 	running *reindexJob
 	last    *reindexJob
-
-	// syncMu guards the corpus-sync lifecycle below.
-	syncMu sync.Mutex
-	// syncCtx is the server's lifetime context, handed over by Start. It is
-	// nil until then, which is what keeps a state built at construction from
-	// exporting before the server is up.
-	syncCtx context.Context //nolint:containedctx // the lifetime of a background follower, not of a request
-	// following reports whether the hub follower is already running, so that a
-	// settings change starts at most one.
-	following bool
 }
 
 // reindexJob is one run of POST /api/v1/search/reindex.
@@ -106,8 +92,8 @@ type reindexJob struct {
 	Repos     []reindexRepo       `json:"repos"`
 	KB        *pando.ReindexStats `json:"kb,omitempty"`
 	// KBNote says what happened to the knowledge-base half in words, because
-	// without Pando's REST reindex route the honest answer is "re-exported,
-	// awaiting Pando's next import", not "reindexed".
+	// without Pando's REST reindex route the honest answer is "nothing was
+	// asked to reindex", not "reindexed".
 	KBNote string `json:"kbNote,omitempty"`
 	Error  string `json:"error,omitempty"`
 }
@@ -115,16 +101,11 @@ type reindexJob struct {
 // reindexRepo is the outcome of one repository within a reindex.
 type reindexRepo struct {
 	Repo string `json:"repo"`
-	// Export is the corpus export of this repository.
-	Export pandosync.Stats `json:"export"`
-	// ExportError is the export failure, empty on success.
-	ExportError string `json:"exportError,omitempty"`
 	// CodeJob is the Pando job id of the source-tree index, empty when the
 	// code half did not run.
 	CodeJob string `json:"codeJob,omitempty"`
-	// CodeError is the code-index failure. It is reported separately from
-	// ExportError on purpose: a Pando that is down must not invalidate a
-	// corpus export that worked.
+	// CodeError is the code-index failure of this repository alone: one
+	// repository Pando refused must not be read as the whole job failing.
 	CodeError string `json:"codeError,omitempty"`
 }
 
@@ -139,16 +120,14 @@ func newSearchState(opts Options, repos *registry, hub *Hub, log *slog.Logger, n
 		hub:        hub,
 		now:        now,
 		configPath: opts.ConfigPath,
-		corpusBase: opts.SearchCorpusDir,
 		settings:   opts.Search.Pando,
-		exporters:  map[string]*pandosync.Exporter{},
 	}
 	s.rebuild()
 	return s
 }
 
-// rebuild reconciles the client, the searcher and the exporters with the
-// running settings. It is called at construction and after a settings change.
+// rebuild reconciles the client and the searcher with the running settings. It
+// is called at construction and after a settings change.
 func (s *searchState) rebuild() {
 	s.mu.Lock()
 	settings := s.settings
@@ -182,7 +161,7 @@ func (s *searchState) rebuild() {
 
 	var searcher *pandoSearcher
 	if client != nil {
-		searcher = &pandoSearcher{client: client, repos: s.repos, log: s.log}
+		searcher = &pandoSearcher{client: client, repos: s.repos, log: s.log, projects: s.codeProjects()}
 	}
 	s.mu.Lock()
 	s.client, s.searcher = client, searcher
@@ -196,37 +175,6 @@ func (s *searchState) rebuild() {
 	} else {
 		s.repos.workspace().SetSemanticSearcher(searcher)
 	}
-	s.rebuildExporters()
-}
-
-// rebuildExporters opens one corpus exporter per ready mount under the
-// configured corpus root. A repository whose exporter cannot be opened is
-// logged and left without one; the others still export.
-func (s *searchState) rebuildExporters() {
-	base := s.corpusRoot()
-	next := map[string]*pandosync.Exporter{}
-	if base != "" {
-		for _, m := range s.repos.ready() {
-			exp, err := pandosync.New(pandosync.Options{
-				Dir:        filepath.Join(base, m.id),
-				Source:     m.vlt,
-				Logger:     s.log,
-				Clock:      s.now,
-				OnProgress: s.progressFor(m.id),
-			})
-			if err != nil {
-				s.log.Warn("corpus export is off for this repository", "repo", m.id, "error", err)
-				continue
-			}
-			next[m.id] = exp
-		}
-	}
-	s.mu.Lock()
-	s.exporters = next
-	s.mu.Unlock()
-	// Exporters that appear after start — a corpus enabled through the
-	// settings — still have to be exported and followed.
-	s.syncNow()
 }
 
 // projectID is the Pando code project the semantic surface talks to.
@@ -246,41 +194,21 @@ func (s *searchState) projectID() string {
 	return derivedProjectID(s.repos)
 }
 
-// derivedProjectID sanitizes the path of the repository the workspace is built
-// around — the first ready mount, in mount order — with Pando's own rule. A
-// workspace with no ready mount has no path to derive one from, and answers
-// the empty string.
+// derivedProjectID is the project id of the repository the workspace is built
+// around: the first ready mount, in mount order. It is the id the registration
+// registers that repository under, so the search and the registration can never
+// disagree about which project is being read (GIT-US-0098). A workspace with no
+// ready mount answers the empty string.
 func derivedProjectID(repos *registry) string {
 	if repos == nil {
 		return ""
 	}
 	for _, m := range repos.ready() {
-		if id := pando.SanitizeProjectID(m.path); id != "" {
+		if id := codeProjectID(m); id != "" {
 			return id
 		}
 	}
 	return ""
-}
-
-// corpusRoot is the directory the per-repository corpora live under:
-// `search.pando.corpusDir` when set, else `<index.cacheDir>/pando-kb`.
-func (s *searchState) corpusRoot() string {
-	s.mu.RLock()
-	dir := strings.TrimSpace(s.settings.CorpusDir)
-	s.mu.RUnlock()
-	if dir != "" {
-		return dir
-	}
-	return s.corpusBase
-}
-
-// progressFor turns the exporter's progress callback into a hub event. The
-// startup export reports under the "startup" operation id; a reindex replaces
-// it with its own job id through progressJob.
-func (s *searchState) progressFor(repo string) func(pandosync.Progress) {
-	return func(p pandosync.Progress) {
-		s.publishProgress("startup", repo, searchPhaseExport, p.Done, p.Total, "")
-	}
 }
 
 // publishProgress emits one search.progress frame.
@@ -317,37 +245,6 @@ func (s *searchState) semantic() *pandoSearcher {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.searcher
-}
-
-// exporterFor returns the corpus exporter of one mount.
-func (s *searchState) exporterFor(id string) (*pandosync.Exporter, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	exp, ok := s.exporters[id]
-	return exp, ok
-}
-
-// allExporters returns the exporters in mount order, so a reindex walks the
-// repositories the way the banner lists them.
-func (s *searchState) allExporters() []struct {
-	repo string
-	exp  *pandosync.Exporter
-} {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	out := make([]struct {
-		repo string
-		exp  *pandosync.Exporter
-	}, 0, len(s.exporters))
-	for _, m := range s.repos.ready() {
-		if exp, ok := s.exporters[m.id]; ok {
-			out = append(out, struct {
-				repo string
-				exp  *pandosync.Exporter
-			}{m.id, exp})
-		}
-	}
-	return out
 }
 
 // backend names the search backend currently in force, which is the value of
@@ -390,26 +287,18 @@ type searchSettingsView struct {
 	// Backend is the search backend in force: "core" or "pando".
 	Backend string `json:"backend"`
 	// Configured reports whether a Pando endpoint is set at all.
-	Configured bool   `json:"configured"`
-	MCPURL     string `json:"mcpUrl,omitempty"`
-	RESTURL    string `json:"restUrl,omitempty"`
-	ProjectID  string `json:"projectId,omitempty"`
-	// CorpusDir is the resolved corpus root, the directory the per-repository
-	// corpora are written under.
-	CorpusDir   string `json:"corpusDir,omitempty"`
+	Configured  bool   `json:"configured"`
+	MCPURL      string `json:"mcpUrl,omitempty"`
+	RESTURL     string `json:"restUrl,omitempty"`
+	ProjectID   string `json:"projectId,omitempty"`
 	AllowRemote bool   `json:"allowRemote"`
 	// Reachable is the outcome of a live probe of the MCP endpoint. It is null
 	// when no endpoint is configured.
 	Reachable *bool `json:"reachable"`
 	// ReachableError is why the probe failed, empty when it did not.
 	ReachableError string `json:"reachableError,omitempty"`
-	// Corpora is the last full export of every mounted repository.
-	Corpora []searchCorpusView `json:"corpora"`
-	// Documents is the exported document count across every repository.
-	Documents int `json:"documents"`
-	// LastExport is the most recent full export across every repository, zero
-	// when none has finished yet.
-	LastExport *time.Time `json:"lastExport"`
+	// Indexed says what Pando is pointed at for every mounted repository.
+	Indexed []searchIndexedView `json:"indexed"`
 	// Reindex is the running job, or the last finished one.
 	Reindex *reindexJob `json:"reindex,omitempty"`
 	// Persisted says whether a PATCH reached the configuration file. It is
@@ -417,11 +306,29 @@ type searchSettingsView struct {
 	Persisted bool `json:"persisted"`
 }
 
-// searchCorpusView is one repository's corpus.
-type searchCorpusView struct {
-	Repo string          `json:"repo"`
-	Dir  string          `json:"dir"`
-	Last pandosync.Stats `json:"last"`
+// searchIndexedView is what Pando indexes for one mounted repository.
+//
+// There is no exported copy to report on any more (GIT-EP-0020), so the honest
+// answer to "is my search current?" is where Pando was pointed and how much
+// git-in-track's own index found there: a documentation directory holding no
+// items is a misconfigured KBPath, and that is what this row makes visible.
+type searchIndexedView struct {
+	Repo string `json:"repo"`
+	// Root is the working tree, the path registered as a Pando code project.
+	Root string `json:"root"`
+	// Docs are the documentation directories of the repository. Pando's
+	// KBPath points at one of them, and the backlog lives under it in
+	// `.pmngr/`, so one KB indexation covers both.
+	Docs []string `json:"docs"`
+	// Items, Pages and Comments are what this companion's own index holds
+	// under those directories.
+	Items    int `json:"items"`
+	Pages    int `json:"pages"`
+	Comments int `json:"comments"`
+	// Code is the repository's code-project registration: the project it was
+	// registered under, or why there is no code search. It is absent until the
+	// registration that starts with the server has run.
+	Code *codeIndexView `json:"code,omitempty"`
 }
 
 // view renders the settings. probe controls whether the reachability check
@@ -438,18 +345,20 @@ func (s *searchState) view(ctx context.Context, probe bool) searchSettingsView {
 		MCPURL:      settings.MCPURL,
 		RESTURL:     settings.RESTURL,
 		ProjectID:   s.projectID(),
-		CorpusDir:   s.corpusRoot(),
 		AllowRemote: settings.AllowRemote,
-		Corpora:     []searchCorpusView{},
+		Indexed:     []searchIndexedView{},
 	}
-	for _, e := range s.allExporters() {
-		last := e.exp.LastExport()
-		out.Corpora = append(out.Corpora, searchCorpusView{Repo: e.repo, Dir: e.exp.Dir(), Last: last})
-		out.Documents += last.Items + last.Pages
-		if !last.At.IsZero() && (out.LastExport == nil || last.At.After(*out.LastExport)) {
-			at := last.At
-			out.LastExport = &at
+	for _, m := range s.repos.ready() {
+		stats := m.vlt.Stats()
+		docs := m.docsFolders
+		if len(docs) == 0 && m.docs != "" {
+			docs = []string{m.docs}
 		}
+		out.Indexed = append(out.Indexed, searchIndexedView{
+			Repo: m.id, Root: m.path, Docs: docs,
+			Items: stats.Items, Pages: stats.Pages, Comments: stats.Comments,
+			Code: s.codeIndexOf(m.id),
+		})
 	}
 	if probe && out.Configured {
 		reachable := false
@@ -484,7 +393,6 @@ type searchSettingsPatch struct {
 	MCPURL      *string `json:"mcpUrl,omitempty"`
 	RESTURL     *string `json:"restUrl,omitempty"`
 	ProjectID   *string `json:"projectId,omitempty"`
-	CorpusDir   *string `json:"corpusDir,omitempty"`
 	AllowRemote *bool   `json:"allowRemote,omitempty"`
 }
 
@@ -504,9 +412,6 @@ func (s *searchState) apply(patch searchSettingsPatch) error {
 	if patch.ProjectID != nil {
 		next.ProjectID = strings.TrimSpace(*patch.ProjectID)
 	}
-	if patch.CorpusDir != nil {
-		next.CorpusDir = strings.TrimSpace(*patch.CorpusDir)
-	}
 	if patch.AllowRemote != nil {
 		next.AllowRemote = *patch.AllowRemote
 	}
@@ -522,10 +427,6 @@ func (s *searchState) apply(patch searchSettingsPatch) error {
 		}
 		_ = probe.Close()
 	}
-	if next.CorpusDir != "" && !filepath.IsAbs(next.CorpusDir) {
-		return errors.New("corpusDir: the corpus directory must be an absolute path")
-	}
-
 	s.mu.Lock()
 	s.settings = next
 	s.mu.Unlock()
@@ -556,7 +457,6 @@ func (s *searchState) persist() (bool, error) {
 	cfg.Search.Pando.MCPURL = settings.MCPURL
 	cfg.Search.Pando.RESTURL = settings.RESTURL
 	cfg.Search.Pando.ProjectID = settings.ProjectID
-	cfg.Search.Pando.CorpusDir = settings.CorpusDir
 	cfg.Search.Pando.AllowRemote = settings.AllowRemote
 	if err := config.Save(s.configPath, cfg); err != nil {
 		return false, err //nolint:wrapcheck // config already names the file
@@ -598,11 +498,11 @@ func (s *Server) handleSearchReindex(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case errors.Is(err, errReindexRunning):
 		failProblem(w, r, codeSearchReindexRunning,
-			"A corpus reindex is already running; wait for it to finish rather than starting a second one.")
+			"A reindex is already running; wait for it to finish rather than starting a second one.")
 		return
 	case errors.Is(err, errSearchNotConfigured):
 		failProblem(w, r, codeSearchNotConfigured,
-			"Nothing to reindex: neither a corpus directory nor a Pando endpoint is configured.")
+			"Nothing to reindex: no Pando endpoint is configured.")
 		return
 	case err != nil:
 		failProblem(w, r, codeInternal, err.Error())
@@ -614,17 +514,15 @@ func (s *Server) handleSearchReindex(w http.ResponseWriter, r *http.Request) {
 // errReindexRunning and errSearchNotConfigured are the two refusals of a
 // reindex request.
 var (
-	errReindexRunning      = errors.New("a corpus reindex is already running")
-	errSearchNotConfigured = errors.New("no corpus directory and no Pando endpoint")
+	errReindexRunning      = errors.New("a reindex is already running")
+	errSearchNotConfigured = errors.New("no Pando endpoint")
 )
 
 // startReindex claims the single reindex slot and runs the job in the
 // background, reporting on the hub. It answers as soon as the job has an id: a
-// full re-export of a large corpus takes longer than an HTTP request should.
+// full reindex of a large repository takes longer than an HTTP request should.
 func (s *searchState) startReindex(ctx context.Context) (*reindexJob, error) {
-	exporters := s.allExporters()
-	client := s.pando()
-	if len(exporters) == 0 && client == nil {
+	if s.pando() == nil {
 		return nil, errSearchNotConfigured
 	}
 
@@ -636,7 +534,7 @@ func (s *searchState) startReindex(ctx context.Context) (*reindexJob, error) {
 	job := &reindexJob{
 		ID:        "reindex-" + strconv.FormatUint(searchJobCounter.Add(1), 10),
 		StartedAt: s.now().UTC(),
-		Phase:     searchPhaseExport,
+		Phase:     searchPhaseCode,
 		Repos:     []reindexRepo{},
 	}
 	s.running = job
@@ -647,12 +545,12 @@ func (s *searchState) startReindex(ctx context.Context) (*reindexJob, error) {
 	return &started, nil
 }
 
-// runReindex is the job itself: a full corpus export per repository, then the
-// code index of each source tree, then the knowledge-base half.
+// runReindex is the job itself: the code index of each source tree, then the
+// knowledge-base half.
 //
-// The three are independent on purpose. A Pando that is down must not
-// invalidate an export that worked, so each failure is recorded against its own
-// half and the job carries on.
+// The two are independent on purpose. Pando refusing one repository's source
+// tree must not stop the knowledge base being reindexed, so each failure is
+// recorded against its own half and the job carries on.
 func (s *searchState) runReindex(ctx context.Context, job *reindexJob) {
 	// job is the same pointer view() copies under jobMu, so every write to it
 	// goes through mutate; a settings read racing a running reindex would
@@ -673,48 +571,46 @@ func (s *searchState) runReindex(ctx context.Context, job *reindexJob) {
 	}()
 
 	client := s.pando()
-	for _, e := range s.allExporters() {
-		out := reindexRepo{Repo: e.repo}
-		s.publishProgress(job.ID, e.repo, searchPhaseExport, 0, 0, "exporting the corpus")
-		stats, err := e.exp.ExportAll(ctx)
-		out.Export = stats
-		if err != nil {
-			out.ExportError = err.Error()
-			s.log.Warn("corpus export failed", "repo", e.repo, "error", err)
-		}
+	// The same project list the registration uses, so an explicit reindex asks
+	// Pando to refresh the very project the search reads from.
+	for _, p := range s.codeProjects() {
+		out := reindexRepo{Repo: p.repo}
+		s.publishProgress(job.ID, p.repo, searchPhaseCode, 0, 0, "indexing the source tree")
 		if client != nil {
-			s.publishProgress(job.ID, e.repo, searchPhaseCode, 0, 0, "indexing the source tree")
-			if m, ok := s.repos.lookup(e.repo); ok {
-				id, err := client.IndexProject(ctx, m.path, m.id)
-				switch {
-				case err != nil:
-					out.CodeError = err.Error()
-					s.log.Warn("code index failed", "repo", e.repo, "error", err)
-				default:
-					out.CodeJob = id
-				}
+			id, err := client.IndexProject(ctx, p.root, p.id)
+			switch {
+			case err != nil:
+				out.CodeError = err.Error()
+				s.log.Warn("code index failed", "repo", p.repo, "error", err)
+			default:
+				out.CodeJob = id
+				s.noteCodeIndex(p.repo, codeIndexView{
+					Project: p.id, Status: codeIndexStatusIndexing, Job: id,
+					Note: "Reindexing the repository root.",
+				})
 			}
 		}
 		mutate(func(j *reindexJob) { j.Repos = append(j.Repos, out) })
 	}
 
-	// The knowledge-base half. Pando imports the corpus on its own schedule
-	// with KBWatch off, so without its REST reindex route the honest report is
-	// "re-exported, awaiting the next import" — not "reindexed".
+	// The knowledge-base half. Pando watches the documentation directory
+	// itself, so this is a catch-up pass rather than the only way the index
+	// ever changes — and without a REST URL there is no route to ask for one.
 	mutate(func(j *reindexJob) { j.Phase = searchPhaseKB })
 	s.publishProgress(job.ID, "", searchPhaseKB, 0, 0, "reindexing the knowledge base")
 	var kbStats *pando.ReindexStats
 	var kbNote string
 	if client == nil {
-		kbNote = "Re-exported. No Pando endpoint is configured, so nothing was asked to import it."
+		kbNote = "No Pando endpoint is configured, so nothing was reindexed."
 	} else {
 		stats, err := client.ReindexKB(ctx)
 		switch {
 		case notConfigured(err):
-			kbNote = "Re-exported, awaiting Pando's next import pass: no REST URL is configured, " +
-				"and with KBWatch off there is no watcher to trigger."
+			kbNote = "Not reindexed: no Pando REST URL is configured, and the reindex route " +
+				"is only on the REST surface. Pando's own watcher still follows the " +
+				"documentation directory."
 		case err != nil:
-			kbNote = "Re-exported, but the knowledge-base reindex failed: " + err.Error()
+			kbNote = "The knowledge-base reindex failed: " + err.Error()
 			s.log.Warn("knowledge base reindex failed", "error", err)
 		default:
 			kbStats = &stats
@@ -726,7 +622,7 @@ func (s *searchState) runReindex(ctx context.Context, job *reindexJob) {
 		j.KB, j.KBNote = kbStats, kbNote
 		j.Phase = searchPhaseDone
 		for _, repo := range j.Repos {
-			if repo.ExportError != "" || repo.CodeError != "" {
+			if repo.CodeError != "" {
 				j.Phase = searchPhaseFailed
 				j.Error = "one or more repositories failed; see repos[]"
 				break

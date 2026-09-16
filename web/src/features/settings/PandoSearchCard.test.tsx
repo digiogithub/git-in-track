@@ -24,22 +24,19 @@ const configured: FakeSearch = {
     mcpUrl: 'http://127.0.0.1:9777/mcp',
     restUrl: 'http://127.0.0.1:9778',
     projectId: 'acme-api',
-    corpusDir: '/home/dana/.local/state/gintrack/pando-kb',
-    documents: 450,
-    lastExport: '2026-09-15T10:02:11Z',
-    corpora: [
+    indexed: [
       {
         repo: 'acme-api',
-        dir: '/home/dana/.local/state/gintrack/pando-kb/acme-api',
-        last: {
-          items: 412,
-          pages: 38,
-          written: 3,
-          removed: 0,
-          skipped: 447,
-          duration: 91_000_000,
-          at: '2026-09-15T10:02:11Z',
-          full: true,
+        root: '/home/dana/src/acme-api',
+        docs: ['docs'],
+        items: 412,
+        pages: 38,
+        comments: 96,
+        code: {
+          project: 'home_dana_src_acme-api',
+          status: 'indexing',
+          job: 'idx-1',
+          note: 'Indexing the repository root; code search answers as the index fills.',
         },
       },
     ],
@@ -66,22 +63,26 @@ describe('PandoSearchCard', () => {
     expect(screen.queryByLabelText('Pando MCP URL')).toBeNull();
   });
 
-  it('renders the settings document: backend, endpoints, probe and corpus', async () => {
+  it('renders the settings document: backend, endpoints, probe and what Pando indexes', async () => {
     renderCard(configured);
 
     expect(await screen.findByText('pando')).toBeInTheDocument();
     expect(screen.getByLabelText('Pando MCP URL')).toHaveValue('http://127.0.0.1:9777/mcp');
     expect(screen.getByLabelText('Pando REST URL')).toHaveValue('http://127.0.0.1:9778');
     expect(screen.getByLabelText('Code project id')).toHaveValue('acme-api');
-    expect(screen.getByLabelText('Corpus directory')).toHaveValue(
-      '/home/dana/.local/state/gintrack/pando-kb',
-    );
+    // The corpus directory is gone with the exporter (epic GIT-EP-0020).
+    expect(screen.queryByLabelText('Corpus directory')).toBeNull();
     expect(screen.getByTestId('pando-reachability')).toHaveTextContent('Pando answered at');
-    // One row per mounted repository, with the numbers that make an export
-    // diagnosable: 447 skipped is "nothing changed", not "nothing was found".
-    expect(screen.getByText('/home/dana/.local/state/gintrack/pando-kb/acme-api')).toBeVisible();
-    expect(screen.getByText('447')).toBeInTheDocument();
-    expect(screen.getByTestId('pando-corpus-summary')).toHaveTextContent('450 exported documents');
+    // One row per mounted repository, saying what Pando was pointed at and how
+    // much this companion's own index finds there: a documentation directory
+    // holding no items is a misconfigured KBPath, and the row shows it.
+    expect(screen.getByText('/home/dana/src/acme-api')).toBeVisible();
+    expect(screen.getByText('docs')).toBeVisible();
+    expect(screen.getByText('412')).toBeInTheDocument();
+    expect(screen.getByText('96')).toBeInTheDocument();
+    expect(screen.getByTestId('pando-index-summary')).toHaveTextContent(
+      'nothing is copied anywhere else',
+    );
   });
 
   it('never offers a token field, and says where a token comes from instead', async () => {
@@ -108,6 +109,47 @@ describe('PandoSearchCard', () => {
     expect(await screen.findByTestId('pando-model-warning')).toHaveTextContent(
       'per Pando instance, not per corpus',
     );
+  });
+
+  it('states the code-project registration, including why there is no code search', async () => {
+    renderCard(configured);
+
+    expect(await screen.findByText('indexing')).toBeInTheDocument();
+    expect(screen.getByText('home_dana_src_acme-api')).toBeInTheDocument();
+    expect(
+      screen.getByText(/Indexing the repository root; code search answers as the index fills\./),
+    ).toBeInTheDocument();
+    // The split itself is stated: the code index cannot see the backlog.
+    expect(screen.getByTestId('pando-index-summary')).toHaveTextContent(
+      'skips dot-directories, so it never sees the backlog',
+    );
+  });
+
+  it('says why there is no code search when Pando refused the registration', async () => {
+    renderCard({
+      ...configured,
+      settings: {
+        ...configured.settings,
+        indexed: [
+          {
+            repo: 'acme-api',
+            root: '/home/dana/src/acme-api',
+            docs: ['docs'],
+            items: 412,
+            pages: 38,
+            comments: 96,
+            code: {
+              project: 'home_dana_src_acme-api',
+              status: 'unavailable',
+              note: 'Pando did not accept the code project, so there is no code search: pando: unreachable',
+            },
+          },
+        ],
+      },
+    });
+
+    expect(await screen.findByText('unavailable')).toBeInTheDocument();
+    expect(screen.getByText(/there is no code search: pando: unreachable/)).toBeInTheDocument();
   });
 
   it('saves the five location fields and says the change reached the file', async () => {
@@ -161,22 +203,24 @@ describe('PandoSearchCard', () => {
         kind: 'searchProgress',
         operationId: 'reindex-1',
         repoId: 'acme-api',
-        phase: 'export',
+        phase: 'code',
         percent: 33,
         done: 1,
         total: 3,
-        message: 'Exporting acme-api',
+        message: 'Indexing acme-api',
       });
     });
-    expect(screen.getByTestId('pando-reindex-progress')).toHaveTextContent('Exporting the corpus');
+    expect(screen.getByTestId('pando-reindex-progress')).toHaveTextContent(
+      'Indexing the source tree',
+    );
     expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '33');
 
     // The terminal frame is only the cue: the counts and the honest
     // knowledge-base note live on the job the card then re-reads.
     provider.finishSearchReindex({
       phase: 'completed',
-      kbNote: 'Re-exported, awaiting Pando’s next import pass',
-      repos: [{ repo: 'acme-api', export: configured.settings?.corpora?.[0]?.last ?? never() }],
+      kbNote: 'Not reindexed: no Pando REST URL is configured',
+      repos: [{ repo: 'acme-api', codeJob: 'idx-7741' }],
     });
     act(() => {
       provider.emitEvent({
@@ -193,7 +237,7 @@ describe('PandoSearchCard', () => {
 
     await waitFor(() => {
       expect(screen.getByTestId('pando-reindex-job')).toHaveTextContent(
-        'Re-exported, awaiting Pando’s next import pass',
+        'Not reindexed: no Pando REST URL is configured',
       );
     });
     expect(await screen.findByRole('button', { name: 'Reindex now' })).toBeEnabled();
@@ -213,8 +257,3 @@ describe('PandoSearchCard', () => {
     expect(screen.getByRole('button', { name: 'Reindex now' })).toBeEnabled();
   });
 });
-
-/** A fixture that cannot be missing; keeps the test honest about its own data. */
-function never(): never {
-  throw new Error('fixture is missing its corpus');
-}

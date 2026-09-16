@@ -43,8 +43,8 @@ RequireToken = true
 # section without it decodes to the zero value and silently turns it off.
 FrontendTools = true
 # HITL: every tool call the agent wants to make is surfaced to the browser for
-# approval. Together with the Tools allow-list below this is the interim
-# boundary — see the caveat in docs/20-agent-interface.md.
+# approval. Together with the Tools allow-list below it is the boundary that
+# keeps this agent a reader — see docs/20-agent-interface.md.
 HumanInTheLoop = true
 AutoApprove = false
 # The companion imposes its own per-user and global in-flight caps; this is
@@ -59,7 +59,14 @@ Persona = {{ toml .Persona }}
 # ToolDiscovery whenever an [MCPServers] entry exists) hides every MCP tool
 # behind `tool_search` or the generic `mcp_call_tool` proxy, which this list
 # would strip; the [ToolDiscovery] and [MCPGateway] sections below turn the
-# gateway off so the tools keep their names and their per-tool approval.
+# gateway off, so this file is in the direct-registration configuration and the
+# tools keep their names and their per-tool approval.
+#
+# Of Pando's KB tools only the ones that READ are listed: `kb_add_document`,
+# `kb_delete_document` and the memory `remember`/`forget` path mirror a document
+# back to disk through a serializer that emits Pando's typed keys alone, so a
+# call against a file of this repository would rewrite it without its `id`,
+# `status` and `parent`.
 Tools = [
 {{- range .Tools }}
   {{ toml . }},
@@ -146,20 +153,26 @@ Authorization = {{ toml .BearerHeader }}
 {{- end }}
 
 # =============================================================================
-# Remembrances — the semantic index over the exported backlog corpus
+# Remembrances — the semantic index over this repository's documentation
 # =============================================================================
 [Remembrances]
 Enabled = true
-# The corpus `gintrack serve` exports: one Markdown file per item and per KB
-# page, outside the repository so nothing exported is ever committed. Pando's
-# directory walk has no hidden-directory or node_modules exclusion, so this must
-# point at the corpus directory and never at a repository root.
+# This repository's documentation folder, not the repository root: Pando's KB
+# walk applies no exclusions at all (a bare filepath.WalkDir filtered only by
+# extension, internal/rag/kb/sync.go), so a root would be indexed whole.
+# Pointed here it reaches the backlog under `.pmngr/` and the knowledge-base
+# pages and nothing else — and `.pmngr/` is exactly the half Pando's code
+# indexer cannot reach, since that one skips dot-directories. The files indexed
+# are the repository's own, so there is no second copy to keep in sync.
 KBPath = {{ toml .KBPath }}
 KBAutoImport = true
-# KBWatch stays FALSE. The watcher re-writes documents it processes without
-# parsing their front matter, so every incremental edit strips the metadata the
-# exporter wrote. Re-sync is driven by the companion instead.
-KBWatch = false
+# KBWatch is TRUE, which is Pando's own default: an edit to an item or a page is
+# reindexed as it happens. The watcher is safe — it performs no file write of
+# any kind (internal/rag/kb/watcher.go): it stats, reads, and updates the
+# database. The tools that do write to disk are `kb_add_document`,
+# `kb_delete_document` and the memory `remember`/`forget` path, and the [AGUI]
+# Tools allow-list above admits none of them.
+KBWatch = true
 
 # =============================================================================
 # Pando's own MCP server — off

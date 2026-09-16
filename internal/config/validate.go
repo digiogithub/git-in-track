@@ -195,9 +195,6 @@ func (c *Config) validateSearch(add func(field, format string, args ...any)) {
 	p := c.Search.Pando
 	validatePandoURL(add, "search.pando.mcpUrl", p.MCPURL, p.AllowRemote)
 	validatePandoURL(add, "search.pando.restUrl", p.RESTURL, p.AllowRemote)
-	if dir := strings.TrimSpace(p.CorpusDir); dir != "" && !filepath.IsAbs(dir) {
-		add("search.pando.corpusDir", "%q is not an absolute path", dir)
-	}
 }
 
 // validatePandoURL checks one URL of a Pando stanza: absolute, http or https,
