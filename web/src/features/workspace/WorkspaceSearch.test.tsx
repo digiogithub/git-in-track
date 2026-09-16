@@ -121,6 +121,42 @@ describe('WorkspaceSearch', () => {
     expect(within(related).getByText('82% match')).toBeInTheDocument();
   });
 
+  it('labels a semantic hit with the Pando index it came from', async () => {
+    const provider = pandoProvider();
+    const codeHit: SearchHit = {
+      kind: 'file',
+      path: 'internal/server/search_pando.go',
+      title: 'SearchSemantic',
+      snippet: 'func (p *pandoSearcher) SearchSemantic(',
+      score: 0.91,
+      vaultId: 'repo-1',
+      source: 'pando',
+      index: 'code',
+    };
+    vi.spyOn(provider, 'search').mockResolvedValue({
+      hits: [...hits, { ...semanticHit, index: 'kb' }, codeHit],
+    });
+    renderWithRouter({ index: WorkspaceSearch, provider });
+
+    await userEvent.type(
+      await screen.findByRole('searchbox', undefined, { timeout: 5000 }),
+      'login',
+    );
+
+    const related = await screen.findByRole(
+      'list',
+      { name: /related by meaning/i },
+      { timeout: 5000 },
+    );
+    const rows = within(related).getAllByRole('listitem');
+    expect(rows).toHaveLength(2);
+    // A code hit says which index found it, so it is never read as backlog.
+    const code = rows.find((row) => row.textContent?.includes('SearchSemantic'));
+    expect(within(code!).getByText('code index')).toBeInTheDocument();
+    const kb = rows.find((row) => row.textContent?.includes('Identity provider'));
+    expect(within(kb!).getByText('knowledge base')).toBeInTheDocument();
+  });
+
   it('leaves no semantic section behind when the capability is not pando', async () => {
     const provider = new FakeProvider({ repos: [] });
     vi.spyOn(provider, 'search').mockResolvedValue({ hits: [...hits, semanticHit] });

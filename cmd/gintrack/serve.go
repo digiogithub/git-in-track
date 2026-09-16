@@ -195,12 +195,10 @@ func runServe(cmd *cobra.Command, build buildInfo, flags *serveFlags) error {
 		// process (GIT-US-0049).
 		Agent: pickBool(cmd, "agent", flags.agent, cfg.Agent.Enabled),
 		Pando: cfg.PandoTargets(),
-		// Semantic search. The tokens are resolved here the same way, and the
-		// corpus base is the cache directory unless the section overrides it;
-		// the per-repository corpus is `<base>/<mount id>`, which is what
-		// `gintrack agent init` writes into Pando's KBPath (GIT-US-0082).
-		Search:          searchSettings(cfg),
-		SearchCorpusDir: filepath.Join(cfg.CacheDir(res.Path), "pando-kb"),
+		// Semantic search. The tokens are resolved here the same way. Pando
+		// indexes the repository itself, so there is nothing else to point it
+		// at from here (GIT-EP-0020).
+		Search: searchSettings(cfg),
 		// The public tunnel. Only the startup path may turn it on implicitly;
 		// a toggle made in the web UI is never written back to the file.
 		Tunnel: config.Tunnel{Enabled: tunnelOn, Provider: cfg.Server.Tunnel.Provider},

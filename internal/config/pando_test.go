@@ -34,7 +34,6 @@ search:
     restUrl: http://127.0.0.1:7788
     restToken: rest-token
     projectId: git-in-track
-    corpusDir: /tmp/pando-kb
 `
 
 func TestParsePandoSections(t *testing.T) {
@@ -59,7 +58,7 @@ func TestParsePandoSections(t *testing.T) {
 	if s.MCPURL != "http://127.0.0.1:9777/mcp" || s.RESTURL != "http://127.0.0.1:7788" {
 		t.Fatalf("unexpected search.pando: %v", s)
 	}
-	if s.ProjectID != "git-in-track" || s.CorpusDir != "/tmp/pando-kb" {
+	if s.ProjectID != "git-in-track" {
 		t.Fatalf("unexpected search.pando ids: %v", s)
 	}
 	if err := cfg.Validate(); err != nil {
@@ -332,11 +331,6 @@ func TestValidatePandoRefusals(t *testing.T) {
 			mut:   func(c *Config) { c.Search.Pando.MCPURL = "http://pando.example.com:9777/mcp" },
 			field: "search.pando.mcpUrl",
 		},
-		{
-			name:  "relative corpus dir",
-			mut:   func(c *Config) { c.Search.Pando.CorpusDir = "pando-kb" },
-			field: "search.pando.corpusDir",
-		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -389,5 +383,26 @@ func TestLoopbackURL(t *testing.T) {
 		if LoopbackURL(raw) {
 			t.Fatalf("%s should not be loopback", raw)
 		}
+	}
+}
+
+// TestParseRefusesTheRetiredCorpusDir pins GIT-US-0095: a file that still
+// configures the exported corpus is refused by name rather than ignored, so
+// that "my corpus stopped being written" is answered by the parser instead of
+// by a silence.
+func TestParseRefusesTheRetiredCorpusDir(t *testing.T) {
+	_, err := Parse([]byte("version: 1\nsearch:\n  pando:\n    corpusDir: /tmp/pando-kb\n"))
+	if err == nil {
+		t.Fatal("a configuration that still sets search.pando.corpusDir was accepted")
+	}
+	if !errors.Is(err, ErrInvalid) {
+		t.Fatalf("error does not classify as ErrInvalid: %v", err)
+	}
+	var fe FieldError
+	if !errors.As(err, &fe) || fe.Field != "search.pando.corpusDir" {
+		t.Fatalf("error does not name the retired field: %v", err)
+	}
+	if !strings.Contains(fe.Message, "GIT-EP-0020") {
+		t.Errorf("the refusal does not name the epic that removed it: %q", fe.Message)
 	}
 }

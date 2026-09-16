@@ -2,14 +2,16 @@
 id: GIT-US-0099
 type: story
 title: "Correct the record: the watcher, the corpus and an ADR for the reversal"
-status: backlog
+status: done
 priority: medium
 parent: GIT-EP-0020
 milestone: GIT-M-0013
 author: mcp
 labels: [docs]
 created: 2026-09-16T12:47:12Z
-updated: 2026-09-16T12:47:12Z
+updated: 2026-09-16T15:56:15Z
+started: 2026-09-16T15:56:06Z
+closed: 2026-09-16T15:56:15Z
 ---
 
 ## Description

@@ -2,13 +2,15 @@
 id: GIT-EP-0020
 type: epic
 title: Pando indexes the repository directly; retire the exported corpus
-status: backlog
+status: done
 priority: high
 milestone: GIT-M-0013
 author: mcp
 labels: [core, server, web, cli, docs]
 created: 2026-09-16T12:45:38Z
-updated: 2026-09-16T12:45:38Z
+updated: 2026-09-16T15:56:12Z
+started: 2026-09-16T15:07:24Z
+closed: 2026-09-16T15:56:12Z
 ---
 
 ## Description

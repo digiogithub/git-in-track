@@ -136,8 +136,8 @@ func statusForCode(code string) int {
 		return http.StatusNotImplemented
 	case codeSearchNotConfigured:
 		// Nothing to reindex is a malformed request against this companion's
-		// state: the operator configures `search.pando` (or a corpus
-		// directory) and asks again (GIT-US-0091).
+		// state: the operator configures `search.pando` and asks again
+		// (GIT-US-0091).
 		return http.StatusBadRequest
 	case codeIndexUnavailable, codeSyncEngineNotRunning:
 		return http.StatusServiceUnavailable

@@ -96,8 +96,8 @@ import type {
   ProviderErrorCode,
   RefResolution,
   RepoInfo,
-  SearchCorpus,
-  SearchCorpusStats,
+  SearchCodeIndex,
+  SearchIndexedRepo,
   SearchHit,
   SearchQuery,
   SearchReindexJob,
@@ -960,6 +960,15 @@ export function toKbPage(value: unknown, requestedPath: string): KbPage {
   };
 }
 
+/**
+ * The three kinds a hit can be. `file` is a document the semantic backend found
+ * inside the indexed tree that the index owns neither as an item nor as a page
+ * — a source file, or Markdown outside the knowledge base.
+ */
+function toSearchHitKind(value: string | undefined): SearchHit['kind'] {
+  return value === 'item' || value === 'file' ? value : 'page';
+}
+
 export function toSearchHits(value: unknown): SearchHit[] {
   const record = asRecord(value);
   // Three shapes are accepted, so a companion older than GIT-US-0086 keeps
@@ -971,7 +980,7 @@ export function toSearchHits(value: unknown): SearchHit[] {
       const hit = asRecord(entry);
       if (!hit) return null;
       const mapped: SearchHit = {
-        kind: asString(hit['kind']) === 'item' ? 'item' : 'page',
+        kind: toSearchHitKind(asString(hit['kind'])),
         path: asString(hit['path']) ?? '',
         title: asString(hit['title']) ?? '',
         snippet: asString(hit['snippet']) ?? '',
@@ -981,6 +990,10 @@ export function toSearchHits(value: unknown): SearchHit[] {
         source: asString(hit['source']) === 'pando' ? 'pando' : 'core',
       };
       put(mapped, 'id', asString(hit['id']));
+      // Which of Pando's two indexations answered, so the row can say so
+      // (GIT-US-0098). Anything else is left absent rather than guessed.
+      const index = asString(hit['index']);
+      if (index === 'kb' || index === 'code') mapped.index = index;
       // A workspace-wide search says which project — and which repository —
       // answered, so the UI can label every row (GIT-US-0016).
       put(mapped, 'project', asString(hit['project']));
@@ -1002,40 +1015,48 @@ export function toSearchResult(value: unknown): SearchResult {
 /** The phases the reindex walks; anything else reads as the first one. */
 function toSearchPhase(value: string | undefined): SearchReindexPhase {
   switch (value) {
-    case 'code':
     case 'kb':
     case 'completed':
     case 'failed':
       return value;
     default:
-      return 'export';
+      return 'code';
   }
 }
 
-/** One `pandosync.Stats`; an export that never ran is all zeroes with no `at`. */
-function toSearchCorpusStats(value: unknown): SearchCorpusStats {
-  const record = asRecord(value) ?? {};
-  return {
-    items: asNumber(record['items']) ?? 0,
-    pages: asNumber(record['pages']) ?? 0,
-    written: asNumber(record['written']) ?? 0,
-    removed: asNumber(record['removed']) ?? 0,
-    skipped: asNumber(record['skipped']) ?? 0,
-    duration: asNumber(record['duration']) ?? 0,
-    at: asString(record['at']) ?? '',
-    full: asBoolean(record['full']) ?? false,
-  };
-}
-
-function toSearchCorpora(value: unknown): SearchCorpus[] {
+/** One row of what Pando indexes, per mounted repository. */
+function toSearchIndexed(value: unknown): SearchIndexedRepo[] {
   return asArray(value).map((entry) => {
     const record = asRecord(entry) ?? {};
     return {
       repo: asString(record['repo']) ?? '',
-      dir: asString(record['dir']) ?? '',
-      last: toSearchCorpusStats(record['last']),
+      root: asString(record['root']) ?? '',
+      docs: asArray(record['docs']).flatMap((doc) => {
+        const name = asString(doc);
+        return name === undefined ? [] : [name];
+      }),
+      items: asNumber(record['items']) ?? 0,
+      pages: asNumber(record['pages']) ?? 0,
+      comments: asNumber(record['comments']) ?? 0,
+      ...optional('code', toSearchCodeIndex(record['code'])),
     };
   });
+}
+
+/** One repository's code-project registration, absent until it has run. */
+function toSearchCodeIndex(value: unknown): SearchCodeIndex | undefined {
+  const record = asRecord(value);
+  if (record === null) return undefined;
+  const status = asString(record['status']);
+  return {
+    project: asString(record['project']) ?? '',
+    status:
+      status === 'off' || status === 'registered' || status === 'indexing'
+        ? status
+        : 'unavailable',
+    ...optional('job', asString(record['job'])),
+    ...optional('note', asString(record['note'])),
+  };
 }
 
 function toSearchReindexRepos(value: unknown): SearchReindexRepo[] {
@@ -1043,8 +1064,6 @@ function toSearchReindexRepos(value: unknown): SearchReindexRepo[] {
     const record = asRecord(entry) ?? {};
     return {
       repo: asString(record['repo']) ?? '',
-      export: toSearchCorpusStats(record['export']),
-      ...optional('exportError', asString(record['exportError'])),
       ...optional('codeJob', asString(record['codeJob'])),
       ...optional('codeError', asString(record['codeError'])),
     };
@@ -1094,13 +1113,10 @@ export function toSearchSettings(value: unknown): SearchSettings {
     mcpUrl: asString(record['mcpUrl']) ?? '',
     restUrl: asString(record['restUrl']) ?? '',
     projectId: asString(record['projectId']) ?? '',
-    corpusDir: asString(record['corpusDir']) ?? '',
     allowRemote: asBoolean(record['allowRemote']) ?? false,
     reachable: reachable ?? null,
     reachableError: asString(record['reachableError']) ?? '',
-    corpora: toSearchCorpora(record['corpora']),
-    documents: asNumber(record['documents']) ?? 0,
-    lastExport: asString(record['lastExport']) ?? null,
+    indexed: toSearchIndexed(record['indexed']),
     reindex:
       record['reindex'] === undefined || record['reindex'] === null
         ? null

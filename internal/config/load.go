@@ -69,11 +69,52 @@ func Parse(data []byte) (*Config, error) {
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("parse configuration: %w", err)
 	}
+	if err := refuseRetiredKeys(data); err != nil {
+		return nil, err
+	}
 	if cfg.Version == 0 {
 		cfg.Version = SchemaVersion
 	}
 	cfg.EnsureWorkspace(cfg.DefaultWorkspace)
 	return cfg, nil
+}
+
+// retiredProbe is the shape a retired key is looked for in. Only keys this
+// build no longer has a field for belong here: everything else is either
+// decoded by Config or ignored, as an unknown key always has been.
+type retiredProbe struct {
+	Search struct {
+		Pando struct {
+			CorpusDir *string `yaml:"corpusDir"`
+		} `yaml:"pando"`
+	} `yaml:"search"`
+}
+
+// refuseRetiredKeys fails a file that still configures something this build has
+// removed.
+//
+// Silently ignoring one would be worse than refusing it: an operator who wrote
+// `search.pando.corpusDir` expects a corpus to be written somewhere, and a
+// build that quietly stops writing it looks like a bug in search rather than a
+// deliberate removal. So the message names the epic that removed it and says
+// what to do with what is left on disk.
+func refuseRetiredKeys(data []byte) error {
+	var probe retiredProbe
+	if err := yaml.Unmarshal(data, &probe); err != nil {
+		// Anything malformed enough to fail here already failed the real
+		// decode above; there is nothing this pass can add.
+		return nil //nolint:nilerr // the caller already reported the parse failure
+	}
+	if probe.Search.Pando.CorpusDir != nil {
+		return FieldError{
+			Field: "search.pando.corpusDir",
+			Message: "the corpus exporter was removed in GIT-EP-0020: Pando now indexes the " +
+				"repository itself, so there is no corpus to write. Delete this key. " +
+				"A corpus directory left by an older version is not used any more and is " +
+				"safe to remove by hand.",
+		}
+	}
+	return nil
 }
 
 // Save writes the configuration atomically with mode 0600, creating the parent

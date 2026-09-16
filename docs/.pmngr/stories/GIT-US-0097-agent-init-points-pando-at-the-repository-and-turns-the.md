@@ -2,14 +2,16 @@
 id: GIT-US-0097
 type: story
 title: agent init points Pando at the repository and turns the watcher on
-status: backlog
+status: done
 priority: high
 parent: GIT-EP-0020
 milestone: GIT-M-0013
 author: mcp
 labels: [cli, security]
 created: 2026-09-16T12:46:35Z
-updated: 2026-09-16T12:46:35Z
+updated: 2026-09-16T15:56:01Z
+started: 2026-09-16T15:07:28Z
+closed: 2026-09-16T15:56:01Z
 ---
 
 ## Description

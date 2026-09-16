@@ -2,14 +2,16 @@
 id: GIT-US-0096
 type: story
 title: Resolve Pando search hits against real repository paths
-status: backlog
+status: done
 priority: high
 parent: GIT-EP-0020
 milestone: GIT-M-0013
 author: mcp
 labels: [server, core]
 created: 2026-09-16T12:46:14Z
-updated: 2026-09-16T15:03:53Z
+updated: 2026-09-16T15:56:00Z
+started: 2026-09-16T15:07:27Z
+closed: 2026-09-16T15:56:00Z
 ---
 
 ## Description

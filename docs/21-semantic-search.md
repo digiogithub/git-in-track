@@ -1,233 +1,274 @@
-# 21 — Semantic Search and the Pando Corpus
+# 21 — Semantic Search: Pando indexes the repository
 
-Status: **as built** for the corpus exporter (`internal/pandosync`, `GIT-US-0073`), its wiring
-into the companion (`GIT-T-0130`, `GIT-T-0134`) and the search and settings surface over it
-(`GIT-US-0082`, and the backend half of `GIT-US-0091`).
+Status: **as built** for the two indexations of `GIT-EP-0020` and the search and settings
+surface over them (`GIT-US-0082`, `GIT-US-0091`, `GIT-US-0096`, `GIT-US-0098`, `GIT-US-0099`).
+The exported corpus this document once described is retired; §5 records what was removed and
+which of its warnings were withdrawn. The decision is [ADR-036](./adr/ADR-036-pando-indexes-the-repository-directly.md).
 Phase: **Phase 9 — agent interface and semantic search** (`GIT-M-0013`)
-Audience: contributors working on `internal/pandosync` and on the search features; anyone
-configuring Pando against a git-in-track workspace.
+Audience: contributors working on the search features; anyone configuring Pando against a
+git-in-track workspace.
 
 git-in-track's own index answers exact questions: an id, a label, a status, a substring.
 Semantic search answers the other kind — *"where did we decide how conflicts are merged?"* —
-and that needs an embedding index. Pando already has one. Rather than teach git-in-track to
-embed, the companion keeps a plain Markdown **corpus** on disk that Pando imports on its own
-schedule, and searches it through Pando.
+and that needs an embedding index. Pando already has one, so the companion points Pando at the
+repository's own files and searches them through it. Nothing is copied anywhere.
 
 ---
 
-## 1. The corpus in one paragraph
+## 0. The two indexations
 
-The corpus is a directory of Markdown files, one per backlog item and one per knowledge-base
-page, written by the companion and read by Pando. It is **derived data**: everything in it can
-be rebuilt from the repository in one pass, nothing in it is authoritative, and deleting the
-whole directory costs nothing but the next export. It lives **outside every repository**, so
-nothing exported can ever be committed.
+Pando has two indexations and they divide this repository cleanly. Neither writes to it.
+
+| | Knowledge base | Code |
+|---|---|---|
+| Configured by | `[Remembrances] KBPath` + `KBWatch = true` | `code_index_project`, called by the companion at startup |
+| Pointed at | the repository's documentation directory, `<repo>/docs` | the repository root, `<repo>` |
+| Walks | `filepath.WalkDir` filtered only by extension — **no exclusions at all** (Pando `internal/rag/kb/sync.go`) | the tree minus every dot-directory, `node_modules`, `vendor`, `dist`, `build`, `__pycache__`, `.git` (Pando `internal/rag/code/indexer.go:234-240`) |
+| Therefore covers | the backlog under `docs/.pmngr/` — items and comment threads — and the knowledge-base pages | the source, `README`, `CHANGELOG`, and the Markdown that lives outside the knowledge base |
+| Searched with | `kb_search_documents` | `code_hybrid_search` (with `include_docs: true`; Pando excludes Markdown by default) |
+| A hit carries | a chunk of the document plus its front matter as Pando stored it | a symbol — a heading, for Markdown — a file path and a line, and **no front matter at all** |
+
+**Why the backlog is unreachable from the code side.** The code indexer skips any directory
+whose name starts with a dot, and the backlog lives in `docs/.pmngr/`. So the code index cannot
+see an item, a comment or a board even in principle, which is exactly the half the knowledge-base
+indexation covers. The exclusions are hardcoded and `code_index_project` exposes only a
+`languages` filter, so this is a property of Pando, not a setting to be kept right.
+
+**Where they do overlap: `docs/*.md`.** Those files are knowledge-base documents through
+`KBPath` *and* indexable Markdown for the code indexer — it has a tree-sitter grammar that turns
+each heading into a symbol. One file can therefore come back from both sides, with two scores on
+two scales, for one query. See §0.2.
+
+### 0.1 Registration happens when the server starts
+
+`gintrack serve` registers every mounted repository root with Pando as a code project
+(`internal/server/search_register.go`), not `gintrack agent init`: `agent init` writes
+configuration once, by one person, while a fresh clone becomes searchable by whoever starts the
+server. The first index of this repository — 937 indexable files — took **62 s** wall clock, all
+of it after `code_index_project` had already returned a job id, so it runs eagerly at startup
+rather than lazily on the first search.
+
+- **The project id** is Pando's sanitisation of the repository's absolute path
+  (`pando.SanitizeProjectID`), which is the same value `search.pando.projectId` defaults to, so
+  the registration and the search can never disagree about which project is being read. A mount
+  id alone would not do: it is unique within one workspace, while Pando's project table is shared
+  by every workspace on the machine.
+- **It is idempotent.** `code_list_projects` is asked first, and a project whose id already
+  points at this working tree is left alone — neither duplicated nor reindexed. (Pando's indexer
+  also skips a file whose content hash has not changed, so even an explicit reindex is
+  incremental, but the promise here is that nothing is asked for at all.) A project id pointed at
+  *another* tree is re-registered, because searching it would answer another repository's
+  questions.
+- **It never blocks startup.** The pass runs in a goroutine after the listener is up, every call
+  is bounded by the client's own deadline, and a Pando that is down or slow leaves the companion
+  fully functional with no code search. What happened is stated per repository in
+  `GET /api/v1/search/settings` → `indexed[].code` (`status` one of `off`, `registered`,
+  `indexing`, `unavailable`, plus a `note` in words), which the settings card renders: the reason
+  there is no code search is readable in the UI, not only in the log.
+
+### 0.2 Duplicates are merged at presentation
+
+A `docs/` file that both indexes returned is shown **once**
+(`internal/server/search_code.go`, `semanticMerge`):
+
+- **The key is the resolved file path**, scoped by the repository the document was resolved in —
+  not the path Pando reported. The knowledge-base side reports a path relative to `KBPath`
+  (`architecture/overview.md`) and the code side one relative to the repository root
+  (`docs/architecture/overview.md`); both are resolved against git-in-track's own index first, so
+  they meet on the same key. An item is keyed by its id instead, which is unique workspace-wide.
+- **The better score wins**, where "better" is relative to the best hit of its own leg. The raw
+  scores are not comparable — a knowledge-base fusion score sits around 0.016 while a code score
+  is already normalised to 0..1 against its own top hit — so each leg is divided by its own best
+  score before the two are compared or ordered. The surviving row keeps its own raw `score`.
+- **The loser fills the winner's gaps.** A code hit has no front matter: it knows a symbol name
+  and a path, while the knowledge-base hit knows the title, the item id and the project. Whichever
+  won, the row a user sees carries both, and a `file` kind is upgraded to the `page` or `item` the
+  other side recognised.
+- **The alternative was rejected.** Filtering `docs/` out of the code side would mean a path
+  filter on every query — Pando's code exclusions cannot be configured — and the two indexes
+  answer different shapes of question over the same file (a paragraph versus a heading symbol),
+  which is worth keeping both of.
+
+Every hit reaches the API with `index: "kb" | "code"` alongside `source: "pando"`, and the web
+search labels the row with it, so a code hit is never mistaken for a backlog item.
 
 ---
 
-## 2. Layout
+## 1. Configuring Pando
 
-```
-<corpus root>/
-  GIT/                       # one directory per project key
-    items/
-      GIT-EP-0019.md         # one file per item, named by its permanent id
-      GIT-US-0073.md
-      GIT-T-0122.md
-    kb/
-      README.md              # one file per KB page, mirroring the docs folder
-      21-semantic-search.md
-      adr/
-        035-ag-ui.md
-  ACME/
-    items/…
-    kb/…
-```
-
-Rules the exporter enforces:
-
-- An item file is named after its id, and the id alone decides its project directory. An item
-  whose id does not parse is skipped and logged, never written to a guessed path.
-- A KB page keeps the path it has inside its project's documentation folder, so
-  `docs/adr/035-ag-ui.md` in the repository becomes `GIT/kb/adr/035-ag-ui.md` in the corpus.
-- Every path is cleaned and then checked to be inside `<project>/items` or `<project>/kb`.
-  A page path containing `..`, a backslash, a NUL byte, a leading `/` or a Windows volume is
-  refused with `ErrForbiddenPath` and nothing is written.
-- Nothing but `.md` files lives in the corpus. A write goes through a sibling dot file named
-  `.<name>.md.tmp` which is renamed into place, so an importer scanning the directory mid-write
-  either sees the old file or the new one, never half of one, and never sees the temporary.
-  A leftover temporary from a crash is pruned by the next full export.
-- A file whose source has disappeared is pruned, and a directory the prune emptied is removed.
-
-## 3. What a document looks like
-
-```markdown
----
-id: GIT-US-0073
-type: story
-title: 'Corpus exporter: keep a Pando-indexable copy of the backlog'
-status: in_progress
-milestone: GIT-M-0013
-parent: GIT-EP-0019
-project: GIT
-updated: "2026-09-13T21:17:27Z"
-tags: [GIT-US-0073, server, performance, story, in_progress]
-aliases: ['Corpus exporter: keep a Pando-indexable copy of the backlog']
----
-
-GIT-US-0073 — Corpus exporter: keep a Pando-indexable copy of the backlog
-
-## Description
-
-As a companion user, I want every item and KB page mirrored into a corpus directory…
-```
-
-A KB page is the same shape with `path` in place of `id` and `Page: <slug> — <title>` as its
-first body line.
-
-Three things about that document are deliberate.
-
-**`tags` and `aliases` are the only keys Pando reads.** It parses front matter into a fixed
-struct and discards everything else. The remaining keys are written for a human reading the
-corpus and for `grep`; they are *not* a data channel. **Nothing downstream may read an item's
-status, milestone or parent back out of a Pando search hit.** A consumer resolves a hit to an
-item id and re-reads the authoritative fields from git-in-track's own index — which is also why
-a stale corpus can never show stale field values in the UI, only a stale set of candidates.
-
-**The id is repeated in the body.** Even `tags` is not guaranteed to survive: Pando's KB watcher
-does not parse front matter and strips tags from every document it re-processes (523 of 539
-documents in Pando's own knowledge base had already lost theirs when this was measured). The
-first body line puts the id and the title inside the indexed chunk, where no front-matter parser
-can lose it, so a hit is always resolvable back to an item.
-
-**The body is copied verbatim.** `[[GIT-US-0024]]` wikilinks are left alone so that Pando builds
-the same link graph the backlog has.
-
-## 4. Sync model
-
-```
-gintrack ──writes Markdown──▶  corpus directory  ◀──imports on a schedule── Pando
-   │                                                                          │
-   └──── hub events (item.changed, file.changed, overflow) ────┘              ▼
-                                                                    embedding index
-```
-
-The exporter runs a **full export** when the companion starts, in the background so the listener
-is never delayed, and then keeps the corpus current from events. A full export writes only the
-documents whose bytes changed — the exporter compares a content hash, from its in-memory cache or
-from the file on disk after a restart — so a second export over an unchanged corpus rewrites
-nothing. That matters beyond saving I/O: Pando's importer skips by mtime, so a needless rewrite
-would make it re-embed a document that did not change.
-
-Configure Pando like this:
+`gintrack agent init` writes this into the repository's `.pando.toml`, and `--kb-path`
+overrides the directory for a layout it cannot guess (docs/07 §4.18):
 
 ```toml
 [Remembrances]
-KBPath = "/home/you/.cache/gintrack/pando-kb"
+Enabled = true
+KBPath = "/home/you/src/acme-api/docs"   # the repository's own documentation folder
 KBAutoImport = true
-KBWatch = false
+KBWatch = true
 ```
 
-`KBWatch` stays **false** on purpose. The watcher is the component that erases `tags`, and
-fsnotify on a large corpus is expensive for no benefit: the exporter has already written
-complete files by the time an import pass runs. Forcing a re-sync means
-`POST /api/v1/search/reindex`: it re-exports the corpus and, when `search.pando.restUrl` is
-configured, calls Pando's `POST /api/v1/remembrances/kb/reindex` and reports its real
-scanned/added/updated/deleted counters. Without a REST URL there is nothing to call — the
-corpus is re-exported and the job says so, rather than claiming a reindex that did not happen.
+Three things about that block are deliberate.
 
-### 4.0 How the companion drives it (GIT-T-0130, GIT-T-0134)
+**`KBPath` is the documentation folder, not the repository root.** The KB walk applies no
+exclusions at all, so a root would be indexed whole — `.git`, `node_modules`, `dist` and every
+build artifact — and, with the watcher on, would exhaust the host's inotify watches. Pointed at
+`docs/` it reaches the backlog under `docs/.pmngr/` and the knowledge-base pages, and nothing
+else. See §4.
 
-The wiring lives in `internal/server`, which is the only package that knows both the exporter
-and the hub:
+**`KBWatch = true`, which is Pando's own default.** An edit to an item or a page is reindexed as
+it happens. See §5 for the warning this replaces.
 
-- **One exporter per mounted repository**, rooted at `<corpusDir>/<repo id>`, where `corpusDir`
-  is `search.pando.corpusDir` or, unset, `<index.cacheDir>/pando-kb`. That is exactly the path
-  `gintrack agent init` writes into Pando's `KBPath`, so the two never drift. Under it the
-  layout of §2 applies unchanged: `<PROJECT>/items/…` and `<PROJECT>/kb/…`.
-- **The first full export starts from `Server.Start`, in a goroutine**, carrying the server's
-  shutdown context. The listener answers requests while it runs, and a shutdown cancels it
-  cleanly: every file already written is complete, and the next start finishes the job.
-- **Then the exporter follows the hub** as an ordinary in-process subscriber of `item.changed`
-  and `file.changed` (`IsKb`), coalescing a burst per document over a 250 ms window. An
-  `op: "deleted"` item and an `op: "remove"` page become `ItemRemoved` and `PageRemoved`.
-- **The hub's slow-subscriber drop is the overflow.** When the hub declares the subscriber too
-  far behind, the companion re-exports everything and subscribes again — the contract of §4.2,
-  mapped onto the one failure mode the hub actually has.
-- **Progress is published as `search.progress`**, shaped like `sync.progress`: the startup
-  export reports under the operation id `startup`, a reindex under its job id
-  (docs/07 §5.6, and `POST /api/v1/search/reindex`).
+**Nothing is copied.** The files Pando indexes are the repository's own, committed files. There
+is no second directory to keep current, nothing to prune, and no window in which the index is
+one export behind the working tree.
 
-A write failure is logged and dropped, never fatal: the exporter is not poisoned by it and the
-next event over the same document retries.
+The repository root is registered as a Pando **code** project separately, by the companion, when
+`gintrack serve` starts (§0.1). Nothing has to be run by hand for that.
 
-### 4.1 ⚠️ Never point `KBPath` at a repository
+---
 
-Pando's directory walk has **no** hidden-directory exclusion and **no** `node_modules`
-exclusion. Pointed at a repository root it will walk `.git`, `node_modules`, `dist` and every
-build artifact, and — with `KBWatch` on — exhaust the host's inotify watches. `KBPath` must name
-the corpus directory and nothing else. That is also why the exporter keeps the corpus free of
-every file that is not an exported `.md` document, and why it refuses to start when the corpus
-root turns out to be a git working tree.
+## 2. What a hit is, and how it resolves
 
-### 4.2 Overflow means re-export, not drift
+A Pando hit is a **candidate**, never a record. `internal/server/search_pando.go` parses the path
+Pando reports and resolves it against git-in-track's own index; every field the UI shows — title,
+status, project, id — is re-read locally.
 
-The companion's event hub drops a subscriber that falls behind, permanently. An exporter driven
-by such a subscriber would stop receiving events and desync silently and for ever. So overflow
-is an event of its own: `Event{Kind: pandosync.Overflow}` runs a full export, which rewrites what
-changed and prunes what vanished. The same fallback covers a page removal the exporter cannot
-resolve to a corpus path — a page it never saw exported — because doing nothing there would
-leave an orphan document in the index.
+| Path Pando reports | Resolves to | `kind` |
+|---|---|---|
+| `.pmngr/<type>/<ID>-<slug>.md` | the item with that id | `item` |
+| `.pmngr/comments/<ID>/<file>` | the **item the comment belongs to**, `match: "comment"` | `item` |
+| `<path>.md` under the documentation folder | the knowledge-base page | `page` |
+| anything else that is still on disk | a plain file result: a path, a snippet, no front matter | `file` |
 
-## 5. The Go seam
+Paths are parsed **from the right**, so a deployment that reports the path with a prefix — an
+absolute `metadata.source_path`, or a `file_path` relative to a different `KBPath` — still
+resolves.
 
-`internal/pandosync` depends on `internal/core` and on a two-method source. It does **not**
-import `internal/server`: the hub lives there, and the server adapts its own events to
-`pandosync.Event` rather than the other way round.
+- **Comment hits collapse.** Several comments of one item that all match the query become one
+  row for the item, carrying the best-scoring fragment and `moreMatches` counting the rest, so a
+  thread that answers a query in five places does not fill the result list with one item.
+- **A foreign path is not a ghost and not a drop.** A file that is neither a backlog file nor a
+  page this index holds — a hand-edited stray, or a document under the documentation folder that
+  git-in-track does not own — comes back as a `file` hit. Only a path that is no longer on disk
+  is dropped, because a dangling row is worse than a thin result.
+- **Drops are counted.** The resolver reports how many candidates it dropped per query, on a
+  debug log line with a running total, so "search is missing things" has a number behind it.
+- **Every hit names its index.** `index: "kb" | "code"` travels to the API alongside
+  `source: "pando"` (§0.2).
 
-```go
-type Source interface {
-	Items() []core.Item          // every indexed item, deleted ones included, with bodies
-	Pages() []*core.KBPage       // every indexed KB page, with bodies
-}
+---
 
-// Optional: lets Apply resolve one document without cloning the whole index.
-type Lookup interface {
-	Item(id core.ItemID) (core.Item, bool)
-	Page(vaultPath string) (*core.KBPage, bool)
-}
+## 3. Reindexing
 
-e, err := pandosync.New(pandosync.Options{
-	Dir:        cfg.CacheDir(configPath) + "/pando-kb",
-	Source:     vault,
-	Project:    "GIT",          // fallback for a document that names no project
-	OnProgress: publishProgress, // optional, for the hub
-})
+`POST /api/v1/search/reindex` is the catch-up pass. It is not how the index normally changes —
+the watcher is — but it is what a companion started after a batch of commits landed needs, and
+what a Pando whose watcher was off needs.
 
-stats, err := e.ExportAll(ctx)                                    // full pass
-stats, err = e.Apply(ctx, pandosync.Event{Kind: pandosync.ItemChanged, ID: "GIT-US-0073"})
-last := e.LastExport()                                            // for the settings card
-```
+The job walks two phases and publishes `search.progress` for each (docs/07 §5.6):
 
-Event kinds: `ItemChanged`, `ItemRemoved`, `PageChanged`, `PageRemoved`, `Overflow`.
-`Stats` carries `Items`, `Pages`, `Written`, `Removed`, `Skipped`, `Duration`, `At` and `Full`.
+| Phase | What runs |
+|---|---|
+| `code` | `code_index_project` for every mounted repository's working tree, one Pando job id per repository |
+| `kb` | Pando's `POST /api/v1/remembrances/kb/reindex`, once, for the knowledge base |
+| `completed` / `failed` | the terminal frame; `failed` means at least one repository's code half failed, and the successful halves are still in the job |
 
-`Options.FS` replaces `Dir` with any `core.FS`, which is how the tests run the whole exporter
-over an in-memory file system.
+The knowledge-base half is honest about doing nothing. With no `search.pando.restUrl` configured
+there is no route to call — the reindex lives on `pando serve`'s REST surface only — and `kbNote`
+says so, adding that Pando's own watcher still follows the documentation directory. It never
+claims a reindex that did not happen.
 
-## 6. Searching the corpus
+A second call while one is running is refused with `search_reindex_running` (409) and the running
+job is untouched. A companion with no Pando endpoint answers `search_not_configured` (400).
 
-Search itself is specified with `GIT-US-0082`. The contract the corpus imposes on it is short:
+---
 
-- A Pando hit is a **candidate**, not a record. Resolve it to an item id or a page from its
-  corpus path — `<PROJECT>/items/<ID>.md` and `<PROJECT>/kb/<path>.md`, parsed from the right so
-  a deployment that reports the path with a prefix still resolves — and read every field the UI
-  shows from git-in-track's own index.
-- An id that no longer resolves is a stale hit from a corpus Pando has not re-imported yet.
-  Drop it rather than rendering a ghost.
-- Do not use `code_index_project` for this corpus: `code_hybrid_search` excludes Markdown by
-  default. The code index of `POST /api/v1/search/reindex` is over the repository's **source
-  tree**, which is a different thing from the corpus.
+## 4. The KB walk has no exclusions — which is why `KBPath` is `docs/`
+
+Pando's knowledge-base sync is a bare `filepath.WalkDir` filtered only by extension
+(`internal/rag/kb/sync.go:125`). There is no hidden-directory rule, no `node_modules` rule, no
+ignore file. **Pointed at a repository root it would walk the whole working tree**, `.git`
+included, and with `KBWatch = true` it would register an inotify watch per directory.
+
+That is a real constraint and it is why `KBPath` names the documentation folder. It is **not** a
+reason to keep the index outside the repository: the documentation folder is inside the
+repository, is committed, and is exactly the half that answers backlog questions.
+
+**It is also not true of the code indexer.** `internal/rag/code/indexer.go:234-240` skips every
+dot-directory, `node_modules`, `vendor`, `dist`, `build`, `__pycache__` and `.git`. That is why
+the repository root can be registered as a code project without indexing `node_modules`, and it
+is also why the code index cannot see `docs/.pmngr/` — a dot-directory — which is precisely the
+half the KB indexation covers. The two exclusion sets are properties of Pando, hardcoded, with
+no setting to get wrong.
+
+---
+
+## 5. What was removed, and the warning that was withdrawn
+
+Until `GIT-EP-0020` the companion exported a second copy of every item and knowledge-base page
+into `<cacheDir>/pando-kb/<repo id>/`, outside every repository, and configured Pando with
+`KBWatch = false`. `internal/pandosync`, its hub subscription, the `search.pando.corpusDir`
+configuration key, the `corpusDir`/`corpora`/`documents`/`lastExport` fields of
+`GET /api/v1/search/settings` and the corpus directory input in the settings card are all gone.
+A configuration that still sets `search.pando.corpusDir` is refused by name, citing this epic,
+rather than ignored. **A corpus directory left behind by an older version is not read any more
+and is safe to delete by hand.**
+
+Two sentences appeared throughout this repository's documentation, its templates and its code
+comments. Both are withdrawn, and a reader who remembers them should know which was wrong.
+
+> ⚠️ **Withdrawn (false):** *"Pando's KB watcher re-writes the documents it processes without
+> parsing their front matter, so every incremental edit it handles strips the metadata the
+> exporter wrote."*
+
+Verified against Pando at commit `710a39281`, the version installed here: `internal/rag/kb/watcher.go`
+contains **no write call of any kind**. It stats, reads, and calls `AddDocument` /
+`UpdateDocument` / `DeleteDocument`, which are database operations. The bug behind the warning was
+real and is documented in Pando's own `internal/rag/kb/repair.go:22-40`, but it damaged **metadata
+in the database, not files on disk**, and it was fixed under PANDO-US-0003/0004: the watcher now
+shares `buildDocumentMetadata` with the sync path, self-writes are suppressed for three seconds,
+and a startup repair re-parses documents whose stored metadata lost keys their source still
+declares. `KBWatch = true` is Pando's own default.
+
+> ⚠️ **Withdrawn (true, but applied to the wrong thing):** *"Pando's directory walk has no
+> hidden-directory or `node_modules` exclusion, so `KBPath` must never point at a repository."*
+
+The first half is true of the **KB** walk and remains the reason `KBPath` is the documentation
+folder rather than the repository root (§4). The conclusion does not follow: the documentation
+folder is inside the repository. And the claim is false of the **code** indexer, which skips
+those directories, which is what makes registering the repository root safe.
+
+**The write hazard is real, and it is not the watcher.** `kb_add_document`, `kb_delete_document`
+and the memory `remember` / `forget` path mirror a document to disk through a serializer that
+emits Pando's typed front-matter keys alone. A call against an existing repository path would
+rewrite that file without `id`, `status` or `parent` — and for gintrack a mismatched `id` or
+`type` is a hard parse error that removes the item from the index until it is fixed. What keeps
+those tools away from repository files is the `[AGUI] Tools` allow-list `gintrack agent init`
+writes, which admits only the reading KB tools plus `code_hybrid_search` and `code_find_symbol`.
+That is a configuration boundary, not a code boundary: see ADR-036 and docs/20 §6.2.
+
+**Tag filtering inside Pando is lost.** The exporter synthesised a `tags` list; real backlog files
+carry `labels`, which is not one of Pando's reserved keys. `labels` reaches a hit's `metadata`
+verbatim through `MergeUnknownFrontMatterKeys`, but Pando's own tag filter no longer has anything
+to filter on. That is accepted — no derived data is written into source front matter — and it
+costs nothing downstream, because a consumer resolves a hit to an id and re-reads every field
+from git-in-track's own index anyway.
+
+---
+
+## 6. Searching
+
+Search itself is specified with `GIT-US-0082`. The contract the two indexations impose on it is short:
+
+- A Pando hit is a **candidate**, not a record: resolve it and re-read every field the UI shows
+  from git-in-track's own index. §2 is the resolution table.
+- A path that is no longer on disk is a stale hit from an index Pando has not caught up with
+  yet. Drop it rather than rendering a ghost.
+- Both legs run inside one latency budget (`pandoBudget`, 300 ms) and in parallel, because they
+  are two calls to the same Pando. The knowledge-base leg is the one a failure degrades over: a
+  code leg that failed on its own costs the answer its code hits and nothing else.
+- `code_hybrid_search` excludes Markdown unless `include_docs` is set, and the companion always
+  sets it: `docs/*.md`, the README and the changelog are what a question about this repository is
+  most often answered from.
 - The companion reaches all of this through `vault.Workspace`: the host installs a
   `vault.SemanticSearcher` with `SetSemanticSearcher`, and every caller of the core contract —
   the REST endpoint, the MCP `search_semantic` tool — reaches it through the `search.semantic`
@@ -240,8 +281,21 @@ Search itself is specified with `GIT-US-0082`. The contract the corpus imposes o
 
 | Question | Answer |
 |---|---|
-| Can I delete the corpus? | Yes. It is rebuilt on the next start or on the next overflow. |
-| Is it committed? | Never. It lives outside every repository, and the exporter refuses a corpus root that is a git working tree. |
-| Does it contain secrets? | It contains exactly what the backlog and the KB contain. Treat it with the same care as the repository. |
-| Why did my edit not show up in search? | The exporter wrote the file immediately; Pando imports on its own schedule with `KBWatch = false`. |
-| Why are tags missing in Pando? | Its watcher strips them. That is why the id is also in the body, and why no consumer depends on front matter. |
+| Where does Pando keep its index? | In its own database, under Pando's data directory. Nothing of it is in this repository, and nothing of this repository is copied anywhere. |
+| Can I delete the old `<cacheDir>/pando-kb/` directory? | Yes. Nothing reads it any more (§5). |
+| Is `KBWatch = true` safe? | Yes. The watcher performs no file write at all. The tools that do write are excluded by the `[AGUI] Tools` allow-list (§5, ADR-036). |
+| Why is `KBPath` `docs/` and not the repository root? | The KB walk has no exclusions, so a root would be indexed whole. The code indexer, which *is* pointed at the root, does exclude (§4). |
+| Does Pando see the backlog? | Yes, through the KB indexation: `docs/.pmngr/` is under `KBPath`. The code indexation cannot see it, because it skips dot-directories. |
+| Why did my edit not show up in search? | The watcher reindexes as it happens; if it was off, or the companion missed a batch of commits, run `POST /api/v1/search/reindex` (§3). |
+| Why are there no tags in Pando? | Backlog files carry `labels`, not `tags`, and the exporter that synthesised `tags` is gone. Filtering by tag inside Pando is lost on purpose (§5). |
+| A search hit is a file with no title — is that a bug? | No. A path that is neither a backlog file nor a knowledge-base page comes back as a plain `file` result (§2). |
+| Does the index contain secrets? | It contains exactly what the repository contains. Treat it with the same care. |
+
+---
+
+## 8. Related documents
+
+- [ADR-036](./adr/ADR-036-pando-indexes-the-repository-directly.md) — why the exported corpus was retired
+- [Agent interface](./20-agent-interface.md) — `gintrack agent init`, the tool allow-list, the security posture
+- [CLI and API](./07-cli-and-api.md) — `search.pando` configuration, the search settings endpoints
+- [Research: Pando gap analysis](./research/2026-09-13-pando-gap-search-and-fit.md) — accurate when written, superseded by this document

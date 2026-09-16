@@ -2,14 +2,16 @@
 id: GIT-US-0098
 type: story
 title: Register the repository with Pando as a code project
-status: backlog
+status: done
 priority: medium
 parent: GIT-EP-0020
 milestone: GIT-M-0013
 author: mcp
 labels: [server, cli, docs]
 created: 2026-09-16T12:46:50Z
-updated: 2026-09-16T15:04:14Z
+updated: 2026-09-16T15:56:02Z
+started: 2026-09-16T15:44:29Z
+closed: 2026-09-16T15:56:02Z
 ---
 
 ## Description

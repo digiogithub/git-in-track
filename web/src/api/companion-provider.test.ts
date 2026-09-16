@@ -2152,28 +2152,19 @@ const searchSettingsBody = {
   mcpUrl: 'http://127.0.0.1:9777/mcp',
   restUrl: 'http://127.0.0.1:9778',
   projectId: 'acme-api',
-  corpusDir: '/home/dana/.local/state/gintrack/pando-kb',
   allowRemote: false,
   reachable: true,
   reachableError: '',
-  corpora: [
+  indexed: [
     {
       repo: 'acme-api',
-      dir: '/home/dana/.local/state/gintrack/pando-kb/acme-api',
-      last: {
-        items: 412,
-        pages: 38,
-        written: 3,
-        removed: 0,
-        skipped: 447,
-        duration: 91_000_000,
-        at: '2026-09-15T10:02:11Z',
-        full: true,
-      },
+      root: '/home/dana/src/acme-api',
+      docs: ['docs'],
+      items: 412,
+      pages: 38,
+      comments: 96,
     },
   ],
-  documents: 450,
-  lastExport: '2026-09-15T10:02:11Z',
   reindex: null,
   persisted: false,
 };
@@ -2187,10 +2178,37 @@ describe('CompanionProvider semantic search settings (story GIT-US-0091)', () =>
     expect(lastCall(fetchImpl).url).toBe(`${BASE}/api/v1/search/settings`);
     expect(settings.backend).toBe('pando');
     expect(settings.reachable).toBe(true);
-    expect(settings.documents).toBe(450);
-    expect(settings.corpora[0]?.last.skipped).toBe(447);
+    expect(settings.indexed[0]?.root).toBe('/home/dana/src/acme-api');
+    expect(settings.indexed[0]?.docs).toEqual(['docs']);
+    expect(settings.indexed[0]?.comments).toBe(96);
     expect(settings.persisted).toBe(false);
     expect(settings.reindex).toBeNull();
+  });
+
+  it('reads the code-project registration of every indexed repository', () => {
+    const settings = toSearchSettings({
+      backend: 'pando',
+      indexed: [
+        {
+          repo: 'acme-api',
+          root: '/home/dana/src/acme-api',
+          docs: ['docs'],
+          code: { project: 'home_dana_src_acme-api', status: 'indexing', job: 'idx-1' },
+        },
+        // A repository the registration has not reached yet.
+        { repo: 'team', root: '/home/dana/src/team', docs: ['knowledge'] },
+        // A status this client does not know reads as "no code search".
+        { repo: 'old', root: '/home/dana/src/old', docs: [], code: { status: 'martian' } },
+      ],
+    });
+
+    expect(settings.indexed[0]?.code).toEqual({
+      project: 'home_dana_src_acme-api',
+      status: 'indexing',
+      job: 'idx-1',
+    });
+    expect(settings.indexed[1]?.code).toBeUndefined();
+    expect(settings.indexed[2]?.code?.status).toBe('unavailable');
   });
 
   it('keeps "nothing is configured" apart from "it did not answer"', () => {
@@ -2229,7 +2247,7 @@ describe('CompanionProvider semantic search settings (story GIT-US-0091)', () =>
       response({
         jobId: 'reindex-1',
         startedAt: '2026-09-15T10:04:00Z',
-        phase: 'export',
+        phase: 'code',
         repos: [],
       }),
     );
@@ -2241,7 +2259,7 @@ describe('CompanionProvider semantic search settings (story GIT-US-0091)', () =>
     expect(job).toEqual({
       jobId: 'reindex-1',
       startedAt: '2026-09-15T10:04:00Z',
-      phase: 'export',
+      phase: 'code',
       repos: [],
     });
 
@@ -2253,7 +2271,6 @@ describe('CompanionProvider semantic search settings (story GIT-US-0091)', () =>
       repos: [
         {
           repo: 'acme-api',
-          export: { items: 412, pages: 38, written: 3 },
           codeJob: 'idx-7741',
           codeError: 'pando is not reachable',
         },
@@ -2261,11 +2278,10 @@ describe('CompanionProvider semantic search settings (story GIT-US-0091)', () =>
     });
     expect(finished.phase).toBe('completed');
     expect(finished.kb?.unchanged).toBe(447);
-    // The halves are independent: a failed code index leaves the export in the
-    // job rather than invalidating it.
-    expect(finished.repos[0]?.export.items).toBe(412);
+    // A repository Pando refused is recorded against that repository alone;
+    // the knowledge-base half still reports its own counts.
+    expect(finished.repos[0]?.codeJob).toBe('idx-7741');
     expect(finished.repos[0]?.codeError).toBe('pando is not reachable');
-    expect(finished.repos[0]?.exportError).toBeUndefined();
   });
 
   it('maps the two refusals to their own codes', async () => {

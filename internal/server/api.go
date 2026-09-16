@@ -77,8 +77,8 @@ func (s *Server) mountAPI(api chi.Router) {
 		p.Get("/inbox", s.handleInboxList)
 
 		p.Get("/search", s.handleSearch)
-		// The semantic accelerator's own surface: where Pando is, where the
-		// corpus lives, whether it is current, and the button that rebuilds it
+		// The semantic accelerator's own surface: where Pando is, what it
+		// indexes, whether it answers, and the button that reindexes it
 		// (GIT-US-0091). They are separate paths rather than a subtree so that
 		// GET /search keeps its own route.
 		p.Get("/search/settings", s.handleSearchSettings)

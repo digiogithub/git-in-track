@@ -3,8 +3,10 @@ package main
 import (
 	"encoding/base64"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -98,6 +100,8 @@ func TestAgentInitWritesThePandoConfiguration(t *testing.T) {
 		"Persona = 'backlog-assistant'",
 		"'gintrack_*'",
 		"'kb_search_documents'",
+		"'kb_get_document'",
+		"'kb_related_documents'",
 		"'code_hybrid_search'",
 		"Mesnada = false",
 		"[AGUI.Profiles.backlog-assistant]",
@@ -110,7 +114,7 @@ func TestAgentInitWritesThePandoConfiguration(t *testing.T) {
 		"Token = 'age1:",
 		"[Remembrances]",
 		"KBAutoImport = true",
-		"KBWatch = false",
+		"KBWatch = true",
 		"[MCPServer]",
 		"HttpEnabled = false",
 		":9777",
@@ -124,8 +128,20 @@ func TestAgentInitWritesThePandoConfiguration(t *testing.T) {
 	if !strings.Contains(toml, "strips the browser") {
 		t.Error("the AllowedOrigins comment does not explain that the proxy strips Origin")
 	}
-	if !strings.Contains(toml, "strips the metadata") {
-		t.Error("the KBWatch comment does not explain that the watcher erases front matter")
+	// The [Remembrances] comments carry the reversal of GIT-EP-0020: the
+	// documentation folder rather than the repository root, and a watcher that
+	// is safe because it writes nothing.
+	if !strings.Contains(toml, "no exclusions at all") {
+		t.Error("the KBPath comment does not explain why the documentation folder and not the repository root")
+	}
+	if !strings.Contains(toml, "performs no file write") {
+		t.Error("the KBWatch comment does not say the watcher writes no file")
+	}
+	if strings.Contains(toml, "strips the metadata") {
+		t.Error("the retired claim that the watcher strips front matter is still in the template")
+	}
+	if want := "KBPath = '" + filepath.Join(h.Repo, "docs") + "'"; !strings.Contains(toml, want) {
+		t.Errorf("KBPath is not the repository's documentation folder (%s):\n%s", want, toml)
 	}
 
 	persona := readGenerated(t, h.Repo, agentPersonaName)
@@ -447,9 +463,11 @@ func TestAgentInitForceOverwrites(t *testing.T) {
 	}
 }
 
-// TestAgentInitCorpusPathAndFlags checks the two values the companion and the
-// exporter must agree on: the corpus directory and the AG-UI port.
-func TestAgentInitCorpusPathAndFlags(t *testing.T) {
+// TestAgentInitKBPathAndFlags checks the values the generated configuration
+// takes from the repository and from the flags: after GIT-EP-0020 the indexed
+// directory is the repository's own documentation folder, not a corpus outside
+// it.
+func TestAgentInitKBPathAndFlags(t *testing.T) {
 	h := newHarness(t)
 	h.register()
 
@@ -463,15 +481,68 @@ func TestAgentInitCorpusPathAndFlags(t *testing.T) {
 	if !strings.Contains(toml, "Port = 18090") {
 		t.Error("--agui-port was not used for the AG-UI listener")
 	}
-	want := filepath.Join(filepath.Dir(h.Config), "pando-kb", "acme-api")
+	want := filepath.Join(h.Repo, "docs")
 	if !strings.Contains(toml, "KBPath = '"+want+"'") {
 		t.Errorf("KBPath is not %q:\n%s", want, toml)
 	}
-	if strings.Contains(toml, "KBPath = '"+h.Repo) {
-		t.Error("KBPath points inside the repository")
+	if strings.Contains(toml, filepath.Join(filepath.Dir(h.Config), "pando-kb")) {
+		t.Error("KBPath still points at the retired corpus directory")
 	}
 	if !strings.Contains(stdout, "--port 18090") {
 		t.Errorf("the printed agui-serve command does not carry the port:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, want) {
+		t.Errorf("the report does not name the indexed directory %q:\n%s", want, stdout)
+	}
+}
+
+// TestAgentInitKBPathOverride covers --kb-path, for a repository whose
+// documentation does not live where detection would look.
+func TestAgentInitKBPathOverride(t *testing.T) {
+	h := newHarness(t)
+	h.register()
+	elsewhere := filepath.Join(h.Repo, "handbook")
+
+	payload := decode[agentInitPayload](t,
+		h.mustRun("agent", "init", "--repo", h.Repo, "--kb-path", elsewhere, "--json"))
+
+	if payload.KBPath != elsewhere {
+		t.Errorf("--kb-path was not used: %q", payload.KBPath)
+	}
+	toml := readGenerated(t, h.Repo, agentPandoConfigName)
+	if !strings.Contains(toml, "KBPath = '"+elsewhere+"'") {
+		t.Errorf("--kb-path did not reach the configuration:\n%s", toml)
+	}
+}
+
+// TestAgentToolsExcludeEveryWritingKBTool pins the allow-list against the write
+// hazard of GIT-EP-0020: `kb_add_document`, `kb_delete_document` and the memory
+// `remember`/`forget` path mirror a document to disk with Pando's typed keys
+// alone, destroying `id`, `status` and `parent` in a repository file. Each is
+// named here so adding one to Pando cannot silently widen the list, and the
+// check is a glob match so a broadened entry such as `kb_*` fails too.
+func TestAgentToolsExcludeEveryWritingKBTool(t *testing.T) {
+	for _, writer := range agentWritingKBTools {
+		for _, glob := range agentTools {
+			matched, err := path.Match(glob, writer)
+			if err != nil {
+				t.Fatalf("bad glob %q: %v", glob, err)
+			}
+			if matched {
+				t.Errorf("the allow-list entry %q admits the writing tool %q", glob, writer)
+			}
+		}
+	}
+	for _, want := range []string{"kb_add_document", "kb_delete_document", "remember", "forget"} {
+		if !slices.Contains(agentWritingKBTools, want) {
+			t.Errorf("%q is not named as a writing tool, so nothing stops it entering the allow-list", want)
+		}
+	}
+	// The reading KB tools are the ones that must be there.
+	for _, want := range []string{"kb_search_documents", "kb_get_document", "kb_related_documents"} {
+		if !slices.Contains(agentTools, want) {
+			t.Errorf("the allow-list does not admit the reading tool %q", want)
+		}
 	}
 }
 

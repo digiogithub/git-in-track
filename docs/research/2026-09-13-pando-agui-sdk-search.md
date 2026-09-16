@@ -4,6 +4,14 @@ type: page
 tags: [research, pando, agent, search]
 ---
 
+> ⚠️ **Partly superseded — annotation added 2026-09-16 (`GIT-US-0099`).** Kept as written; it
+> was accurate on its date. The export-to-`.pando-kb` shape it recommends (and the
+> `internal/server/pandosync.go` hub subscriber) was built and then **retired** by
+> `GIT-EP-0020`: Pando now indexes the repository's own committed files, `KBPath` is the
+> repository's documentation folder, and there is no exporter. See
+> [docs/21](../21-semantic-search.md) §5 and
+> [ADR-036](../adr/ADR-036-pando-indexes-the-repository-directly.md).
+
 # Pando → git-in-track integration research
 
 Analysed `/www/MCP/Pando/pando`. Target `/www/git-in-track` (Go+chi `internal/server`, React 18.3.1 + Vite + TanStack Router/Query + Zustand + shadcn in `web/`). All paths absolute; line numbers verified unless marked *(uncertain)*.

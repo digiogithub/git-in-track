@@ -860,10 +860,10 @@ stories or pages are *about* X" — the question a substring index answers with 
 when the wording of the question is not the wording of the item.
 
 The ranking is not gintrack's: it comes from the Pando backend the companion installs behind
-the core method `search.semantic` (`internal/vault/semantic.go`). Pando returns *candidates
-only* — every field below is re-read from gintrack's own index before the answer leaves, and a
-candidate that no longer resolves is dropped, so nothing in a Pando corpus can reach an agent
-as if it were backlog state.
+the core method `search.semantic` (`internal/vault/semantic.go`). Pando indexes the
+repository's own files (docs/21, ADR-036) and returns *candidates only* — every field below is
+re-read from gintrack's own index before the answer leaves, and a candidate whose path is gone
+from disk is dropped, so nothing Pando holds can reach an agent as if it were backlog state.
 
 ```json
 // input
@@ -904,7 +904,7 @@ matches, which is exactly the wrong conclusion.
 | **Structured** — an id, a status, an assignee, a sprint, a parent, a label, a date range | `get_item`, `list_items` | They read the front matter directly: exact, cheap, and they return the `rev` a write has to quote. |
 | **Literal** — words you expect to appear verbatim in an item or a page | `search_items`, `search_kb` | Substring ranking over ids, titles, labels and bodies. |
 | **Semantic** — a topic, a decision, "where did we say…", wording the user half-remembers | `search_semantic` | Ranks by meaning across items and pages, so a different vocabulary still finds the item. |
-| **Code** — a symbol, a call site, "how is X implemented" | Pando's `code_hybrid_search`, then `code_find_symbol` | The code index is the only one that sees Go and TypeScript and their symbol graph; the backlog corpus is Markdown only. |
+| **Code** — a symbol, a call site, "how is X implemented" | Pando's `code_hybrid_search`, then `code_find_symbol` | The code index is the only one that sees Go and TypeScript and their symbol graph. It is pointed at the repository root and skips dot-directories, so it cannot see the backlog under `.pmngr/` — that half is Pando's knowledge-base indexation. |
 
 Call **one** of them, then widen only if it comes back empty. The same table is written into
 the routing skill `gintrack agent init` generates (`20-agent-interface.md`), because a rule an

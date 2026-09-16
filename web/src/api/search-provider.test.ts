@@ -46,6 +46,26 @@ describe('search response mapping', () => {
     expect(wrapped.hits[0]?.source).toBe('core');
   });
 
+  it('carries the Pando index a semantic hit came from, and a file kind', () => {
+    const result = toSearchResult({
+      hits: [
+        { kind: 'page', path: 'docs/21.md', title: '21', source: 'pando', index: 'kb' },
+        {
+          kind: 'file',
+          path: 'internal/server/search_code.go',
+          title: 'searchCode',
+          source: 'pando',
+          index: 'code',
+        },
+        // An index this client does not know is left absent, never guessed.
+        { kind: 'page', path: 'c.md', source: 'pando', index: 'martian' },
+      ],
+    });
+
+    expect(result.hits.map((hit) => hit.index)).toEqual(['kb', 'code', undefined]);
+    expect(result.hits[1]?.kind).toBe('file');
+  });
+
   it('reads an unknown origin as the local index', () => {
     const result = toSearchResult({ hits: [{ kind: 'item', path: 'a.md', source: 'martian' }] });
     expect(result.hits[0]?.source).toBe('core');
@@ -93,14 +113,14 @@ describe('FakeProvider semantic search settings (story GIT-US-0091)', () => {
 
   it('answers a settings document a card can render', async () => {
     const provider = new FakeProvider({
-      search: { fullTextSearch: 'pando', settings: { documents: 450 } },
+      search: { fullTextSearch: 'pando', settings: { projectId: 'acme-api' } },
     });
 
     expect(provider.capabilities.searchSettings).toBe(true);
     await expect(provider.getSearchSettings()).resolves.toMatchObject({
       backend: 'pando',
       configured: true,
-      documents: 450,
+      projectId: 'acme-api',
       reachable: true,
     });
   });
@@ -136,7 +156,7 @@ describe('FakeProvider semantic search settings (story GIT-US-0091)', () => {
     const provider = new FakeProvider({ search: { settings: {} } });
     const job = await provider.reindexSearch();
 
-    expect(job.phase).toBe('export');
+    expect(job.phase).toBe('code');
     await expect(provider.getSearchSettings()).resolves.toMatchObject({
       reindex: { jobId: job.jobId },
     });

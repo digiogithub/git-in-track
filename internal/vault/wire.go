@@ -360,6 +360,16 @@ type SearchHit struct {
 	// index, "pando" for a semantic candidate resolved back into it. It is
 	// always set, so a client never has to guess from an absent field.
 	Source string `json:"source,omitempty"`
+	// Index names which Pando indexation a semantic hit came from, "kb" or
+	// "code". It is empty on a core hit (GIT-US-0098).
+	Index string `json:"index,omitempty"`
+	// Match names where in the document the fragment was found: empty for the
+	// document itself, "comment" for a semantic hit inside an item's comment
+	// thread that resolved back to the item.
+	Match string `json:"match,omitempty"`
+	// MoreMatches counts the further comments of the same item collapsed into
+	// this hit.
+	MoreMatches int `json:"moreMatches,omitempty"`
 
 	Project string `json:"project,omitempty"`
 	// VaultID names the repository the hit came from, so that a workspace-wide

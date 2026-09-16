@@ -1,6 +1,6 @@
 // Package pando is the companion's typed client for Pando's semantic search
-// surface: the knowledge base, the code index, and the reindex that keeps the
-// exported corpus in step.
+// surface: the knowledge base, the code index, and the reindex that catches
+// its knowledge base up with the repository.
 //
 // It is the transport seam for the whole semantic-search epic. Everything above
 // it — the HTTP handlers, the MCP tools, the web client — sees Client, KBHit,

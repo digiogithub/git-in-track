@@ -69,6 +69,7 @@ Every ADR uses the same sections:
 | [ADR-033](ADR-033-inbox-is-a-reserved-triage-status-category.md) | The inbox is a reserved `triage` status category plus a front-matter block | Accepted | 8 |
 | [ADR-034](ADR-034-sprint-status-is-derived-from-dates.md) | A sprint's status is derived from its dates, and a closed sprint freezes one snapshot | Accepted | 8 |
 | [ADR-035](ADR-035-agent-interface-over-ag-ui.md) | The agent panel consumes AG-UI directly, with `@pando-ai/sdk/agui` and our own chat UI | Accepted | 9 |
+| [ADR-036](ADR-036-pando-indexes-the-repository-directly.md) | Pando indexes the repository's own files; the exported corpus is retired | Accepted | 9 |
 
 ## Related documents
 

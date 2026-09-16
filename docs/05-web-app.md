@@ -531,21 +531,29 @@ keeps a hand-written `project.yaml` as readable as it was found (doc 03 §6.5).
 card exists to answer one complaint — "semantic search returns nothing" — without reading the
 companion's log, so everything on it is a step of that diagnosis: the backend badge (`core` or
 `pando`, plus *degraded* when the endpoint did not answer), the MCP and REST URLs, the code project
-id, the corpus directory, an `allowRemote` switch carrying doc 07 §3.3's warning verbatim, the
-result of the **live** reachability probe with whatever error it produced, and one row per mounted
-repository of the exported corpus — its directory, its last export time and its
-written/removed/skipped counts, where a large *skipped* means "nothing changed", not "nothing was
-found". **Reindex now** posts `POST /api/v1/search/reindex`, which answers `202` with a job and then
-works in the background; the card follows the `search.progress` frames through the provider's event
-seam (a `searchProgress` change event) — phases `export` → `code` → `kb` → `completed`/`failed` —
-and re-reads the settings on a terminal frame, because the counts, the per-repository errors and the
-knowledge-base note live on the finished job rather than in the frame. A second run while one is
-going is refused with `search_reindex_running` and reported as "a reindex is already running", not
-as a failure to retry. Two things it deliberately does not do: it never renders a token field —
-neither Pando token is reported or patchable, and the card says instead that they are set in the
-configuration file or in `GINTRACK_PANDO_MCP_TOKEN` / `GINTRACK_PANDO_REST_TOKEN` — and it never
-calls a re-export a completed index: without a REST URL the job's own `kbNote` says the corpus was
-re-exported and awaits Pando's next import pass, and the card repeats it word for word. A standing
+id, an `allowRemote` switch carrying doc 07 §3.3's warning verbatim, the result of the **live**
+reachability probe with whatever error it produced, and **one row per mounted repository of what
+Pando is pointed at** — the working tree, the documentation directories, the items, pages and
+comments git-in-track's own index found under them, and the state of the repository's code-project
+registration as a badge (`off`, `registered`, `indexing`, `unavailable`) with the companion's own
+sentence explaining it. That row replaces the exported-corpus report the card used to show: there is
+no second copy to date any more (epic GIT-EP-0020, ADR-036), so the diagnosis is *where Pando was
+pointed and how much was found there* — a row reporting 0 items and 0 pages is a misconfigured
+`KBPath`, and that is what the card makes visible. Underneath it the card states in prose that the
+backlog lives under `.pmngr/` inside the knowledge-base directory, so one indexation covers items,
+comments and pages, and that the working tree is registered separately as a code project when the
+companion starts. **Reindex now** posts `POST /api/v1/search/reindex`, which answers `202` with a job
+and then works in the background; the card follows the `search.progress` frames through the
+provider's event seam (a `searchProgress` change event) — phases `code` → `kb` →
+`completed`/`failed` — and re-reads the settings on a terminal frame, because the counts, the
+per-repository errors and the knowledge-base note live on the finished job rather than in the frame.
+A second run while one is going is refused with `search_reindex_running` and reported as "a reindex
+is already running", not as a failure to retry. Two things it deliberately does not do: it never
+renders a token field — neither Pando token is reported or patchable, and the card says instead that
+they are set in the configuration file or in `GINTRACK_PANDO_MCP_TOKEN` /
+`GINTRACK_PANDO_REST_TOKEN` — and it never calls a reindex that did not happen a completed one:
+without a REST URL the job's own `kbNote` says nothing was asked to reindex and that Pando's watcher
+still follows the documentation directory, and the card repeats it word for word. A standing
 warning says the embedding model is pinned configuration: Pando silently skips chunks whose vector
 length differs from the query's, and the model is per Pando **instance**, so changing it degrades
 recall invisibly for every consumer of that instance until a full reindex. The card is gated on the
