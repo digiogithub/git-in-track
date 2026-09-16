@@ -2,12 +2,13 @@
 id: GIT-M-0012
 type: milestone
 title: Phase 8 — Inbox and cycles
-status: in_progress
+status: done
 author: mcp
 labels: [core, web, server]
 created: 2026-09-13T13:06:52Z
-updated: 2026-09-13T19:53:36Z
+updated: 2026-09-15T21:45:58Z
 started: 2026-09-13T19:53:36Z
+closed: 2026-09-15T21:45:58Z
 due: 2026-12-15
 ---
 
