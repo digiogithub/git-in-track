@@ -65,6 +65,7 @@ import type {
   Capabilities,
   CreateProjectInput,
   CreateTeamInput,
+  EnableInboxInput,
   ChangeEvent,
   Comment,
   KbFeedbackNoteDraft,
@@ -331,6 +332,9 @@ const PROBLEM_CODES: Record<string, ProviderErrorCode> = {
   sprint_target_completed: 'sprint_target_completed',
   // A project with no triage status simply has no inbox (ADR-033).
   no_triage_status: 'no_triage_status',
+  // Enabling an inbox that exists, or over an ordinary `triage` status (GIT-US-0100).
+  inbox_already_enabled: 'inbox_already_enabled',
+  triage_status_id_taken: 'triage_status_id_taken',
   project_exists: 'project_exists',
   team_exists: 'team_exists',
   team_project_exists: 'team_project_exists',
@@ -900,7 +904,7 @@ export function toProjectSummary(value: unknown): ProjectSummary {
     .map((entry) => asPriority(entry))
     .filter((entry): entry is Priority => entry !== undefined);
 
-  return {
+  const project: ProjectSummary = {
     key,
     name: asString(record['name']) ?? key,
     docsPath: asString(record['docsPath']) ?? asString(record['docs']) ?? '',
@@ -909,6 +913,9 @@ export function toProjectSummary(value: unknown): ProjectSummary {
     priorities: priorities.length > 0 ? priorities : [...PRIORITIES],
     itemCounts: toItemCounts(record['counts'] ?? record['itemCounts']),
   };
+  put(project, 'writable', asBoolean(record['writable']));
+  put(project, 'configRev', asString(record['configRev']));
+  return project;
 }
 
 function toKbNode(value: unknown): KbNode | null {
@@ -1880,6 +1887,23 @@ export class CompanionProvider implements DataProvider {
         ...(input.timezone === undefined ? {} : { timezone: input.timezone }),
       },
     });
+    const record = asRecord(body);
+    return toProjectSummary(record?.['project'] ?? body);
+  }
+
+  /**
+   * Adds the triage status to a project's `project.yaml`. `If-Match` carries
+   * the `configRev` the listing reported; without one the write is
+   * unconditional, which is safe because it only ever inserts one status.
+   */
+  async enableInbox(input: EnableInboxInput): Promise<ProjectSummary> {
+    const body = await this.#json(
+      `${API_PREFIX}/projects/${encodeURIComponent(input.project)}/inbox`,
+      {
+        method: 'POST',
+        ...(input.rev === undefined ? {} : { rev: input.rev }),
+      },
+    );
     const record = asRecord(body);
     return toProjectSummary(record?.['project'] ?? body);
   }

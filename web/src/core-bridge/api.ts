@@ -154,6 +154,10 @@ export type ProjectSummary = {
   labels: { name: string; color?: string; description?: string }[];
   priorities: Priority[];
   itemCounts: Record<ItemType, number>;
+  /** False when `project.yaml` did not validate, so the project opens read-only. */
+  writable?: boolean;
+  /** Revision of `project.yaml`, the precondition of `project.inbox.enable`. */
+  configRev?: string;
   /** Repository the project was discovered in; set by a workspace-wide answer. */
   vaultId?: string;
   /** Initial status and transition map (`from -> [to...]`); absent transitions mean any. */
@@ -1397,6 +1401,20 @@ export type ProjectCreated = {
   writes: WriteSet;
 };
 
+/** What `project.inbox.enable` needs: the project, and the revision read. */
+export type ProjectInboxEnableParams = {
+  project: string;
+  /** `configRev` as the project listing reported it; omitted is unconditional. */
+  rev?: string;
+  vaultId?: string;
+};
+
+/** What `project.inbox.enable` answers with: the project, and the files to persist. */
+export type ProjectInboxEnabled = {
+  project: ProjectSummary;
+  writes: WriteSet;
+};
+
 /** What `team.create` needs: where `team.yaml` goes and its identity. */
 export type NewTeamParams = {
   /** Vault-relative folder; `''` and `'.'` both mean the repository root. */
@@ -1604,6 +1622,17 @@ export type CoreApi = {
    * and a folder that already holds a project with `project_exists`.
    */
   'project.create': { params: NewProjectParams; result: ProjectCreated };
+  /**
+   * Give a project created before the inbox existed one (ADR-033): it adds
+   * `{id: triage, name: Triage, category: triage}` as the first status of
+   * `project.yaml` and leaves the rest of the file alone.
+   *
+   * It refuses a project that already has a triage status with
+   * `inbox_already_enabled`, one with an ordinary status called `triage` with
+   * `triage_status_id_taken`, and a `rev` that is no longer current with
+   * `stale_revision`.
+   */
+  'project.inbox.enable': { params: ProjectInboxEnableParams; result: ProjectInboxEnabled };
 
   /** Every board of the team repository. */
   'board.list': {

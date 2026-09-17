@@ -56,7 +56,7 @@ func DefaultWorkflow() Workflow {
 			// The inbox. It is deliberately not a target of any declared
 			// transition: work leaves triage by being accepted, which moves it to
 			// the initial status, and nothing ordinary moves back into it.
-			{ID: "triage", Name: "Triage", Category: CategoryTriage},
+			TriageStatusDef(),
 			{ID: "backlog", Name: "Backlog", Category: CategoryTodo},
 			{ID: "todo", Name: "To Do", Category: CategoryTodo},
 			{ID: "in_progress", Name: "In Progress", Category: CategoryInProgress},

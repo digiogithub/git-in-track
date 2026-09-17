@@ -379,6 +379,8 @@ func (v *Vault) Dispatch(ctx context.Context, method string, raw []byte) (any, e
 		return v.projectList(), nil
 	case "project.create":
 		return v.projectCreate(ctx, raw)
+	case "project.inbox.enable":
+		return v.projectInboxEnable(ctx, raw)
 
 	case "team.get":
 		return v.teamGet()
@@ -780,6 +782,11 @@ func (v *Vault) projectList() []projectSummary {
 			BacklogPath: p.BacklogPath,
 			Writable:    writable,
 			Diagnostics: p.Diagnostics,
+		}
+		if p.ConfigPath != "" {
+			if data, err := v.fs.ReadFile(p.ConfigPath); err == nil {
+				summary.ConfigRev = string(core.ComputeRev(data))
+			}
 		}
 		if p.Config != nil {
 			for _, s := range p.Config.Workflow.Statuses {

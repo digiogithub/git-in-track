@@ -2,9 +2,17 @@ import { act, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { FakeProvider, type FakeSearch } from '@/api/fake-provider';
-import type { RepoInfo, SearchCodeIndex, SearchIndexedRepo } from '@/api/provider';
+import { FakeProvider, sampleProject, type FakeSearch } from '@/api/fake-provider';
+import {
+  ProviderError,
+  type ProjectSummary,
+  type RepoInfo,
+  type SearchCodeIndex,
+  type SearchIndexedRepo,
+} from '@/api/provider';
 import { useAppStore } from '@/app/store';
+import { ToastProvider } from '@/components/ui/toast';
+import { InboxNavLink } from '@/features/inbox/InboxNavLink';
 import { renderWithRouter } from '@/test/router';
 
 import { WorkspaceHome } from './WorkspaceHome';
@@ -239,6 +247,95 @@ describe('semantic search per repository (GIT-US-0101)', () => {
     );
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/already running/i);
+  });
+});
+
+describe('enabling a project inbox', () => {
+  const triaged: ProjectSummary = {
+    ...sampleProject,
+    statuses: [{ id: 'triage', name: 'Triage', category: 'triage' }, ...sampleProject.statuses],
+  };
+
+  /** The workspace list next to the sidebar entry the button should reveal. */
+  function HomeWithInboxLink() {
+    return (
+      <ToastProvider>
+        <InboxNavLink project="ACME" />
+        <WorkspaceHome />
+      </ToastProvider>
+    );
+  }
+
+  it('adds the triage status and shows the inbox link without a reload', async () => {
+    const provider = new FakeProvider({
+      repos: [readyRepo],
+      projects: [{ ...sampleProject, configRev: 'sha256:1111111111111111' }],
+    });
+    const enable = vi.spyOn(provider, 'enableInbox');
+    renderWithRouter({ index: HomeWithInboxLink, provider });
+
+    const button = await screen.findByRole(
+      'button',
+      { name: 'Enable inbox for ACME' },
+      { timeout: 5000 },
+    );
+    expect(screen.queryByRole('link', { name: /ACME inbox/ })).toBeNull();
+
+    await userEvent.click(button);
+
+    expect(await screen.findByRole('link', { name: /ACME inbox/ })).toHaveAttribute(
+      'href',
+      '/p/ACME/inbox',
+    );
+    expect(enable).toHaveBeenCalledWith({ project: 'ACME', rev: 'sha256:1111111111111111' });
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'Enable inbox for ACME' })).toBeNull();
+    });
+  });
+
+  it('is not offered for a project that already has an inbox', async () => {
+    renderWithRouter({
+      index: WorkspaceHome,
+      provider: new FakeProvider({ repos: [readyRepo], projects: [triaged] }),
+    });
+
+    await screen.findByRole('link', { name: /ACME backlog/ }, { timeout: 5000 });
+    expect(screen.queryByRole('button', { name: /enable inbox/i })).toBeNull();
+  });
+
+  it('is not offered in a read-only workspace or for a read-only project', async () => {
+    const { unmount } = renderWithRouter({
+      index: WorkspaceHome,
+      provider: new FakeProvider({ repos: [readyRepo] }, { readOnly: true }),
+    });
+    await screen.findByRole('link', { name: /ACME backlog/ }, { timeout: 5000 });
+    expect(screen.queryByRole('button', { name: /enable inbox/i })).toBeNull();
+    unmount();
+
+    renderWithRouter({
+      index: WorkspaceHome,
+      provider: new FakeProvider({
+        repos: [readyRepo],
+        projects: [{ ...sampleProject, writable: false }],
+      }),
+    });
+    await screen.findByRole('link', { name: /ACME backlog/ }, { timeout: 5000 });
+    expect(screen.queryByRole('button', { name: /enable inbox/i })).toBeNull();
+  });
+
+  it('reports a refusal in a toast', async () => {
+    const provider = new FakeProvider({ repos: [readyRepo] });
+    vi.spyOn(provider, 'enableInbox').mockRejectedValue(
+      new ProviderError('triage_status_id_taken', 'ACME already has a status called triage'),
+    );
+    renderWithRouter({ index: HomeWithInboxLink, provider });
+
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'Enable inbox for ACME' }, { timeout: 5000 }),
+    );
+
+    expect(await screen.findByText('The inbox of ACME could not be enabled')).toBeVisible();
+    expect(screen.getByText('ACME already has a status called triage')).toBeVisible();
   });
 });
 

@@ -166,6 +166,11 @@ type projectSummary struct {
 	Writable    bool              `json:"writable"`
 	Diagnostics []core.Diagnostic `json:"diagnostics,omitempty"`
 
+	// ConfigRev is the revision of project.yaml, the precondition of a write
+	// to it such as "project.inbox.enable". Empty when the file cannot be read,
+	// which is the case of a vault hydrated from a snapshot alone.
+	ConfigRev string `json:"configRev,omitempty"`
+
 	// VaultID names the repository the project was discovered in. It is empty
 	// for a single-repository answer and set by a workspace-wide one.
 	VaultID string `json:"vaultId,omitempty"`

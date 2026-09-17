@@ -1,14 +1,26 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from '@tanstack/react-router';
-import { BookOpen, FolderGit2, ListChecks, RefreshCw, ShieldAlert, Trash2 } from 'lucide-react';
+import {
+  BookOpen,
+  FolderGit2,
+  Inbox,
+  ListChecks,
+  RefreshCw,
+  ShieldAlert,
+  Trash2,
+} from 'lucide-react';
 import { useState } from 'react';
 
-import type { RepoInfo } from '@/api/provider';
+import type { ProjectSummary, RepoInfo } from '@/api/provider';
 import { isJujutsu, JUJUTSU_SUMMARY } from '@/api/provider';
 import { useProvider } from '@/api/provider-context';
 import { useAppStore } from '@/app/store';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { useToast } from '@/components/ui/toast';
+import { useProjects } from '@/features/backlog/queries';
+import { useEnableInbox } from '@/features/inbox/queries';
+import { hasTriageStatus } from '@/features/inbox/search';
 import { FsaVault, getHandleRecord, registerVault, requestPermission } from '@/fs';
 
 import { FolderPickers } from './FolderPickers';
@@ -46,6 +58,15 @@ export function WorkspaceHome() {
   const [error, setError] = useState<string | null>(null);
 
   const repos = useQuery({ queryKey: ['repos'], queryFn: () => provider.listRepos() });
+  const projects = useProjects();
+  const canWrite = provider.capabilities.write;
+
+  /** The project behind a key, when it can be given an inbox from here. */
+  const inboxCandidate = (key: string, repo: RepoInfo): ProjectSummary | undefined => {
+    if (!canWrite || repo.state !== 'ready') return undefined;
+    const project = projects.data?.find((p) => p.key === key);
+    return project && needsInbox(project) ? project : undefined;
+  };
 
   const invalidate = async () => {
     await queryClient.invalidateQueries({ queryKey: ['repos'] });
@@ -216,26 +237,30 @@ export function WorkspaceHome() {
 
                   {repo.projects.length > 0 ? (
                     <ul className="flex flex-wrap gap-2">
-                      {repo.projects.map((project) => (
-                        <li key={project} className="flex items-center gap-1">
-                          <Link
-                            to="/p/$project/items"
-                            params={{ project }}
-                            className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-xs hover:bg-secondary"
-                          >
-                            <ListChecks aria-hidden="true" className="h-3 w-3" />
-                            {project} backlog
-                          </Link>
-                          <Link
-                            to="/p/$project/kb/$"
-                            params={{ project, _splat: '' }}
-                            className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-xs hover:bg-secondary"
-                          >
-                            <BookOpen aria-hidden="true" className="h-3 w-3" />
-                            {project} docs
-                          </Link>
-                        </li>
-                      ))}
+                      {repo.projects.map((project) => {
+                        const candidate = inboxCandidate(project, repo);
+                        return (
+                          <li key={project} className="flex items-center gap-1">
+                            <Link
+                              to="/p/$project/items"
+                              params={{ project }}
+                              className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-xs hover:bg-secondary"
+                            >
+                              <ListChecks aria-hidden="true" className="h-3 w-3" />
+                              {project} backlog
+                            </Link>
+                            <Link
+                              to="/p/$project/kb/$"
+                              params={{ project, _splat: '' }}
+                              className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-xs hover:bg-secondary"
+                            >
+                              <BookOpen aria-hidden="true" className="h-3 w-3" />
+                              {project} docs
+                            </Link>
+                            {candidate ? <EnableInboxButton project={candidate} /> : null}
+                          </li>
+                        );
+                      })}
                     </ul>
                   ) : (
                     <p className="text-sm text-muted-foreground">
@@ -290,5 +315,54 @@ export function WorkspaceHome() {
         </ul>
       </section>
     </div>
+  );
+}
+
+/**
+ * Whether a project can be given an inbox: it opened writable and declares no
+ * triage status yet (ADR-033).
+ */
+function needsInbox(project: ProjectSummary): boolean {
+  return project.writable !== false && !hasTriageStatus(project);
+}
+
+/**
+ * Adds the triage status to a project that predates the inbox (GIT-US-0100).
+ * On success the project list is updated in place, so the button goes away and
+ * the inbox link shows up without a reload; a refusal is a toast.
+ */
+function EnableInboxButton({ project }: { project: ProjectSummary }) {
+  const enable = useEnableInbox();
+  const { toast } = useToast();
+
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      className="h-6 rounded-full px-2"
+      aria-label={`Enable inbox for ${project.key}`}
+      title="Adds a Triage status to project.yaml so this project can receive submissions"
+      disabled={enable.isPending}
+      onClick={() => {
+        enable.mutate(
+          {
+            project: project.key,
+            ...(project.configRev === undefined ? {} : { rev: project.configRev }),
+          },
+          {
+            onError: (error) => {
+              toast({
+                variant: 'destructive',
+                title: `The inbox of ${project.key} could not be enabled`,
+                description: error.message,
+              });
+            },
+          },
+        );
+      }}
+    >
+      <Inbox aria-hidden="true" className="h-3 w-3" />
+      Enable inbox
+    </Button>
   );
 }

@@ -519,6 +519,55 @@ describe('CompanionProvider project creation (story GIT-US-0031)', () => {
   });
 });
 
+describe('CompanionProvider.enableInbox', () => {
+  it('posts to the project with the config revision in If-Match', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      response({
+        project: {
+          key: 'ACME',
+          name: 'ACME',
+          docsPath: 'docs',
+          statuses: [{ id: 'triage', name: 'Triage', category: 'triage' }],
+          writable: true,
+          configRev: 'sha256:2222222222222222',
+        },
+        writes: { written: [], removed: [] },
+      }),
+    );
+
+    const project = await provider(fetchImpl).enableInbox({
+      project: 'ACME',
+      rev: 'sha256:1111111111111111',
+    });
+
+    const [call] = fetchImpl.mock.calls;
+    expect(String(call?.[0])).toBe(`${BASE}/api/v1/projects/ACME/inbox`);
+    const init = call?.[1] as RequestInit;
+    expect(init.method).toBe('POST');
+    expect(headerOf(init, 'If-Match')).toBe('sha256:1111111111111111');
+    expect(project).toMatchObject({
+      statuses: [{ id: 'triage', category: 'triage' }],
+      writable: true,
+      configRev: 'sha256:2222222222222222',
+    });
+  });
+
+  it('reports an existing inbox as inbox_already_enabled', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(
+        response(
+          { code: 'inbox_already_enabled', detail: 'project ACME already has an inbox' },
+          { status: 409 },
+        ),
+      );
+
+    await expect(provider(fetchImpl).enableInbox({ project: 'ACME' })).rejects.toMatchObject({
+      code: 'inbox_already_enabled',
+    });
+  });
+});
+
 describe('CompanionProvider error mapping', () => {
   const cases: {
     name: string;
