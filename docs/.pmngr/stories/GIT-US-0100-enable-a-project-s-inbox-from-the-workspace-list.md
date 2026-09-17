@@ -2,7 +2,7 @@
 id: GIT-US-0100
 type: story
 title: Enable a project's inbox from the workspace list
-status: backlog
+status: in_review
 priority: high
 parent: GIT-EP-0021
 milestone: GIT-M-0014
@@ -10,7 +10,8 @@ author: mcp
 labels: [core, server, web]
 estimate: 5
 created: 2026-09-17T09:31:52Z
-updated: 2026-09-17T09:31:52Z
+updated: 2026-09-17T09:47:01Z
+started: 2026-09-17T09:33:16Z
 ---
 
 ## Description

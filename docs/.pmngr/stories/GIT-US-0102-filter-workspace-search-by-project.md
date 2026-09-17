@@ -2,7 +2,7 @@
 id: GIT-US-0102
 type: story
 title: Filter workspace search by project
-status: backlog
+status: in_review
 priority: medium
 parent: GIT-EP-0021
 milestone: GIT-M-0014
@@ -10,7 +10,8 @@ author: mcp
 labels: [core, server, web]
 estimate: 3
 created: 2026-09-17T09:31:58Z
-updated: 2026-09-17T09:31:58Z
+updated: 2026-09-17T09:47:05Z
+started: 2026-09-17T09:33:20Z
 ---
 
 ## Description

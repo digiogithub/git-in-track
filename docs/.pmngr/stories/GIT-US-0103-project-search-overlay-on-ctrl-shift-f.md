@@ -2,7 +2,7 @@
 id: GIT-US-0103
 type: story
 title: Project search overlay on Ctrl+Shift+F
-status: backlog
+status: in_review
 priority: medium
 parent: GIT-EP-0021
 milestone: GIT-M-0014
@@ -10,7 +10,8 @@ author: mcp
 labels: [web]
 estimate: 5
 created: 2026-09-17T09:32:03Z
-updated: 2026-09-17T09:32:03Z
+updated: 2026-09-17T09:47:07Z
+started: 2026-09-17T09:33:21Z
 ---
 
 ## Description

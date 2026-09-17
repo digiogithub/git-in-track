@@ -2,7 +2,7 @@
 id: GIT-US-0101
 type: story
 title: Enable semantic search for one repository from the workspace list
-status: backlog
+status: in_review
 priority: high
 parent: GIT-EP-0021
 milestone: GIT-M-0014
@@ -10,7 +10,8 @@ author: mcp
 labels: [server, web]
 estimate: 5
 created: 2026-09-17T09:31:54Z
-updated: 2026-09-17T09:31:54Z
+updated: 2026-09-17T09:47:03Z
+started: 2026-09-17T09:33:18Z
 ---
 
 ## Description
