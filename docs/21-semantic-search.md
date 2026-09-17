@@ -180,6 +180,14 @@ claims a reindex that did not happen.
 A second call while one is running is refused with `search_reindex_running` (409) and the running
 job is untouched. A companion with no Pando endpoint answers `search_not_configured` (400).
 
+**One repository.** A body of `{"repo":"<mount id>"}` limits the `code` phase to that repository
+(GIT-US-0101): it is registered and indexed alone, the other repositories are not touched, and the
+`kb` phase runs as usual. This is what the workspace list's **Enable semantic search** button posts
+for a repository whose code index is `off` or `unavailable`; afterwards that row reads `indexing`,
+or `unavailable` with Pando's reason if it was refused. An unknown id is refused with
+`repo_not_registered` (404). Where Pando is not configured at all, the workspace row links to the
+settings card instead, and browser-only mode shows no control.
+
 ---
 
 ## 4. The KB walk has no exclusions — which is why `KBPath` is `docs/`

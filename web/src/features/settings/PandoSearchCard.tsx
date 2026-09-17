@@ -271,7 +271,7 @@ function PandoSearchSettings() {
 
   if (settings === null) {
     return (
-      <Card>
+      <Card id="semantic-search">
         <CardHeader>
           <CardTitle>Semantic search (Pando)</CardTitle>
         </CardHeader>
@@ -289,7 +289,7 @@ function PandoSearchSettings() {
   }
 
   return (
-    <Card>
+    <Card id="semantic-search">
       <CardHeader className="flex-row items-start justify-between space-y-0">
         <div className="space-y-1">
           <CardTitle>Semantic search (Pando)</CardTitle>

@@ -3757,12 +3757,19 @@ export class FakeProvider implements DataProvider {
     return Promise.resolve(structuredClone(this.searchSettings));
   }
 
-  reindexSearch(): Promise<SearchReindexJob> {
+  reindexSearch(repo?: string): Promise<SearchReindexJob> {
     let current: SearchSettings;
     try {
       current = this.requireSearchSettings();
     } catch (error) {
       return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+    }
+    const scoped = repo !== undefined && repo !== '';
+    // The companion refuses a scope it does not serve before anything else.
+    if (scoped && !current.indexed.some((row) => row.repo === repo)) {
+      return Promise.reject(
+        new ProviderError('not_found', `No indexed repository is registered as ${repo}.`),
+      );
     }
     if (this.searchReindexError !== null) {
       return Promise.reject(
@@ -3772,12 +3779,27 @@ export class FakeProvider implements DataProvider {
     this.searchReindexCount += 1;
     const job: SearchReindexJob = {
       jobId: `reindex-${String(this.searchReindexCount)}`,
+      ...(scoped ? { scope: repo } : {}),
       startedAt: '2026-09-15T10:04:00Z',
       phase: 'code',
       repos: [],
       ...this.searchReindexJob,
     };
-    this.searchSettings = { ...current, reindex: structuredClone(job) };
+    // A scoped job hands that repository to Pando, which is what its row says
+    // from then on; the other rows are left exactly as they were.
+    const indexed = current.indexed.map((row) =>
+      scoped && row.repo === repo
+        ? {
+            ...row,
+            code: {
+              project: row.code?.project ?? row.repo,
+              status: 'indexing' as const,
+              note: 'Reindexing the repository root.',
+            },
+          }
+        : row,
+    );
+    this.searchSettings = { ...current, indexed, reindex: structuredClone(job) };
     return Promise.resolve(structuredClone(job));
   }
 
@@ -3789,8 +3811,25 @@ export class FakeProvider implements DataProvider {
   finishSearchReindex(job: Partial<SearchReindexJob>): void {
     const current = this.requireSearchSettings();
     const running = current.reindex;
+    // A repository Pando refused reads as unavailable afterwards, as it does
+    // on the companion.
+    const refused = new Set(
+      (job.repos ?? []).filter((repo) => (repo.codeError ?? '') !== '').map((repo) => repo.repo),
+    );
     this.searchSettings = {
       ...current,
+      indexed: current.indexed.map((row) =>
+        refused.has(row.repo)
+          ? {
+              ...row,
+              code: {
+                project: row.code?.project ?? row.repo,
+                status: 'unavailable' as const,
+                note: 'Pando did not accept the code project, so there is no code search.',
+              },
+            }
+          : row,
+      ),
       reindex: {
         jobId: running?.jobId ?? 'reindex-1',
         startedAt: running?.startedAt ?? '2026-09-15T10:04:00Z',

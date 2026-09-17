@@ -1085,6 +1085,7 @@ export function toSearchReindexJob(value: unknown): SearchReindexJob {
   const record = asRecord(value) ?? {};
   return {
     jobId: asString(record['jobId']) ?? '',
+    ...optional('scope', asString(record['scope'])),
     startedAt: asString(record['startedAt']) ?? '',
     ...optional('endedAt', asString(record['endedAt'])),
     phase: toSearchPhase(asString(record['phase'])),
@@ -2570,11 +2571,13 @@ export class CompanionProvider implements DataProvider {
 
   /**
    * `POST /api/v1/search/reindex` → `202` with the queued job. The work runs
-   * in the background and reports on `search.progress`.
+   * in the background and reports on `search.progress`. A `repo` scopes it
+   * to that one repository.
    */
-  async reindexSearch(): Promise<SearchReindexJob> {
+  async reindexSearch(repo?: string): Promise<SearchReindexJob> {
+    const body = repo === undefined || repo === '' ? {} : { repo };
     return toSearchReindexJob(
-      await this.#json(`${API_PREFIX}/search/reindex`, { method: 'POST', body: {} }),
+      await this.#json(`${API_PREFIX}/search/reindex`, { method: 'POST', body }),
     );
   }
 

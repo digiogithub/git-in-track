@@ -1,8 +1,12 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -85,7 +89,10 @@ type searchState struct {
 
 // reindexJob is one run of POST /api/v1/search/reindex.
 type reindexJob struct {
-	ID        string              `json:"jobId"`
+	ID string `json:"jobId"`
+	// Scope is the one repository the job was asked for, empty for a reindex
+	// of the whole workspace (GIT-US-0101).
+	Scope     string              `json:"scope,omitempty"`
 	StartedAt time.Time           `json:"startedAt"`
 	EndedAt   time.Time           `json:"endedAt,omitempty"`
 	Phase     string              `json:"phase"`
@@ -492,10 +499,40 @@ func (s *Server) handleSearchSettingsPatch(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, r, http.StatusOK, view)
 }
 
+// searchReindexRequest is the optional body of POST /api/v1/search/reindex.
+//
+// The scope is a body field of the one reindex route rather than a route of its
+// own: a scoped run is the same job — same single slot, same 202 answer, same
+// search.progress frames and the same `reindex` record in the settings — over
+// fewer repositories, and a second route would have to repeat every one of
+// those promises (GIT-US-0101).
+type searchReindexRequest struct {
+	// Repo, when set, restricts the code half to that mounted repository.
+	Repo string `json:"repo,omitempty"`
+}
+
 // handleSearchReindex serves POST /api/v1/search/reindex.
 func (s *Server) handleSearchReindex(w http.ResponseWriter, r *http.Request) {
-	job, err := s.search.startReindex(context.WithoutCancel(r.Context()))
+	var req searchReindexRequest
+	// The body is optional: the unscoped reindex has always been a bare POST.
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxRequestBody))
+	if err != nil {
+		failProblem(w, r, codeInvalidRequest, fmt.Sprintf("The request body could not be read: %v", err))
+		return
+	}
+	if len(bytes.TrimSpace(body)) > 0 {
+		if err := json.Unmarshal(body, &req); err != nil {
+			failProblem(w, r, codeInvalidRequest, fmt.Sprintf("The request body is not valid JSON: %v", err))
+			return
+		}
+	}
+	req.Repo = strings.TrimSpace(req.Repo)
+	job, err := s.search.startReindex(context.WithoutCancel(r.Context()), req.Repo)
 	switch {
+	case errors.Is(err, errReindexUnknownRepo):
+		failProblem(w, r, codeRepoNotRegistered,
+			"No indexed repository is registered as "+req.Repo+".")
+		return
 	case errors.Is(err, errReindexRunning):
 		failProblem(w, r, codeSearchReindexRunning,
 			"A reindex is already running; wait for it to finish rather than starting a second one.")
@@ -511,17 +548,28 @@ func (s *Server) handleSearchReindex(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, r, http.StatusAccepted, job)
 }
 
-// errReindexRunning and errSearchNotConfigured are the two refusals of a
-// reindex request.
+// errReindexRunning, errSearchNotConfigured and errReindexUnknownRepo are the
+// refusals of a reindex request.
 var (
 	errReindexRunning      = errors.New("a reindex is already running")
 	errSearchNotConfigured = errors.New("no Pando endpoint")
+	errReindexUnknownRepo  = errors.New("no such indexed repository")
 )
 
 // startReindex claims the single reindex slot and runs the job in the
 // background, reporting on the hub. It answers as soon as the job has an id: a
 // full reindex of a large repository takes longer than an HTTP request should.
-func (s *searchState) startReindex(ctx context.Context) (*reindexJob, error) {
+//
+// A non-empty repo scopes the code half to that one mount, which is how the
+// workspace list switches semantic search on for a single repository.
+func (s *searchState) startReindex(ctx context.Context, repo string) (*reindexJob, error) {
+	projects := s.codeProjects()
+	if repo != "" {
+		projects = scopeCodeProjects(projects, repo)
+		if len(projects) == 0 {
+			return nil, errReindexUnknownRepo
+		}
+	}
 	if s.pando() == nil {
 		return nil, errSearchNotConfigured
 	}
@@ -533,6 +581,7 @@ func (s *searchState) startReindex(ctx context.Context) (*reindexJob, error) {
 	}
 	job := &reindexJob{
 		ID:        "reindex-" + strconv.FormatUint(searchJobCounter.Add(1), 10),
+		Scope:     repo,
 		StartedAt: s.now().UTC(),
 		Phase:     searchPhaseCode,
 		Repos:     []reindexRepo{},
@@ -541,8 +590,19 @@ func (s *searchState) startReindex(ctx context.Context) (*reindexJob, error) {
 	s.jobMu.Unlock()
 
 	started := *job
-	go s.runReindex(ctx, job)
+	go s.runReindex(ctx, job, projects)
 	return &started, nil
+}
+
+// scopeCodeProjects keeps the code project of one mount, and nothing when the
+// workspace has no ready mount by that id.
+func scopeCodeProjects(projects []codeProject, repo string) []codeProject {
+	for _, p := range projects {
+		if p.repo == repo {
+			return []codeProject{p}
+		}
+	}
+	return nil
 }
 
 // runReindex is the job itself: the code index of each source tree, then the
@@ -551,7 +611,7 @@ func (s *searchState) startReindex(ctx context.Context) (*reindexJob, error) {
 // The two are independent on purpose. Pando refusing one repository's source
 // tree must not stop the knowledge base being reindexed, so each failure is
 // recorded against its own half and the job carries on.
-func (s *searchState) runReindex(ctx context.Context, job *reindexJob) {
+func (s *searchState) runReindex(ctx context.Context, job *reindexJob, projects []codeProject) {
 	// job is the same pointer view() copies under jobMu, so every write to it
 	// goes through mutate; a settings read racing a running reindex would
 	// otherwise observe a half-written record.
@@ -571,9 +631,10 @@ func (s *searchState) runReindex(ctx context.Context, job *reindexJob) {
 	}()
 
 	client := s.pando()
-	// The same project list the registration uses, so an explicit reindex asks
-	// Pando to refresh the very project the search reads from.
-	for _, p := range s.codeProjects() {
+	// The same project list the registration uses (or its one scoped entry),
+	// so an explicit reindex asks Pando to refresh the very project the search
+	// reads from.
+	for _, p := range projects {
 		out := reindexRepo{Repo: p.repo}
 		s.publishProgress(job.ID, p.repo, searchPhaseCode, 0, 0, "indexing the source tree")
 		if client != nil {
@@ -582,6 +643,13 @@ func (s *searchState) runReindex(ctx context.Context, job *reindexJob) {
 			case err != nil:
 				out.CodeError = err.Error()
 				s.log.Warn("code index failed", "repo", p.repo, "error", err)
+				// The row says so too: a reindex is also how a repository that
+				// was never registered gets registered, and a refusal leaves it
+				// exactly as unavailable as a refused registration would.
+				s.noteCodeIndex(p.repo, codeIndexView{
+					Project: p.id, Status: codeIndexStatusUnavailable,
+					Note: "Pando did not accept the code project, so there is no code search: " + err.Error(),
+				})
 			default:
 				out.CodeJob = id
 				s.noteCodeIndex(p.repo, codeIndexView{
