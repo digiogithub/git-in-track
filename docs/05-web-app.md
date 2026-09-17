@@ -576,6 +576,15 @@ recall invisibly for every consumer of that instance until a full reindex. The c
 `searchSettings` capability — companion mode — so browser-only mode has no card rather than an empty
 one.
 
+The workspace list reads the same settings (one cached query, `features/settings/search-queries.ts`)
+and gives each repository row a semantic-search badge — `on` (registered), `indexing`, `off`,
+`unavailable` (story GIT-US-0101). For `off` or `unavailable` the row offers **Enable semantic
+search**, which calls `reindexSearch(repoId)` — `POST /api/v1/search/reindex` with `{repo}` — so only
+that repository is registered with Pando and indexed. The row follows its own job through the same
+`searchProgress` events and refetches the settings on the terminal frame. With no Pando configured
+the control is a link to the settings card (`/settings#semantic-search`); without the
+`searchSettings` capability it is absent.
+
 **Import from YouTrack (`features/youtrack/`, story GIT-US-0059).** The entry is a button in the
 backlog toolbar, and it needs **both** capability flags: `youtrackSupported`, because a browser-only
 tab has no process to hold a token, and `youtrack`, because importing from an instance nothing is

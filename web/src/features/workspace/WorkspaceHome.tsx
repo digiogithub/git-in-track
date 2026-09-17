@@ -12,6 +12,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { FsaVault, getHandleRecord, registerVault, requestPermission } from '@/fs';
 
 import { FolderPickers } from './FolderPickers';
+import { RepoSemanticSearch } from './RepoSemanticSearch';
 import { TeamPanel } from './TeamPanel';
 import { WorkspaceSearch } from './WorkspaceSearch';
 
@@ -241,6 +242,8 @@ export function WorkspaceHome() {
                       No project was found in this folder yet.
                     </p>
                   )}
+
+                  <RepoSemanticSearch repoId={repo.id} />
 
                   <div className="flex flex-wrap gap-2">
                     {repo.state === 'needs-permission' ? (

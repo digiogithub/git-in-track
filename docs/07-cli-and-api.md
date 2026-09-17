@@ -3027,6 +3027,26 @@ and, afterwards, the last finished one:
 - A second call while one is running is refused with `search_reindex_running`
   (409) and the running job is untouched. A companion with no Pando endpoint
   answers `search_not_configured` (400).
+- **One repository (GIT-US-0101).** The body is optional; `{"repo":"<id>"}`
+  scopes the code half to that mounted repository. It is how the workspace list
+  switches semantic search on for a repository whose code index is `off` or
+  `unavailable`: `code_index_project` registers and indexes that working tree
+  alone, no other repository is touched, and the knowledge base is reindexed as
+  usual. The job carries `"scope":"<id>"`, and its outcome lands in that
+  repository's `indexed[].code` (`indexing`, or `unavailable` when Pando refused
+  it). An id that is not a ready mount answers `repo_not_registered` (404)
+  before the reindex slot is claimed. The scope is a body field of this route
+  rather than a route of its own because a scoped run is the same job — the
+  same single slot, `202`, `search.progress` frames and `reindex` record — over
+  fewer repositories.
+
+```json
+POST /api/v1/search/reindex
+{"repo":"acme-api"}
+
+202
+{"jobId":"reindex-2","scope":"acme-api","startedAt":"2026-09-17T10:00:00Z","phase":"code","repos":[]}
+```
 
 > **Operations: the embedding model is pinned configuration.** Pando skips any
 > chunk whose vector length differs from the query's — silently, with no

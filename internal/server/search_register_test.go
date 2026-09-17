@@ -167,7 +167,7 @@ func TestReindexUsesTheRegisteredProject(t *testing.T) {
 	fake := &fakePando{}
 	installPando(t, s, fake)
 
-	job, err := s.search.startReindex(context.Background())
+	job, err := s.search.startReindex(context.Background(), "")
 	if err != nil {
 		t.Fatalf("startReindex(): %v", err)
 	}

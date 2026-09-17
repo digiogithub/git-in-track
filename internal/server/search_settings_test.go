@@ -503,3 +503,83 @@ func TestDerivedProjectIDMatchesPandoSanitisation(t *testing.T) {
 		t.Errorf("a workspace with no ready mount derived %q, want the empty string", got)
 	}
 }
+
+// TestSearchReindexScopedToOneRepository covers the workspace-list switch of
+// GIT-US-0101: a reindex naming one repository registers and indexes that
+// repository alone, and the job says which one it was scoped to.
+func TestSearchReindexScopedToOneRepository(t *testing.T) {
+	t.Parallel()
+
+	first := copyTree(t, fixtureRoot)
+	second := copyTree(t, fixtureRoot)
+	s, err := New(Options{
+		Bind: "127.0.0.1", Token: "test-token", Version: "0.0.1-test", Workspace: "test",
+		Repos: []Repo{
+			{ID: "alpha", Path: first, Role: "project", DocsFolder: "docs"},
+			{ID: "beta", Path: second, Role: "project", DocsFolder: "docs"},
+		},
+		Now: func() time.Time { return time.Date(2026, 9, 17, 10, 0, 0, 0, time.UTC) },
+	})
+	if err != nil {
+		t.Fatalf("New(): %v", err)
+	}
+	fake := &fakePando{}
+	installPando(t, s, fake)
+
+	rec := send(t, s, request{
+		method: http.MethodPost, target: "/api/v1/search/reindex",
+		body: map[string]any{"repo": "beta"},
+	})
+	var job struct {
+		JobID string `json:"jobId"`
+		Scope string `json:"scope"`
+	}
+	decode(t, rec, http.StatusAccepted, &job)
+	if job.Scope != "beta" {
+		t.Errorf("scope = %q, want beta", job.Scope)
+	}
+
+	view := waitForReindex(t, s, job.JobID)
+	if view.Phase != searchPhaseDone {
+		t.Fatalf("phase = %q (%+v)", view.Phase, view)
+	}
+	if len(view.Repos) != 1 || view.Repos[0].Repo != "beta" {
+		t.Fatalf("repos = %+v, want beta alone", view.Repos)
+	}
+	if indexed := fake.indexedProjects(); len(indexed) != 1 || indexed[0] != second {
+		t.Errorf("code index ran over %v, want only %s", indexed, second)
+	}
+	if code := s.search.codeIndexOf("beta"); code == nil || code.Status != codeIndexStatusIndexing {
+		t.Errorf("beta registration = %+v, want indexing", code)
+	}
+	if code := s.search.codeIndexOf("alpha"); code != nil {
+		t.Errorf("alpha was touched: %+v", code)
+	}
+}
+
+func TestSearchReindexRefusesAnUnknownRepository(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newPandoSearchServer(t, searchServerOptions{})
+	fake := &fakePando{}
+	installPando(t, s, fake)
+
+	rec := send(t, s, request{
+		method: http.MethodPost, target: "/api/v1/search/reindex",
+		body: map[string]any{"repo": "nope"},
+	})
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+	if code := recorderProblemCode(t, rec); code != codeRepoNotRegistered {
+		t.Errorf("problem code = %q, want %q", code, codeRepoNotRegistered)
+	}
+	if indexed := fake.indexedProjects(); len(indexed) != 0 {
+		t.Errorf("an unknown scope indexed %v", indexed)
+	}
+	// The slot was never claimed, so a workspace reindex still starts.
+	next := send(t, s, request{method: http.MethodPost, target: "/api/v1/search/reindex"})
+	if next.Code != http.StatusAccepted {
+		t.Errorf("follow-up reindex status = %d, want 202", next.Code)
+	}
+}

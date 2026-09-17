@@ -1478,6 +1478,11 @@ export type SearchReindexPhase = 'code' | 'kb' | 'completed' | 'failed';
 /** `POST /api/v1/search/reindex` → the job, and `settings.reindex` afterwards. */
 export type SearchReindexJob = {
   jobId: string;
+  /**
+   * The one repository the job was asked for, absent for a reindex of the
+   * whole workspace (GIT-US-0101).
+   */
+  scope?: string;
   startedAt: string;
   endedAt?: string;
   phase: SearchReindexPhase;
@@ -2004,8 +2009,13 @@ export interface DataProvider {
    * as a `searchProgress` change event. A second call while one runs is
    * refused with `search_reindex_running`, and a companion with nothing to
    * index with answers `search_not_configured`.
+   *
+   * `repo` scopes the source-tree half to one mounted repository — the
+   * workspace list's "enable semantic search" switch registers and indexes
+   * that repository alone — and an id the companion does not serve is refused
+   * with `not_found` (GIT-US-0101).
    */
-  reindexSearch(): Promise<SearchReindexJob>;
+  reindexSearch(repo?: string): Promise<SearchReindexJob>;
 
   // MCP write tools (`GET|PATCH /api/v1/mcp/settings`)
   /**
