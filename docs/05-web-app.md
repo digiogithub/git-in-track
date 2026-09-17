@@ -54,6 +54,7 @@ web/
       inbox/                   # the triage queue and the accept flow (ADR-033)
       metrics/                 # sprint metrics and charts
       retros/                  # retrospectives and improvement actions
+      search/                  # shared search hit rows, the Ctrl+Shift+F project overlay
       sync/                    # sync panel, conflicts, credentials, git log, job queue
       settings/                # workspace, repos, appearance, agents/MCP status, YouTrack
       workspace/               # the landing surface and the add-repository wizard
@@ -134,7 +135,7 @@ state is shareable by URL and survives reloads.
   /settings/sync                            branch policy, commit-on-save, author
   /settings/credentials                     credential storage + CORS proxy
   /settings/agents                          agent / MCP status
-/p/$projectKey                           ProjectLayout
+/p/$projectKey                           ProjectLayout (mounts the Ctrl+Shift+F search overlay)
   /p/$projectKey/kb/*                       KbViewer (splat path into the docs folder)
   /p/$projectKey/items                      ItemTable (list view, filters in search params)
   /p/$projectKey/items/$itemId              ItemDetail
@@ -186,6 +187,21 @@ index, `updated desc`, limit 20), "Assigned to me" (matching `team.yaml` identit
 or the configured git author email), and a sync health strip.
 
 Where the companion reports `fullTextSearch: 'pando'`, a second group, *Related by meaning*, follows the exact matches: each row carries the why-matched passage as escaped text with the query terms highlighted and a subdued relevance. A per-user toggle (`semanticResults` in `gintrack:ui-prefs`) hides it, and a `degraded` response says the semantic half was unreachable (docs/21).
+
+**Project search overlay (`features/search/ProjectSearchOverlay.tsx`, story GIT-US-0103).**
+Ctrl+Shift+F (Cmd+Shift+F on macOS) on any `/p/$projectKey/...` route — backlog, inbox,
+KB — opens a modal search scoped to that project: the same `search` call as the workspace
+panel with `projectKey` set, the same minimum query length, and the same rows (the hit
+rendering lives in `features/search/SearchHits.tsx` and both surfaces use it), exact matches
+first and *Related by meaning* after them under the same `semanticResults` toggle. Tabs
+narrow the list: *All*, *Items* (item hits, comment matches included) and *KB* (page and
+file hits). The query input keeps focus; ↑/↓ move the selection (`aria-activedescendant`),
+and Enter or a click opens an item at `/p/$projectKey/items/$id` or a page at
+`/p/$projectKey/kb/<vault path>` and closes the overlay. A `file` hit from the code index has
+no screen, so it is listed but cannot be opened. Escape closes the overlay and focus returns
+to the element that had it. `ProjectLayout` mounts the overlay, so the shortcut does nothing
+outside a project. CodeMirror binds no Mod-Shift-F, but a keypress inside `.cm-editor` is
+left to the editor anyway.
 
 **AddRepositoryWizard (`/repos/add`)** — Three steps.
 1. *Location*: in browser-only mode, "Choose folder" invokes
@@ -1558,7 +1574,8 @@ disabled with the same reason rather than being enabled and failing with a raw
 - shadcn/ui is Radix-based, so dialogs, menus, tabs, tooltips and comboboxes come
   with correct roles and focus management; we keep those primitives rather than
   hand-rolling.
-- Keyboard: every action reachable without a pointer. Global shortcuts (⌘K search,
+- Keyboard: every action reachable without a pointer. Inside a project, Ctrl+Shift+F
+  (⌘⇧F on macOS) opens the project search overlay (§3.1, as built). Global shortcuts (⌘K search,
   `g` `b` boards, `g` `i` items, `e` edit, `s` sync) are listed in a shortcuts
   dialog and are disabled while an editor or input has focus.
 - Drag & drop always has a keyboard equivalent plus a "Move to…" menu on each card.

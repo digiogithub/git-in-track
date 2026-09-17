@@ -1,6 +1,7 @@
 import { createRoute, createRouter, lazyRouteComponent } from '@tanstack/react-router';
 
 import { NotFound } from '@/app/layout/NotFound';
+import { ProjectLayout } from '@/app/layout/ProjectLayout';
 import { rootRoute } from '@/app/rootRoute';
 import { EpicTree } from '@/features/backlog/EpicTree';
 import { ItemDetail } from '@/features/backlog/ItemDetail';
@@ -36,6 +37,7 @@ const addRepositoryRoute = createRoute({
 export const projectRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/p/$project',
+  component: ProjectLayout,
 });
 
 /** Splat route: everything after `kb/` is a path inside the docs folder. */
