@@ -2307,6 +2307,7 @@ POST   /api/v1/items/{id}/triage        If-Match: <rev>   {"action":"accept|reje
 GET    /api/v1/inbox                                      the triage queue of a project
 GET    /api/v1/items/{id}/comments
 POST   /api/v1/items/{id}/comments   If-Match: <item rev> optional, honored when sent
+POST   /api/v1/items/{id}/comments/tasks  If-Match: <comment rev>  {"path":"…/comments/…md","line":3,"checked":true}
 GET    /api/v1/items/{id}/links
 POST   /api/v1/items/{id}/links         {"relation":"blocks","target":"ACME-T-0500"}
 DELETE /api/v1/items/{id}/links/{relation}/{target}

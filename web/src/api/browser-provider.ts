@@ -753,6 +753,26 @@ export class BrowserProvider implements DataProvider {
     return comment;
   }
 
+  async setCommentTask(
+    id: string,
+    path: string,
+    line: number,
+    checked: boolean,
+    rev: string,
+  ): Promise<Comment> {
+    const mount = this.#mountForItem(id, await this.#ensureWritable());
+    const { comment, writes } = await this.#call('comment.task.set', {
+      id,
+      path,
+      line,
+      checked,
+      rev,
+    });
+    await this.#persist(mount, writes);
+    this.#emit({ kind: 'items', repoId: mount.id, ids: [id] });
+    return comment;
+  }
+
   // --------------------------------------------------------------------- inbox
 
   /**

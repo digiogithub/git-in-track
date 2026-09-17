@@ -348,6 +348,40 @@ export function useAddComment(
   });
 }
 
+export type ToggleCommentTaskVariables = {
+  id: string;
+  /** The comment file; a comment has no id of its own. */
+  path: string;
+  line: number;
+  checked: boolean;
+  rev: string;
+};
+
+/**
+ * Ticks or clears one checkbox of a comment, the way `useToggleTask` does for
+ * the item body. The fresh comment replaces the cached one, so the next toggle
+ * carries the new `rev`.
+ */
+export function useToggleCommentTask(
+  project: string,
+): UseMutationResult<Comment, Error, ToggleCommentTaskVariables> {
+  const provider = useProvider();
+  const queryClient = useQueryClient();
+
+  return useMutation<Comment, Error, ToggleCommentTaskVariables>({
+    mutationFn: ({ id, path, line, checked, rev }) =>
+      provider.setCommentTask(id, path, line, checked, rev),
+    onSuccess: (comment, { id }) => {
+      queryClient.setQueryData<Comment[]>(backlogKeys.comments(project, id), (thread) =>
+        thread?.map((entry) => (entry.path === comment.path ? { ...entry, ...comment } : entry)),
+      );
+    },
+    onSettled: (_comment, _error, { id }) => {
+      void queryClient.invalidateQueries({ queryKey: backlogKeys.comments(project, id) });
+    },
+  });
+}
+
 // ------------------------------------------------- pushing a comment upstream
 
 export type PushCommentVariables = {

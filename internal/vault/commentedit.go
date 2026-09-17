@@ -2,6 +2,8 @@ package vault
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"path"
 	"strings"
@@ -191,4 +193,66 @@ func upsertExternalBySystem(list, set []core.External) []core.External {
 		list = out
 	}
 	return list
+}
+
+// commentTaskParams is the input of "comment.task.set".
+type commentTaskParams struct {
+	// Path is the vault-relative path of the comment file.
+	Path string `json:"path"`
+	// ID is the item the comment belongs to, checked like comment.update's.
+	ID string `json:"id,omitempty"`
+	// Line is the 1-based line of the checkbox inside the comment body, as the
+	// renderer stamped it on the rendered input.
+	Line    int    `json:"line"`
+	Checked bool   `json:"checked"`
+	Rev     string `json:"rev"`
+}
+
+// commentTaskSet flips one task-list checkbox in the body of a comment.
+//
+// It is the comment twin of "item.task.set": the core rewrites the one byte
+// between the brackets on the body read under the caller's `rev`, and the
+// result goes back through "comment.update", so the write is rev-guarded,
+// stamps `updated` and returns the same write set any other comment edit does.
+func (v *Vault) commentTaskSet(ctx context.Context, raw []byte) (any, error) {
+	p, err := decodeParams[commentTaskParams](raw)
+	if err != nil {
+		return nil, err
+	}
+	rel := path.Clean(strings.TrimSpace(p.Path))
+	if strings.TrimSpace(p.Path) == "" {
+		return nil, failf("invalid_request", "a comment task toggle needs the path of the comment file")
+	}
+	if p.Rev == "" || p.Rev == "*" {
+		return nil, failf("invalid_request", "a comment task toggle needs the rev the body was read at")
+	}
+	current, err := v.fs.ReadFile(rel)
+	if err != nil {
+		return nil, &Error{
+			Code: "not_found", Message: fmt.Sprintf("read %s: %v", rel, err), Path: rel,
+		}
+	}
+	if got := core.ComputeRev(current); got != core.Rev(p.Rev) {
+		return nil, &core.StaleRevisionError{Path: rel, Expected: core.Rev(p.Rev), Current: got}
+	}
+	comment, err := core.ParseComment(rel, current)
+	if err != nil {
+		return nil, failf("invalid_request", "parse %s: %v", rel, err)
+	}
+
+	body, err := core.SetTaskListItem(comment.Body, p.Line, p.Checked)
+	if err != nil {
+		if errors.Is(err, core.ErrNotTaskListItem) {
+			return nil, failf(core.TaskListItemMismatchCode,
+				"line %d of %s is not a task-list item; the comment has changed since it was rendered",
+				p.Line, rel)
+		}
+		return nil, fmt.Errorf("toggle %s: %w", rel, err)
+	}
+
+	patch, err := json.Marshal(commentUpdateParams{Path: rel, ID: p.ID, Rev: p.Rev, Body: &body})
+	if err != nil {
+		return nil, fmt.Errorf("toggle %s: %w", rel, err)
+	}
+	return v.commentUpdate(ctx, patch)
 }

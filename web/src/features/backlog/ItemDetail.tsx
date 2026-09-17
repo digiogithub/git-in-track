@@ -53,6 +53,7 @@ import {
   useMoveItem,
   useProject,
   usePushCommentToYoutrack,
+  useToggleCommentTask,
   useToggleTask,
   useUnlinkExternal,
 } from '@/features/backlog/queries';
@@ -291,6 +292,7 @@ function CommentsPanel({ item, projectKey }: { item: Item; projectKey: string })
   const provider = useProvider();
   const comments = useComments(projectKey, item.id);
   const addComment = useAddComment(projectKey);
+  const toggleCommentTask = useToggleCommentTask(projectKey);
   const { toast } = useToast();
   const [draft, setDraft] = useState('');
   const canWrite = provider.capabilities.write;
@@ -339,6 +341,29 @@ function CommentsPanel({ item, projectKey }: { item: Item; projectKey: string })
                   path={comment.path}
                   project={projectKey}
                   cacheKey={`${comment.path}@${comment.rev}`}
+                  taskBusy={toggleCommentTask.isPending}
+                  {...(canWrite
+                    ? {
+                        onToggleTask: (line: number, checked: boolean) => {
+                          toggleCommentTask.mutate(
+                            { id: item.id, path: comment.path, line, checked, rev: comment.rev },
+                            {
+                              onError: (error) => {
+                                const stale =
+                                  error instanceof ProviderError && error.code === 'stale_revision';
+                                toast({
+                                  variant: 'destructive',
+                                  title: stale ? 'Changed on disk' : 'The checkbox was not saved',
+                                  description: stale
+                                    ? 'The comment was modified elsewhere. It has been reloaded — try again.'
+                                    : error.message,
+                                });
+                              },
+                            },
+                          );
+                        },
+                      }
+                    : {})}
                 />
               </div>
               {pushable ? (

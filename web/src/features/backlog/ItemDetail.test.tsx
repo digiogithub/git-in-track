@@ -215,6 +215,46 @@ describe('ItemDetail', () => {
     expect(saved.body).toContain('As an employee, I want SSO.');
   });
 
+  it('ticks a checkbox inside a comment', async () => {
+    const user = userEvent.setup();
+    const commentPath = 'docs/.pmngr/comments/ACME-US-0042/20260826T090000Z-jose.md';
+    const provider = new FakeProvider({
+      comments: [
+        ...sampleComments,
+        {
+          item: 'ACME-US-0042',
+          author: 'jose',
+          created: '2026-08-26T09:00:00Z',
+          body: 'Follow-up:\n\n- [ ] Ask Northwind for a test tenant',
+          path: commentPath,
+          rev: 'sha256:00000000000000c2',
+        },
+      ],
+    });
+    const setCommentTask = vi.spyOn(provider, 'setCommentTask');
+    renderBacklog({ path: '/p/ACME/items/ACME-US-0042', provider });
+
+    const thread = within(await screen.findByRole('list', { name: 'Comment thread' }));
+    const box = await thread.findByRole('checkbox', { name: 'Toggle task on line 3' });
+    expect(box).not.toBeChecked();
+    await user.click(box);
+
+    await waitFor(() => {
+      expect(setCommentTask).toHaveBeenCalledWith(
+        'ACME-US-0042',
+        commentPath,
+        3,
+        true,
+        'sha256:00000000000000c2',
+      );
+    });
+    await waitFor(() => {
+      expect(thread.getByRole('checkbox', { name: 'Toggle task on line 3' })).toBeChecked();
+    });
+    const saved = await provider.listComments('ACME-US-0042');
+    expect(saved.find((c) => c.path === commentPath)?.body).toContain('- [x] Ask Northwind');
+  });
+
   it('reports a stale revision when a criterion is ticked on a stale body', async () => {
     const user = userEvent.setup();
     const provider = new FakeProvider();

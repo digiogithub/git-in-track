@@ -1051,9 +1051,7 @@ function toSearchCodeIndex(value: unknown): SearchCodeIndex | undefined {
   return {
     project: asString(record['project']) ?? '',
     status:
-      status === 'off' || status === 'registered' || status === 'indexing'
-        ? status
-        : 'unavailable',
+      status === 'off' || status === 'registered' || status === 'indexing' ? status : 'unavailable',
     ...optional('job', asString(record['job'])),
     ...optional('note', asString(record['note'])),
   };
@@ -2417,6 +2415,20 @@ export class CompanionProvider implements DataProvider {
       body: author ? { body, author } : { body },
     });
     return toComment(answer, { item: id, author: author ?? '', body });
+  }
+
+  async setCommentTask(
+    id: string,
+    path: string,
+    line: number,
+    checked: boolean,
+    rev: string,
+  ): Promise<Comment> {
+    const answer = await this.#json(
+      `${API_PREFIX}/items/${encodeURIComponent(id)}/comments/tasks`,
+      { method: 'POST', rev, body: { path, line, checked } },
+    );
+    return toComment(answer, { item: id, author: '', body: '' });
   }
 
   // --------------------------------------------------------------------- inbox

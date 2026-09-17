@@ -96,6 +96,77 @@ func TestItemTaskSet(t *testing.T) {
 	})
 }
 
+func TestCommentTaskSet(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newAPIServer(t)
+	var comment struct {
+		Path string `json:"path"`
+		Body string `json:"body"`
+		Rev  string `json:"rev"`
+	}
+	decode(t, send(t, s, request{
+		method: http.MethodPost,
+		target: "/api/v1/items/DEMO-US-0001/comments",
+		body:   map[string]any{"body": "Follow-up:\n\n- [ ] one\n- [ ] two", "author": "claude"},
+	}), http.StatusCreated, &comment)
+	boxes := core.TaskListItems(comment.Body)
+	if len(boxes) != 2 {
+		t.Fatalf("the seeded comment should hold 2 checkboxes, found %d", len(boxes))
+	}
+	target := "/api/v1/items/DEMO-US-0001/comments/tasks"
+
+	t.Run("without If-Match", func(t *testing.T) {
+		var doc problemBody
+		decode(t, send(t, s, request{
+			method: http.MethodPost, target: target,
+			body: map[string]any{"path": comment.Path, "line": boxes[0].Line, "checked": true},
+		}), http.StatusPreconditionRequired, &doc)
+	})
+
+	t.Run("without a path", func(t *testing.T) {
+		var doc problemBody
+		decode(t, send(t, s, request{
+			method: http.MethodPost, target: target,
+			body:   map[string]any{"line": boxes[0].Line, "checked": true},
+			header: map[string]string{"If-Match": comment.Rev},
+		}), http.StatusBadRequest, &doc)
+		if doc.Code != "invalid_request" {
+			t.Errorf("code = %q", doc.Code)
+		}
+	})
+
+	t.Run("ticking a checkbox", func(t *testing.T) {
+		var updated struct {
+			Body string `json:"body"`
+			Rev  string `json:"rev"`
+		}
+		decode(t, send(t, s, request{
+			method: http.MethodPost, target: target,
+			body:   map[string]any{"path": comment.Path, "line": boxes[1].Line, "checked": true},
+			header: map[string]string{"If-Match": comment.Rev},
+		}), http.StatusOK, &updated)
+		if want := strings.Replace(comment.Body, "- [ ] two", "- [x] two", 1); updated.Body != want {
+			t.Errorf("body = %q, want %q", updated.Body, want)
+		}
+		if updated.Rev == comment.Rev {
+			t.Error("a toggle must produce a new revision")
+		}
+	})
+
+	t.Run("a stale revision is refused", func(t *testing.T) {
+		var doc problemBody
+		decode(t, send(t, s, request{
+			method: http.MethodPost, target: target,
+			body:   map[string]any{"path": comment.Path, "line": boxes[0].Line, "checked": true},
+			header: map[string]string{"If-Match": comment.Rev},
+		}), http.StatusPreconditionFailed, &doc)
+		if doc.Code != "stale_revision" {
+			t.Errorf("code = %q, want stale_revision", doc.Code)
+		}
+	})
+}
+
 func TestItemReferences(t *testing.T) {
 	t.Parallel()
 

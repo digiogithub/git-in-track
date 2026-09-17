@@ -2,6 +2,7 @@ package vault
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/digiogithub/git-in-track/internal/core"
@@ -301,4 +302,73 @@ func mustJSON(t *testing.T, v any) string {
 		t.Fatalf("encode: %v", err)
 	}
 	return string(data)
+}
+
+// TestCommentTaskSet proves a comment checkbox is toggled the way an item's
+// is: one line rewritten, rev-guarded, and refused on a line that is no
+// checkbox.
+func TestCommentTaskSet(t *testing.T) {
+	const body = "Checklist:\n\n- [ ] first\n- [ ] second\n\n```\n- [ ] code\n```"
+
+	t.Run("ticking a checkbox changes exactly that line", func(t *testing.T) {
+		v, _ := loadedVault(t)
+		comment := seedComment(t, v, body)
+		line := core.TaskListItems(comment.Body)[1].Line
+
+		updated := decode[commentUpdateResult](t, call(t, v, "comment.task.set", map[string]any{
+			"id": "DEMO-US-0001", "path": comment.Path, "rev": string(comment.Rev),
+			"line": line, "checked": true,
+		}))
+		want := strings.Replace(comment.Body, "- [ ] second", "- [x] second", 1)
+		if updated.Comment.Body != want {
+			t.Errorf("body = %q, want %q", updated.Comment.Body, want)
+		}
+		if updated.Comment.Rev == comment.Rev {
+			t.Error("the rev did not move, so nothing was written")
+		}
+		if len(updated.Writes.Written) == 0 {
+			t.Error("a toggle must report the file it wrote")
+		}
+	})
+
+	t.Run("a stale revision is refused", func(t *testing.T) {
+		v, _ := loadedVault(t)
+		comment := seedComment(t, v, body)
+		line := core.TaskListItems(comment.Body)[0].Line
+		call(t, v, "comment.task.set", map[string]any{
+			"path": comment.Path, "rev": string(comment.Rev), "line": line, "checked": true,
+		})
+		env := rawCall(t, v, "comment.task.set", map[string]any{
+			"path": comment.Path, "rev": string(comment.Rev), "line": line, "checked": false,
+		})
+		if env.OK || env.Error.Code != core.StaleRevisionCode {
+			t.Errorf("answer = %+v, want %s", env, core.StaleRevisionCode)
+		}
+	})
+
+	t.Run("a line that is not a checkbox is refused", func(t *testing.T) {
+		v, _ := loadedVault(t)
+		comment := seedComment(t, v, body)
+		for _, line := range []int{1, strings.Count(comment.Body[:strings.Index(comment.Body, "- [ ] code")], "\n") + 1} {
+			env := rawCall(t, v, "comment.task.set", map[string]any{
+				"path": comment.Path, "rev": string(comment.Rev), "line": line, "checked": true,
+			})
+			if env.OK || env.Error.Code != core.TaskListItemMismatchCode {
+				t.Errorf("line %d: answer = %+v, want %s", line, env, core.TaskListItemMismatchCode)
+			}
+		}
+	})
+
+	t.Run("a toggle without a rev is refused", func(t *testing.T) {
+		v, _ := loadedVault(t)
+		comment := seedComment(t, v, body)
+		for _, rev := range []string{"", "*"} {
+			env := rawCall(t, v, "comment.task.set", map[string]any{
+				"path": comment.Path, "rev": rev, "line": 3, "checked": true,
+			})
+			if env.OK || env.Error.Code != "invalid_request" {
+				t.Errorf("rev %q: answer = %+v, want invalid_request", rev, env)
+			}
+		}
+	})
 }

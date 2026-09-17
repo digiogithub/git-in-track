@@ -2099,6 +2099,38 @@ export class FakeProvider implements DataProvider {
     return Promise.resolve(structuredClone(comment));
   }
 
+  /** Stands in for `comment.task.set`, one line and one character, like `setTaskItem`. */
+  setCommentTask(
+    id: string,
+    path: string,
+    line: number,
+    checked: boolean,
+    rev: string,
+  ): Promise<Comment> {
+    this.assertWritable();
+    const comment = this.comments.find((c) => c.item === id && c.path === path);
+    if (!comment)
+      return Promise.reject(new ProviderError('not_found', `Comment ${path} not found`));
+    if (comment.rev !== rev) {
+      return Promise.reject(new ProviderError('stale_revision', `${path} changed on disk`));
+    }
+    const lines = comment.body.split('\n');
+    const source = lines[line - 1];
+    const marker =
+      source === undefined ? null : /^([ \t]*(?:[-*+]|\d+[.)])[ \t]+\[)([ xX])(\])/.exec(source);
+    if (!marker) {
+      return Promise.reject(
+        new ProviderError('validation_failed', `Line ${line} of ${path} is not a task-list item`),
+      );
+    }
+    lines[line - 1] =
+      `${marker[1]}${checked ? 'x' : ' '}${marker[3]}${source?.slice(marker[0].length) ?? ''}`;
+    comment.body = lines.join('\n');
+    comment.rev = this.nextRev();
+    this.emit({ kind: 'items', repoId: 'repo-1', ids: [id] });
+    return Promise.resolve(structuredClone(comment));
+  }
+
   // --------------------------------------------------------------------- inbox
 
   /**

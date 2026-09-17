@@ -429,6 +429,8 @@ func (v *Vault) Dispatch(ctx context.Context, method string, raw []byte) (any, e
 		return v.commentList(raw)
 	case "comment.update":
 		return v.commentUpdate(ctx, raw)
+	case "comment.task.set":
+		return v.commentTaskSet(ctx, raw)
 
 	case "kb.tree":
 		return v.kbTree(raw)

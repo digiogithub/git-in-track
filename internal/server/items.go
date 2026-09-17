@@ -37,6 +37,7 @@ func (s *Server) mountItems(r chi.Router) {
 	r.Post("/{id}/triage", s.handleItemTriage)
 	r.Get("/{id}/comments", s.handleCommentList)
 	r.Post("/{id}/comments", s.handleCommentAdd)
+	r.Post("/{id}/comments/tasks", s.handleCommentTaskSet)
 	s.deferRoute(r, "/{id}/links", "Typed links are edited through PATCH /items/{id} until Phase 3.")
 }
 
@@ -463,6 +464,51 @@ func (s *Server) handleCommentAdd(w http.ResponseWriter, r *http.Request) {
 	comment := field(result, "comment")
 	s.publishWrite(r, m, result, id, "commented")
 	writeEntity(w, r, http.StatusCreated, comment, revOfComment(comment))
+}
+
+// handleCommentTaskSet serves POST /api/v1/items/{id}/comments/tasks: one
+// task-list checkbox of a comment, ticked or cleared. A comment has no id of
+// its own, so the body names the comment file by `path`; If-Match carries the
+// rev of that comment, not of the item.
+func (s *Server) handleCommentTaskSet(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	rev, ok := requireIfMatch(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Path    string `json:"path"`
+		Line    int    `json:"line"`
+		Checked *bool  `json:"checked"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	if strings.TrimSpace(body.Path) == "" {
+		failProblem(w, r, codeInvalidRequest, "A comment task toggle needs the `path` of the comment file.")
+		return
+	}
+	if body.Line <= 0 {
+		failProblem(w, r, codeInvalidRequest, "A task toggle needs the 1-based `line` of the checkbox.")
+		return
+	}
+	if body.Checked == nil {
+		failProblem(w, r, codeInvalidRequest, "A task toggle needs `checked`.")
+		return
+	}
+	m, ok := s.mountForItem(w, r, id)
+	if !ok {
+		return
+	}
+	result, ok := s.call(w, r, m, "comment.task.set", map[string]any{
+		"id": id, "path": body.Path, "rev": rev, "line": body.Line, "checked": *body.Checked,
+	})
+	if !ok {
+		return
+	}
+	comment := field(result, "comment")
+	s.publishWrite(r, m, result, id, "commented")
+	writeEntity(w, r, http.StatusOK, comment, revOfComment(comment))
 }
 
 // handleValidate serves POST /api/v1/validate and POST /api/v1/items/validate.

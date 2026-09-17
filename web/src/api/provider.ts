@@ -1809,6 +1809,18 @@ export interface DataProvider {
    * lives in; a handle is derived from the name for the file name.
    */
   addComment(id: string, body: string, author?: string): Promise<Comment>;
+  /**
+   * Ticks or clears one task-list checkbox of a comment. A comment has no id
+   * of its own, so `path` names its file; `line` is the 1-based line of the
+   * marker inside the comment body and `rev` is the comment's revision.
+   */
+  setCommentTask(
+    id: string,
+    path: string,
+    line: number,
+    checked: boolean,
+    rev: string,
+  ): Promise<Comment>;
 
   // inbox (ADR-033, docs/07 §5.3)
   /**

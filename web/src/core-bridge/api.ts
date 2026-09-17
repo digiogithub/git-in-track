@@ -1903,6 +1903,15 @@ export type CoreApi = {
     result: { comment: Comment; writes: WriteSet };
   };
 
+  /**
+   * Flip one task-list checkbox in a comment body — the comment twin of
+   * `item.task.set`. The rewrite goes through `comment.update` under `rev`.
+   */
+  'comment.task.set': {
+    params: { path: string; id?: string; line: number; checked: boolean; rev: string };
+    result: { comment: Comment; writes: WriteSet };
+  };
+
   'kb.tree': { params: { project?: string; vaultId?: string }; result: KbNode[] };
   'kb.page': { params: { path: string; vaultId?: string }; result: KbPage };
   'kb.write': {

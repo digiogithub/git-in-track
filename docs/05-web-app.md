@@ -1264,6 +1264,14 @@ The write is the ordinary rev-guarded one: the body goes back through
 file, and a losing race raises `stale_revision` and the conflict path of §8,
 exactly like an editor save.
 
+Checkboxes inside a comment work the same way. `CommentsPanel` passes an
+`onToggleTask` to each comment's renderer, and the click calls
+`provider.setCommentTask(id, path, line, checked, rev)` → `comment.task.set`
+(`POST /api/v1/items/{id}/comments/tasks`). A comment has no id of its own, so
+it is addressed by `path`, `line` counts inside the comment body, and `rev` is
+the comment's. The rewrite is the same `core.SetTaskListItem`, written back
+through `comment.update`, which stamps the comment's `updated`.
+
 ### 8.3 Drafts (as built, GIT-US-0010)
 
 An unsaved edit is kept in `localStorage` under
