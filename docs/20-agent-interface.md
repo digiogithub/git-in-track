@@ -157,11 +157,9 @@ What that guarantees:
   relies on.
 - **A key that is already there with another value is left alone**, and reported on stdout
   with the recommended value and a one-line reason. This is the conflict policy: warn, do not
-  overwrite. In a live configuration these values are load bearing — `[ToolDiscovery]
-  Enabled = true` and `[MCPGateway] Enabled = true` are what make `gintrack_*` calls work in
-  this repository today, because with the gateway off Pando v0.705.1 deadlocks (PANDO-US-0031)
-  — so imposing the template's values would break a working setup. Read the report and decide
-  key by key.
+  overwrite. In a live configuration these values are load bearing — a deployment that turned
+  the gateway on did so for a reason, and imposing the template's values would break a working
+  setup. Read the report and decide key by key.
 - A copy of the previous version is written as `.pando.toml.<timestamp>.bak` before the first
   edit, and its path is printed. `.pando.toml` is git-ignored, so git is not a safety net.
 - The merged file keeps mode 0600.
@@ -442,13 +440,13 @@ tree, and expect a search not to find it.
 **The agent says it cannot access the gintrack tools, and no `TOOL_CALL_START` names a `gintrack_*` tool.** Pando's MCP gateway is on: check that the repository's `.pando.toml` carries `[ToolDiscovery] Enabled = false` / `Mode = 'off'` and `[MCPGateway] Enabled = false` (files generated before 2026-09-15 lack them; re-run `gintrack agent init`, which merges the two sections in — but note that if you already have them set the other way round the merge reports them and leaves them alone, so flip them by hand). Behind the gateway the tools are reachable only through `tool_search` or `mcp_call_tool`, which the `[AGUI] Tools` allow-list removes on purpose: `mcp_call_tool` is a generic proxy to any server and any tool, and it bypasses the per-tool approval prompt.
 
 **A `gintrack_*` tool call starts and the run never finishes** (`TOOL_CALL_END` and then
-keep-alives only, whatever `AutoApprove` says). Pando-side, v0.705.1: with the gateway off, the
-MCP tools are cached at startup bound to the process-wide permission service, so a call from an
-AG-UI run waits for a terminal prompt that `agui-serve` cannot show. Tracked as a Pando fix
-(`PANDO-US-0031`); until it ships, the only configuration that completes such a turn is the
-gateway back on (`[ToolDiscovery] Enabled = true`) with `'tool_search'`, `'mcp_query_catalog'`
-and `'mcp_call_tool'` added to `[AGUI] Tools` — coarse, because `mcp_call_tool` reaches any
-server and any tool and asks no per-tool approval. Treat that as a temporary trade, not a setup.
+keep-alives only, whatever `AutoApprove` says). The Pando instance predates its
+`PANDO-US-0031` fix: with the gateway off, MCP tools were cached bound to the process-wide
+permission service, so a call from an AG-UI run waited on a terminal prompt that `agui-serve`
+cannot show, and no approval ever reached the browser. Upgrade Pando to a build carrying that
+fix (commit `38abda0` or later) — nothing in `.pando.toml` works around it, and the
+gateway-on configuration that used to complete a turn reached the tools through
+`mcp_call_tool`, which asks no per-tool approval.
 
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
