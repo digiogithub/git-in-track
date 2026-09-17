@@ -1402,9 +1402,22 @@ export type SearchResult = {
 
 export type SearchQuery = {
   text: string;
+  /** One project key. Kept next to `projectKeys`; the two add up. */
   projectKey?: string;
+  /**
+   * Restricts the search to any of these project keys (GIT-US-0102). Absent or
+   * empty searches every project, which is what a caller sends when every
+   * project is selected.
+   */
+  projectKeys?: string[];
   limit?: number;
 };
+
+/** The project keys a query is scoped to, `projectKey` folded in; empty means all. */
+export function searchProjectKeys(query: SearchQuery): string[] {
+  const keys = [...(query.projectKey ? [query.projectKey] : []), ...(query.projectKeys ?? [])];
+  return [...new Set(keys.filter((key) => key !== ''))];
+}
 
 /**
  * What Pando indexes for one mounted repository.

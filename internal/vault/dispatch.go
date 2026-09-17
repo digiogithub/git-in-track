@@ -290,15 +290,11 @@ func (w *Workspace) Dispatch(ctx context.Context, method string, raw []byte) (an
 	case "project.list":
 		return w.Projects(ctx)
 	case "search":
-		p, err := decodeParams[struct {
-			Q       string `json:"q"`
-			Limit   int    `json:"limit,omitempty"`
-			Project string `json:"project,omitempty"`
-		}](raw)
+		p, err := decodeParams[searchParams](raw)
 		if err != nil {
 			return nil, err
 		}
-		return w.Search(ctx, p.Q, p.Limit, p.Project)
+		return w.Search(ctx, p.Q, p.Limit, ScopeKeys(p.Project, p.Projects))
 	case "search.semantic":
 		// Ranked by meaning rather than by substring. The host installs the
 		// backend (see semantic.go); without one the method answers

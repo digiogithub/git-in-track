@@ -29,8 +29,17 @@ type SemanticQuery struct {
 	// Project scopes the query to one project key. Empty searches every
 	// project of every mounted repository.
 	Project string `json:"project,omitempty"`
+	// Projects scopes the query to any of several project keys, next to
+	// Project (GIT-US-0102). A hit naming no project — a plain file — is
+	// outside any non-empty scope.
+	Projects []string `json:"projects,omitempty"`
 	// Kind scopes the query to "item" or "page". Empty searches both.
 	Kind string `json:"kind,omitempty"`
+}
+
+// Admits reports whether a hit of project key is inside the query's scope.
+func (q SemanticQuery) Admits(key core.ProjectKey) bool {
+	return InScope(ScopeKeys(q.Project, q.Projects), string(key))
 }
 
 // SemanticSearcher is the backend a host installs with

@@ -2920,6 +2920,21 @@ knowledge-base page) plus the `vaultId` of the repository that answered, so a wo
 returns a row whose source is ambiguous (GIT-US-0016). With `?project=<KEY>`, only the repository
 exposing that key is searched, and an unknown key is a `404`.
 
+`project` scopes to **several projects** too (GIT-US-0102). Like every list filter it is
+repeatable and OR within the field, and each value may also be a comma-separated list, so
+`?project=ACME&project=WEB` and `?project=ACME,WEB` are the same query. A team key is a valid
+scope and selects that team's knowledge base. Every key must name a mounted project or team,
+or the answer is a `404`. The scope applies to both halves: exact hits outside it are never
+ranked, and semantic candidates are filtered after they are resolved — Pando has no project
+filter of its own, so the companion over-fetches and drops the rest, and skips the code
+projects whose repository holds none of the selected keys. A `kind: "file"` hit names no
+project and is therefore outside any scope. Omitting `project` searches everything, which is
+what the web app sends when every project is selected.
+
+The core contract spells the same scope `{"q":…,"project":"ACME","projects":["WEB"]}` on the
+`search` method; the two fields add up, and `SearchQuery.projectKeys` is the web provider's
+name for it.
+
 
 #### Semantic search settings and reindex (GIT-US-0091)
 

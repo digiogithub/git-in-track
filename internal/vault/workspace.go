@@ -371,21 +371,22 @@ func (w *Workspace) teamSummary(m *Mount) teamSummary {
 // Search ranks results across every open repository, keeping the source of each
 // hit. Ranking is per vault and the merge is by score, which is exact because
 // the scoring of docs/02 section 8 does not depend on corpus statistics.
-func (w *Workspace) Search(ctx context.Context, q string, limit int, project string) ([]searchHit, error) {
+//
+// projects restricts the answer to those project keys; empty searches every
+// project (GIT-US-0102). A repository owning none of them is not asked.
+func (w *Workspace) Search(ctx context.Context, q string, limit int, projects []string) ([]searchHit, error) {
 	w.mu.RLock()
 	mounts := w.snapshot()
 	w.mu.RUnlock()
 
-	params, err := json.Marshal(map[string]any{"q": q, "limit": limit, "project": project})
+	params, err := json.Marshal(searchParams{Q: q, Limit: limit, Projects: projects})
 	if err != nil {
 		return nil, failf("internal", "encode search params: %v", err)
 	}
 	var all []searchHit
 	for _, m := range mounts {
-		if project != "" {
-			if owner, ok := w.MountForProject(core.ProjectKey(project)); ok && owner.ID != m.ID {
-				continue
-			}
+		if !w.mountInScope(m, projects) {
+			continue
 		}
 		result, err := m.Vault.Dispatch(ctx, "search", params)
 		if err != nil {
@@ -416,6 +417,22 @@ func (w *Workspace) Search(ctx context.Context, q string, limit int, project str
 		all = []searchHit{}
 	}
 	return all, nil
+}
+
+// mountInScope reports whether a search restricted to projects can find
+// anything in m. A key no open repository claims does not rule a mount out:
+// the vault's own filter then answers nothing, which is the honest result.
+func (w *Workspace) mountInScope(m *Mount, projects []string) bool {
+	if len(projects) == 0 {
+		return true
+	}
+	for _, key := range projects {
+		owner, ok := w.MountForProject(core.ProjectKey(key))
+		if !ok || owner.ID == m.ID {
+			return true
+		}
+	}
+	return false
 }
 
 // Projects returns every project of every open repository, each carrying the id

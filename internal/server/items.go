@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"reflect"
 	"strconv"
 	"strings"
@@ -546,9 +547,11 @@ func (s *Server) handleValidate(w http.ResponseWriter, r *http.Request) {
 // handleSearch serves GET /api/v1/search.
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	project := q.Get("project")
-	if project != "" {
-		if _, found := s.repos.forProject(project); !found {
+	projects := parseSearchProjects(q)
+	for _, project := range projects {
+		// A team key is a valid scope too: it addresses the team knowledge
+		// base, whose hits carry it as their project.
+		if _, found := s.repos.workspace().MountForProject(core.ProjectKey(project)); !found {
 			failProblem(w, r, codeNotFound, "No mounted repository exposes project "+project+".")
 			return
 		}
@@ -564,12 +567,12 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	// and several clones answers one query instead of one per repository
 	// (GIT-US-0016).
 	text := q.Get("q")
-	hits, err := s.repos.workspace().Search(r.Context(), text, limit, project)
+	hits, err := s.repos.workspace().Search(r.Context(), text, limit, projects)
 	if err != nil {
 		writeVaultError(w, r, err)
 		return
 	}
-	hits, degraded, dropped := s.mergeSemantic(r.Context(), hits, text, limit, project)
+	hits, degraded, dropped := s.mergeSemantic(r.Context(), hits, text, limit, projects)
 	writeJSON(w, r, http.StatusOK, map[string]any{
 		"query": text,
 		"hits":  hits,
@@ -582,6 +585,19 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		"engine":   s.search.backend(),
 		"degraded": degraded,
 	})
+}
+
+// parseSearchProjects reads the project scope of GET /search. `project` is
+// repeatable, OR within the field like every list filter (docs/07 section
+// 5.3), and each value may also be a comma-separated list, so `project=A&
+// project=B` and `project=A,B` mean the same (GIT-US-0102). No value searches
+// every project.
+func parseSearchProjects(q url.Values) []string {
+	var keys []string
+	for _, v := range q["project"] {
+		keys = append(keys, splitList(v)...)
+	}
+	return vault.ScopeKeys("", keys)
 }
 
 // mergeSemantic appends the semantic half of a search to the exact one.
@@ -600,14 +616,14 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 // response reports: a stale Pando index must be visible to the caller, not
 // only in the companion's log.
 func (s *Server) mergeSemantic(
-	ctx context.Context, exact []vault.SearchHit, text string, limit int, project string,
+	ctx context.Context, exact []vault.SearchHit, text string, limit int, projects []string,
 ) (merged []vault.SearchHit, degraded bool, dropped int) {
 	if s.search == nil || s.search.semantic() == nil || strings.TrimSpace(text) == "" {
 		return exact, false, 0
 	}
 	var drops atomic.Int64
 	semantic, err := s.repos.workspace().SearchSemantic(withSemanticDrops(ctx, &drops),
-		vault.SemanticQuery{Q: text, Limit: limit, Project: project})
+		vault.SemanticQuery{Q: text, Limit: limit, Projects: projects})
 	dropped = int(drops.Load())
 	if s.search.noteDegraded(err) {
 		return exact, true, dropped

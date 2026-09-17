@@ -6,8 +6,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -632,6 +634,61 @@ func TestSearchAndValidate(t *testing.T) {
 	if len(diagnostics) == 0 {
 		t.Error("a file without front matter must produce a diagnostic")
 	}
+}
+
+// The project scope of GET /search is repeatable and comma-separated alike
+// (GIT-US-0102).
+func TestParseSearchProjects(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		query string
+		want  []string
+	}{
+		{query: "q=x", want: nil},
+		{query: "q=x&project=", want: nil},
+		{query: "project=DEMO", want: []string{"DEMO"}},
+		{query: "project=DEMO&project=WEB", want: []string{"DEMO", "WEB"}},
+		{query: "project=DEMO,WEB", want: []string{"DEMO", "WEB"}},
+		{query: "project=DEMO,%20WEB&project=DEMO&project=API", want: []string{"DEMO", "WEB", "API"}},
+	}
+	for _, tt := range tests {
+		values, err := url.ParseQuery(tt.query)
+		if err != nil {
+			t.Fatalf("parse %q: %v", tt.query, err)
+		}
+		if got := parseSearchProjects(values); !reflect.DeepEqual(got, tt.want) {
+			t.Errorf("%s: got %v, want %v", tt.query, got, tt.want)
+		}
+	}
+}
+
+func TestSearchScopedToProjects(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newAPIServer(t)
+
+	var search struct {
+		Hits []struct {
+			Project string `json:"project"`
+		} `json:"hits"`
+	}
+	decode(t, send(t, s, request{
+		method: http.MethodGet, target: "/api/v1/search?q=checkout&project=DEMO,DEMO&limit=10",
+	}), http.StatusOK, &search)
+	if len(search.Hits) == 0 {
+		t.Fatal("a search scoped to the fixture project found nothing")
+	}
+	for _, hit := range search.Hits {
+		if hit.Project != "DEMO" {
+			t.Errorf("a scoped search returned a hit from %q", hit.Project)
+		}
+	}
+
+	// Every key in the scope must name a mounted project, as the single one did.
+	decode(t, send(t, s, request{
+		method: http.MethodGet, target: "/api/v1/search?q=checkout&project=DEMO&project=NOPE",
+	}), http.StatusNotFound, nil)
 }
 
 func TestReposProjectsAndReindex(t *testing.T) {

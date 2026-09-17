@@ -1553,16 +1553,13 @@ func relativeToDocs(docsPath, p string) string {
 
 // search runs the ranked substring search over items and pages.
 func (v *Vault) search(raw []byte) (any, error) {
-	p, err := decodeParams[struct {
-		Q       string `json:"q"`
-		Limit   int    `json:"limit,omitempty"`
-		Project string `json:"project,omitempty"`
-	}](raw)
+	p, err := decodeParams[searchParams](raw)
 	if err != nil {
 		return nil, err
 	}
+	scope := ScopeKeys(p.Project, p.Projects)
 	limit := p.Limit
-	if p.Project != "" && limit > 0 {
+	if len(scope) > 0 && limit > 0 {
 		// Filtering after ranking would shrink the page below the requested size,
 		// so ask for more and cut afterwards.
 		limit *= 4
@@ -1570,7 +1567,7 @@ func (v *Vault) search(raw []byte) (any, error) {
 	hits := v.index.Search(p.Q, limit)
 	out := make([]searchHit, 0, len(hits))
 	for _, h := range hits {
-		if p.Project != "" && string(h.Project) != p.Project {
+		if !InScope(scope, string(h.Project)) {
 			continue
 		}
 		source := h.Source

@@ -256,6 +256,10 @@ describe('BrowserProvider', () => {
 
     expect(call).toHaveBeenCalledWith('kb.tree', { project: 'ACME' });
     expect(call).toHaveBeenCalledWith('search', { q: 'sso', limit: 5 });
+
+    // A project scope reaches the core as its `projects` list (GIT-US-0102).
+    await provider.search({ text: 'sso', projectKeys: ['ACME', 'WEB'] });
+    expect(call).toHaveBeenLastCalledWith('search', { q: 'sso', projects: ['ACME', 'WEB'] });
   });
 
   it('reads assets from the vault, never from the core', async () => {
