@@ -167,7 +167,7 @@ import type {
   YouTrackTestResult,
   YouTrackTokenSource,
 } from '@/api/provider';
-import { ProviderError } from '@/api/provider';
+import { ProviderError, searchProjectKeys } from '@/api/provider';
 import { authorizationHeader, clearToken, hasToken, withTokenQuery } from '@/api/token';
 import type { Link } from '@/core-bridge/api';
 
@@ -2024,7 +2024,8 @@ export class CompanionProvider implements DataProvider {
     const search = buildQuery({
       q: query.text,
       scope: 'items,kb',
-      project: query.projectKey,
+      // Repeated `project=` params; none at all searches every project.
+      project: searchProjectKeys(query),
       limit: query.limit,
     });
     return toSearchResult(await this.#json(`${API_PREFIX}/search${search}`));

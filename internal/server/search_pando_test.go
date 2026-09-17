@@ -321,6 +321,31 @@ func TestSemanticHitsResolveAgainstTheRepository(t *testing.T) {
 	}
 }
 
+// A project scope reaches the semantic half: candidates outside it — here a
+// plain file, which names no project — are dropped (GIT-US-0102).
+func TestSemanticHitsHonourTheProjectScope(t *testing.T) {
+	t.Parallel()
+
+	s, root := newAPIServer(t)
+	installPando(t, s, &fakePando{hits: []pando.KBHit{
+		{FilePath: ".pmngr/stories/DEMO-US-0002-save-payment-methods.md", Chunk: "saved cards", Score: 0.03, Rank: 1},
+		{FilePath: "notes/scratch.txt", Chunk: "a loose note", Score: 0.01, Rank: 2},
+	}})
+	writeFixtureFile(t, filepath.Join(root, "docs", "notes", "scratch.txt"), "a loose note\n")
+
+	scoped := searchFor(t, s, "/api/v1/search?q=checkout&limit=20&project=DEMO")
+	sawItem := false
+	for _, hit := range scoped.Hits {
+		if hit.Project != "DEMO" {
+			t.Errorf("a scoped search returned %+v", hit)
+		}
+		sawItem = sawItem || hit.ID == "DEMO-US-0002"
+	}
+	if !sawItem {
+		t.Errorf("the in-scope semantic hit is missing: %+v", scoped.Hits)
+	}
+}
+
 // TestSemanticCommentHitsCollapseOntoTheirItem pins the maintainer's decision:
 // a comment hit is the item it belongs to, marked as a comment match, and a
 // thread that answers the query several times is one row with a count

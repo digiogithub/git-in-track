@@ -181,7 +181,11 @@ exposes `listSnapshots()` and `refreshSnapshots()` in both modes.
 
 A **workspace search panel** (`features/workspace/WorkspaceSearch.tsx`) queries every
 open repository at once and labels each row with the project it came from, because in
-a workspace the same title can exist in two repositories. Below the repos: "Recently edited" (from the
+a workspace the same title can exist in two repositories. With more than one project
+(or team) open, a project multi-select (`SearchProjectFilter.tsx`) scopes the query:
+every key is checked by default, "All" and "None" reset it, the selection survives a
+new query, and an empty selection shows a hint instead of querying. All checked sends
+no scope at all; otherwise the query carries `projectKeys` (GIT-US-0102). Below the repos: "Recently edited" (from the
 index, `updated desc`, limit 20), "Assigned to me" (matching `team.yaml` identity
 or the configured git author email), and a sync health strip.
 

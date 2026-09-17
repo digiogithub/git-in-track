@@ -332,7 +332,7 @@ func (p *pandoSearcher) resolve(c pando.KBHit, q vault.SemanticQuery) (core.Sear
 	if q.Kind != "" && q.Kind != hit.Kind {
 		return core.SearchHit{}, "", false
 	}
-	if q.Project != "" && q.Project != string(hit.Project) {
+	if !q.Admits(hit.Project) {
 		return core.SearchHit{}, "", false
 	}
 	return hit, repo, true

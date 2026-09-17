@@ -2,7 +2,7 @@ import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { FakeProvider } from '@/api/fake-provider';
+import { FakeProvider, sampleProject } from '@/api/fake-provider';
 import type { SearchHit } from '@/api/provider';
 import { useUiPrefs } from '@/app/ui-prefs';
 import { renderWithRouter } from '@/test/router';
@@ -49,6 +49,14 @@ const semanticHit: SearchHit = {
 /** A fake whose companion reports a semantic index behind it. */
 function pandoProvider(): FakeProvider {
   return new FakeProvider({ repos: [], search: { fullTextSearch: 'pando' } });
+}
+
+/** A fake holding two projects, which is when the project filter appears. */
+function twoProjectProvider(): FakeProvider {
+  return new FakeProvider({
+    repos: [],
+    projects: [sampleProject, { ...sampleProject, key: 'WEB', name: 'Marketing Website' }],
+  });
 }
 
 describe('WorkspaceSearch', () => {
@@ -283,5 +291,83 @@ describe('WorkspaceSearch', () => {
     expect(
       await screen.findByText(/semantic search unavailable/i, undefined, { timeout: 5000 }),
     ).toBeInTheDocument();
+  });
+
+  describe('project filter', () => {
+    it('selects every project by default and sends no scope', async () => {
+      const provider = twoProjectProvider();
+      const search = vi.spyOn(provider, 'search').mockResolvedValue({ hits });
+      renderWithRouter({ index: WorkspaceSearch, provider });
+
+      const group = await screen.findByRole(
+        'group',
+        { name: /projects to search/i },
+        { timeout: 5000 },
+      );
+      const boxes = within(group).getAllByRole('checkbox');
+      expect(boxes).toHaveLength(2);
+      for (const box of boxes) expect(box).toBeChecked();
+
+      await userEvent.type(screen.getByRole('searchbox'), 'done');
+      await screen.findByRole('list', { name: /search results/i }, { timeout: 5000 });
+      expect(search.mock.calls.at(-1)?.[0]).not.toHaveProperty('projectKeys');
+    });
+
+    it('scopes the query to the projects left selected, across query changes', async () => {
+      const provider = twoProjectProvider();
+      const search = vi.spyOn(provider, 'search').mockResolvedValue({ hits });
+      renderWithRouter({ index: WorkspaceSearch, provider });
+
+      const web = await screen.findByRole('checkbox', { name: 'WEB' }, { timeout: 5000 });
+      await userEvent.click(web);
+      expect(web).not.toBeChecked();
+
+      const input = screen.getByRole('searchbox');
+      await userEvent.type(input, 'done');
+      await screen.findByRole('list', { name: /search results/i }, { timeout: 5000 });
+      expect(search.mock.calls.at(-1)?.[0]).toMatchObject({ text: 'done', projectKeys: ['ACME'] });
+
+      // The selection is the user's, not the query's: it survives a new query.
+      await userEvent.clear(input);
+      await userEvent.type(input, 'login');
+      await vi.waitFor(() => {
+        expect(search.mock.calls.at(-1)?.[0]).toMatchObject({
+          text: 'login',
+          projectKeys: ['ACME'],
+        });
+      });
+      expect(screen.getByRole('checkbox', { name: 'WEB' })).not.toBeChecked();
+
+      // "All" restores the unscoped query.
+      await userEvent.click(screen.getByRole('button', { name: /search every project/i }));
+      await vi.waitFor(() => {
+        expect(search.mock.calls.at(-1)?.[0]).not.toHaveProperty('projectKeys');
+      });
+    });
+
+    it('shows a hint and does not query when no project is selected', async () => {
+      const provider = twoProjectProvider();
+      const search = vi.spyOn(provider, 'search').mockResolvedValue({ hits });
+      renderWithRouter({ index: WorkspaceSearch, provider });
+
+      await userEvent.click(
+        await screen.findByRole('button', { name: /search no project/i }, { timeout: 5000 }),
+      );
+      for (const box of screen.getAllByRole('checkbox')) expect(box).not.toBeChecked();
+
+      await userEvent.type(screen.getByRole('searchbox'), 'done');
+      expect(screen.getByText(/select at least one project/i)).toBeInTheDocument();
+      expect(screen.queryByRole('list', { name: /search results/i })).not.toBeInTheDocument();
+      expect(screen.queryByText(/nothing matched/i)).not.toBeInTheDocument();
+      expect(search).not.toHaveBeenCalled();
+    });
+
+    it('is not shown for a single project', async () => {
+      const provider = new FakeProvider({ repos: [] });
+      renderWithRouter({ index: WorkspaceSearch, provider });
+
+      await screen.findByRole('searchbox', undefined, { timeout: 5000 });
+      expect(screen.queryByRole('group', { name: /projects to search/i })).not.toBeInTheDocument();
+    });
   });
 });

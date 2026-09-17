@@ -1936,7 +1936,10 @@ export type CoreApi = {
     result: { page: KbPage; writes: WriteSet; notes: KbFeedbackNoteRef[] };
   };
 
-  search: { params: { q: string; limit?: number; project?: string }; result: SearchHit[] };
+  search: {
+    params: { q: string; limit?: number; project?: string; projects?: string[] };
+    result: SearchHit[];
+  };
 
   /**
    * Merge the three versions of one conflicted file, applying the user's

@@ -282,6 +282,59 @@ func TestWorkspaceSearchSpansEveryRepository(t *testing.T) {
 	})
 }
 
+// A search scoped to several projects answers from those and no other; the
+// single `project` spelling folds into the same scope (GIT-US-0102).
+func TestWorkspaceSearchFiltersByProjects(t *testing.T) {
+	modes(t, func(t *testing.T, w *Workspace) {
+		projectsOf := func(params map[string]any) map[string]bool {
+			t.Helper()
+			seen := map[string]bool{}
+			for _, h := range decode[[]searchHit](t, wsCall(t, w, "search", params)) {
+				seen[h.Project] = true
+			}
+			return seen
+		}
+
+		all := projectsOf(map[string]any{"q": "the", "limit": 50})
+		if !all["DEMO"] || !all["DEMO-TEAM"] {
+			t.Fatalf("the fixture must answer from both projects, got %v", all)
+		}
+
+		team := projectsOf(map[string]any{"q": "the", "limit": 50, "projects": []string{"DEMO-TEAM"}})
+		if len(team) != 1 || !team["DEMO-TEAM"] {
+			t.Errorf("projects [DEMO-TEAM] must answer only from DEMO-TEAM, got %v", team)
+		}
+
+		both := projectsOf(map[string]any{"q": "the", "limit": 50, "projects": []string{"DEMO", "DEMO-TEAM"}})
+		if !both["DEMO"] || !both["DEMO-TEAM"] {
+			t.Errorf("projects [DEMO DEMO-TEAM] must answer from both, got %v", both)
+		}
+
+		mixed := projectsOf(map[string]any{"q": "the", "limit": 50, "project": "DEMO", "projects": []string{"DEMO-TEAM"}})
+		if !mixed["DEMO"] || !mixed["DEMO-TEAM"] {
+			t.Errorf("project and projects must add up, got %v", mixed)
+		}
+
+		none := projectsOf(map[string]any{"q": "the", "limit": 50, "projects": []string{"NOPE"}})
+		if len(none) != 0 {
+			t.Errorf("an unknown project must answer nothing, got %v", none)
+		}
+	})
+}
+
+func TestScopeKeys(t *testing.T) {
+	if got := ScopeKeys("", nil); got != nil {
+		t.Errorf("no scope must be nil, got %v", got)
+	}
+	got := ScopeKeys("A", []string{"B", "A", "", "B"})
+	if strings.Join(got, ",") != "A,B" {
+		t.Errorf("ScopeKeys must fold and de-duplicate, got %v", got)
+	}
+	if !InScope(nil, "") || !InScope(got, "B") || InScope(got, "C") || InScope(got, "") {
+		t.Error("InScope admits everything without a scope and only listed keys with one")
+	}
+}
+
 func TestWorkspaceTeamKnowledgeBase(t *testing.T) {
 	modes(t, func(t *testing.T, w *Workspace) {
 		tree := decode[[]kbNode](t, wsCall(t, w, "kb.tree", map[string]any{"project": "DEMO-TEAM"}))

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -73,6 +74,28 @@ func topCodeScore(hits []pando.CodeHit) float64 {
 	return top
 }
 
+// repoInScope reports whether a repository can hold a hit of a search scoped
+// to keys. A repository this companion cannot inspect is kept: the resolved
+// hits are filtered anyway, so asking is only ever wasted, never wrong.
+func (p *pandoSearcher) repoInScope(repo string, keys []string) bool {
+	if len(keys) == 0 || p.repos == nil {
+		return true
+	}
+	m, ok := p.repos.lookup(repo)
+	if !ok || !m.ready() {
+		return true
+	}
+	// resolveCode labels a page without a project with the repository id; a
+	// team repository's pages carry its team key.
+	owned := append([]string{m.id, m.teamKey()}, m.projectKeys()...)
+	for _, key := range keys {
+		if slices.Contains(owned, key) {
+			return true
+		}
+	}
+	return false
+}
+
 // searchCode runs the code leg over every registered code project and resolves
 // what comes back against the repository the project was registered from.
 //
@@ -92,7 +115,14 @@ func (p *pandoSearcher) searchCode(ctx context.Context, q vault.SemanticQuery) (
 		mu sync.Mutex
 		wg sync.WaitGroup
 	)
+	scope := vault.ScopeKeys(q.Project, q.Projects)
 	for _, project := range p.projects {
+		// Pando has no project filter, so a scoped query spares the code
+		// projects whose repository holds none of the selected projects: every
+		// hit they could return would be dropped below (GIT-US-0102).
+		if !p.repoInScope(project.repo, scope) {
+			continue
+		}
 		wg.Add(1)
 		go func(project codeProject) {
 			defer wg.Done()
@@ -177,7 +207,7 @@ func (p *pandoSearcher) resolveCode(project codeProject, c pando.CodeHit, q vaul
 	if q.Kind != "" && q.Kind != hit.Kind {
 		return core.SearchHit{}, false
 	}
-	if q.Project != "" && q.Project != string(hit.Project) {
+	if !q.Admits(hit.Project) {
 		return core.SearchHit{}, false
 	}
 	return hit, true

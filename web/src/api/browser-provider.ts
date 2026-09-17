@@ -666,6 +666,7 @@ export class BrowserProvider implements DataProvider {
       q: query.text,
       ...(query.limit === undefined ? {} : { limit: query.limit }),
       ...(query.projectKey === undefined ? {} : { project: query.projectKey }),
+      ...(query.projectKeys?.length ? { projects: query.projectKeys } : {}),
     });
     return { hits: hits.map((hit): SearchHit => ({ ...hit, source: 'core' })) };
   }

@@ -9,6 +9,10 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
+import { useProjects } from '@/features/backlog/queries';
+
+import { useTeams } from './active-team';
+import { SearchProjectFilter, type SearchProjectOption } from './SearchProjectFilter';
 
 /** Nothing is queried below this length: one letter matches everything. */
 const MIN_QUERY = 2;
@@ -196,10 +200,32 @@ export function WorkspaceSearch() {
   const setSemanticResults = useUiPrefs((state) => state.setSemanticResults);
   const showSemantic = semanticSupported && semanticEnabled;
 
+  // The project scope (GIT-US-0102). Team keys are offered next to project
+  // keys because a team knowledge-base hit is labelled with its team key.
+  const projects = useProjects();
+  const teams = useTeams();
+  const options = useMemo<SearchProjectOption[]>(() => {
+    const seen = new Map<string, SearchProjectOption>();
+    for (const scope of [...(projects.data ?? []), ...(teams.data ?? [])]) {
+      if (!seen.has(scope.key)) seen.set(scope.key, { key: scope.key, name: scope.name });
+    }
+    return [...seen.values()];
+  }, [projects.data, teams.data]);
+  const [excluded, setExcluded] = useState<ReadonlySet<string>>(() => new Set());
+  const selectedKeys = options.filter((option) => !excluded.has(option.key)).map((o) => o.key);
+  const noneSelected = options.length > 0 && selectedKeys.length === 0;
+  // Every project selected sends no scope at all: the same answer, cheaper.
+  const projectKeys = selectedKeys.length === options.length ? undefined : selectedKeys;
+
   const results = useQuery({
-    queryKey: ['workspace-search', query],
-    queryFn: () => provider.search({ text: query, limit: SEARCH_LIMIT }),
-    enabled,
+    queryKey: ['workspace-search', query, projectKeys ?? null],
+    queryFn: () =>
+      provider.search({
+        text: query,
+        limit: SEARCH_LIMIT,
+        ...(projectKeys ? { projectKeys } : {}),
+      }),
+    enabled: enabled && !noneSelected,
   });
 
   const hits = results.data?.hits ?? [];
@@ -207,7 +233,8 @@ export function WorkspaceSearch() {
   const semantic = showSemantic ? hits.filter((hit) => hit.source === 'pando') : [];
   const terms = useMemo(() => queryTerms(query), [query]);
   const degraded = showSemantic && results.data?.degraded === true;
-  const nothing = enabled && !results.isPending && exact.length === 0 && semantic.length === 0;
+  const searching = enabled && !noneSelected;
+  const nothing = searching && !results.isPending && exact.length === 0 && semantic.length === 0;
 
   return (
     <section aria-labelledby="workspace-search-heading" className="space-y-3">
@@ -241,6 +268,10 @@ export function WorkspaceSearch() {
             }}
           />
 
+          {options.length > 1 ? (
+            <SearchProjectFilter options={options} excluded={excluded} onChange={setExcluded} />
+          ) : null}
+
           {semanticSupported ? (
             <div className="flex items-center gap-2">
               <Switch
@@ -255,7 +286,11 @@ export function WorkspaceSearch() {
             </div>
           ) : null}
 
-          {enabled && results.isPending ? (
+          {noneSelected ? (
+            <p className="text-sm text-muted-foreground">Select at least one project to search.</p>
+          ) : null}
+
+          {searching && results.isPending ? (
             <p className="text-sm text-muted-foreground">Searching…</p>
           ) : null}
 

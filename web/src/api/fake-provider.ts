@@ -150,7 +150,7 @@ import type {
   YouTrackIssuePage,
   YouTrackIssueQuery,
 } from '@/api/provider';
-import { ProviderError, readOnlyCapabilities } from '@/api/provider';
+import { ProviderError, readOnlyCapabilities, searchProjectKeys } from '@/api/provider';
 import { DEFAULT_COMMIT_TEMPLATE, validateCommitTemplate } from '@/git/message';
 
 /**
@@ -1914,10 +1914,23 @@ export class FakeProvider implements DataProvider {
         });
       }
     }
+    // The project scope, as the core applies it: a hit outside it is dropped,
+    // and a hit naming no project is outside any non-empty scope. The fake's
+    // own hits carry no project, so an item's comes from its id and a page
+    // belongs to the first project.
+    const scope = searchProjectKeys(query);
+    const projectOf = (hit: SearchHit): string | undefined =>
+      hit.project ??
+      (hit.id
+        ? this.projects.find((p) => hit.id?.replace(/-[A-Z]+-\d+$/, '') === p.key)?.key
+        : this.projects[0]?.key);
+    const inScope = (hit: SearchHit): boolean =>
+      scope.length === 0 || scope.includes(projectOf(hit) ?? '');
     hits.sort((a, b) => (b.score ?? 0) - (a.score ?? 0) || a.title.localeCompare(b.title));
-    const exact = hits.slice(0, query.limit ?? 20);
+    const exact = hits.filter(inScope).slice(0, query.limit ?? 20);
     const seen = new Set(exact.map((hit) => hit.id ?? hit.path ?? hit.title));
     const semantic = this.semanticHits
+      .filter(inScope)
       .filter((hit) => !seen.has(hit.id ?? hit.path ?? hit.title))
       .map((hit): SearchHit => ({ ...hit, source: 'pando' }));
     return Promise.resolve(

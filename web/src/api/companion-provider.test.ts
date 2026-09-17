@@ -228,7 +228,8 @@ describe('CompanionProvider reads', () => {
             { kind: 'kb', path: 'architecture/auth.md', title: 'Authentication', score: 5.1 },
           ],
         }),
-      );
+      )
+      .mockResolvedValueOnce(response({ results: [] }));
 
     const client = provider(fetchImpl);
 
@@ -277,6 +278,12 @@ describe('CompanionProvider reads', () => {
     // A companion that names no origin is answering with its local index.
     expect(found.hits.every((hit) => hit.source === 'core')).toBe(true);
     expect(found.degraded).toBeUndefined();
+
+    // Several projects travel as repeated params, the single key folded in.
+    await client.search({ text: 'oidc', projectKey: 'ACME', projectKeys: ['WEB', 'ACME'] });
+    expect(lastCall(fetchImpl).url).toBe(
+      `${BASE}/api/v1/search?q=oidc&scope=items%2Ckb&project=ACME&project=WEB`,
+    );
   });
 
   it('reads capabilities from GET /api/v1/capabilities', async () => {
