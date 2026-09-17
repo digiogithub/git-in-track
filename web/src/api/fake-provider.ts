@@ -49,6 +49,7 @@ import type {
   Capabilities,
   CreateProjectInput,
   CreateTeamInput,
+  EnableInboxInput,
   ChangeEvent,
   Comment,
   ConflictAnalysis,
@@ -1771,6 +1772,41 @@ export class FakeProvider implements DataProvider {
       repo.docsFolder = repo.docsFolder === '' ? input.docsFolder : repo.docsFolder;
       this.emit({ kind: 'repo', repoId: repo.id });
     }
+    return Promise.resolve(structuredClone(project));
+  }
+
+  enableInbox(input: EnableInboxInput): Promise<ProjectSummary> {
+    this.assertWritable();
+    const project = this.projects.find((p) => p.key === input.project);
+    if (!project) {
+      return Promise.reject(new ProviderError('not_found', `No project ${input.project}`));
+    }
+    if (project.statuses.some((s) => s.category === 'triage')) {
+      return Promise.reject(
+        new ProviderError('inbox_already_enabled', `project ${project.key} already has an inbox`),
+      );
+    }
+    if (project.statuses.some((s) => s.id === 'triage')) {
+      return Promise.reject(
+        new ProviderError(
+          'triage_status_id_taken',
+          `project ${project.key} already has a status called triage`,
+        ),
+      );
+    }
+    if (
+      input.rev !== undefined &&
+      project.configRev !== undefined &&
+      input.rev !== project.configRev
+    ) {
+      return Promise.reject(
+        new ProviderError('stale_revision', `project.yaml of ${project.key} changed`),
+      );
+    }
+    project.statuses = [{ id: 'triage', name: 'Triage', category: 'triage' }, ...project.statuses];
+    if (project.configRev !== undefined) project.configRev = `${project.configRev}+inbox`;
+    const repo = this.repos.find((r) => r.projects.includes(project.key));
+    if (repo) this.emit({ kind: 'repo', repoId: repo.id });
     return Promise.resolve(structuredClone(project));
   }
 

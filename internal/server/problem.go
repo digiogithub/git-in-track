@@ -110,7 +110,8 @@ func statusForCode(code string) int {
 		vault.TeamProjectExistsCode, vault.TeamProjectReferencedCode,
 		codeTunnelRequiresToken, codeYouTrackNotConfigured, codeSyncJobNotRetryable,
 		codeSearchReindexRunning,
-		vault.NoTriageStatusCode, vault.SprintTargetCompletedCode:
+		vault.NoTriageStatusCode, vault.SprintTargetCompletedCode,
+		vault.InboxEnabledCode, vault.TriageIDTakenCode:
 		// A WIP limit is advisory: the move is refused once, and the caller may
 		// repeat it with `force` (docs/04 R-COL-5). Two sprints of one board
 		// sharing a day, and a second active sprint, are the same shape of
@@ -122,7 +123,8 @@ func statusForCode(code string) int {
 		// declares no triage status simply has no inbox (ADR-033), and a
 		// transfer aimed at a sprint that is already over is refused outright
 		// rather than per item: both are the state of the repository refusing a
-		// well-formed request, not a malformed one.
+		// well-formed request, not a malformed one. Enabling an inbox a project
+		// already has, or over a status already called `triage`, is the same.
 		return http.StatusConflict
 	case "read_only", "forbidden":
 		return http.StatusForbidden

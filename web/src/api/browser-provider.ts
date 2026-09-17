@@ -44,6 +44,7 @@ import type {
   ConflictResolveResult,
   CreateProjectInput,
   CreateTeamInput,
+  EnableInboxInput,
   DataProvider,
   Diagnostic,
   IndexStats,
@@ -239,6 +240,8 @@ const CORE_ERROR_CODES: Record<string, ProviderError['code']> = {
   sprint_already_active: 'sprint_already_active',
   sprint_target_completed: 'sprint_target_completed',
   no_triage_status: 'no_triage_status',
+  inbox_already_enabled: 'inbox_already_enabled',
+  triage_status_id_taken: 'triage_status_id_taken',
   project_exists: 'project_exists',
   team_exists: 'team_exists',
   team_project_exists: 'team_project_exists',
@@ -499,6 +502,32 @@ export class BrowserProvider implements DataProvider {
     await this.#touchRecord(mount);
 
     this.#emit({ kind: 'repo', repoId });
+    return project;
+  }
+
+  /**
+   * Adds the triage status to a project's `project.yaml`. The core edits its
+   * in-memory copy and reports the write set, which is persisted through the
+   * folder handle of the repository that holds the project.
+   */
+  async enableInbox(input: EnableInboxInput): Promise<ProjectSummary> {
+    const mount = this.#mountForProject(input.project) ?? (await this.#ensureActive());
+    if (!mount.vault.capabilities.write) {
+      throw new ProviderError(
+        'read_only',
+        'This folder was opened read-only, so its project.yaml cannot be changed. ' +
+          'Reopen it with "Open folder" in a Chromium browser, or run the companion.',
+      );
+    }
+    const { project, writes } = await this.#call('project.inbox.enable', {
+      vaultId: mount.id,
+      project: input.project,
+      ...(input.rev === undefined ? {} : { rev: input.rev }),
+    });
+    await this.#persist(mount, writes);
+    await this.#touchRecord(mount);
+
+    this.#emit({ kind: 'repo', repoId: mount.id });
     return project;
   }
 

@@ -12,6 +12,14 @@ because a commit list cannot express them.
 
 ## [Unreleased]
 
+### Added
+
+- **Enable a project's inbox from the workspace list** (`GIT-US-0100`, ADR-033). A project
+  created before the inbox existed shows an *Enable inbox* button on the Workspace page; it adds
+  `{id: triage, name: Triage, category: triage}` as the first status of `project.yaml` and changes
+  nothing else in the file. Core method `project.inbox.enable`, companion route
+  `POST /api/v1/projects/{key}/inbox`; project answers now carry `writable` and `configRev`.
+
 ### Removed
 
 - **The Pando corpus exporter is gone; Pando indexes the repository's own files**

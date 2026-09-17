@@ -29,12 +29,14 @@ import {
 import { useEffect } from 'react';
 
 import type {
+  EnableInboxInput,
   InboxDraft,
   InboxFilter,
   InboxPage,
   InboxTriageInput,
   InboxTriageResult,
   Item,
+  ProjectSummary,
 } from '@/api/provider';
 import { useProvider } from '@/api/provider-context';
 import { backlogKeys } from '@/features/backlog/queries';
@@ -213,6 +215,31 @@ export function useCreateInboxItem(
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: inboxKeys.project(project) });
       void queryClient.invalidateQueries({ queryKey: backlogKeys.lists(project) });
+    },
+  });
+}
+
+/**
+ * Gives a project that predates the inbox one (story GIT-US-0100).
+ *
+ * The answer is the project with its new workflow, which is written straight
+ * into the shared project list so that every `InboxNavLink` appears at once;
+ * the list and the repositories are then refetched to pick up anything else
+ * the host reports about the change.
+ */
+export function useEnableInbox(): UseMutationResult<ProjectSummary, Error, EnableInboxInput> {
+  const provider = useProvider();
+  const queryClient = useQueryClient();
+
+  return useMutation<ProjectSummary, Error, EnableInboxInput>({
+    mutationFn: (input) => provider.enableInbox(input),
+    onSuccess: (project) => {
+      queryClient.setQueryData<ProjectSummary[]>(backlogKeys.projects(), (projects) =>
+        projects?.map((p) => (p.key === project.key ? { ...p, ...project } : p)),
+      );
+      void queryClient.invalidateQueries({ queryKey: backlogKeys.projects() });
+      void queryClient.invalidateQueries({ queryKey: ['repos'] });
+      void queryClient.invalidateQueries({ queryKey: inboxKeys.project(project.key) });
     },
   });
 }

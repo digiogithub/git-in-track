@@ -2239,7 +2239,21 @@ GET /api/v1/projects                    # merged view across the workspace
 GET /api/v1/projects/{key}              # project.yaml: key, name, workflow, labels,
                                         # members, templates, id counters
 PATCH /api/v1/projects/{key}            # If-Match required; writes project.yaml
+POST /api/v1/projects/{key}/inbox       # If-Match optional (configRev); adds the triage status
 ```
+
+Every project answer carries `writable` and `configRev`, the revision of its `project.yaml`.
+`POST /projects/{key}/inbox` (story GIT-US-0100, ADR-033) gives a project created before the inbox
+existed one: it inserts `{id: triage, name: Triage, category: triage}` as the **first** workflow
+status and changes nothing else — `initial` and `transitions` are untouched, and the rest of the
+file keeps its bytes (the new entry is written as a line in the style of the list's first entry).
+It is the core method `project.inbox.enable` (`{project, rev?}`), so browser-only mode writes the
+same file. `If-Match` carries `configRev` and is honored when sent (`412 stale_revision`); without
+it the write is unconditional, which is safe because it only ever adds one status. A project that
+already declares a triage status is `409 inbox_already_enabled`; one whose workflow already has an
+ordinary status called `triage` is `409 triage_status_id_taken` and the file is left alone. The
+answer is `{project, writes}` with the new `configRev` as `ETag`, and the write is announced with
+`file.changed` plus a full `index.updated` and staged by commit-on-save like any other.
 
 #### Knowledge base
 

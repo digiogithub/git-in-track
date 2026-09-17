@@ -179,6 +179,16 @@ is marked *not cloned* and shows the `git clone` URL — it is listed, never hid
 when the file its cards come from was last generated (GIT-US-0019). The provider
 exposes `listSnapshots()` and `refreshSnapshots()` in both modes.
 
+**Enable inbox (as built, story GIT-US-0100)** — each project chip in a repository card carries an
+*Enable inbox* button when the project has no inbox yet: it declares no status in the `triage`
+category (ADR-033), it opened writable, its repository is ready and the workspace is not read-only.
+The button calls `enableInbox({project, rev})` (`project.inbox.enable` in the core, `POST
+/api/v1/projects/{key}/inbox` on the companion), which adds `{id: triage, name: Triage, category:
+triage}` as the first status of `project.yaml` and nothing else. `rev` is the project's `configRev`.
+On success the answer replaces the project in the shared `['projects']` query, so the button goes
+away and the sidebar *Inbox* entry appears without a reload; a refusal — an inbox that already
+exists, an ordinary status already called `triage`, a stale revision — is a destructive toast.
+
 A **workspace search panel** (`features/workspace/WorkspaceSearch.tsx`) queries every
 open repository at once and labels each row with the project it came from, because in
 a workspace the same title can exist in two repositories. Below the repos: "Recently edited" (from the

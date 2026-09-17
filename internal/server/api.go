@@ -51,6 +51,9 @@ func (s *Server) mountAPI(api chi.Router) {
 		p.Get("/projects/{key}", s.handleProject)
 		p.Patch("/projects/{key}", s.notImplemented("Editing project.yaml over the API arrives with Phase 3."))
 		p.Route("/projects/{key}/kb", s.mountKB)
+		// Adding the triage status to a project that predates the inbox
+		// (GIT-US-0100, ADR-033).
+		p.Post("/projects/{key}/inbox", s.handleProjectInboxEnable)
 
 		// Team repositories: team.yaml, its members and its project list.
 		p.Get("/teams", s.handleTeams)

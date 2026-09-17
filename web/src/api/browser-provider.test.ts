@@ -572,6 +572,44 @@ describe('BrowserProvider.createProject', () => {
   });
 });
 
+describe('BrowserProvider.enableInbox', () => {
+  it('writes project.yaml back through the folder handle', async () => {
+    const enabled: ProjectSummary = {
+      ...project,
+      statuses: [{ id: 'triage', name: 'Triage', category: 'triage' }, ...project.statuses],
+    };
+    const { provider, vault, call } = await mount({
+      'project.inbox.enable': () => ({
+        project: enabled,
+        writes: {
+          written: [{ path: 'docs/.pmngr/project.yaml', text: 'schema: 1\nkey: ACME\n# triage\n' }],
+          removed: [],
+        },
+      }),
+    });
+
+    await expect(
+      provider.enableInbox({ project: 'ACME', rev: 'sha256:1111111111111111' }),
+    ).resolves.toMatchObject({
+      statuses: [{ id: 'triage', category: 'triage' }, ...project.statuses],
+    });
+
+    expect(vault.snapshot()['docs/.pmngr/project.yaml']).toContain('# triage');
+    expect(call).toHaveBeenCalledWith(
+      'project.inbox.enable',
+      expect.objectContaining({ project: 'ACME', rev: 'sha256:1111111111111111' }),
+    );
+  });
+
+  it('refuses to write into a read-only folder', async () => {
+    const { provider } = await mount({}, false);
+
+    await expect(provider.enableInbox({ project: 'ACME' })).rejects.toMatchObject({
+      code: 'read_only',
+    });
+  });
+});
+
 describe('BrowserProvider.createTeam', () => {
   it('writes team.yaml back through the folder handle', async () => {
     const team = {

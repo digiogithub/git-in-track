@@ -1296,6 +1296,20 @@ export type CreateProjectInput = {
 };
 
 /**
+ * Enabling the inbox of a project created before it existed (story
+ * GIT-US-0100, ADR-033). It adds `{id: triage, name: Triage, category: triage}`
+ * as the first status of `project.yaml`. A project that already has a triage
+ * status is refused with `inbox_already_enabled`, one with an ordinary status
+ * called `triage` with `triage_status_id_taken`.
+ */
+export type EnableInboxInput = {
+  /** The project key. */
+  project: string;
+  /** `configRev` as `listProjects` reported it; omitted is unconditional. */
+  rev?: string;
+};
+
+/**
  * Creating a team repository in a folder that is not one (story GIT-US-0034).
  *
  * It writes `team.yaml` at the folder root plus the `.pmngr/` artifact folders
@@ -1576,6 +1590,10 @@ export type ProviderErrorCode =
    * project without an inbox (ADR-033). It is a state to explain, not an error.
    */
   | 'no_triage_status'
+  /** The project already has an inbox, so there is nothing to enable (GIT-US-0100). */
+  | 'inbox_already_enabled'
+  /** An ordinary status is already called `triage`; rename it first (GIT-US-0100). */
+  | 'triage_status_id_taken'
   /** The board already runs a sprint; confirm to run two at once. */
   | 'sprint_already_active'
   /** The improvement action already became a task (docs/04 R-RETRO-2). */
@@ -1733,6 +1751,11 @@ export interface DataProvider {
    * the file a companion writes and the file a browser writes are identical.
    */
   createProject(input: CreateProjectInput): Promise<ProjectSummary>;
+  /**
+   * Adds the triage status to a project's workflow, and returns the project as
+   * `listProjects` now reports it. Both modes go through the same core code.
+   */
+  enableInbox(input: EnableInboxInput): Promise<ProjectSummary>;
   /**
    * Turns a mounted folder into a team repository, and returns it as `getTeam`
    * reports it. Both modes go through the same core code, so the `team.yaml` a
