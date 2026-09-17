@@ -2,14 +2,15 @@
 id: GIT-EP-0018
 type: epic
 title: Conversational agent interface over Pando AG-UI
-status: in_progress
+status: done
 priority: high
 milestone: GIT-M-0013
 author: mcp
 labels: [web, server, mcp, docs]
 created: 2026-09-13T13:08:26Z
-updated: 2026-09-15T17:09:51Z
+updated: 2026-09-16T16:00:16Z
 started: 2026-09-15T17:09:51Z
+closed: 2026-09-16T16:00:16Z
 ---
 
 ## Description
