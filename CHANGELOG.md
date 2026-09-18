@@ -12,8 +12,27 @@ because a commit list cannot express them.
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [2.0.0] — 2026-09-18
+
+A major release because of the breaking changes listed under *Removed* and *Changed*: the
+`search.pando.corpusDir` configuration key is rejected, `GET|PATCH /api/v1/search/settings`
+and `POST /api/v1/search/reindex` lose fields, and `gintrack agent init` no longer exits 5 on
+a re-run. The on-disk data model is unchanged (`schema: 1`).
+
 ### Added
 
+- **Filter the workspace search by project** (`GIT-US-0102`). A project multi-select (team
+  keys included) scopes the search; the core `search` method accepts `projects` and
+  `GET /api/v1/search` reads repeated or comma-separated `project` parameters.
+- **Enable semantic search for one repository from the workspace list** (`GIT-US-0101`).
+  `POST /api/v1/search/reindex` takes an optional `{"repo": "<id>"}` body scoping the code
+  half to that mount, and answers `repo_not_registered` (404) for an unknown id.
+- **Project search overlay on Ctrl+Shift+F** (`GIT-US-0103`; Cmd+Shift+F on macOS), scoped to
+  the current project, with All / Items / KB tabs and keyboard navigation.
+- **Tick task-list checkboxes inside comments.** Core method `comment.task.set`, companion
+  route `POST /api/v1/items/{id}/comments/tasks`, rev-guarded like any comment edit.
 - **Enable a project's inbox from the workspace list** (`GIT-US-0100`, ADR-033). A project
   created before the inbox existed shows an *Enable inbox* button on the Workspace page; it adds
   `{id: triage, name: Triage, category: triage}` as the first status of `project.yaml` and changes
@@ -1051,7 +1070,8 @@ each, `Contents: read and write`. GHCR needs no secret. The release workflow ver
 tokens before it builds anything and fails with the fix in the message when either is
 missing. Full procedure: [docs/09](docs/09-ci-cd-and-releases.md) §9 and §10.
 
-[Unreleased]: https://github.com/digiogithub/git-in-track/compare/v1.6.0...HEAD
+[Unreleased]: https://github.com/digiogithub/git-in-track/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/digiogithub/git-in-track/compare/v1.6.0...v2.0.0
 [1.6.0]: https://github.com/digiogithub/git-in-track/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/digiogithub/git-in-track/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/digiogithub/git-in-track/compare/v1.3.0...v1.4.0
