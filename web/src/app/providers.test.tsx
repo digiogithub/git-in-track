@@ -54,19 +54,26 @@ describe('AppProviders', () => {
 
   it('detects the mode and builds a provider when none is injected', async () => {
     useAppStore.getState().reset();
+    // The default probe uses the global fetch, which reaches the real network:
+    // a `gintrack serve` running on the developer's machine would answer it.
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockRejectedValue(new TypeError('Failed to fetch')));
 
-    render(
-      <AppProviders>
-        <ProviderProbe />
-      </AppProviders>,
-    );
+    try {
+      render(
+        <AppProviders>
+          <ProviderProbe />
+        </AppProviders>,
+      );
 
-    // No companion answers in jsdom, so detection settles on browser-only mode.
-    expect(
-      await screen.findByText('provider: browser', undefined, { timeout: 5000 }),
-    ).toBeInTheDocument();
-    expect(useAppStore.getState().mode).toBe('browser');
-    expect(useAppStore.getState().capabilities.write).toBe(false);
+      // No companion answers, so detection settles on browser-only mode.
+      expect(
+        await screen.findByText('provider: browser', undefined, { timeout: 5000 }),
+      ).toBeInTheDocument();
+      expect(useAppStore.getState().mode).toBe('browser');
+      expect(useAppStore.getState().capabilities.write).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('upgrades a running tab to the companion and announces it', async () => {
