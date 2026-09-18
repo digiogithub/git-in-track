@@ -103,19 +103,26 @@ func runMCP(cmd *cobra.Command, build buildInfo, flags *globalFlags, local *mcpF
 		allowWrite = res.Config.MCP.AllowWrite
 	}
 
-	space, roots, err := mountWorkspace(repos, build.Version)
+	space, mounts, err := mountWorkspace(repos, build.Version)
 	if err != nil {
 		return err
 	}
+	roots := make([]string, 0, len(mounts))
+	for _, m := range mounts {
+		roots = append(roots, m.root)
+	}
+	logger := slog.New(slog.NewTextHandler(cmd.ErrOrStderr(), nil))
+	fresh := newMCPFreshness(mounts, logger)
 	srv, err := mcp.New(mcp.Options{
 		Core:       space,
 		Version:    build.Version,
 		Agent:      local.agent,
 		AllowWrite: allowWrite,
 		Roots:      roots,
+		BeforeCall: fresh.beforeCall,
 		// stdio carries protocol frames on stdout and nothing else, so the
 		// logger is pinned to stderr whatever the global configuration says.
-		Logger: slog.New(slog.NewTextHandler(cmd.ErrOrStderr(), nil)),
+		Logger: logger,
 	})
 	if err != nil {
 		return fmt.Errorf("start the MCP server: %w", err)
@@ -136,6 +143,8 @@ func runMCP(cmd *cobra.Command, build buildInfo, flags *globalFlags, local *mcpF
 
 	ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	stopWatch := fresh.start(ctx)
+	defer stopWatch()
 	if err := srv.ServeStdio(ctx); err != nil {
 		return fmt.Errorf("serve MCP over stdio: %w", err)
 	}
@@ -186,17 +195,20 @@ func mcpRepos(res *config.Resolution, extra []string) ([]config.Repo, error) {
 // mountWorkspace opens every repository as a vault and attaches it to one
 // workspace — the same corevault.Workspace the companion server and the browser
 // worker drive, so an agent and a human see one implementation of every query.
-// It also returns the host directories the path guard confines paths to.
-func mountWorkspace(repos []config.Repo, version string) (*corevault.Workspace, []string, error) {
+// It also returns the mounted repositories: their host directories are what the
+// path guard confines paths to, and their vaults are what the watcher keeps
+// current.
+func mountWorkspace(repos []config.Repo, version string) (*corevault.Workspace, []mcpMount, error) {
 	space := corevault.NewWorkspace()
 	space.SetVersion(version)
-	roots := make([]string, 0, len(repos))
+	mounts := make([]mcpMount, 0, len(repos))
 	for _, repo := range repos {
 		fsys, err := osfs.New(repo.Path)
 		if err != nil {
 			return nil, nil, fmt.Errorf("open %s: %w", repo.ID, err)
 		}
-		v, err := corevault.Open(fsys, filepath.Base(filepath.Clean(repo.Path)))
+		docs := declaredDocsFolders(repo)
+		v, err := corevault.OpenWithDocs(fsys, filepath.Base(filepath.Clean(repo.Path)), docs)
 		if err != nil {
 			return nil, nil, fmt.Errorf("index %s: %w", repo.ID, err)
 		}
@@ -207,7 +219,23 @@ func mountWorkspace(repos []config.Repo, version string) (*corevault.Workspace, 
 		if _, err := space.Attach(repo.ID, role, v); err != nil {
 			return nil, nil, fmt.Errorf("attach %s: %w", repo.ID, err)
 		}
-		roots = append(roots, fsys.Root())
+		mounts = append(mounts, mcpMount{id: repo.ID, root: fsys.Root(), docs: docs, vlt: v})
 	}
-	return space, roots, nil
+	return space, mounts, nil
+}
+
+// declaredDocsFolders lists every documentation folder a registration
+// declares, DocsFolder first, so that a folder deeper than discovery reaches —
+// a monorepo's apps/api/docs — is indexed here as it is by the companion.
+func declaredDocsFolders(repo config.Repo) []string {
+	out := make([]string, 0, len(repo.DocsFolders)+1)
+	seen := map[string]bool{}
+	for _, folder := range append([]string{repo.DocsFolder}, repo.DocsFolders...) {
+		if folder == "" || seen[folder] {
+			continue
+		}
+		seen[folder] = true
+		out = append(out, folder)
+	}
+	return out
 }

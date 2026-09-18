@@ -18,6 +18,7 @@ docs:
 workflow:
   initial: backlog
   statuses:
+    - {id: triage, name: Triage, category: triage}
     - {id: backlog, name: Backlog, category: todo}
     - {id: todo, name: To Do, category: todo}
     - {id: in_progress, name: In Progress, category: in_progress, wip: 4}

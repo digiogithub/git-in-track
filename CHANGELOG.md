@@ -20,6 +20,16 @@ because a commit list cannot express them.
   nothing else in the file. Core method `project.inbox.enable`, companion route
   `POST /api/v1/projects/{key}/inbox`; project answers now carry `writable` and `configRev`.
 
+### Fixed
+
+- **`gintrack mcp` over stdio sees files changed after it started.** The stdio server indexed
+  the workspace once at startup and never again, so a task triaged out of the inbox or a page
+  written in the web UI (or by another agent) was missing from `list_items`, `search_items`,
+  `list_kb_pages` and `search_kb` until the agent runtime restarted the server. It now runs
+  the companion's file watcher over the same scopes; a repository the watcher cannot cover is
+  rescanned incrementally before a tool call, at most once a second. The stdio server also
+  indexes the documentation folders a registration declares, as the companion does.
+
 ### Removed
 
 - **The Pando corpus exporter is gone; Pando indexes the repository's own files**

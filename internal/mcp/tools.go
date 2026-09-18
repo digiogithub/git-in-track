@@ -89,6 +89,9 @@ func register[In, Out any](s *Server, def toolDef, handle func(context.Context, 
 			return nil, zero, failf(codeWriteDisabled,
 				"%s changes files and this server was started read-only", def.Name)
 		}
+		if s.beforeCall != nil {
+			s.beforeCall(ctx)
+		}
 		out, err := handle(ctx, s, in)
 		if err != nil {
 			return nil, zero, err

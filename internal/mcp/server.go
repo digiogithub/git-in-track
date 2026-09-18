@@ -95,6 +95,11 @@ type Options struct {
 	Roots []string
 	// AfterWrite is called after a successful write tool. Nil disables it.
 	AfterWrite func(ctx context.Context, ev WriteEvent)
+	// BeforeCall runs before every tool call. The stdio host uses it to bring
+	// an index no watcher keeps current up to date with the files, so that a
+	// task triaged or a page written by someone else since startup is listed.
+	// Nil disables it.
+	BeforeCall func(ctx context.Context)
 	// Logger receives diagnostics. Over stdio it must never write to stdout.
 	Logger *slog.Logger
 	// Now is the clock. Nil means time.Now.
@@ -110,6 +115,7 @@ type Server struct {
 	allowWrite bool
 	guard      *PathGuard
 	afterWrite func(ctx context.Context, ev WriteEvent)
+	beforeCall func(ctx context.Context)
 	log        *slog.Logger
 	now        func() time.Time
 	sdk        *sdk.Server
@@ -142,6 +148,7 @@ func New(opts Options) (*Server, error) {
 		allowWrite: opts.AllowWrite,
 		guard:      NewPathGuard(opts.Roots...),
 		afterWrite: opts.AfterWrite,
+		beforeCall: opts.BeforeCall,
 		log:        opts.Logger,
 		now:        opts.Now,
 	}

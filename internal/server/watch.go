@@ -3,8 +3,6 @@ package server
 import (
 	"context"
 	"fmt"
-	"path/filepath"
-	"strings"
 	"sync"
 
 	"github.com/digiogithub/git-in-track/internal/core"
@@ -105,54 +103,12 @@ func (s *Server) startWatch(ctx context.Context) {
 }
 
 // watchScopes reports the repo-relative subtrees of a mount that are worth
-// watching: the documentation folders the registration declared, the ones
-// discovery found, and the root-level backlog a team repository keeps.
-//
-// Everything else in a repository — the source tree, build output, a vendored
-// dependency — is never indexed, so watching it buys nothing and costs one
-// inotify watch per directory. A repository of ten thousand directories used to
-// exhaust the whole watch budget and leave the repositories registered after it
-// with no live updates at all.
-//
-// A project at the repository root indexes the whole tree, but watching the
-// whole tree is exactly what exhausts the budget. Its scopes are the backlog and
-// the folders that hold a page today; an edit anywhere else is still picked up
-// when the file is opened (Vault.freshen) or by the next reindex.
+// watching; see vault.WatchScopes, which the stdio MCP server shares.
 func watchScopes(m *mount) []string {
 	if !m.ready() {
 		return nil
 	}
-	out := make([]string, 0, len(m.docsFolders)+2)
-	seen := map[string]bool{}
-	add := func(folder string) {
-		folder = strings.Trim(strings.TrimSpace(filepath.ToSlash(folder)), "/")
-		if folder == "" || folder == "." || seen[folder] {
-			return
-		}
-		seen[folder] = true
-		out = append(out, folder)
-	}
-	for _, folder := range m.docsFolders {
-		add(folder)
-	}
-	rootProject := false
-	for _, ref := range m.vlt.Projects() {
-		if ref.DocsPath == "." {
-			rootProject = true
-			continue
-		}
-		add(ref.DocsPath)
-	}
-	// A team repository keeps its boards, sprints and retrospectives in a
-	// backlog folder at the root, beside the documentation folder; a root
-	// project keeps its whole backlog there.
-	add(core.BacklogDirName)
-	if rootProject {
-		for _, dir := range m.vlt.PageDirs() {
-			add(dir)
-		}
-	}
-	return out
+	return m.vlt.WatchScopes(m.docsFolders)
 }
 
 // refreshOnRead announces what a read-time refresh folded into a mount's index

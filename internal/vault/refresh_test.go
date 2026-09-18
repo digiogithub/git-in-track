@@ -84,3 +84,57 @@ func TestVaultRefreshesOnRead(t *testing.T) {
 		}
 	})
 }
+
+// TestVaultRescan pins the watcher-less fallback: one incremental pass brings
+// lists and searches up to date with a task created, a page written and a page
+// removed on disk behind the vault's back.
+func TestVaultRescan(t *testing.T) {
+	v, root := diskVault(t)
+	write := func(rel, content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(rel)), []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s behind the vault's back: %v", rel, err)
+		}
+	}
+	task := strings.Replace(onDisk(t, root, "docs/.pmngr/tasks/DEMO-T-0001-add-address-validation.md"),
+		"id: DEMO-T-0001", "id: DEMO-T-0002", 1)
+	task = strings.Replace(task, "title: Add address validation", "title: Triaged from the inbox", 1)
+	write("docs/.pmngr/tasks/DEMO-T-0002-triaged-from-the-inbox.md", task)
+	write("docs/rescanned.md", "# Rescanned\n\nzzqx rescan marker\n")
+	if err := os.Remove(filepath.Join(root, "docs", "architecture", "overview.md")); err != nil {
+		t.Fatalf("remove a page: %v", err)
+	}
+
+	listed := func() map[string]bool {
+		out := map[string]bool{}
+		items := decode[struct {
+			Items []struct {
+				ID string `json:"id"`
+			} `json:"items"`
+		}](t, call(t, v, "item.list", map[string]any{}))
+		for _, it := range items.Items {
+			out[it.ID] = true
+		}
+		return out
+	}
+	if listed()["DEMO-T-0002"] {
+		t.Fatal("item.list sees the new task before any rescan: the test proves nothing")
+	}
+
+	if _, err := v.Rescan(context.Background()); err != nil {
+		t.Fatalf("Rescan: %v", err)
+	}
+	if !listed()["DEMO-T-0002"] {
+		t.Error("item.list after Rescan misses the task created on disk")
+	}
+	pages := map[string]bool{}
+	for _, p := range v.index.Pages() {
+		pages[p.Path] = true
+	}
+	if !pages["docs/rescanned.md"] {
+		t.Error("the index after Rescan misses the page written on disk")
+	}
+	if pages["docs/architecture/overview.md"] {
+		t.Error("the index after Rescan still holds the page removed from disk")
+	}
+}

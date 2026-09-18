@@ -2,8 +2,11 @@ package vault
 
 import (
 	"context"
+	"fmt"
 	"path"
+	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/digiogithub/git-in-track/internal/core"
 )
@@ -82,5 +85,84 @@ func (v *Vault) PageDirs() []string {
 		out = append(out, dir)
 	}
 	sort.Strings(out)
+	return out
+}
+
+// Rescan brings the index up to date with the file system in one incremental
+// pass: the projects are discovered again, every indexed folder is listed and
+// only the files whose size or modification time moved are parsed again. It is
+// the fallback for a host with no file watcher — a long-lived MCP server over
+// stdio whose watcher could not start — which would otherwise answer every
+// list and search from the index it built at startup, blind to the tasks and
+// pages written by anyone else since. It costs one stat per indexed file.
+//
+// A vault over an in-memory file system has nothing to rescan: its host pushes
+// every change through "vault.apply".
+func (v *Vault) Rescan(ctx context.Context) (IndexStats, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.mem != nil || v.index == nil {
+		return v.stats(), nil
+	}
+	changed, err := v.rediscover()
+	if err != nil {
+		return IndexStats{}, err
+	}
+	if changed {
+		// A project appeared or vanished: the classification of every file may
+		// have moved, which only a full build settles.
+		return v.rebuild(ctx)
+	}
+	if _, err := v.index.Build(ctx, false); err != nil {
+		return IndexStats{}, fmt.Errorf("rescan index: %w", err)
+	}
+	return v.stats(), nil
+}
+
+// WatchScopes reports the vault-relative subtrees worth watching for changes:
+// the documentation folders the host declared, the ones discovery found, and
+// the root-level backlog a team repository keeps.
+//
+// Everything else in a repository — the source tree, build output, a vendored
+// dependency — is never indexed, so watching it buys nothing and costs one
+// inotify watch per directory. A repository of ten thousand directories used to
+// exhaust the whole watch budget and leave the repositories registered after it
+// with no live updates at all.
+//
+// A project at the repository root indexes the whole tree, but watching the
+// whole tree is exactly what exhausts the budget. Its scopes are the backlog and
+// the folders that hold a page today; an edit anywhere else is still picked up
+// when the file is opened (freshen) or by the next reindex.
+func (v *Vault) WatchScopes(declared []string) []string {
+	out := make([]string, 0, len(declared)+2)
+	seen := map[string]bool{}
+	add := func(folder string) {
+		folder = strings.Trim(strings.TrimSpace(filepath.ToSlash(folder)), "/")
+		if folder == "" || folder == "." || seen[folder] {
+			return
+		}
+		seen[folder] = true
+		out = append(out, folder)
+	}
+	for _, folder := range declared {
+		add(folder)
+	}
+	rootProject := false
+	for _, ref := range v.Projects() {
+		if ref.DocsPath == "." {
+			rootProject = true
+			continue
+		}
+		add(ref.DocsPath)
+	}
+	// A team repository keeps its boards, sprints and retrospectives in a
+	// backlog folder at the root, beside the documentation folder; a root
+	// project keeps its whole backlog there.
+	add(core.BacklogDirName)
+	if rootProject {
+		for _, dir := range v.PageDirs() {
+			add(dir)
+		}
+	}
 	return out
 }

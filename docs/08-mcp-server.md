@@ -66,9 +66,18 @@ few hundred items). Every repository of the workspace is mounted as an `internal
 and attached to one `vault.Workspace` — the same object the companion server and the browser
 worker drive — so an agent and a human see one implementation of every query.
 
-*Planned:* a watcher so long-lived sessions see external edits, and connecting to an already
-running `gintrack serve` instead of building a second index. Until then, use the HTTP
-transport when the companion is running: one index, one watcher, shared with the web UI.
+A long-lived session sees the edits made outside it — a task triaged out of the inbox in the
+web UI, a page another agent wrote — because the stdio server watches every repository the
+way the companion does, over the same scopes (`vault.WatchScopes`), and folds each batch
+into that repository's index. A repository the watcher cannot cover (the watcher failed to
+start, or adding the repository failed) falls back to an incremental rescan
+(`vault.Rescan`: one stat per indexed file, only changed files re-parsed) before a tool
+call, at most once a second; either condition is logged to stderr. The stdio server also
+honours the documentation folders a registration declares, as the companion does.
+
+*Planned:* connecting to an already running `gintrack serve` instead of building a second
+index. Until then, the HTTP transport is the cheaper choice when the companion is running:
+one index, one watcher, shared with the web UI.
 
 ### 2.2 Streamable HTTP
 
