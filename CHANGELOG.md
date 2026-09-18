@@ -14,6 +14,16 @@ because a commit list cannot express them.
 
 Nothing yet.
 
+## [2.0.1] — 2026-09-18
+
+### Security
+
+- **Dependencies patched against the open advisories** (#23). `google.golang.org/grpc`
+  1.83.0 → 1.83.2 (HTTP/2 DATA-frame memory exhaustion, xDS `:authority` crash, xDS RBAC
+  header-matching bypass), `go.opentelemetry.io/otel` 1.44.0 → 1.45.0 (exporter endpoint URLs
+  in info logs) — all indirect, through cloudflared's tunnel — and the development-only
+  `vitest` 3.2.7 → 4.1.11 (`@vitest/mocker` path traversal). No behaviour change.
+
 ## [2.0.0] — 2026-09-18
 
 A major release because of the breaking changes listed under *Removed* and *Changed*: the
@@ -1070,7 +1080,8 @@ each, `Contents: read and write`. GHCR needs no secret. The release workflow ver
 tokens before it builds anything and fails with the fix in the message when either is
 missing. Full procedure: [docs/09](docs/09-ci-cd-and-releases.md) §9 and §10.
 
-[Unreleased]: https://github.com/digiogithub/git-in-track/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/digiogithub/git-in-track/compare/v2.0.1...HEAD
+[2.0.1]: https://github.com/digiogithub/git-in-track/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/digiogithub/git-in-track/compare/v1.6.0...v2.0.0
 [1.6.0]: https://github.com/digiogithub/git-in-track/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/digiogithub/git-in-track/compare/v1.4.0...v1.5.0
