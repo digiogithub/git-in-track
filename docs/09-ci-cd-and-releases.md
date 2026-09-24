@@ -69,16 +69,19 @@ formatting and static analysis, then runs the full test suite and a real build.
 | `web`       | Web (lint, typecheck, test, build)  | `npm ci`, ESLint, `tsc -b`, vitest, `vite build`, uploads `web/dist`                               |
 | `wasm`      | WASM core                           | `make wasm`, size report, `node scripts/wasm-smoke.mjs`, uploads `core.wasm` + `wasm_exec.js`      |
 | `build`     | Full build (embed frontend)         | WASM → web → `go build`, runs `gintrack version` and `--help`, uploads the binary                  |
+| `spec-impact` | Spec impact (requirement gate)    | Pull requests only: `make spec-check` against `origin/<base>`, report in the job summary, fails on exit 7 |
 
-Everything except `build` fans out from `preflight`; `build` waits for all of them, so a
-failed lint or test never produces a downloadable artifact.
+Everything except `build` fans out from `preflight`; `build` waits for the verification jobs
+(`workflows`, `go`, `web`, `wasm`), so a failed lint or test never produces a downloadable
+artifact. `spec-impact` runs beside them and is a check of its own: it gates the merge, not the
+artifact.
 
 ### Preflight
 
 The Phase 0 scaffold has landed, so the guard no longer skips the pipeline when `go.mod`
 and `web/package.json` are missing. It now asserts the layout — `go.mod`, `go.sum`,
 `Makefile`, `.goreleaser.yaml`, `.golangci.yaml`, `Dockerfile`, `cmd/gintrack`, `wasm`, the web
-workspace, `web/dist/.gitkeep` and `scripts/wasm-smoke.mjs` — and **fails** when something
+workspace, `web/dist/.gitkeep`, `scripts/wasm-smoke.mjs` and `scripts/spec-check.sh` — and **fails** when something
 is gone, which is a real regression rather than a reason to stay green. Downstream jobs
 therefore no longer carry an `if:` condition, and the required status checks of §8 always
 report.
@@ -95,6 +98,73 @@ report.
 # 2. npm installs third-party Go sources under web/node_modules; never build them.
 - run: go list ./... | grep -v '/web/node_modules/' | xargs go vet
 ```
+
+### Requirement impact gate (`spec-impact`)
+
+`GIT-US-0133`. Before an agent opens a pull request it runs `gintrack spec impact --fail-on
+failing,suspect` (AGENTS.md, the spec-driven loop); this job reruns the same check on the pull
+request, deterministically, so a requirement the change breaks or leaves unverified cannot merge
+unnoticed. It runs on `pull_request` only — on a push to `main` there is no diff to gate.
+
+The job checks out with `fetch-depth: 0` (the diff starts at the base branch, so its history must
+be present), reuses the `setup-go` and `setup-node` caches, runs `npm ci` in `web/`, then:
+
+```bash
+make spec-check SPEC_BASE=origin/${{ github.base_ref }}
+```
+
+`make spec-check` builds `bin/gintrack` and runs `scripts/spec-check.sh`, which:
+
+1. writes a throwaway configuration to `bin/spec-check/config.yaml` and registers only the
+   checkout (`gintrack add`), so the gate never reads a user's own configuration; its directory
+   is also the index cache directory, so the test-result cache lives there too;
+2. runs the Go suite as `go test -json` (no `-race`, no coverage — the `go` job owns those) into
+   `bin/spec-check/go.json`, and Vitest with `--reporter=dot --reporter=json` into
+   `bin/spec-check/vitest.json`. `make test` is unchanged. A failing test does not stop the gate:
+   it is recorded as a failing result and surfaces as a failing requirement, while the `go` and
+   `web` jobs own the plain pass/fail of the suites;
+3. records both with `gintrack spec ingest` (docs/07 §4.19; `--base web` for Vitest);
+4. runs `gintrack spec impact --since "$SPEC_BASE" --tiers 1,2 --format text --fail-on
+   failing,suspect` (docs/07 §4.20), writes the report to `bin/spec-check/impact.txt` and the
+   offenders to `bin/spec-check/offenders.txt`, prints both, and exits with its code.
+
+Everything lands under `bin/`, which `.gitignore` excludes. The step appends the compact report
+to `$GITHUB_STEP_SUMMARY`; on exit `7` it adds the offending requirements
+(`<ref>  <state>  <title>`) to the summary and one `::error::` annotation per requirement, and
+fails. Any other non-zero exit means the gate **could not run** (a base ref git does not know,
+a broken report) and fails with that code, so the two are never confused.
+
+**No Pando in CI.** Tier 2 (transitive callers) reads the Pando code graph, which CI does not
+configure: the tiers line reports `2 unavailable (no Pando code graph is configured)` and tier 1
+— `Implements:`/`Verifies:` markers and `trace:` entries — decides alone. An unavailable tier
+never fails the gate. Tier 3 (semantic candidates) is not requested: candidates never trip
+`--fail-on` anyway. A repository with no specs, or a project still on `schema: 1`, passes with
+`0 hits`.
+
+**Run it locally** with the same target: `make spec-check` (default `SPEC_BASE=origin/main`), or
+`make spec-check SPEC_BASE=main` against a local branch. It needs `make deps` first
+(`web/node_modules`). `SPEC_TIERS`, `SPEC_FAIL_ON`, `SPEC_BUDGET` and `SPEC_DIR` override the
+script's defaults for experiments; CI uses the defaults.
+
+**When the gate trips.** A `failing` requirement is fixed, not acknowledged: fix the code or the
+test, or — when the requirement itself is wrong — change it. A `suspect` one passed before but
+no longer proves the current code or text:
+
+- **The behavior changed on purpose** — add a `## Spec Delta` to the story with
+  `### MODIFIED <REF> — <title>` and the new text (docs/03 §21.8). The spec changes when the story
+  reaches `done`; until then the report lists the story under the hit's `pending`.
+- **The behavior did not change** — rerun the linked tests, ingest them and re-verify:
+  `verify_requirement` over MCP, or `gintrack spec verify <REF>` (dry) then
+  `gintrack spec verify --commit <REF>`, which stamps `verified:` with the commit and the current
+  block rev (docs/03 §21.6, ADR-037 §7). A stamp on the current text clears a `text` suspect.
+- **Neither is clear** — ask a human on the story, naming the ref.
+
+> **Known limitation.** `--fail-on suspect` also matches the `suspect` **flag** the impact query
+> raises on a *passing* requirement whose traced code the diff touches (docs/03 R-IMP-5). That
+> flag is computed from the diff alone: neither a pending `MODIFIED` delta nor a fresh stamp
+> clears it while the pull request still changes the traced code, so a PR that edits traced code
+> of a passing requirement trips the gate until the gate's semantics are refined in a follow-up.
+> The coverage **state** `suspect` (docs/03 R-REQ-12a) is cleared as described above.
 
 ### Notes on the CI workflow
 
@@ -388,6 +458,7 @@ The Makefile is the single local entry point; CI calls the same targets (`make w
 | `test`             | `test-go` (race + coverage) and `test-web` (vitest)                       |
 | `lint`             | `lint-go`, `lint-web` and `lint-ci`                                       |
 | `lint-ci`          | parses both workflow files as YAML and runs `actionlint` when installed   |
+| `spec-check`       | builds `bin/gintrack`, then `scripts/spec-check.sh`: tests with JSON output, `spec ingest`, `spec impact --since $(SPEC_BASE) --tiers 1,2 --fail-on failing,suspect` (§2) |
 | `fmt`              | `gofmt -w` over the tracked Go sources                                    |
 | `run` / `dev`      | companion server / Vite dev server                                        |
 | `release-check`    | `goreleaser check` on `.goreleaser.yaml`, no build                        |

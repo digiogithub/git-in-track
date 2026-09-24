@@ -1873,8 +1873,9 @@ ingest — never an error. Deleting it loses only evidence; ingesting the report
 > seams build the Pando client and semantic searcher through the constructor `gintrack serve`
 > uses (`server.InstallSemanticSearch`) and hand them to the impact seam, so with
 > `search.pando.mcpUrl` configured impact tiers 2 and 3 answer; without it they report
-> `unavailable` and tier 1 still answers. The CI gate (`GIT-US-0133`) and the pre-push
-> hook (`GIT-US-0134`) build on `spec impact --fail-on`.
+> `unavailable` and tier 1 still answers. The CI gate (`GIT-US-0133`: `make spec-check` and the
+> `spec-impact` job of `ci.yml`, docs/09 §2) and the pre-push hook (`GIT-US-0134`) build on
+> `spec impact --fail-on`.
 
 Every command takes `--json`: the payload goes to stdout, human notes to stderr.
 
