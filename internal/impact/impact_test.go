@@ -360,8 +360,29 @@ func TestImpactGolden(t *testing.T) {
 		t.Fatalf("two runs differ:\n%s\n%s", a, b)
 	}
 	// The base commit id is the only varying part across machines; pin it.
+	checkGolden(t, "impact_tiers12.golden.json", bytes.ReplaceAll(append(a, '\n'), []byte(f.base), []byte("<base>")))
+}
+
+// TestImpactGoldenReverified pins the answer once the diff is committed and
+// the linked tests re-ran and were ingested at its head (GIT-US-0148): the
+// touched requirements are passing and not suspect.
+func TestImpactGoldenReverified(t *testing.T) {
+	f := newFixture(t)
+	head := f.commit("change NextID")
+	f.ingestAt(head, map[string]trace.Outcome{"TestNextID": trace.OutcomePass, "TestFormat": trace.OutcomePass})
+	res := f.impact(f.resolver(fixtureGraph(), nil), core.ImpactQuery{Base: f.base, Story: "ACME-US-0001", Tiers: []int{1, 2}})
+	a, err := json.MarshalIndent(res, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
 	got := bytes.ReplaceAll(append(a, '\n'), []byte(f.base), []byte("<base>"))
-	golden := filepath.Join("testdata", "impact_tiers12.golden.json")
+	checkGolden(t, "impact_reverified.golden.json", bytes.ReplaceAll(got, []byte(head), []byte("<head>")))
+}
+
+// checkGolden compares got with testdata/name, rewriting it under -update.
+func checkGolden(t *testing.T, name string, got []byte) {
+	t.Helper()
+	golden := filepath.Join("testdata", name)
 	if *update {
 		if err := os.WriteFile(golden, got, 0o644); err != nil {
 			t.Fatal(err)
@@ -570,5 +591,183 @@ func TestNotImportedByCoreOrVault(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// ingestAt records the given outcomes of the fixture's two tests at commit,
+// a day after the initial results, as `gintrack spec ingest` would.
+func (f *fixture) ingestAt(commit string, outcomes map[string]trace.Outcome) {
+	f.t.Helper()
+	at := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
+	var results []trace.TestResult
+	for symbol, o := range outcomes {
+		results = append(results, trace.TestResult{
+			ID: "example.com/acme/src#" + symbol, Format: trace.FormatGoTest, Path: "src/alloc_test.go",
+			Symbol: symbol, Result: o, Commit: commit, At: at,
+		})
+	}
+	if _, err := f.store.Merge(f.root, results); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+// TestImpactSuspectAtHead pins when a passing requirement the diff touches
+// is suspect (GIT-US-0148, docs/03 R-IMP-5): unless its linked tests all
+// passed in results ingested at the diff's head commit, or its stamp names
+// that commit on the current text. Failing wins; a pending Spec Delta alone
+// clears nothing.
+func TestImpactSuspectAtHead(t *testing.T) {
+	both := map[string]trace.Outcome{"TestNextID": trace.OutcomePass, "TestFormat": trace.OutcomePass}
+	type state struct {
+		status  core.CoverageStatus
+		suspect bool
+	}
+	for _, tc := range []struct {
+		name string
+		// setup commits (or not) the diff and ingests; it returns the head
+		// of the query, "" for the working tree.
+		setup  func(t *testing.T, f *fixture) string
+		r1, r2 state
+	}{
+		{"uncommitted diff, results at HEAD: a dirty tree has no head commit", func(t *testing.T, f *fixture) string {
+			return ""
+		}, state{core.CoverageSuspect, true}, state{core.CoveragePassing, true}},
+		{"committed diff, tests not re-run", func(t *testing.T, f *fixture) string {
+			f.commit("change NextID")
+			return ""
+		}, state{core.CoverageSuspect, true}, state{core.CoveragePassing, true}},
+		{"committed diff, tests re-run and ingested at head", func(t *testing.T, f *fixture) string {
+			f.ingestAt(f.commit("change NextID"), both)
+			return ""
+		}, state{core.CoveragePassing, false}, state{core.CoveragePassing, false}},
+		{"head named as a revision", func(t *testing.T, f *fixture) string {
+			head := f.commit("change NextID")
+			f.ingestAt(head, both)
+			return head
+		}, state{core.CoveragePassing, false}, state{core.CoveragePassing, false}},
+		{"head named as a revision the results were not taken at", func(t *testing.T, f *fixture) string {
+			head := f.commit("change NextID")
+			f.write("src/report.go", strings.Replace(fxReport, `"report"`, `"reports"`, 1))
+			f.ingestAt(f.commit("change Report"), both)
+			return head
+		}, state{core.CoveragePassing, true}, state{core.CoveragePassing, true}},
+		{"re-run at head, a linked test fails", func(t *testing.T, f *fixture) string {
+			f.ingestAt(f.commit("change NextID"), map[string]trace.Outcome{"TestNextID": trace.OutcomeFail, "TestFormat": trace.OutcomePass})
+			return ""
+		}, state{core.CoverageFailing, false}, state{core.CoveragePassing, false}},
+		{"only one requirement's tests re-run at head", func(t *testing.T, f *fixture) string {
+			f.ingestAt(f.commit("change NextID"), map[string]trace.Outcome{"TestNextID": trace.OutcomePass})
+			return ""
+		}, state{core.CoveragePassing, false}, state{core.CoveragePassing, true}},
+		{"re-run at head, results without a commit", func(t *testing.T, f *fixture) string {
+			f.commit("change NextID")
+			f.ingestAt("", both)
+			return ""
+		}, state{core.CoveragePassing, true}, state{core.CoveragePassing, true}},
+		{"re-run at head, an uncommitted backlog edit", func(t *testing.T, f *fixture) string {
+			f.ingestAt(f.commit("change NextID"), both)
+			f.write(fxStoryPath, strings.Replace(fxStory, "status: in_progress", "status: done", 1))
+			return ""
+		}, state{core.CoveragePassing, false}, state{core.CoveragePassing, false}},
+		{"re-run at head, then an uncommitted code edit", func(t *testing.T, f *fixture) string {
+			f.ingestAt(f.commit("change NextID"), both)
+			f.write("src/report.go", strings.Replace(fxReport, `"report"`, `"reports"`, 1))
+			return ""
+		}, state{core.CoveragePassing, true}, state{core.CoveragePassing, true}},
+		{"a stamp at head on the current text, no local results", func(t *testing.T, f *fixture) string {
+			f.ingestAt(f.commit("change NextID"), both)
+			stamp(t, f, "ACME-SP-0001.R1", "ACME-SP-0001.R2")
+			if err := os.Remove(f.store.Path()); err != nil {
+				t.Fatal(err)
+			}
+			return ""
+		}, state{core.CoveragePassing, false}, state{core.CoveragePassing, false}},
+		{"a stamp at the base, no local results", func(t *testing.T, f *fixture) string {
+			stamp(t, f, "ACME-SP-0001.R2")
+			if err := os.Remove(f.store.Path()); err != nil {
+				t.Fatal(err)
+			}
+			f.commit("change NextID and stamp R2")
+			return ""
+		}, state{core.CoverageUntested, false}, state{core.CoveragePassing, true}},
+		{"a pending MODIFIED delta, tests not re-run", func(t *testing.T, f *fixture) string {
+			f.commit("change NextID")
+			modifyR1(t, f)
+			return ""
+		}, state{core.CoverageSuspect, true}, state{core.CoveragePassing, true}},
+		{"a pending MODIFIED delta, tests re-run at head", func(t *testing.T, f *fixture) string {
+			f.ingestAt(f.commit("change NextID"), both)
+			modifyR1(t, f)
+			return ""
+		}, state{core.CoveragePassing, false}, state{core.CoveragePassing, false}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			head := tc.setup(t, f)
+			if _, err := f.vlt.Reload(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			q := core.ImpactQuery{Base: f.base, Head: head, Tiers: []int{1, 2}}
+			first := f.impact(f.resolver(fixtureGraph(), nil), q)
+			got := map[string]state{}
+			for _, h := range first.Hits {
+				got[h.Ref.String()] = state{h.Status, h.Suspect}
+			}
+			if got["ACME-SP-0001.R1"] != tc.r1 || got["ACME-SP-0001.R2"] != tc.r2 {
+				t.Errorf("R1, R2 = %+v, %+v, want %+v, %+v (hits %+v)",
+					got["ACME-SP-0001.R1"], got["ACME-SP-0001.R2"], tc.r1, tc.r2, first.Hits)
+			}
+			// Deterministic: the same diff and the same results, the same answer.
+			again := f.impact(f.resolver(fixtureGraph(), nil), q)
+			a, _ := json.Marshal(first)
+			b, _ := json.Marshal(again)
+			if !bytes.Equal(a, b) {
+				t.Errorf("two runs differ:\n%s\n%s", a, b)
+			}
+		})
+	}
+}
+
+// stamp writes the verified: stamp of refs from the ingested results, as
+// `gintrack spec verify --commit` does.
+func stamp(t *testing.T, f *fixture, refs ...string) {
+	t.Helper()
+	params, err := json.Marshal(map[string]any{"refs": refs, "by": "ci"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var env struct {
+		OK     bool            `json:"ok"`
+		Result json.RawMessage `json:"result"`
+	}
+	out := f.vlt.Call("requirement.stamp", string(params))
+	if err := json.Unmarshal([]byte(out), &env); err != nil || !env.OK {
+		t.Fatalf("requirement.stamp: %v %s", err, out)
+	}
+	if !strings.Contains(string(env.Result), `"verified"`) {
+		t.Fatalf("requirement.stamp wrote nothing: %s", env.Result)
+	}
+}
+
+// modifyR1 adds an open story whose unapplied Spec Delta modifies R1.
+func modifyR1(t *testing.T, f *fixture) {
+	t.Helper()
+	f.write("docs/.pmngr/stories/ACME-US-0002-allocate-by-scan-again.md", `---
+id: ACME-US-0002
+type: story
+title: Allocate by scan again
+status: in_progress
+created: 2026-01-01T00:00:00Z
+updated: 2026-01-01T00:00:00Z
+---
+
+## Spec Delta
+
+### MODIFIED ACME-SP-0001.R1 — Allocate by scan
+
+The allocator SHALL allocate max + 2.
+`)
+	if _, err := f.vlt.Reload(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 }

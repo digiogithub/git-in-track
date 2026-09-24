@@ -349,6 +349,17 @@ because a commit list cannot express them.
 
 ### Fixed
 
+- **`suspect` clears once a changed requirement is re-verified at head** (`GIT-US-0148`,
+  docs/03 R-REQ-12a rule 6, R-IMP-5). The impact query flagged every passing requirement whose
+  traced code the diff touched as `suspect`, so with `--fail-on suspect` every pull request that
+  edited traced code tripped the CI gate, even after its tests were re-run. A touched passing
+  requirement is now suspect only when it was **not re-verified at the diff's head commit**: it
+  is cleared when every linked test passed in results ingested at head, or when its
+  `verified.commit` is head on the current block rev. A failing re-run makes it `failing`; a
+  pending `MODIFIED` Spec Delta alone clears nothing. For a working-tree head, the head commit is
+  `HEAD` only while the tree differs from it in `.pmngr/` backlog files at most. Coverage rows
+  (`coverage.list`, `gintrack spec coverage --json`) gain `commit`, the commit a passing row's
+  evidence verified the current text at. The known limitation in docs/09 is gone.
 - **`search_semantic` works over stdio `gintrack mcp`** (GIT-US-0121). Only `gintrack serve`
   installed the semantic searcher, so an agent spawning `gintrack mcp` always got
   `unavailable` even with `search.pando.mcpUrl` configured. The stdio server now installs the

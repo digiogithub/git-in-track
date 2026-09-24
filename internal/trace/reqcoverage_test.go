@@ -411,7 +411,7 @@ func TestCoverageRowShape(t *testing.T) {
 	if err := json.Unmarshal(r.call("coverage.list", map[string]any{"refs": []string{"ACME-SP-0001.R1"}}), &got); err != nil {
 		t.Fatal(err)
 	}
-	want := `{"ref":"ACME-SP-0001.R1","status":"passing","reasons":["results"],"tests":[{"test":"src/alloc_test.go#TestNextID","result":"pass"}]}`
+	want := `{"ref":"ACME-SP-0001.R1","status":"passing","reasons":["results"],"tests":[{"test":"src/alloc_test.go#TestNextID","result":"pass"}],"commit":"` + c1 + `"}`
 	if len(got.Coverage) != 1 || string(got.Coverage[0]) != want {
 		t.Errorf("row = %s\nwant  %s", got.Coverage, want)
 	}
@@ -476,6 +476,63 @@ func TestClassify(t *testing.T) {
 			}
 			if got.Status != tc.want.status || !reflect.DeepEqual(got.Reasons, tc.want.reasons) {
 				t.Errorf("Classify = %s %v, want %s %v", got.Status, got.Reasons, tc.want.status, tc.want.reasons)
+			}
+		})
+	}
+}
+
+// TestClassifyCommit pins the commit a passing row's evidence verified the
+// current text at, which the impact query compares with the diff's head
+// (GIT-US-0148): one commit for every matched result, or a stamp on the
+// current text; nothing for any other row.
+func TestClassifyCommit(t *testing.T) {
+	t.Parallel()
+	ref := core.RequirementRef{Spec: "ACME-SP-0001", Number: 1}
+	t0 := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	noDrift := func(string) ([]string, error) { return nil, nil }
+	drifted := func(string) ([]string, error) { return []string{"code:a.go#F"}, nil }
+	pass := func(commits ...string) Evidence {
+		return Evidence{Result: RequirementPass, Commits: commits, At: t0.Add(time.Hour)}
+	}
+	for _, tc := range []struct {
+		name   string
+		in     CoverageInput
+		drift  DriftFunc
+		status core.CoverageStatus
+		commit string
+	}{
+		{"results at one commit", CoverageInput{Linked: 1, Evidence: pass("c2")}, noDrift, core.CoveragePassing, "c2"},
+		{"results at several commits", CoverageInput{Linked: 2, Evidence: pass("c1", "c2")}, noDrift, core.CoveragePassing, ""},
+		{"a result without a commit", CoverageInput{Linked: 2,
+			Evidence: Evidence{Result: RequirementPass, Commits: []string{"c2"}, Uncommitted: true, At: t0}},
+			noDrift, core.CoveragePassing, ""},
+		{"results drifted since their commit", CoverageInput{Linked: 1, Evidence: pass("c2")}, drifted, core.CoverageSuspect, ""},
+		{"failing results", CoverageInput{Linked: 1,
+			Evidence: Evidence{Result: RequirementFail, Commits: []string{"c2"}, At: t0}}, noDrift, core.CoverageFailing, ""},
+		{"a stamp on the current text", CoverageInput{BlockRev: "sha256:a", Linked: 1,
+			Stamp: &core.Verification{Rev: "sha256:a", Commit: "c3", At: core.NewTimestamp(t0)}},
+			noDrift, core.CoveragePassing, "c3"},
+		{"a stamp without a rev", CoverageInput{BlockRev: "sha256:a", Linked: 1,
+			Stamp: &core.Verification{Commit: "c3", At: core.NewTimestamp(t0)}},
+			noDrift, core.CoveragePassing, ""},
+		{"a stamp on another text", CoverageInput{BlockRev: "sha256:b", Linked: 1,
+			Stamp: &core.Verification{Rev: "sha256:a", Commit: "c3", At: core.NewTimestamp(t0)}},
+			noDrift, core.CoverageSuspect, ""},
+		{"a stamp and partial results", CoverageInput{BlockRev: "sha256:a", Linked: 2,
+			Stamp:    &core.Verification{Rev: "sha256:a", Commit: "c3", At: core.NewTimestamp(t0)},
+			Evidence: Evidence{Result: RequirementPartial, Commits: []string{"c4"}, At: t0.Add(time.Hour)}},
+			noDrift, core.CoveragePassing, "c3"},
+		{"no history to check drift", CoverageInput{Linked: 1, Evidence: pass("c2")}, nil, core.CoveragePassing, "c2"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tc.in.Ref = ref
+			got, err := Classify(tc.in, tc.drift)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Status != tc.status || got.Commit != tc.commit {
+				t.Errorf("Classify = %s at %q, want %s at %q", got.Status, got.Commit, tc.status, tc.commit)
 			}
 		})
 	}

@@ -58,6 +58,12 @@ fi
 [ "$go_status" -eq 0 ] || echo "spec-check: go test exited $go_status; failures are recorded as failing results" >&2
 [ "$web_status" -eq 0 ] || echo "spec-check: vitest exited $web_status; failures are recorded as failing results" >&2
 
+# `spec ingest` records the results at the checkout's HEAD (its --commit
+# default), the commit `spec impact` resolves the working-tree head to: a
+# requirement whose linked tests all pass here is re-verified at head and is not
+# flagged suspect for the diff touching its traced code (docs/03 R-IMP-5). The
+# checkout must stay clean outside the backlog folders — every output of this
+# script lands under $SPEC_DIR, which git ignores.
 if [ -s "$dir/go.json" ]; then
   "$gintrack" spec ingest --repo "$root" --format go "$dir/go.json" || exit $?
 fi
