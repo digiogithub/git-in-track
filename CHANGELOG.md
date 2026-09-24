@@ -294,6 +294,18 @@ because a commit list cannot express them.
   browser-only mode reads and writes requirements through the WASM core and answers
   `unavailable` for trace, coverage and impact. Requirement writes and spec files edited on disk
   are announced as `item.changed` on the spec id. The screens arrive with `GIT-US-0128`–`0131`.
+- **The spec-driven agent loop, documented** (`GIT-US-0126`). `AGENTS.md` gains the SDD loop —
+  `spec_context`, implement with `// Implements:` / `// Verifies:` markers, `spec_impact` under a
+  budget, then fix the code, add a `## Spec Delta` or ask a human for every failing or suspect
+  hit, run the tests, `gintrack spec ingest`, `verify_requirement`, and
+  `gintrack spec impact --fail-on failing,suspect` before the PR — plus token-economy guidance
+  and the thirty-two tools grouped by kind. docs/08 §10.8 covers editing specs and requirement
+  blocks by hand: the block extent, the block-level `rev` equivalent (hash the block bytes as
+  ADR-037 §6 defines the block rev and verify them unchanged immediately before writing), and
+  never renumbering `R<n>` or hand-writing `verified:`, `implemented_by` or `modified_by`. The
+  README mentions specs. A new test checks the `gintrack mcp --list-tools` counts (13 read-only,
+  32 with `--allow-write`) and every tool name against `AGENTS.md` and docs/08 §4, whose stale
+  "twenty-seven" is corrected.
 
 ### Changed
 
