@@ -2,7 +2,7 @@
 id: GIT-US-0143
 type: story
 title: Add gintrack migrate --to 2 and the specs upgrade guide
-status: backlog
+status: in_review
 priority: medium
 parent: GIT-EP-0022
 milestone: GIT-M-0015
@@ -10,7 +10,7 @@ author: mcp
 labels: [cli, docs, agent-ok]
 estimate: 3
 created: 2026-09-24T15:29:50Z
-updated: 2026-09-24T15:29:50Z
+updated: 2026-09-24T22:31:00Z
 links:
   - { kind: blocked_by, target: GIT-US-0105 }
 ---
@@ -25,11 +25,11 @@ Blocked by GIT-US-0105.
 
 ## Acceptance Criteria
 
-- [ ] `gintrack migrate --to 2` raises `schema` in one reviewable write. It supports `--dry-run` and `--json` and is idempotent.
-- [ ] Downgrading is refused with a clear message.
-- [ ] An upgrade guide under docs/ explains: which projects need schema 2, what older binaries do, and the order to upgrade the binaries, the web app and CI before creating the first spec.
-- [ ] The CHANGELOG "Known limitations" and docs/07 are updated.
-- [ ] Tests are table-driven. `make test` and `make lint` pass.
+- [x] `gintrack migrate --to 2` raises `schema` in one reviewable write. It supports `--dry-run` and `--json` and is idempotent.
+- [x] Downgrading is refused with a clear message.
+- [x] An upgrade guide under docs/ explains: which projects need schema 2, what older binaries do, and the order to upgrade the binaries, the web app and CI before creating the first spec.
+- [x] The CHANGELOG "Known limitations" and docs/07 are updated.
+- [x] Tests are table-driven. `make test` and `make lint` pass.
 
 ## Notes
 
