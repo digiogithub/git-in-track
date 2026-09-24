@@ -97,7 +97,19 @@ because a commit list cannot express them.
   headings, map keys and inbound refs and appends the block. Writes use the canonical serializer,
   materialize the status, follow the workflow transitions, honour the write gate and report
   `schemaUpgraded`. `search` with `requirements: true` adds one `kind: "requirement"` hit per
-  matching block. No MCP tool, REST route or web UI yet.
+  matching block. No REST route or web UI yet; the MCP tools below use them.
+- **Single requirements over MCP** (`GIT-US-0122`, ADR-037 §6, docs/08 §4.20). Four new tools:
+  `list_requirements` (read) lists compact requirement rows — `ref`, `spec`, `title`, `status`
+  and `rev` by default, more with `fields`, the block text only when projected — filtered by
+  project, spec, status or words and paged with the usual cursor; `create_spec`,
+  `create_requirement` and `update_requirement` (writes) create a spec (reporting
+  `schemaUpgraded: 2` on a project's first), append a requirement with an allocated `R<n>`, and
+  patch one requirement under its **requirement rev**, refusing a stale one with
+  `stale_revision`, `currentRev`, `conflicts[]` and `retry` exactly like `update_item`, while a
+  write to a sibling requirement of the same spec goes through. `get_item` on a requirement ref
+  (`ACME-SP-0003.R2`) returns only that block and its entry, with `rev`, `blockRev` and
+  `specRev`. The verification stamp is readable but not writable from MCP. `gintrack mcp
+  --list-tools` now prints nine read-only tools and twenty-seven with `--allow-write`.
 
 ### Changed
 

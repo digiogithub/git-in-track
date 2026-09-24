@@ -33,20 +33,27 @@ func newMCPCommand(build buildInfo, flags *globalFlags) *cobra.Command {
 		Short: "Serve the backlog to AI agents over the Model Context Protocol",
 		Long: `Mcp speaks the Model Context Protocol over stdin and stdout, so that an agent
 runtime can spawn it as a tool server. It exposes the workspace's backlog and
-knowledge base as typed tools: twenty-three of them with writes enabled, eight
+knowledge base as typed tools: twenty-seven of them with writes enabled, nine
 without.
 
-The eight read-only tools are list_items, search_items, search_semantic,
-get_item, list_inbox, list_kb_pages, get_kb_page and search_kb.
-search_semantic ranks by meaning rather than by substring and needs the Pando
-backend configured under "search.pando"; without one it refuses and names
-search_items as the fallback, so an empty answer is never mistaken for
+The nine read-only tools are list_items, search_items, search_semantic,
+get_item, list_requirements, list_inbox, list_kb_pages, get_kb_page and
+search_kb. search_semantic ranks by meaning rather than by substring and needs
+the Pando backend configured under "search.pando"; without one it refuses and
+names search_items as the fallback, so an empty answer is never mistaken for
 "nothing matches".
 
-The fifteen that need writes are create_epic, create_story, create_task, create_milestone, create_inbox_item,
-update_item, add_comment, move_on_board, triage_inbox_item, close_sprint,
-transfer_sprint_items, import_youtrack_issues, push_comment_to_youtrack,
-publish_kb_page_to_youtrack and sync_kb_page_from_youtrack.
+The eighteen that need writes are create_epic, create_story, create_task,
+create_milestone, create_spec, create_requirement, create_inbox_item,
+update_item, update_requirement, add_comment, move_on_board, triage_inbox_item,
+close_sprint, transfer_sprint_items, import_youtrack_issues,
+push_comment_to_youtrack, publish_kb_page_to_youtrack and
+sync_kb_page_from_youtrack.
+
+Specs are addressed one requirement at a time: list_requirements returns
+compact rows, get_item on a requirement ref (ACME-SP-0003.R2) returns only that
+block and its entry, and update_requirement quotes the requirement's own rev,
+so a write to one requirement never races another of the same spec.
 
 Three of them are the inbox: list_inbox reads a project's triage queue,
 create_inbox_item files something into it and triage_inbox_item decides one

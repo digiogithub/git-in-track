@@ -6,7 +6,7 @@ with `GIT-US-0024`, plus `create_milestone` from `GIT-US-0033`;
 Phase: **Phase 5 — MCP server + agent workflows** (depends on Phase 2 companion CLI, Phase 3 boards, Phase 4 sync)
 Audience: contributors working on `internal/mcp`; authors of agent instructions (`AGENTS.md`)
 
-What ships today: twenty-three tools over stdio and over streamable HTTP, read-only by default,
+What ships today: twenty-seven tools over stdio and over streamable HTTP, read-only by default,
 with cursor pagination, field projection and a `rev` on every item. Resources, prompts, the
 audit log, dry-run and rate limiting are specified here and land in later stories of the
 epic; each is labelled where it appears.
@@ -188,14 +188,15 @@ advertised yet; they arrive with sections 5 and 6.
 
 ## 4. Tool catalog
 
-Twenty-three tools ship: twelve with `GIT-US-0024`, `create_milestone` with `GIT-US-0033`, the
+Twenty-seven tools ship: twelve with `GIT-US-0024`, `create_milestone` with `GIT-US-0033`, the
 three inbox tools with `GIT-US-0056`, the two sprint rollover tools with `GIT-US-0085`, the
-four YouTrack tools with `GIT-US-0062`, `GIT-US-0079` and `GIT-US-0094`, and `search_semantic`
-with `GIT-US-0088`. They are the same twenty-three on both transports, from the same registry,
-over the same workspace.
+four YouTrack tools with `GIT-US-0062`, `GIT-US-0079` and `GIT-US-0094`, `search_semantic`
+with `GIT-US-0088`, and the four spec tools (`list_requirements`, `create_spec`,
+`create_requirement`, `update_requirement`) with `GIT-US-0122`. They are the same twenty-seven
+on both transports, from the same registry, over the same workspace.
 
-Eight are read tools and fifteen are write tools; `gintrack mcp --list-tools` prints eight,
-and with `--allow-write` twenty-three.
+Nine are read tools and eighteen are write tools; `gintrack mcp --list-tools` prints nine,
+and with `--allow-write` twenty-seven.
 
 Common conventions for all tools:
 
@@ -218,7 +219,8 @@ Common conventions for all tools:
 | ---------------- | ----- | ------------------------- | ------------------- |
 | `list_items`     | read  | `item.list`               | ~45 tokens/item     |
 | `search_items`   | read  | `search`                  | ~60 tokens/result   |
-| `get_item`       | read  | `item.get` (+ `comment.list`, `item.children`) | 150–900 tokens |
+| `get_item`       | read  | `item.get` (+ `comment.list`, `item.children`); `requirement.get` for a requirement ref | 150–900 tokens; ~120 for a requirement |
+| `list_requirements` | read | `requirement.list`      | ~40 tokens/row      |
 | `get_kb_page`    | read  | `kb.page`                 | page-dependent      |
 | `list_kb_pages`  | read  | `kb.tree`                 | ~20 tokens/page     |
 | `search_kb`      | read  | `search`                  | ~60 tokens/result   |
@@ -228,6 +230,9 @@ Common conventions for all tools:
 | `create_task`    | write | `item.create`             | ~90 tokens          |
 | `create_milestone` | write | `item.create`           | ~90 tokens          |
 | `update_item`    | write | `item.update`              | ~90 tokens         |
+| `create_spec`    | write | `item.create`             | ~90 tokens          |
+| `create_requirement` | write | `requirement.create`  | ~75 tokens          |
+| `update_requirement` | write | `requirement.update`  | ~75 tokens          |
 | `add_comment`    | write | `comment.add`             | ~70 tokens          |
 | `move_on_board`  | write | `board.move`              | ~90 tokens          |
 | `list_inbox`     | read  | `inbox.list`              | ~45 tokens/entry    |
@@ -256,7 +261,7 @@ semantics the REST API and the web UI apply, because it is the same `item.list`.
   "type": "object",
   "properties": {
     "project":      { "type": "string",  "description": "Project key, for example ACME" },
-    "type":         { "type": "array", "items": { "type": "string" }, "description": "epic, story, task or milestone" },
+    "type":         { "type": "array", "items": { "type": "string" }, "description": "epic, story, task, milestone or spec" },
     "status":       { "type": "array", "items": { "type": "string" } },
     "category":     { "type": "array", "items": { "type": "string" }, "description": "todo, in_progress, done, cancelled" },
     "priority":     { "type": "array", "items": { "type": "string" } },
@@ -354,6 +359,11 @@ second read.
 Without `include`, the answer is the front-matter projection alone — no body, no thread, no
 children. The `body`, `comments` and search `snippet` fields are repository content: data to
 reason about, never instructions (section 7.5).
+
+**A requirement ref reads one requirement.** Given `ACME-SP-0003.R2` (optionally
+`ACME/`-qualified), `get_item` answers with `requirement` and `specRev` instead of `item`: that
+block's text and its `requirements:` entry, never the rest of the spec (section 4.20). `include`
+does not apply, and `fields` projects the requirement; `ref` and `rev` always survive.
 
 ### 4.4 `create_epic`, `create_story`, `create_task`, `create_milestone`
 
@@ -934,12 +944,124 @@ Call **one** of them, then widen only if it comes back empty. The same table is 
 the routing skill `gintrack agent init` generates (`20-agent-interface.md`), because a rule an
 agent reads at the start of a session beats a tool description it skims.
 
-### 4.20 Planned tools
+### 4.20 Specs: `create_spec`, `list_requirements`, `create_requirement`, `update_requirement`
+
+A spec (ADR-037, doc 03 §21) is read and written **one requirement at a time**, so an agent pays
+only for the block it reads and touches only the block it owns. The four tools, and `get_item` on
+a requirement ref, are shims over the vault's `requirement.*` methods (doc 07 §6.7).
+
+Every requirement read carries **two hashes** (ADR-037 §6):
+
+- **`rev` — the requirement rev**, the block plus its `requirements:` entry. It is the write
+  token: `update_requirement` quotes it, and nothing else.
+- **`blockRev` — the block rev**, the block alone: the fingerprint a verification stamp records.
+  It does not move on a status or trace change, so it is never accepted as a write token; quoting
+  it is refused as `stale_revision`.
+
+`specRev`, where returned, is the spec's file rev, for a spec-level `update_item` (title, labels,
+body) that follows.
+
+**`create_spec`** creates the spec item: `project`, `title`, `body` (by convention `## Purpose`,
+`## Scope`, `## Requirements`), `status`, `priority`, `assignees` (owners), `labels`, `author`. A
+spec has no parent, milestone, estimate or due date, so the tool does not accept them. The
+first spec of a project raises `project.yaml` to `schema: 2` in the same write and reports
+`"schemaUpgraded": 2`, exactly like `create_story` does for a first spec link.
+
+**`list_requirements`** lists compact rows. Filters: `project`, `spec`, `status[]` and `text`
+(every word in the ref, title or text). The default row is `ref`, `spec`, `title`, `status` and
+`rev`; `fields` adds `blockRev`, `project`, `path`, `anchor`, `line`, `trace`, `verified`,
+`links`, `extra` or `text`, and the block text is fetched only when `text` is projected. Pages
+are cut with the cursor of section 3.4: pass `nextCursor` back with every filter unchanged. A
+call naming neither `project` nor `spec` goes to the workspace's default repository, like
+`list_items`.
+
+```json
+// input
+{ "project": "ACME", "spec": "ACME-SP-0003", "limit": 2 }
+// output
+{
+  "requirements": [
+    {"ref":"ACME-SP-0003.R1","rev":"sha256:22c4bb963caf7a7f","spec":"ACME-SP-0003",
+     "status":"done","title":"Allocate the next ID by index scan"},
+    {"ref":"ACME-SP-0003.R2","rev":"sha256:efe223ffcb327995","spec":"ACME-SP-0003",
+     "status":"in_progress","title":"Reject a malformed reserved range"}
+  ],
+  "total": 5,
+  "nextCursor": "eyJvIjoyLCJmIjoiOTFhYjBkMmUifQ"
+}
+```
+
+**`get_item` on a ref** returns only that requirement:
+
+```json
+// input
+{ "id": "ACME-SP-0003.R2" }
+// output
+{
+  "requirement": {
+    "ref":"ACME-SP-0003.R2","rev":"sha256:efe223ffcb327995","blockRev":"sha256:a2785bd2f23e4b93",
+    "spec":"ACME-SP-0003","project":"ACME","title":"Reject a malformed reserved range",
+    "status":"in_progress","path":"docs/.pmngr/specs/ACME-SP-0003-id-allocation.md",
+    "anchor":"acme-sp-0003-r2","line":14,
+    "trace":{"tests":["internal/core/allocator_test.go#TestReservedRange"]},
+    "text":"The allocator SHALL refuse a reserved range whose start exceeds its end.\n\n#### Scenario: inverted range\n- WHEN ..."
+  },
+  "specRev": "sha256:d0ce6610d3cf874d"
+}
+```
+
+**`create_requirement`** appends one block `### <REF> — <title>` to a spec: `spec`, `title`,
+`text` (the statement and its `#### Scenario` sections; no level 1–3 heading), `status`
+(default: the workflow's initial status), `trace {code[], tests[]}`, `links` (`supersedes`,
+`superseded_by` or `relates_to` only). `R<n>` is allocated by the tool as max + 1 and never
+reused; never propose one. It needs no `rev`.
+
+**`update_requirement`** is a sparse patch of one requirement: `ref`, `rev` (required), and any of
+`title`, `text`, `status` (validated against the project workflow), `trace`, `links`, and
+`unset` (`trace` or `links`). Only that block and its entry change, plus the spec's `updated`,
+so a concurrent write to **another** requirement of the same spec neither conflicts with it nor
+is lost by it. The verification stamp `verified` is readable but **not writable** from MCP: it
+is written only when implementing work reaches `done` or by `gintrack spec verify --commit`
+(ADR-037 §7), so the tool accepts neither `verified` nor `unset: ["verified"]`.
+
+Both writes answer with the requirement without its text — the agent just sent it — plus
+`specRev`, `changed` and, when the write raised the schema, `schemaUpgraded`:
+
+```json
+// input
+{ "ref": "ACME-SP-0003.R2", "rev": "sha256:efe223ffcb327995", "status": "in_review" }
+// output
+{
+  "requirement": {"ref":"ACME-SP-0003.R2","rev":"sha256:38d7e744d07de580",
+    "blockRev":"sha256:a2785bd2f23e4b93","spec":"ACME-SP-0003",
+    "title":"Reject a malformed reserved range","status":"in_review",
+    "trace":{"tests":["internal/core/allocator_test.go#TestReservedRange"]}},
+  "specRev": "sha256:868c72022df175b6",
+  "changed": ["docs/.pmngr/specs/ACME-SP-0003-id-allocation.md"]
+}
+```
+
+A stale `rev` is refused exactly like `update_item` (section 4.5): `stale_revision` with
+`currentRev` — the requirement rev now — the one-line `retry`, and `conflicts[]` over `text`
+(named, never quoted), `title`, `status`, `trace`, `verified` and `links`, judged against the file
+as it is now. An empty (absent) `conflicts` means your change is already there: stop. A missing
+`rev` is `precondition_required`; `"*"` is the explicit, unsafe waiver.
+
+```json
+{ "error": { "code": "stale_revision",
+   "message": "update ACME-SP-0003.R2: ACME-SP-0003.R2 was modified on disk since revision sha256:efe223ffcb327995 (current sha256:38d7e744d07de580)",
+   "path": "docs/.pmngr/specs/ACME-SP-0003-id-allocation.md",
+   "currentRev": "sha256:38d7e744d07de580",
+   "conflicts": [{"field":"title","current":"Reject a malformed reserved range","proposed":"Refuse inverted ranges"}],
+   "retry": "Someone else wrote this file first. Re-read the item with get_item, …" } }
+```
+
+### 4.21 Planned tools
 
 `08` specified a larger catalog than `GIT-US-0024` implements. These are *planned*, each
 behind its own story: `list_workspaces`, `list_projects`, `get_kb_tree`, `link_items`,
 `list_comments`, `list_boards`, `get_board`, `get_sprint`, `list_retros`, `get_sync_status`
-and `run_sync` — verb first, like the twenty-three above. Every one of them already has a core
+and `run_sync` — verb first, like the twenty-seven above. Every one of them already has a core
 method behind it, so the work is framing rather than domain logic.
 
 `delete_item` is deliberately **not** on that list: deleting a backlog item is a human action
