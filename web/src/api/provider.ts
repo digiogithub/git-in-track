@@ -128,6 +128,15 @@ import type {
   TeamSummary,
   WorkspaceSummary,
   WorkspaceVault,
+  CoverageRow,
+  ImpactReport,
+  ImpactResult,
+  Requirement,
+  RequirementDraft,
+  RequirementPatch,
+  RequirementWrite,
+  TraceEdge,
+  TracedRequirement,
 } from '@/core-bridge/api';
 
 export type {
@@ -236,6 +245,14 @@ export type {
   TeamSummary,
   WorkspaceSummary,
   WorkspaceVault,
+  CoverageRow,
+  ImpactReport,
+  ImpactResult,
+  Requirement,
+  RequirementDraft,
+  RequirementPatch,
+  TraceEdge,
+  TracedRequirement,
 };
 
 export type ProviderKind = 'browser' | 'companion';
@@ -1679,6 +1696,14 @@ export type ProviderErrorCode =
    * than `read_only` (GIT-US-0053).
    */
   | 'not_supported'
+  /**
+   * The session has no backend for this answer: requirement trace, coverage
+   * and impact need the marker scanner, test results and git history, which
+   * only the companion has (GIT-US-0127). Browser-only mode always answers it
+   * for them; a companion answers it for impact on a repository without
+   * history. It is a state to explain ("run the companion"), not a failure.
+   */
+  | 'unavailable'
   | 'internal';
 
 export type ChangeEvent =
@@ -2311,8 +2336,93 @@ export interface DataProvider {
    */
   cancelAgentRun(threadId: string, options?: AgentRequestOptions): Promise<void>;
 
+  // specs and requirements (GIT-US-0127, ADR-037)
+  /**
+   * The specs of a project: `listItems` narrowed to `type: spec`. A spec edit
+   * arrives as an `items` change event carrying the spec id, in both modes.
+   */
+  listSpecs(project: string, filter?: SpecFilter): Promise<ItemPage>;
+  /** One spec; `not_found` for an id that is not a spec of the project. */
+  getSpec(project: string, id: string): Promise<Item>;
+  /** Requirements as rows of their own, over the project or one spec. */
+  listRequirements(project: string, filter?: RequirementFilter): Promise<RequirementList>;
+  /** One requirement with its text, its requirement `rev`, its `blockRev` and its spec's rev. */
+  getRequirement(project: string, ref: string): Promise<RequirementRead>;
+  /** Appends a requirement to a spec; `R<n>` is allocated by the core. */
+  createRequirement(project: string, draft: RequirementDraft): Promise<RequirementWriteResult>;
+  /**
+   * Patches one requirement under its requirement `rev` — never its
+   * `blockRev`. A stale rev fails with `stale_revision`.
+   */
+  updateRequirement(
+    project: string,
+    ref: string,
+    patch: RequirementPatch,
+    rev: string,
+  ): Promise<RequirementWriteResult>;
+  /** The computed trace of one requirement; `unavailable` in browser-only mode. */
+  traceRequirement(project: string, ref: string): Promise<TracedRequirement>;
+  /** Coverage rows of requirements; `unavailable` in browser-only mode. */
+  listCoverage(project: string, filter?: CoverageFilter): Promise<CoverageList>;
+  /**
+   * The requirements a diff affects, per tier. `base` defaults to `HEAD` and
+   * no `head` is the working tree. `unavailable` in browser-only mode and on a
+   * repository without git history.
+   */
+  queryImpact(project: string, query?: ImpactQuery): Promise<ImpactResult>;
+  /** The same query as the ranked, token-budgeted report; `unavailable` like `queryImpact`. */
+  getImpactReport(project: string, query?: ImpactReportQuery): Promise<ImpactReport>;
+
   subscribe(handler: (event: ChangeEvent) => void): Unsubscribe;
 }
+
+// ------------------------------------------------------------------- specs
+
+/** The item filters that still apply to a spec list: project and type are fixed. */
+export type SpecFilter = Omit<ItemFilter, 'project' | 'type'>;
+
+/** Narrows `listRequirements`; `text: true` includes each block's text, statement and scenarios. */
+export type RequirementFilter = {
+  spec?: string;
+  status?: string[];
+  q?: string;
+  text?: boolean;
+  includeDeleted?: boolean;
+};
+
+export type RequirementList = { requirements: Requirement[]; total: number };
+
+/** `requirement.get`: the requirement and the file rev of its spec. */
+export type RequirementRead = { requirement: Requirement; specRev: string };
+
+/** A requirement write as the provider reports it: the core's answer without the write set. */
+export type RequirementWriteResult = Omit<RequirementWrite, 'writes'>;
+
+export type CoverageFilter = { spec?: string; refs?: string[]; status?: CoverageRow['status'][] };
+
+export type CoverageList = { coverage: CoverageRow[]; total: number };
+
+/** The query of `impact.query` (doc 03 §21.11). */
+export type ImpactQuery = {
+  base?: string;
+  head?: string;
+  story?: string;
+  title?: string;
+  tiers?: (1 | 2 | 3)[];
+  depth?: number;
+  limit?: number;
+};
+
+/** `impact.report`: the query and the page of the report to render. */
+export type ImpactReportQuery = ImpactQuery & {
+  budget?: number;
+  cursor?: string;
+  format?: 'json' | 'text';
+};
+
+/** Why browser-only mode has no trace, coverage or impact (GIT-US-0127). */
+export const BROWSER_SPEC_ANALYSIS_REASON =
+  'Requirement trace, coverage and impact are not available in browser-only mode: they need the code scanner, test results and git history of the companion. Run `gintrack serve` to see them.';
 
 // ------------------------------------------------------------------- agent
 

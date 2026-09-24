@@ -281,6 +281,19 @@ because a commit list cannot express them.
   (`server.InstallSemanticSearch`, which returns a `SemanticHost` whose `CallGraph` and
   `Semantic` feed `server.InstallTraceSeams`). Without `search.pando.mcpUrl` nothing changes:
   tier 1 answers and tiers 2–3 report `unavailable`.
+- **Specs, requirements, coverage and impact over HTTP** (`GIT-US-0127`, docs/07 §5.5). The
+  companion serves `/api/v1/projects/{key}/specs`: list and get specs, list, get, create and
+  update requirements (PATCH takes the requirement rev in `If-Match`, `428` without it, `412
+  stale_revision` with `currentRev` and `conflicts[]`), a requirement's `trace`, `coverage` for
+  the project or one spec, and `impact?base=&head=` with its token-budgeted `impact/report`. Each
+  route is one CoreApi method behind the bearer token. A missing tracer, coverage backend or
+  impact resolver is now `503 unavailable` (it was a `500`). The web provider boundary gains the
+  same operations on all three providers (`listSpecs`, `getSpec`, `listRequirements`,
+  `getRequirement`, `createRequirement`, `updateRequirement`, `traceRequirement`,
+  `listCoverage`, `queryImpact`, `getImpactReport`) and a `ProviderErrorCode` `unavailable`:
+  browser-only mode reads and writes requirements through the WASM core and answers
+  `unavailable` for trace, coverage and impact. Requirement writes and spec files edited on disk
+  are announced as `item.changed` on the spec id. The screens arrive with `GIT-US-0128`–`0131`.
 
 ### Changed
 

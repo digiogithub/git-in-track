@@ -22,6 +22,7 @@ const (
 	codePreconditionRequired = "precondition_required"
 	codeRepoNotRegistered    = "repo_not_registered"
 	codeIndexUnavailable     = "index_unavailable"
+	codeUnavailable          = "unavailable"
 	codeInternal             = "internal"
 	// codeTunnelRequiresToken refuses to publish a server that has no bearer
 	// token. The web client switches on this exact string.
@@ -141,7 +142,10 @@ func statusForCode(code string) int {
 		// state: the operator configures `search.pando` and asks again
 		// (GIT-US-0091).
 		return http.StatusBadRequest
-	case codeIndexUnavailable, codeSyncEngineNotRunning:
+	case codeIndexUnavailable, codeSyncEngineNotRunning, codeUnavailable:
+		// `unavailable` is a backend this session does not have — no
+		// requirement tracer, coverage or impact resolver (GIT-US-0127): the
+		// request is fine, this companion cannot answer it.
 		return http.StatusServiceUnavailable
 	case codeYouTrackUnauthorized, codeYouTrackForbidden, codeYouTrackNotFound, codeYouTrackUnreachable:
 		// The caller's own credentials were fine: it is the hop to YouTrack

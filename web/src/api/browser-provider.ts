@@ -107,8 +107,22 @@ import type {
   YouTrackProject,
   YouTrackSettings,
   YouTrackTestResult,
+  CoverageFilter,
+  CoverageList,
+  ImpactQuery,
+  ImpactReport,
+  ImpactReportQuery,
+  ImpactResult,
+  RequirementDraft,
+  RequirementFilter,
+  RequirementList,
+  RequirementPatch,
+  RequirementRead,
+  RequirementWriteResult,
+  SpecFilter,
+  TracedRequirement,
 } from '@/api/provider';
-import { ProviderError, teamScope } from '@/api/provider';
+import { BROWSER_SPEC_ANALYSIS_REASON, ProviderError, teamScope } from '@/api/provider';
 import { hydrateOrBuild } from '@/cache/index-cache';
 import type {
   ConflictResolutionParams,
@@ -256,6 +270,7 @@ const CORE_ERROR_CODES: Record<string, ProviderError['code']> = {
   unknown_method: 'internal',
   read_only: 'read_only',
   permission_denied: 'permission_denied',
+  unavailable: 'unavailable',
 };
 
 function errorCode(error: unknown): string | null {
@@ -1732,6 +1747,81 @@ export class BrowserProvider implements DataProvider {
     return Promise.reject(new ProviderError('not_supported', BROWSER_AGENT_REASON));
   }
 
+  // ---------------------------------------------------------------- specs
+  //
+  // Specs and their requirements are read and written by the WASM core, the
+  // very code the companion runs (GIT-US-0127). Trace, coverage and impact need
+  // the code scanner, test results and git history, none of which a tab has, so
+  // they answer `unavailable` without a round trip to the worker.
+
+  async listSpecs(project: string, filter: SpecFilter = {}): Promise<ItemPage> {
+    await this.#ensureActive();
+    return this.#call('item.list', { ...filter, project, type: 'spec' });
+  }
+
+  async getSpec(project: string, id: string): Promise<Item> {
+    await this.#ensureActive();
+    const item = await this.#call('item.get', { id });
+    if (item.type !== 'spec' || !id.startsWith(`${project}-`)) {
+      throw new ProviderError('not_found', `${id} is not a spec of project ${project}.`);
+    }
+    return item;
+  }
+
+  async listRequirements(
+    project: string,
+    filter: RequirementFilter = {},
+  ): Promise<RequirementList> {
+    await this.#ensureActive();
+    return this.#call('requirement.list', { ...filter, project });
+  }
+
+  async getRequirement(_project: string, ref: string): Promise<RequirementRead> {
+    await this.#ensureActive();
+    return this.#call('requirement.get', { ref });
+  }
+
+  async createRequirement(
+    _project: string,
+    draft: RequirementDraft,
+  ): Promise<RequirementWriteResult> {
+    const mount = this.#mountForItem(draft.spec, await this.#ensureWritable());
+    const { writes, ...result } = await this.#call('requirement.create', draft);
+    await this.#persist(mount, writes);
+    this.#emit({ kind: 'items', repoId: mount.id, ids: [draft.spec] });
+    return result;
+  }
+
+  async updateRequirement(
+    _project: string,
+    ref: string,
+    patch: RequirementPatch,
+    rev: string,
+  ): Promise<RequirementWriteResult> {
+    const spec = specOfRef(ref);
+    const mount = this.#mountForItem(spec, await this.#ensureWritable());
+    const { writes, ...result } = await this.#call('requirement.update', { ref, patch, rev });
+    await this.#persist(mount, writes);
+    this.#emit({ kind: 'items', repoId: mount.id, ids: [result.requirement.spec || spec] });
+    return result;
+  }
+
+  traceRequirement(_project: string, _ref: string): Promise<TracedRequirement> {
+    return Promise.reject(new ProviderError('unavailable', BROWSER_SPEC_ANALYSIS_REASON));
+  }
+
+  listCoverage(_project: string, _filter?: CoverageFilter): Promise<CoverageList> {
+    return Promise.reject(new ProviderError('unavailable', BROWSER_SPEC_ANALYSIS_REASON));
+  }
+
+  queryImpact(_project: string, _query?: ImpactQuery): Promise<ImpactResult> {
+    return Promise.reject(new ProviderError('unavailable', BROWSER_SPEC_ANALYSIS_REASON));
+  }
+
+  getImpactReport(_project: string, _query?: ImpactReportQuery): Promise<ImpactReport> {
+    return Promise.reject(new ProviderError('unavailable', BROWSER_SPEC_ANALYSIS_REASON));
+  }
+
   subscribe(handler: (event: ChangeEvent) => void): Unsubscribe {
     this.#handlers.add(handler);
     return () => {
@@ -1978,6 +2068,16 @@ export class BrowserProvider implements DataProvider {
  * The documentation folders a mount declares: the primary one first, then the
  * extras, without duplicates and without an entry the core would refuse.
  */
+/**
+ * The spec id of a requirement ref: `ACME-SP-0003.R2` and `ACME/ACME-SP-0003.R2`
+ * both name `ACME-SP-0003`.
+ */
+export function specOfRef(ref: string): string {
+  const bare = ref.includes('/') ? ref.slice(ref.indexOf('/') + 1) : ref;
+  const dot = bare.lastIndexOf('.');
+  return dot < 0 ? bare : bare.slice(0, dot);
+}
+
 export function declaredFolders(primary: string, extra?: string[]): string[] {
   const out: string[] = [];
   for (const raw of [primary, ...(extra ?? [])]) {

@@ -150,8 +150,29 @@ import type {
   YouTrackIssue,
   YouTrackIssuePage,
   YouTrackIssueQuery,
+  CoverageFilter,
+  CoverageList,
+  CoverageRow,
+  ImpactQuery,
+  ImpactReport,
+  ImpactReportQuery,
+  ImpactResult,
+  Requirement,
+  RequirementDraft,
+  RequirementFilter,
+  RequirementList,
+  RequirementPatch,
+  RequirementRead,
+  RequirementWriteResult,
+  SpecFilter,
+  TracedRequirement,
 } from '@/api/provider';
-import { ProviderError, readOnlyCapabilities, searchProjectKeys } from '@/api/provider';
+import {
+  BROWSER_SPEC_ANALYSIS_REASON,
+  ProviderError,
+  readOnlyCapabilities,
+  searchProjectKeys,
+} from '@/api/provider';
 import { DEFAULT_COMMIT_TEMPLATE, validateCommitTemplate } from '@/git/message';
 
 /**
@@ -235,6 +256,23 @@ export type FakeData = {
    * into the companion behaviour.
    */
   agent?: FakeAgent;
+  /** The requirements of the specs among `items`, in body order (GIT-US-0127). */
+  requirements?: Requirement[];
+  /**
+   * The companion's derived spec answers. Absent — the default — makes this
+   * fake a runtime with no tracer, coverage or impact at all: every such call
+   * fails with `unavailable`, which is what a browser does.
+   */
+  specAnalysis?: FakeSpecAnalysis;
+};
+
+/** Scripted trace, coverage and impact answers (GIT-US-0127). */
+export type FakeSpecAnalysis = {
+  coverage?: CoverageRow[];
+  /** Traces by requirement ref; a ref it does not name has an empty trace. */
+  traces?: Record<string, TracedRequirement>;
+  /** The answer of every impact query; omit for a repository without history. */
+  impact?: ImpactResult;
 };
 
 /**
@@ -1298,6 +1336,15 @@ function matches(item: Item, f: ItemFilter): boolean {
 const FAKE_NO_YOUTRACK =
   'YouTrack is not available in this mode: there is no process to hold the credential and no way to reach the instance from a tab. Run `gintrack serve` to connect a project.';
 
+/** Runs a synchronous answer as a promise, turning a throw into a rejection. */
+function settle<T>(answer: () => T): Promise<T> {
+  try {
+    return Promise.resolve(answer());
+  } catch (error) {
+    return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+  }
+}
+
 export class FakeProvider implements DataProvider {
   readonly kind = 'browser' as const;
   readonly capabilities: Capabilities;
@@ -1314,6 +1361,9 @@ export class FakeProvider implements DataProvider {
   private today: string;
   private handlers = new Set<(event: ChangeEvent) => void>();
   private revCounter = 1000;
+  /** Requirements by ref, in insertion order (GIT-US-0127). */
+  private requirements: Map<string, Requirement>;
+  private specAnalysis: FakeSpecAnalysis | null;
   /** Commit-on-save settings, in memory (story GIT-US-0020). */
   private git: GitSettings;
   /** The public tunnel, in memory. */
@@ -1398,6 +1448,8 @@ export class FakeProvider implements DataProvider {
     this.youtrackEnvToken = this.youtrackSettings.tokenSource === 'env';
     this.kbSync = data.kbSync ?? null;
     this.agent = data.agent ?? null;
+    this.requirements = new Map((data.requirements ?? []).map((r) => [r.ref, structuredClone(r)]));
+    this.specAnalysis = data.specAnalysis ?? null;
     this.syncEngine = data.syncEngine ?? null;
     this.syncJobs = structuredClone(data.syncEngine?.jobs ?? []);
     this.engineSettings =
@@ -4817,6 +4869,172 @@ export class FakeProvider implements DataProvider {
       throw new ProviderError('not_supported', 'This runtime has no agent.');
     }
     return this.agent;
+  }
+
+  // ---------------------------------------------------------------- specs
+
+  listSpecs(project: string, filter: SpecFilter = {}): Promise<ItemPage> {
+    return this.listItems({ ...filter, project, type: 'spec' });
+  }
+
+  async getSpec(project: string, id: string): Promise<Item> {
+    const item = await this.getItem(id);
+    if (item.type !== 'spec' || !id.startsWith(`${project}-`)) {
+      throw new ProviderError('not_found', `${id} is not a spec of project ${project}.`);
+    }
+    return item;
+  }
+
+  listRequirements(project: string, filter: RequirementFilter = {}): Promise<RequirementList> {
+    const terms = (filter.q ?? '')
+      .toLowerCase()
+      .split(/\s+/)
+      .filter((t) => t !== '');
+    const rows = [...this.requirements.values()]
+      .filter((r) => r.spec.startsWith(`${project}-`))
+      .filter((r) => filter.spec === undefined || r.spec === filter.spec)
+      .filter((r) => !filter.status?.length || filter.status.includes(r.status))
+      .filter((r) => {
+        const hay = `${r.ref} ${r.title} ${r.text ?? ''}`.toLowerCase();
+        return terms.every((t) => hay.includes(t));
+      })
+      .map((r) => {
+        const row = structuredClone(r);
+        if (filter.text !== true) {
+          delete row.text;
+          delete row.statement;
+          delete row.scenarios;
+        }
+        return row;
+      });
+    return Promise.resolve({ requirements: rows, total: rows.length });
+  }
+
+  getRequirement(_project: string, ref: string): Promise<RequirementRead> {
+    const requirement = this.requirements.get(ref);
+    if (!requirement) {
+      return Promise.reject(new ProviderError('not_found', `Requirement ${ref} not found`));
+    }
+    const spec = this.items.get(requirement.spec);
+    return Promise.resolve({ requirement: structuredClone(requirement), specRev: spec?.rev ?? '' });
+  }
+
+  createRequirement(_project: string, draft: RequirementDraft): Promise<RequirementWriteResult> {
+    this.assertWritable();
+    const spec = this.items.get(draft.spec);
+    if (!spec || spec.type !== 'spec') {
+      return Promise.reject(new ProviderError('not_found', `Spec ${draft.spec} not found`));
+    }
+    const taken = [...this.requirements.values()]
+      .filter((r) => r.spec === draft.spec)
+      .map((r) => Number(r.ref.slice(r.ref.lastIndexOf('.R') + 2)));
+    const ref = `${draft.spec}.R${Math.max(0, ...taken) + 1}`;
+    const requirement: Requirement = {
+      ref,
+      spec: draft.spec,
+      path: spec.path,
+      anchor: ref.toLowerCase().replace(/\./g, '-'),
+      line: 0,
+      title: draft.title,
+      status: draft.status ?? 'backlog',
+      ...(draft.text === undefined ? {} : { text: draft.text }),
+      ...(draft.trace === undefined ? {} : { trace: draft.trace }),
+      ...(draft.links === undefined ? {} : { links: draft.links }),
+      rev: this.nextRev(),
+      blockRev: this.nextRev(),
+    };
+    this.requirements.set(ref, requirement);
+    return Promise.resolve(this.touchSpec(requirement));
+  }
+
+  updateRequirement(
+    _project: string,
+    ref: string,
+    patch: RequirementPatch,
+    rev: string,
+  ): Promise<RequirementWriteResult> {
+    this.assertWritable();
+    const current = this.requirements.get(ref);
+    if (!current) {
+      return Promise.reject(new ProviderError('not_found', `Requirement ${ref} not found`));
+    }
+    if (rev !== '*' && current.rev !== rev) {
+      return Promise.reject(
+        new ProviderError('stale_revision', `Requirement ${ref} changed on disk`),
+      );
+    }
+    const { unset, ...set } = patch;
+    const next: Requirement = { ...current, ...set, rev: this.nextRev() };
+    for (const key of unset ?? []) delete next[key];
+    if (patch.title !== undefined || patch.text !== undefined) next.blockRev = this.nextRev();
+    this.requirements.set(ref, next);
+    return Promise.resolve(this.touchSpec(next));
+  }
+
+  /** A requirement write moves its spec's rev and is announced as a spec change. */
+  private touchSpec(requirement: Requirement): RequirementWriteResult {
+    const spec = this.items.get(requirement.spec);
+    const specRev = this.nextRev();
+    if (spec) this.items.set(spec.id, { ...spec, rev: specRev });
+    this.emit({ kind: 'items', repoId: 'repo-1', ids: [requirement.spec] });
+    return { requirement: structuredClone(requirement), specRev };
+  }
+
+  private analysis(): FakeSpecAnalysis {
+    if (this.specAnalysis === null)
+      throw new ProviderError('unavailable', BROWSER_SPEC_ANALYSIS_REASON);
+    return this.specAnalysis;
+  }
+
+  traceRequirement(_project: string, ref: string): Promise<TracedRequirement> {
+    return settle(() => {
+      const traces = this.analysis().traces ?? {};
+      if (!this.requirements.has(ref)) {
+        throw new ProviderError('not_found', `Requirement ${ref} not found`);
+      }
+      return structuredClone(traces[ref] ?? { ref, code: [], tests: [], work: [] });
+    });
+  }
+
+  listCoverage(project: string, filter: CoverageFilter = {}): Promise<CoverageList> {
+    return settle(() => {
+      const rows = (this.analysis().coverage ?? [])
+        .filter((row) => row.ref.startsWith(`${project}-`))
+        .filter((row) => filter.spec === undefined || row.ref.startsWith(`${filter.spec}.`))
+        .filter((row) => !filter.refs?.length || filter.refs.includes(row.ref))
+        .filter((row) => !filter.status?.length || filter.status.includes(row.status));
+      return { coverage: structuredClone(rows), total: rows.length };
+    });
+  }
+
+  queryImpact(_project: string, query: ImpactQuery = {}): Promise<ImpactResult> {
+    return settle(() => {
+      const impact = this.analysis().impact;
+      if (impact === undefined) {
+        throw new ProviderError('unavailable', 'This repository has no git history to diff.');
+      }
+      return {
+        ...structuredClone(impact),
+        base: query.base ?? 'HEAD',
+        ...(query.head ? { head: query.head } : {}),
+      };
+    });
+  }
+
+  async getImpactReport(project: string, query: ImpactReportQuery = {}): Promise<ImpactReport> {
+    const { budget = 1500, format, cursor: _cursor, ...rest } = query;
+    const impact = await this.queryImpact(project, rest);
+    const text = impact.hits.map((h) => `${h.ref} ${h.title} t${h.tier}`).join('\n');
+    return {
+      base: impact.base,
+      ...(impact.head === undefined ? {} : { head: impact.head }),
+      files: impact.files,
+      symbols: impact.symbols,
+      ...(format === 'text' ? { text } : { tiers: impact.tiers, hits: impact.hits }),
+      total: impact.hits.length,
+      budget,
+      tokens: Math.ceil(JSON.stringify(impact).length / 3),
+    };
   }
 
   subscribe(handler: (event: ChangeEvent) => void): Unsubscribe {

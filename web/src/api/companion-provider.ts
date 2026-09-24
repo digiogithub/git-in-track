@@ -167,6 +167,20 @@ import type {
   YouTrackSettingsPatch,
   YouTrackTestResult,
   YouTrackTokenSource,
+  CoverageFilter,
+  CoverageList,
+  ImpactQuery,
+  ImpactReport,
+  ImpactReportQuery,
+  ImpactResult,
+  RequirementDraft,
+  RequirementFilter,
+  RequirementList,
+  RequirementPatch,
+  RequirementRead,
+  RequirementWriteResult,
+  SpecFilter,
+  TracedRequirement,
 } from '@/api/provider';
 import { ProviderError, searchProjectKeys } from '@/api/provider';
 import { authorizationHeader, clearToken, hasToken, withTokenQuery } from '@/api/token';
@@ -360,6 +374,9 @@ const PROBLEM_CODES: Record<string, ProviderErrorCode> = {
   // with nothing to index with is a configuration to fix; neither is a retry.
   search_reindex_running: 'search_reindex_running',
   search_not_configured: 'search_not_configured',
+  // No tracer, coverage backend or impact resolver for this repository
+  // (GIT-US-0127): a state for the view to explain, not a retry.
+  unavailable: 'unavailable',
   index_unavailable: 'internal',
   rate_limited: 'internal',
   internal: 'internal',
@@ -1638,6 +1655,42 @@ function buildQuery(params: Record<string, QueryValue>): string {
 function list(value: string | string[] | undefined): string[] | undefined {
   if (value === undefined) return undefined;
   return Array.isArray(value) ? value : [value];
+}
+
+/** The spec subtree of a project (GIT-US-0127). */
+function specsBase(project: string): string {
+  return `${API_PREFIX}/projects/${encodeURIComponent(project)}/specs`;
+}
+
+/** The route of one requirement: `ACME-SP-0003.R2` → `…/specs/ACME-SP-0003/requirements/R2`. */
+function requirementPath(project: string, ref: string): string {
+  const bare = ref.includes('/') ? ref.slice(ref.indexOf('/') + 1) : ref;
+  const dot = bare.lastIndexOf('.');
+  if (dot < 0) throw new ProviderError('validation_failed', `${ref} is not a requirement ref.`);
+  const spec = bare.slice(0, dot);
+  const req = bare.slice(dot + 1);
+  return `${specsBase(project)}/${encodeURIComponent(spec)}/requirements/${encodeURIComponent(req)}`;
+}
+
+/** `ImpactQuery` → the query string of `GET …/specs/impact`. */
+function impactQuery(query: ImpactQuery, extra: Record<string, QueryValue> = {}): string {
+  return buildQuery({
+    base: query.base,
+    head: query.head,
+    story: query.story,
+    title: query.title,
+    tiers: query.tiers?.map(String),
+    depth: query.depth,
+    limit: query.limit,
+    ...extra,
+  });
+}
+
+/** The answer of `GET …/requirements`, with the total defaulted to the row count. */
+export function toRequirementList(value: unknown): RequirementList {
+  const record = asRecord(value);
+  const requirements = asArray(record?.['requirements']) as RequirementList['requirements'];
+  return { requirements, total: asNumber(record?.['total']) ?? requirements.length };
 }
 
 /** `ItemFilter` → the documented `GET /items` query parameters. */
@@ -3131,6 +3184,100 @@ export class CompanionProvider implements DataProvider {
       })}`,
       { ...agentRequest(options), method: 'POST' },
     );
+  }
+
+  // ---------------------------------------------------------------- specs
+  //
+  // `/projects/{key}/specs` (docs/07 §5.5, GIT-US-0127). The companion answers
+  // with the core's own values, so these are passed through with no mapping
+  // beyond the list total; a missing seam arrives as `503 unavailable`.
+
+  async listSpecs(project: string, filter: SpecFilter = {}): Promise<ItemPage> {
+    const response = await this.#send(`${specsBase(project)}${itemFilterQuery(filter)}`);
+    const body = await readJson(response);
+    return toItemPage(body, response.headers?.get('X-Total-Count') ?? null);
+  }
+
+  async getSpec(project: string, id: string): Promise<Item> {
+    return toItem(await this.#json(`${specsBase(project)}/${encodeURIComponent(id)}`));
+  }
+
+  async listRequirements(
+    project: string,
+    filter: RequirementFilter = {},
+  ): Promise<RequirementList> {
+    const { spec, ...rest } = filter;
+    const path =
+      spec === undefined
+        ? `${specsBase(project)}/requirements`
+        : `${specsBase(project)}/${encodeURIComponent(spec)}/requirements`;
+    const body = await this.#json(
+      `${path}${buildQuery({
+        status: rest.status,
+        q: rest.q,
+        text: rest.text,
+        includeDeleted: rest.includeDeleted,
+      })}`,
+    );
+    return toRequirementList(body);
+  }
+
+  async getRequirement(project: string, ref: string): Promise<RequirementRead> {
+    return (await this.#json(requirementPath(project, ref))) as RequirementRead;
+  }
+
+  async createRequirement(
+    project: string,
+    draft: RequirementDraft,
+  ): Promise<RequirementWriteResult> {
+    const { spec, ...body } = draft;
+    return (await this.#json(`${specsBase(project)}/${encodeURIComponent(spec)}/requirements`, {
+      method: 'POST',
+      body,
+    })) as RequirementWriteResult;
+  }
+
+  async updateRequirement(
+    project: string,
+    ref: string,
+    patch: RequirementPatch,
+    rev: string,
+  ): Promise<RequirementWriteResult> {
+    return (await this.#json(requirementPath(project, ref), {
+      method: 'PATCH',
+      rev,
+      body: { patch },
+    })) as RequirementWriteResult;
+  }
+
+  async traceRequirement(project: string, ref: string): Promise<TracedRequirement> {
+    const body = asRecord(await this.#json(`${requirementPath(project, ref)}/trace`));
+    const trace = body?.['trace'];
+    if (asRecord(trace) === null) throw malformed('requirement trace');
+    return trace as TracedRequirement;
+  }
+
+  async listCoverage(project: string, filter: CoverageFilter = {}): Promise<CoverageList> {
+    const query = buildQuery({ spec: filter.spec, ref: filter.refs, status: filter.status });
+    const body = asRecord(await this.#json(`${specsBase(project)}/coverage${query}`));
+    const coverage = asArray(body?.['coverage']) as CoverageList['coverage'];
+    return { coverage, total: asNumber(body?.['total']) ?? coverage.length };
+  }
+
+  async queryImpact(project: string, query: ImpactQuery = {}): Promise<ImpactResult> {
+    const body = asRecord(await this.#json(`${specsBase(project)}/impact${impactQuery(query)}`));
+    const impact = body?.['impact'];
+    if (asRecord(impact) === null) throw malformed('impact');
+    return impact as ImpactResult;
+  }
+
+  async getImpactReport(project: string, query: ImpactReportQuery = {}): Promise<ImpactReport> {
+    const { budget, cursor, format, ...rest } = query;
+    const search = impactQuery(rest, { budget, cursor, format });
+    const body = asRecord(await this.#json(`${specsBase(project)}/impact/report${search}`));
+    const report = body?.['report'];
+    if (asRecord(report) === null) throw malformed('impact report');
+    return report as ImpactReport;
   }
 
   subscribe(handler: (event: ChangeEvent) => void): Unsubscribe {

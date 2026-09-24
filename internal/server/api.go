@@ -54,6 +54,9 @@ func (s *Server) mountAPI(api chi.Router) {
 		// Adding the triage status to a project that predates the inbox
 		// (GIT-US-0100, ADR-033).
 		p.Post("/projects/{key}/inbox", s.handleProjectInboxEnable)
+		// Specs, their requirements, and the derived coverage, trace and
+		// impact answers (GIT-US-0127, ADR-037).
+		p.Route("/projects/{key}/specs", s.mountSpecs)
 
 		// Team repositories: team.yaml, its members and its project list.
 		p.Get("/teams", s.handleTeams)
