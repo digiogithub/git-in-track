@@ -2,7 +2,7 @@
 id: GIT-US-0104
 type: story
 title: Draft ADR-037 and the docs/03 changes for specs and requirement blocks
-status: todo
+status: in_review
 priority: critical
 parent: GIT-EP-0022
 milestone: GIT-M-0015
@@ -10,7 +10,7 @@ author: claude
 labels: [docs, core]
 estimate: 3
 created: 2026-09-24T12:08:51Z
-updated: 2026-09-24T12:08:51Z
+updated: 2026-09-24T14:56:21Z
 ---
 
 ## Description
@@ -21,11 +21,11 @@ Documentation only, no code. The PR is reviewed and approved by a human; the imp
 
 ## Acceptance Criteria
 
-- [ ] `docs/adr/ADR-037-specs-with-requirement-blocks.md` records the decisions of GIT-T-0238: the `spec` type (`GIT-SP-NNNN`, type code `SP`, folder `docs/.pmngr/specs/`); requirement blocks `### GIT-SP-NNNN.R<n> — <title>` with EARS/SHALL statement and `#### Scenario:` WHEN/THEN; scoped IDs (permanent, next = max+1 in the file, moving = new ID + `supersedes`); the block `rev` definition (exact byte range hashed); the `requirements:` map (`status`, `trace: {code, tests}`, `verified: {rev, commit, at, by}`); statuses reuse the project workflow; `suspect` is computed, never stored.
-- [ ] The ADR defines the link kinds `implements`/`implemented_by`, `modifies`/`modified_by`, `supersedes`/`superseded_by` and the link-target grammar extension accepting `GIT-SP-NNNN.R<n>`.
-- [ ] The ADR defines the marker grammar `Implements:` / `Verifies:` (comment styles recognised) and the `## Spec Delta` section format (ADDED / MODIFIED / REMOVED).
-- [ ] The ADR defines the `project.yaml` key for grammar-lint severity (warning by default, raisable to error).
-- [ ] `docs/03-data-model.md` is updated (folder layout, ID table, front-matter fields, link kinds) and `docs/adr/README.md` lists ADR-037.
+- [x] `docs/adr/ADR-037-specs-with-requirement-blocks.md` records the decisions of GIT-T-0238: the `spec` type (`GIT-SP-NNNN`, type code `SP`, folder `docs/.pmngr/specs/`); requirement blocks `### GIT-SP-NNNN.R<n> — <title>` with EARS/SHALL statement and `#### Scenario:` WHEN/THEN; scoped IDs (permanent, next = max+1 in the file, moving = new ID + `supersedes`); the block `rev` definition (exact byte range hashed); the `requirements:` map (`status`, `trace: {code, tests}`, `verified: {rev, commit, at, by}`); statuses reuse the project workflow; `suspect` is computed, never stored.
+- [x] The ADR defines the link kinds `implements`/`implemented_by`, `modifies`/`modified_by`, `supersedes`/`superseded_by` and the link-target grammar extension accepting `GIT-SP-NNNN.R<n>`.
+- [x] The ADR defines the marker grammar `Implements:` / `Verifies:` (comment styles recognised) and the `## Spec Delta` section format (ADDED / MODIFIED / REMOVED).
+- [x] The ADR defines the `project.yaml` key for grammar-lint severity (warning by default, raisable to error).
+- [x] `docs/03-data-model.md` is updated (folder layout, ID table, front-matter fields, link kinds) and `docs/adr/README.md` lists ADR-037.
 - [ ] A human has approved the PR.
 
 ## Notes
