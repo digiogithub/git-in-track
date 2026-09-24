@@ -1,17 +1,17 @@
 ---
-title: Spec-driven development in git-in-track — overview for validation
+title: Spec-driven development in git-in-track — overview
 created: 2026-09-24
+updated: 2026-09-24
 author: claude
-status: draft
+status: validated
 reviewed_by: GIT-T-0238
 ---
 
 # Spec-driven development in git-in-track — overview
 
-> **Status: draft for human validation.** Nothing here is in the backlog yet.
-> Once the review task GIT-T-0238 is resolved, this becomes the Phase 11
-> milestone with its epics and stories. The open questions in §7 are the
-> decisions that change the plan.
+> **Status: validated on 2026-09-24** through GIT-T-0238. The reviewer's
+> decisions are in §7 and override anything earlier drafts said. The plan below
+> is the Phase 11 milestone in `docs/.pmngr/`.
 
 ## 1. Problem
 
@@ -40,9 +40,9 @@ indexing and impact analysis. It is missing the spec layer on top.
 |---|---|---|
 | Living specs separate from change proposals, ADDED / MODIFIED / REMOVED deltas | OpenSpec | Story carries a `## Spec Delta`; applied when the story is done |
 | Constrained grammar (EARS, SHALL + WHEN/THEN scenarios) | Kiro, OpenSpec | Linted in `internal/core`, live in the web editor via WASM |
-| Stable requirement IDs | Spec Kit `FR-001`, Doorstop | Permanent item IDs `GIT-RQ-NNNN`, never by title |
-| Suspect links after upstream change | Doorstop fingerprints | Verification stamp in front matter plus git and Pando change detection |
-| Bidirectional coverage, test result import | StrictDoc | `// Verifies: GIT-RQ-0042` markers plus `go test -json`, JUnit and Vitest ingest |
+| Stable requirement IDs | Spec Kit `FR-001`, Doorstop | Scoped block IDs `GIT-SP-NNNN.R<n>`, never by title |
+| Suspect links after upstream change | Doorstop fingerprints | Verification stamp per requirement plus git and Pando change detection |
+| Bidirectional coverage, test result import | StrictDoc | `// Verifies: GIT-SP-0003.R2` markers plus `go test -json`, JUnit and Vitest ingest |
 | Only the relevant slice reaches the agent | Kiro steering `fileMatch`, BMAD shards | `spec_context` generated on demand, never copied |
 | Cheap-first verify loop | Spec Kit `converge`, Traycer | Deterministic checks first; the LLM sees only flagged requirements |
 
@@ -51,59 +51,82 @@ requirements in a few hundred tokens with the reason for each hit, its test
 status and whether it is suspect. It resolves in three tiers, cheapest first:
 
 1. **Direct trace.** Changed files and symbols that carry a requirement marker,
-   or that a requirement declares.
+   or that a requirement's `trace:` declares.
 2. **Transitive.** Pando `code_impact_analysis` over the changed symbols reaches
    callers that carry a marker.
-3. **Semantic.** Pando `search_semantic` over requirements, using the changed
-   symbol names and story title. These hits are flagged `candidate` with a
-   score, never presented as certain.
+3. **Semantic.** Pando semantic search over requirement blocks, using the
+   changed symbol names and story title. These hits are flagged `candidate`
+   with a score, never presented as certain.
 
-## 3. Proposed model (needs an ADR — human-only area)
+## 3. Model (ADR-037, human-supervised)
 
-- **Two new item types:**
-  - `spec`, a capability (`GIT-SP-NNNN`, folder `specs/`). It holds purpose,
-    scope and glossary, and is the parent of its requirements.
-  - `requirement` (`GIT-RQ-NNNN`, folder `requirements/`). It is one small file
-    holding an EARS or SHALL statement plus `#### Scenario:` blocks
-    (WHEN/THEN). Small files give per-requirement `rev`, cheap `get_item`,
-    clean git blame and clean merges.
-- **New link kinds:**
-  - `implements` / `implemented_by`, from a story or task to a requirement.
-  - `modifies` / `modified_by`, from a story that changes an existing
-    requirement. This is the delta.
-  - `supersedes` / `superseded_by`, from requirement to requirement.
-- **Code and test anchors.** This part cannot use `links[]` today, because
-  targets must be item IDs. Two sources, both deterministic:
-  - **In-code markers**, which travel with the code through refactors:
-    `// Implements: GIT-RQ-0042` and `// Verifies: GIT-RQ-0042`. These can be
-    scanned natively and are cheap.
-  - **An optional `trace:` field** on the requirement for code that cannot carry
-    a comment: `trace: {code: [path#Symbol], tests: [path#TestName]}`.
-- **Verification stamp**, the only state written back:
-  `verified: {rev: <requirement rev>, commit: <sha>, at: <date>, by: <who>}`.
-  `gintrack spec verify` writes it when the linked tests pass.
-  - **Suspect** is computed and never stored. A requirement is suspect when its
-    `rev` changed since the stamp, or when its traced files or symbols changed
-    between `verified.commit` and HEAD (directly, or transitively through
-    Pando).
+- **One new item type, `spec`** (`GIT-SP-NNNN`, type code `SP`, folder
+  `docs/.pmngr/specs/`). A spec is a capability: purpose, scope and glossary,
+  followed by its requirements as blocks in the body.
+- **Requirements are blocks, not files.** Each one is a heading
+  `### GIT-SP-0003.R2 — <title>` followed by an EARS or SHALL statement and
+  `#### Scenario:` blocks (WHEN/THEN).
+  - Requirement IDs are scoped `<SPEC-ID>.R<n>`: permanent, never renumbered or
+    reused; the next one is max+1 within the file. Moving a requirement to
+    another spec allocates a new ID and records `supersedes`.
+  - Every requirement behaves as a separate unit everywhere: its own status,
+    its own block-level `rev` (hash of the block), trace, verification stamp,
+    row in lists, search and coverage, MCP addressing (get or update one
+    requirement quoting its block `rev`), and Pando entry whose hits resolve to
+    the block anchor.
+- **Per-requirement metadata** lives in the spec front matter as a
+  `requirements:` map keyed by `R<n>`; prose stays in the body:
+
+  ```yaml
+  requirements:
+    R2:
+      status: in_progress
+      trace: {code: [internal/core/ids.go#NextID], tests: [internal/core/ids_test.go#TestNextID]}
+      verified: {rev: sha256:..., commit: <sha>, at: 2026-10-01, by: claude}
+  ```
+
+- **Lifecycle** reuses the project workflow statuses; no per-type workflow.
+- **New link kinds:** `implements` / `implemented_by` (story or task to
+  requirement), `modifies` / `modified_by` (story that changes an existing
+  requirement — the delta), `supersedes` / `superseded_by`. Link targets accept
+  requirement refs `GIT-SP-NNNN.R<n>`; this target-grammar extension is part of
+  ADR-037.
+- **Code and test anchors**, both deterministic:
+  - in-code markers `// Implements: GIT-SP-0003.R2` and
+    `// Verifies: GIT-SP-0003.R2`, which travel with the code;
+  - the optional `trace:` entry for code that cannot carry a comment.
+- **Verification stamp** is the only state written back:
+  `gintrack spec verify` writes `verified` when the linked tests pass.
+  **Suspect** is computed, never stored: the block `rev` changed since the
+  stamp, or traced files or symbols changed between `verified.commit` and HEAD
+  (directly, or transitively through Pando).
+- **Grammar lint** (EARS / SHALL / scenarios / vague words) is a warning by
+  default, configurable in `project.yaml` and raisable to error.
 - **Derived cache only.** Test results and the marker scan are rebuildable
-  caches, like the index today. The repository stays the source of truth.
+  caches. The repository stays the source of truth; Pando never writes specs.
+- **Boundaries.** Block parsing, IDs, lint and the delta live in
+  `internal/core` (WASM-safe). Diff, marker scan, test ingest and Pando calls
+  stay out of `internal/core` and `internal/vault`, behind host-installed seams
+  like `vault.SemanticSearcher`.
 
-## 4. Milestone sketch — Phase 11: Spec-driven development
+## 4. Milestone — Phase 11: Spec-driven development
 
 | # | Epic | Content | Areas |
 |---|---|---|---|
-| E1 | Spec data model | ADR-037; `spec` and `requirement` types, IDs, folders, link kinds, `trace`, `verified`; docs/03, JSON Schema, scaffold, validation. **Human-supervised.** | core, docs |
-| E2 | Authoring and lint | EARS/SHALL/scenario linter in core (WASM), templates, `## Spec Delta` parsing, applying the delta when a story is done, duplicate detection on create via semantic search | core, wasm, web |
-| E3 | Trace engine | Marker scanner (native), `gitops.ChangedFiles(from, to)` for git, system-git and jj, test-result ingest (go test -json, JUnit, Vitest), verification stamp, suspect computation | gitops, server, cli |
-| E4 | Impact analysis over Pando | Wrappers for `code_impact_analysis`, `code_find_symbol` and `code_related_files`; the three-tier resolver with a token budget; semantic fallback marked `candidate`; `unavailable` degradation without Pando | server, mcp |
-| E5 | Agent surface (MCP and CLI) | MCP: `spec_impact`, `spec_coverage`, `spec_context`, `verify_requirement`, `trace_requirement`. CLI: `gintrack spec lint\|impact\|coverage\|verify`. Fix stdio `gintrack mcp` so it gets the semantic searcher. SDD loop in AGENTS.md and docs/08 §10 | mcp, cli, docs |
-| E6 | Web | `/p/$project/specs` capability tree, requirement detail with a trace panel, coverage matrix, impact view for a branch or ref range (companion mode), live lint in the editor | web |
-| E7 | CI gate and interop | `gintrack spec impact --since origin/main --fail-on failing,suspect` as a PR check and git hook; importers for Spec Kit, OpenSpec and Kiro | ci, cli |
-| E8 | Dogfood and benchmark | Write specs for 3–4 of our own capabilities (rev protocol, ID allocation, link validation, MCP pagination); measure agent tokens for "what does this PR affect?" against reading a spec folder | docs |
+| E1 | Spec data model | ADR-037 + docs/03 first (human approval, no code), then the code: `spec` type, `SP` IDs, folder, requirement blocks with block `rev`, `requirements:` map, link kinds and requirement-ref targets. **Agent under human supervision, own PR.** | core, docs |
+| E2 | Authoring, lint and Spec Delta | Vault requirement addressing, grammar linter (warn, configurable), `## Spec Delta` parsing and application on done, templates, duplicate detection on create | core, wasm, server |
+| E3 | Trace engine | `gitops.ChangedFiles(from, to)` for git, system-git and jj; marker scanner; trace graph; test-result ingest; verification stamp and suspect computation | git, server, cli |
+| E4 | Impact over Pando | Wrappers for `code_impact_analysis`, `code_find_symbol`, `code_related_files`; requirement blocks in the Pando index; three-tier resolver with token budget; `unavailable` without Pando | server, mcp |
+| E5 | Agent surface (MCP and CLI) | Stdio semantic-search fix; per-requirement MCP get/update/list; `spec_context`, `spec_coverage`, `spec_impact`, `verify_requirement`, `trace_requirement`; `gintrack spec lint\|impact\|coverage\|verify`; SDD loop in AGENTS.md and docs/08 §10 | mcp, cli, docs |
+| E6 | Web | Spec HTTP API; `/p/$project/specs` tree with one row per requirement; requirement detail and trace panel; **coverage matrix (mandatory)**; impact view for a ref range; live lint | web, server, wasm |
+| E7 | CI gate | `gintrack spec impact --since <ref> --fail-on failing,suspect` as a PR check and a git hook | ci, cli |
+| E8 | Dogfood and benchmark | Specs for rev protocol, ID allocation, link validation and MCP pagination; token benchmark for "what does this PR affect?" | docs |
 
-Rough size: 8 epics, about 30–35 stories. E1 blocks everything. E3 and E4 can
-run in parallel after E1. E5 and E6 depend on E3 and E4.
+Deferred, no milestone: **Spec importers** (Spec Kit, OpenSpec, Kiro), status
+`backlog`.
+
+E1 blocks almost everything. E3 and E4 run in parallel after E1. E5 and E6
+depend on E3 and E4. E7 and E8 close the milestone.
 
 ## 5. Agent loop once built
 
@@ -130,26 +153,28 @@ run in parallel after E1. E5 and E6 depend on E3 and E4.
 - The WASM build still passes. Browser-only mode keeps authoring and lint, and
   impact and ingest answer `unavailable`.
 
-## 7. Open questions for the reviewer
+## 7. Decisions (2026-09-24)
 
-1. **Granularity.** Should each requirement be its own file (recommended:
-   cheap reads, per-requirement `rev`, Doorstop-style), or should requirements
-   be blocks inside one capability file (OpenSpec-style: fewer files, but
-   needing block-level IDs and `rev`)?
-2. **Code anchors.** In-code markers plus an optional `trace:` field
-   (recommended), markers only, or front matter only?
-3. **Requirement lifecycle.** Should it reuse the project workflow statuses, or
-   use a per-type workflow (`draft → approved → implemented → deprecated`)?
-   The per-type option means extending `project.yaml`, which is another
-   data-model change.
-4. **Grammar strictness.** Should EARS be enforced as an error, or only warned
-   about (recommended: warn, configurable)?
-5. **Scope of the first cut.** Is E7 interop in, or deferred to a later phase?
-   Is the E6 web coverage matrix required for the milestone?
-6. **Human-only areas.** E1 changes on-disk formats. Should it be done by a
-   human, or by an agent under supervision in its own PR?
-7. **Naming.** Is it `spec` + `requirement`, or `capability` + `requirement`,
-   and which ID codes: `SP`/`RQ`, or `CAP`/`REQ`?
+1. **Granularity.** Requirements are blocks inside one `spec` file
+   (`### GIT-SP-0003.R2 — <title>`), not files. IDs `<SPEC-ID>.R<n>` are
+   permanent, next = max+1 in the file; moving one means a new ID plus
+   `supersedes`. Each requirement still behaves as a separate unit (status,
+   block `rev`, trace, stamp, list/search/coverage row, MCP addressing, Pando
+   anchor). Metadata goes in a front-matter `requirements:` map keyed by `R<n>`.
+2. **Code anchors.** In-code `// Implements:` and `// Verifies:` markers plus
+   the optional `trace:` entry.
+3. **Lifecycle.** Reuse the project workflow statuses; no per-type workflow.
+4. **Grammar.** Lint warns by default; `project.yaml` can raise it to error.
+5. **Web.** The coverage matrix (requirement × tests; `untested`, `passing`,
+   `failing`, `suspect`) is mandatory for the milestone.
+6. **Scope.** The E7 CI gate and git hook are in. Importers for Spec Kit,
+   OpenSpec and Kiro are a separate epic with no milestone, status `backlog`.
+7. **E1 ownership.** An agent under human supervision, in its own PR. First
+   story: ADR-037 and docs/03 for approval, no code. Second: the code, blocked
+   by the first.
+8. **Naming.** `spec` / `SP`. Link kinds `implements`/`implemented_by`,
+   `modifies`/`modified_by`, `supersedes`/`superseded_by`; targets accept
+   `GIT-SP-NNNN.R<n>` (part of ADR-037).
 
 ## Sources
 
