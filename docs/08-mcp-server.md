@@ -479,7 +479,12 @@ The retry is one round trip:
 ```
 
 An empty `conflicts[]` means the change had already been made by whoever wrote first: there is
-nothing left to do, and repeating the write is wrong. Two agents claiming one story therefore
+nothing left to do, and repeating the write is wrong. It is empty **only** when every field the
+patch proposes is already on disk. A patch the store would refuse anyway — a blank `title`, an
+unknown field in `unset` — cannot have happened, so it never comes back empty: `conflicts[]`
+then names every field the patch carries, each with the value on disk and the value asked for,
+even where the two already agree. Retrying it quoting `currentRev` surfaces the real refusal.
+Structured fields (`body`, `custom`, `external`, `inbox`) are named but never quoted. Two agents claiming one story therefore
 produce exactly one claim — the second is told, and picks other work or comments instead. Never
 retry a conflict by sending `rev: "*"`; that is the one call that can lose someone's work.
 

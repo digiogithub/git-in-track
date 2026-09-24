@@ -23,6 +23,15 @@ because a commit list cannot express them.
   a retry or an enqueue could be announced `started`, or even `done`, before `queued`, when
   a worker picked it up at once, leaving a client showing the job as queued. The sync
   engine now announces state changes in the order they happened.
+- **A refused item patch is never reported as already applied** (`GIT-US-0152`). A stale
+  `item.update` — MCP `update_item`, `PATCH /api/v1/items/{id}`, the browser vault — whose
+  patch the store would refuse anyway (a blank title, an unknown field to unset) came back
+  with an empty `conflicts[]`, which the rev protocol reads as "already applied — stop", so a
+  refused change looked saved. Such a patch now names every field it carries. A stale write
+  to `custom`, `external` or `inbox` alone came back empty the same way; those fields are
+  now compared and named (never quoted). `conflicts[]` is empty only when every proposed
+  field is already on disk (docs/08 §4.5).
+
 - **Allocating an id no longer rewrites `project.yaml`** (`GIT-US-0153`). The counter bump
   re-encoded the whole file through yaml.v3, which stripped alignment and blank lines and
   re-emitted a flow-style label such as `{ name: core, description: Shared Go core (model,

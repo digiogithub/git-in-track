@@ -17,6 +17,8 @@ func TestUpdateReportsTheFieldsInConflict(t *testing.T) {
 	critical := PriorityCritical
 	claimed := []string{"marta"}
 	body := "## Description\n\nRewritten."
+	blank := "   "
+	renamed := "Login with SSO everywhere"
 
 	tests := []struct {
 		name  string
@@ -47,6 +49,38 @@ func TestUpdateReportsTheFieldsInConflict(t *testing.T) {
 			first: ItemPatch{Priority: &high},
 			then:  ItemPatch{Body: &body},
 			want:  []ConflictField{{Field: "body"}},
+		},
+		{
+			// A patch the store would refuse anyway (GIT-US-0152) must never
+			// come back with an empty list, which reads as "already applied".
+			name:  "a refused patch names every field it carries",
+			first: ItemPatch{Priority: &high},
+			then:  ItemPatch{Title: &blank, Priority: &critical},
+			want: []ConflictField{
+				{Field: "title", Current: "Login with SSO", Proposed: "   "},
+				{Field: "priority", Current: "high", Proposed: "critical"},
+			},
+		},
+		{
+			name:  "a refused patch names a field already on disk too",
+			first: ItemPatch{Priority: &high},
+			then:  ItemPatch{Priority: &high, Unset: []string{"no-such-field"}},
+			want: []ConflictField{
+				{Field: "priority", Current: "high", Proposed: "high"},
+				{Field: "no-such-field"},
+			},
+		},
+		{
+			name:  "a partial overlap names only the fields still to change",
+			first: ItemPatch{Priority: &high},
+			then:  ItemPatch{Priority: &high, Title: &renamed},
+			want:  []ConflictField{{Field: "title", Current: "Login with SSO", Proposed: renamed}},
+		},
+		{
+			name:  "a custom field still to change is named",
+			first: ItemPatch{Priority: &high},
+			then:  ItemPatch{Custom: map[string]any{"team": "core"}},
+			want:  []ConflictField{{Field: "custom"}},
 		},
 	}
 
