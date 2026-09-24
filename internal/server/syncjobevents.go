@@ -112,7 +112,9 @@ func newSyncObserver(hub *Hub, now func() time.Time) *syncObserver {
 }
 
 // onJob is [syncengine.Options.OnJob]. The engine calls it off its own lock,
-// after every state change, with a copy of the job.
+// after every state change, with a copy of the job, one call at a time and in
+// the order the changes happened — which is why it must never call back into
+// the engine.
 func (o *syncObserver) onJob(job syncengine.Job) {
 	if o == nil || o.hub == nil {
 		return

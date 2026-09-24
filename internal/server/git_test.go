@@ -5,7 +5,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -569,5 +571,74 @@ func TestCommitOnSaveAcrossRepositories(t *testing.T) {
 				t.Errorf("subject = %q, want %q", log[0], want)
 			}
 		})
+	}
+}
+
+// TestGitRequestsShareOneRepositorySafely drives one go-git repository from
+// many concurrent requests: saves whose debounced commits fire on the
+// committer's timers, explicit commits, and the status reads the UI polls. A
+// go-git Repository is not safe for concurrent use, so every one of these
+// reaches the same backend and must be serialized by it (GIT-US-0146). Run
+// under -race: before the fix the detector reported go-git's object storage
+// being written by a commit while a status read walked it.
+func TestGitRequestsShareOneRepositorySafely(t *testing.T) {
+	settings := config.Default().Git
+	settings.Backend = config.BackendGoGit
+	settings.CommitOnSave = true
+	settings.CommitDebounce = time.Millisecond
+	s, root := newGitServer(t, settings)
+	before := len(gitLog(t, root))
+
+	const writers, rounds = 4, 5
+	reads := []string{
+		"/api/v1/git/status",
+		"/api/v1/sync/status",
+		"/api/v1/sync/conflicts",
+	}
+	codes := make(chan string, writers*rounds*(len(reads)+2))
+	check := func(what string, got, want int) {
+		if got != want {
+			codes <- what + " answered " + http.StatusText(got)
+		}
+	}
+
+	var wg sync.WaitGroup
+	for w := range writers {
+		wg.Go(func() {
+			for i := range rounds {
+				rec := send(t, s, request{
+					method: http.MethodPost,
+					target: "/api/v1/items",
+					body:   map[string]any{"type": "task", "title": "Concurrent " + strconv.Itoa(w) + "-" + strconv.Itoa(i)},
+				})
+				check("POST /api/v1/items", rec.Code, http.StatusCreated)
+				for _, target := range reads {
+					check("GET "+target, send(t, s, request{method: http.MethodGet, target: target}).Code, http.StatusOK)
+				}
+				check("POST /api/v1/git/commit",
+					send(t, s, request{method: http.MethodPost, target: "/api/v1/git/commit"}).Code, http.StatusOK)
+			}
+		})
+	}
+	wg.Wait()
+	close(codes)
+	for problem := range codes {
+		t.Error(problem)
+	}
+
+	for _, out := range s.git.flush(t.Context()) {
+		if out.Err != nil {
+			t.Fatalf("%s: %v", out.Repo, out.Err)
+		}
+	}
+	// Every save is committed exactly once: a commit that overlapped another
+	// would lose or duplicate one.
+	if got := len(gitLog(t, root)) - before; got != writers*rounds {
+		t.Errorf("%d commits, want one per save (%d)", got, writers*rounds)
+	}
+	if st, err := exec.CommandContext(t.Context(), "git", "-C", root, "status", "--porcelain").Output(); err != nil {
+		t.Fatalf("git status: %v", err)
+	} else if len(st) != 0 {
+		t.Errorf("the working tree is not clean after every save was committed:\n%s", st)
 	}
 }

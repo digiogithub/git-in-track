@@ -182,6 +182,21 @@ go-git repository, which is not safe for concurrent use, and two `git commit`
 processes would contend for one `index.lock`. A timer that fires just as a later
 edit re-arms its batch does nothing — only the batch's current timer commits it.
 
+**Every go-git call to one repository is serialized, not only commits.** The
+companion shares one backend per repository among every HTTP handler (git and
+sync status, commit author lookup, history, conflicts), the sync pipeline and
+the committer's timers, so a status read could otherwise walk go-git's object
+storage while a commit rewrites it (GIT-US-0146). The go-git backend is
+therefore handed out wrapped in a per-repository lock, keyed by the working
+tree's root so that two backends opened on one repository share it, and taken
+once around every backend call. The lock order is: the committer's
+per-repository commit lock first, then the backend lock, which is a leaf —
+nothing else is ever acquired while it is held, so the two cannot deadlock. A
+sync run takes the lock per step (fetch, integrate, push), so a commit may land
+between two steps but never inside one. The system-git and jj backends are not
+wrapped: each call is a child process, and git and jj guard their on-disk state
+with their own lock files.
+
 Author selection: empty `authorName`/`authorEmail` uses the repo's
 `user.name`/`user.email`
 (companion: resolved by go-git's config chain; browser: read from

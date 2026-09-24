@@ -12,7 +12,17 @@ because a commit list cannot express them.
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- **Concurrent requests no longer drive one go-git repository at once**
+  (`GIT-US-0146`). The companion shares one git backend per repository among its HTTP
+  handlers, the sync pipeline and commit-on-save, and go-git is not safe for concurrent
+  use: a status read could walk the object storage while a commit rewrote it. Every call
+  to a go-git backend now runs under one per-repository lock (docs/06 §3.3).
+- **`sync.job.*` events of one job arrive in order** (`GIT-US-0146`). A job re-queued by
+  a retry or an enqueue could be announced `started`, or even `done`, before `queued`, when
+  a worker picked it up at once, leaving a client showing the job as queued. The sync
+  engine now announces state changes in the order they happened.
 
 ## [2.0.1] — 2026-09-18
 

@@ -138,8 +138,12 @@ type Options struct {
 	Classify func(err error, now time.Time) Classification
 	// OnJob is called after every state change, with a copy of the job, on a
 	// goroutine that is not holding the engine lock. It is the seam the
-	// WebSocket layer of a later story hangs off. It must not block for long
-	// and must never call back into the engine's blocking methods.
+	// WebSocket layer of a later story hangs off. Calls are made one at a time
+	// and in the order the changes happened, even when they come from different
+	// goroutines (GIT-US-0146), so it must not block for long and must never
+	// call back into a method that changes a job — Enqueue, Cancel,
+	// RetryDeadLetter — nor into the engine's blocking methods: the call it
+	// would make waits for the one in progress to return.
 	OnJob func(Job)
 }
 
@@ -235,6 +239,7 @@ type Engine struct {
 
 	mu       sync.Mutex
 	cond     *sync.Cond
+	announce announcer
 	handlers map[Kind]Handler
 	pending  map[string]*batch
 	queue    []*batch
@@ -275,6 +280,7 @@ func New(opts Options) (*Engine, error) {
 		closeDone: make(chan struct{}),
 	}
 	e.cond = sync.NewCond(&e.mu)
+	e.announce.init(opts.OnJob)
 	e.limiter = newLimiter(opts.Clock, opts.Rate, opts.Burst)
 
 	path := ""
@@ -387,11 +393,12 @@ func (e *Engine) Enqueue(ctx context.Context, req Request) (Job, error) {
 	e.order = append(e.order, id)
 	e.addToBatchLocked(jobCtx, r, now)
 	job := r.job.clone()
+	turn := e.announce.reserveLocked()
 	e.cond.Broadcast()
 	e.mu.Unlock()
 
 	e.journal.markDirty()
-	e.emit(job)
+	e.announce.run(turn, job)
 	return job, nil
 }
 
@@ -530,17 +537,16 @@ func (e *Engine) finishBatch() {
 func (e *Engine) runBatch(b *batch) {
 	defer e.finishBatch()
 
-	jobs, stamps, ctx, cancel := e.startBatch(b)
+	jobs, stamps, turn, ctx, cancel := e.startBatch(b)
 	defer cancel()
+	// Announce the queued-to-running transition off the lock, as every other
+	// state change is announced. Without this an observer sees a job queued and
+	// then finished, and a progress display has nothing to open a row on. The
+	// turn is taken even for an empty batch, so it must always be run.
+	e.announce.run(turn, jobs...)
 	if len(jobs) == 0 {
 		// Every job in the batch was cancelled or superseded while it waited.
 		return
-	}
-	// Announce the queued-to-running transition off the lock, as every other
-	// state change is announced. Without this an observer sees a job queued and
-	// then finished, and a progress display has nothing to open a row on.
-	for _, job := range jobs {
-		e.emit(job)
 	}
 
 	err := e.limiter.Wait(ctx)
@@ -571,18 +577,18 @@ func safeHandle(ctx context.Context, h Handler, jobs []Job) (err error) {
 // startBatch marks the batch's still-queued jobs running and builds the context
 // the handler runs under. The returned stamps are what complete fences its
 // result with.
-func (e *Engine) startBatch(b *batch) ([]Job, map[string]uint64, context.Context, context.CancelFunc) {
+func (e *Engine) startBatch(b *batch) (jobs []Job, stamps map[string]uint64, turn uint64, ctx context.Context, cancel context.CancelFunc) {
 	parent := b.ctx
 	if parent == nil {
 		parent = e.baseCtx
 	}
-	ctx, cancel := context.WithCancel(parent)
+	ctx, cancel = context.WithCancel(parent)
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	now := e.clock.Now()
-	jobs := make([]Job, 0, len(b.ids))
-	stamps := make(map[string]uint64, len(b.ids))
+	jobs = make([]Job, 0, len(b.ids))
+	stamps = make(map[string]uint64, len(b.ids))
 	for _, id := range b.ids {
 		r := e.jobs[id]
 		if r == nil || r.job.State != StateQueued || r.retry != nil {
@@ -596,7 +602,7 @@ func (e *Engine) startBatch(b *batch) ([]Job, map[string]uint64, context.Context
 		stamps[id] = r.gen
 		jobs = append(jobs, r.job.clone())
 	}
-	return jobs, stamps, ctx, cancel
+	return jobs, stamps, e.announce.reserveLocked(), ctx, cancel
 }
 
 // complete applies the outcome of one batch to each of its jobs.
@@ -657,13 +663,12 @@ func (e *Engine) complete(b *batch, jobs []Job, stamps map[string]uint64, err er
 		}
 		changed = append(changed, r.job.clone())
 	}
+	turn := e.announce.reserveLocked()
 	e.cond.Broadcast()
 	e.mu.Unlock()
 
 	e.journal.markDirty()
-	for _, j := range changed {
-		e.emit(j)
-	}
+	e.announce.run(turn, changed...)
 }
 
 // scheduleRetryLocked arms the timer that returns a job to its batch.
@@ -720,13 +725,6 @@ func (e *Engine) deadLetterLocked(r *jobRecord) {
 	}
 }
 
-// emit hands a state change to the caller's callback, off the engine lock.
-func (e *Engine) emit(job Job) {
-	if e.opts.OnJob != nil {
-		e.opts.OnJob(job)
-	}
-}
-
 // Cancel withdraws a job. A queued job leaves the queue; a running job has the
 // context of the batch it is in cancelled, and its result is dropped when the
 // handler returns. It reports whether anything was cancelled, so an unknown id
@@ -767,6 +765,7 @@ func (e *Engine) Cancel(id string) bool {
 		return false
 	}
 	job := r.job.clone()
+	turn := e.announce.reserveLocked()
 	e.cond.Broadcast()
 	e.mu.Unlock()
 
@@ -774,7 +773,7 @@ func (e *Engine) Cancel(id string) bool {
 		cancel()
 	}
 	e.journal.markDirty()
-	e.emit(job)
+	e.announce.run(turn, job)
 	return true
 }
 
@@ -1024,11 +1023,12 @@ func (e *Engine) RetryDeadLetter(id string) error {
 	e.dead = removeString(e.dead, id)
 	e.addToBatchLocked(e.baseCtx, r, now)
 	job := r.job.clone()
+	turn := e.announce.reserveLocked()
 	e.cond.Broadcast()
 	e.mu.Unlock()
 
 	e.journal.markDirty()
-	e.emit(job)
+	e.announce.run(turn, job)
 	return nil
 }
 
