@@ -101,6 +101,7 @@ Start with:
 		newConfigCommand(flags),
 		newYouTrackCommand(flags),
 		newAgentCommand(flags),
+		newSpecCommand(flags),
 	)
 	return cmd
 }

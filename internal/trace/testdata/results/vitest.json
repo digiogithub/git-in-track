@@ -1,0 +1,25 @@
+{
+  "numTotalTests": 4,
+  "numPassedTests": 2,
+  "success": false,
+  "snapshot": {"added": 0, "unmatched": 0},
+  "testResults": [
+    {
+      "name": "/home/runner/work/acme/acme/web/src/alloc.test.ts",
+      "status": "failed",
+      "message": "",
+      "assertionResults": [
+        {"ancestorTitles": ["alloc"], "fullName": "alloc allocates", "status": "passed", "title": "allocates", "duration": 4.5, "failureMessages": []},
+        {"ancestorTitles": ["alloc", "edge"], "fullName": "alloc edge empty", "status": "failed", "title": "empty", "duration": 12, "failureMessages": ["expected 1 to be 2"]},
+        {"ancestorTitles": ["alloc"], "fullName": "alloc later", "status": "todo", "title": "later", "duration": null, "failureMessages": []}
+      ]
+    },
+    {
+      "name": "/elsewhere/gone.test.ts",
+      "assertionResults": [
+        {"ancestorTitles": [], "fullName": "top", "status": "passed", "title": "top", "duration": 1, "failureMessages": []}
+      ]
+    }
+  ],
+  "startTime": 1790000000000
+}

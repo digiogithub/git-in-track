@@ -2321,9 +2321,13 @@ validation, and produce the `E-STATUS-UNKNOWN`, `W-LABEL-UNDECLARED`, and `E-CF-
 > §21.9 and the `specs.lint` key in the core (the web editor's live lint consumes it in a later
 > story). `GIT-US-0109` implements the parsing and validation of `## Spec Delta` (§21.8, R-DELTA-1
 > to R-DELTA-5 up to applying): its diagnostics, the pending `modifies` relations and the refs it
-> reserves.
+> reserves. `GIT-US-0115` ingests `go test -json`, JUnit XML and Vitest JSON reports
+> (`gintrack spec ingest`, docs/07 §4.19): each test is mapped to the `<path>#<symbol>` its
+> markers and `trace.tests` entries spell, its last result is kept in a per-machine test-result
+> cache outside the repository, and each requirement's linked tests are aggregated into raw
+> evidence (`pass`, `fail`, `partial`, `untested`) — never written into a spec.
 > Not implemented yet: applying a Spec Delta when the story is done (§21.8, `GIT-US-0110`), and
-> verification and coverage (§21.6). This
+> the verification cache `verify.json`, the `verified` stamp and the coverage state of §21.6. This
 > section is the normative format; the ADR records the reasoning,
 > the consequences and the alternatives rejected. Using specs raises the project to `schema: 2`
 > ([§21.10](#2110-schema-version-2)).

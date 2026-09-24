@@ -19,6 +19,12 @@
 // Engine keeps one graph current per working tree and is the tracer a native
 // host installs into a vault (vault.RequirementTracer).
 //
+// ParseReport, TestResolver, ResultStore and MatchRequirements ingest test
+// results: go test -json, JUnit XML and Vitest JSON reports are parsed,
+// each test is mapped to the trace ref its markers spell, its last result
+// is kept in a per-machine cache outside the repository, and the results
+// of a requirement's linked tests are aggregated (GIT-US-0115).
+//
 // The package walks the filesystem and is therefore native only; it imports
 // internal/core for the ref grammar, never the other way round, and neither
 // internal/core nor internal/vault may import it (the WASM build stays free

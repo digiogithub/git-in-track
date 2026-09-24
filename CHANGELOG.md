@@ -162,6 +162,18 @@ because a commit list cannot express them.
   carry `anchor` on the wire, core requirement hits included. A chunk outside every block stays
   the spec's row. Pando is only read: no derived document is fed to it and nothing is written
   to `docs/.pmngr/specs/`.
+- **Test result ingestion** (`GIT-US-0115`, ADR-037 §4, §7, docs/03 §21.6, docs/07 §4.19).
+  `gintrack spec ingest <report>...` parses `go test -json` streams (parallel events may
+  interleave), JUnit XML (go-junit-report, Vitest/Jest, pytest, …) and the Vitest/Jest JSON
+  reporter, streaming, with the format detected per file or set by `--format`. Every test is
+  mapped to the `<path>#<symbol>` trace ref its `Verifies:` markers and `trace.tests` entries
+  use (Go packages through `go.mod` or the longest matching directory, CI-runner absolute paths
+  through their longest existing suffix, `--base` for relative ones; ambiguity is reported) and
+  its last result — `{id, path#symbol, result, duration, commit}` — is kept in a per-machine
+  test-result cache under the index cache directory, outside the repository; a corrupt cache is
+  rebuilt, never fatal. Each requirement's linked tests are aggregated (failing beats passing;
+  `pass`, `fail`, `partial`, `untested`) and listed. Nothing is written into a spec; the
+  `verified` stamp, coverage and `verify.json` are later stories.
 
 ### Changed
 

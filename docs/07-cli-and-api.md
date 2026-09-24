@@ -1770,6 +1770,86 @@ visible in the local process list. The two commands to run next are printed: `pa
 agui-serve --cwd <repo> --port <n> --no-tls --token-file <f>` and `gintrack serve --agent
 --mcp-http`.
 
+### 4.19 `gintrack spec ingest <report>...`
+
+> **Implemented** by `GIT-US-0115`. It is the first command of the `gintrack spec` family;
+> `lint`, `impact`, `coverage`, `verify` and `trace` come with `GIT-US-0125`. Stamping
+> `verified:` and the coverage state are `GIT-US-0116`; the per-requirement `verify.json` cache of
+> doc 03 R-REQ-11 is `GIT-US-0141`. Native only: browser-only mode cannot run or ingest tests.
+
+Record the last result of every test a run reported, so the requirements those tests verify can
+be answered from real runs (ADR-037 §7, doc 03 §21.6). Nothing is written into a spec or anywhere
+in the repository.
+
+```bash
+go test -json ./... > go.json;            gintrack spec ingest go.json
+npx vitest run --reporter=json > vt.json; gintrack spec ingest --base web vt.json
+gintrack spec ingest --format junit build/test-results/*.xml
+go test -json ./... | gintrack spec ingest -
+```
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--format go\|junit\|vitest` | detect | report format; detection reads the first bytes: `<` is JUnit, a line with an `"Action"` key is `go test -json`, any other `{` is Vitest |
+| `--repo <path>` | `.` | the repository the tests belong to; its working-tree root is the nearest ancestor holding `.git` or `.jj` |
+| `--base <dir>` | root | repository-relative directory the report's **relative** paths start from, e.g. `web` for a Vitest run in `web/` |
+| `--commit <sha>` | `HEAD` | commit the run was taken at; defaults to the working tree's current commit (`@` under jj), empty when there is none |
+| `--cache <file>` | see below | the test-result cache file |
+| `--json` | | print `{root, commit, cache, reports[], stored, requirements[]}` |
+
+**Supported formats.**
+
+| Format | Produced by | A test is | Outcome |
+|---|---|---|---|
+| `go` | `go test -json` (`cmd/test2json`) | `Package` + `Test` (`TestX/sub_case`) | terminal `pass` / `fail` / `skip` events; `run`, `pause`, `cont`, `output` and package-level events are ignored, so parallel tests may interleave freely; non-JSON lines (build output from `2>&1`) are skipped |
+| `junit` | go-junit-report, Vitest/Jest JUnit, pytest, Surefire, … | `<testcase classname name file?>` in `<testsuites>`/`<testsuite>`, nested at any depth | `<failure>` or `<error>` fails, `<skipped>` skips, otherwise passes |
+| `vitest` | `vitest run --reporter=json` (Jest `--json` has the same shape) | `testResults[].name` (the file) + `assertionResults[].ancestorTitles` and `title` | `passed` passes, `failed` fails, `skipped`/`pending`/`todo`/`disabled` skip |
+
+All three parsers stream: a report is read one event, test case or test file at a time. A test
+reported more than once in one report (`-count=2`, a rerun) collapses to one result — failing
+beats passing beats skipped. Malformed input (a truncated JSON event, broken XML, an XML or JSON
+document that is not a report) exits 3 and records nothing.
+
+**Mapping a test to a trace ref.** Each test becomes `{id, format, path, symbol, result,
+durationNs, commit, at}`, where `path#symbol` is spelled exactly as a `Verifies:` marker or a
+`trace.tests` entry spells it (doc 03 §21.7):
+
+- **go** — the import path is mapped to a directory through the module path of the root `go.mod`,
+  else through the longest suffix of the import path that is a directory of the tree (nested
+  modules, vendored copies); the test to the `_test.go` file of that directory declaring the
+  top-level `TestX`. The symbol is the name as `go test` prints it, `TestX/sub_case`.
+- **vitest** — the file the report names; the symbol is `describe > … > it`.
+- **junit** — the `file` attribute (of the test case, else of the nearest suite) when present;
+  else the `classname` read as a Go import path, then as a file path, then as a dotted Python
+  module (`tests.test_mod.TestCase` → `tests/test_mod.py#TestCase.test_x`). The symbol is the
+  test case name, qualified by the class part of the `classname` for a Python file.
+- A relative path is tried under `--base`, then at the root; an absolute path under the root is
+  made relative; any other path (the CI runner's checkout) maps to its **longest suffix** that
+  exists in the tree.
+- **Ambiguity.** When two `_test.go` files of one package declare the same test (build-tagged
+  variants), the first in lexical order wins and the others are listed in `ambiguous`.
+- A test that maps to no file keeps its report-level `id` (`<package or classname or
+  file>#<name>`), counts as `unmapped`, and never matches a trace ref.
+
+**Matching a requirement.** A requirement's linked tests are its `Verifies:` markers and
+`trace.tests` entries (the trace graph, §6.7). A symbol ref takes the result of the same symbol
+and of every symbol it encloses (`TestX` takes `TestX/sub`); with none it falls back to the nearest
+enclosing result (`TestX/sub` takes `TestX`, for a JUnit report without sub-tests). A whole-file
+ref takes every test of the file. Each linked test's outcome is failing over passing over skipped,
+or `missing`; the requirement is `fail` if any linked test failed, `pass` if every one passed,
+`partial` if some passed and the others are skipped or missing, and `untested` otherwise. These
+are raw evidence for the coverage state of doc 03 R-REQ-12, not that state (there is no
+`suspect` here). The command lists every requirement with at least one linked test.
+
+**The test-result cache.** Results go to
+`<index cache dir>/test-results/<hash of the repository root>.json` (§3.2 `index.cacheDir`,
+default the configuration directory), one file per repository on this machine, outside the
+repository and therefore never committed. Each test keeps its **last** result, whatever it was: a
+new result replaces the cached one with the same `path#symbol` (so a JUnit run replaces the
+`go test` run of the same test), or with the same format and `id` when unmapped. The file is
+versioned; a missing, corrupt or other-version file reads as empty and is rebuilt by the next
+ingest — never an error. Deleting it loses only evidence; ingesting the reports again rebuilds it.
+
 ---
 
 ## 5. Local REST API
