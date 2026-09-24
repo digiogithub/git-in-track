@@ -1,0 +1,15 @@
+# Guide
+
+<!-- Implements: GIT-SP-0005.R1 -->
+
+<!--
+Verifies: GIT-SP-0005.R2
+-->
+
+# Implements: GIT-SP-0005.R8
+
+```html
+<!-- Implements: GIT-SP-0005.R9 -->
+```
+
+Some prose about Implements: GIT-SP-0005.R7 in a sentence.

@@ -110,6 +110,17 @@ because a commit list cannot express them.
   (`ACME-SP-0003.R2`) returns only that block and its entry, with `rev`, `blockRev` and
   `specRev`. The verification stamp is readable but not writable from MCP. `gintrack mcp
   --list-tools` now prints nine read-only tools and twenty-seven with `--allow-write`.
+- **Marker scanner for requirement traces** (`GIT-US-0113`, ADR-037 §8, docs/03 §21.7). A new
+  native package `internal/trace` walks a working tree (honoring `.gitignore`, nested ignore
+  files and `.git/info/exclude`; skipping `.git`, `.jj`, `node_modules`, `vendor`, `dist`,
+  `web/dist` and `.pmngr/`) and extracts full-line `Implements:` / `Verifies:` markers in the
+  `//`, `/* */`, `#`, `--` and `<!-- -->` comment syntaxes of the file-type table, one or
+  several refs per line. Each hit records path, line, kind and enclosing symbol (Go through
+  `go/parser`, including literal `t.Run` sub-test names; TS/JS and Python through a line
+  heuristic; other types attach to the whole file). Malformed markers are `W-MARKER-SYNTAX`;
+  refs to a missing spec or block are `W-MARKER-DANGLING`. The result is an in-memory derived
+  cache, rebuilt fully or incrementally from a list of changed paths; it is never written into
+  a spec, and neither `internal/core` nor `internal/vault` imports it. No CLI or MCP surface yet.
 
 ### Changed
 
