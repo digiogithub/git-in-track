@@ -2,7 +2,7 @@
 id: GIT-US-0142
 type: story
 title: Ship JSON Schema files for every item type including spec
-status: backlog
+status: in_review
 priority: medium
 parent: GIT-EP-0022
 milestone: GIT-M-0015
@@ -10,7 +10,7 @@ author: mcp
 labels: [core, docs, agent-ok]
 estimate: 3
 created: 2026-09-24T15:29:50Z
-updated: 2026-09-24T15:29:50Z
+updated: 2026-09-24T22:25:03Z
 links:
   - { kind: blocked_by, target: GIT-US-0105 }
   - { kind: blocked_by, target: GIT-US-0106 }
@@ -24,11 +24,11 @@ Blocked by GIT-US-0105 and GIT-US-0106 (the link kinds must be final).
 
 ## Acceptance Criteria
 
-- [ ] `internal/core/schema/` holds one schema per item type (epic, story, task, milestone, spec), plus project.yaml, generated from or checked against the Go model.
-- [ ] `spec.schema.json` covers the `requirements:` map (`status`, `trace`, `verified`, `links`).
-- [ ] A test fails when the Go model and the schemas drift.
-- [ ] GIT-US-0105's JSON Schema criterion is ticked, referencing this story.
-- [ ] docs/03 §18 matches what ships. `make test`, `make lint` and `make wasm` pass.
+- [x] `internal/core/schema/` holds one schema per item type (epic, story, task, milestone, spec), plus project.yaml, generated from or checked against the Go model.
+- [x] `spec.schema.json` covers the `requirements:` map (`status`, `trace`, `verified`, `links`).
+- [x] A test fails when the Go model and the schemas drift.
+- [x] GIT-US-0105's JSON Schema criterion is ticked, referencing this story.
+- [x] docs/03 §18 matches what ships. `make test`, `make lint` and `make wasm` pass.
 
 ## Notes
 
