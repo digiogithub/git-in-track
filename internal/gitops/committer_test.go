@@ -99,29 +99,44 @@ func TestCommitterCoalescesRapidEdits(t *testing.T) {
 
 func TestCommitterDebounceFires(t *testing.T) {
 	repo := newRepo(t)
-	c, _ := committerFor(t, repo, 20*time.Millisecond, "")
+	backend := open(t, repo, KindGoGit)
+	outcomes := make(chan Outcome, 8)
+	c := NewCommitter(CommitterOptions{
+		// The window must be wide next to the burst below, which is five
+		// in-memory calls: on a machine loaded by parallel test binaries a
+		// burst that interleaves disk writes can outlast a 20ms window, and
+		// then more than one commit is the correct result, not a bug.
+		Debounce: 100 * time.Millisecond,
+		Backend:  func(string) (Backend, bool) { return backend, true },
+		OnResult: func(out Outcome) { outcomes <- out },
+	})
+	t.Cleanup(func() { c.Close(context.Background()) })
 	before := len(log(t, repo))
 
-	for i := range 5 {
-		write(t, repo, "docs/.pmngr/stories/ACME-US-0001-a.md", "revision "+itoa(i)+"\n")
+	path := "docs/.pmngr/stories/ACME-US-0001-a.md"
+	write(t, repo, path, "revision 4\n")
+	for range 5 {
 		c.Enqueue(t.Context(), Change{
 			Repo:   "repo",
-			Paths:  []string{"docs/.pmngr/stories/ACME-US-0001-a.md"},
+			Paths:  []string{path},
 			Fields: Fields{ItemID: "ACME-US-0001", Title: "A", Type: "story"},
 		})
 	}
 
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if c.Pending() == 0 {
-			break
+	// Wait for the commit the timer makes, not for a fixed time: nothing
+	// calls Flush, so an outcome can only come from the debounce firing.
+	select {
+	case out := <-outcomes:
+		if out.Err != nil {
+			t.Fatalf("the debounced commit failed: %v", out.Err)
 		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if c.Pending() != 0 {
+	case <-time.After(30 * time.Second):
 		t.Fatal("the debounce window elapsed but nothing was committed")
 	}
-	// The timer callback may still be finishing; Close waits for it.
+	if c.Pending() != 0 {
+		t.Fatal("a batch is still pending after its commit")
+	}
+	// Close waits for anything still in flight, so the count below is final.
 	c.Close(context.Background())
 
 	if made := len(log(t, repo)) - before; made != 1 {
@@ -360,5 +375,65 @@ func TestCloseWaitsForACommitInFlight(t *testing.T) {
 	<-closed
 	if backend.writing.Load() {
 		t.Error("Close returned while the backend was still writing")
+	}
+}
+
+// overlapBackend records how many commits run at once. The first commit it
+// sees blocks until released, which holds the window in which a second,
+// concurrent commit would show up open for as long as the test needs.
+type overlapBackend struct {
+	stubBackend
+	entered chan string
+	release chan struct{}
+	active  atomic.Int32
+	overlap atomic.Bool
+}
+
+// Commit reports the overlap, announces itself, and blocks until released.
+func (b *overlapBackend) Commit(_ context.Context, req CommitRequest) (CommitResult, error) {
+	if b.active.Add(1) > 1 {
+		b.overlap.Store(true)
+	}
+	defer b.active.Add(-1)
+	b.entered <- req.Paths[0]
+	<-b.release
+	return CommitResult{SHA: "0123456789abcdef", Subject: "committed"}, nil
+}
+
+// TestCommitterSerializesCommitsToOneRepository is the regression test of
+// GIT-US-0145. Two items edited together have two debounce timers, and both
+// fire on their own goroutine. Committing both at once drives one backend —
+// one go-git Repository, which is not safe for concurrent use — from two
+// goroutines: the race detector reported the object storage being read and
+// rewritten at the same time, and go-git could dereference a cache the other
+// commit had just reset. A second commit must wait for the first.
+func TestCommitterSerializesCommitsToOneRepository(t *testing.T) {
+	backend := &overlapBackend{entered: make(chan string, 2), release: make(chan struct{})}
+	c := NewCommitter(CommitterOptions{
+		Debounce: time.Millisecond,
+		Backend:  func(string) (Backend, bool) { return backend, true },
+	})
+	c.Enqueue(t.Context(), Change{Repo: "repo", Paths: []string{"docs/a.md"}, Fields: Fields{ItemID: "ACME-T-1", Title: "A"}})
+	first := <-backend.entered
+	c.Enqueue(t.Context(), Change{Repo: "repo", Paths: []string{"docs/b.md"}, Fields: Fields{ItemID: "ACME-T-2", Title: "B"}})
+
+	// The second timer fires after a millisecond; give it ample time to start
+	// a commit it must not start.
+	select {
+	case second := <-backend.entered:
+		t.Errorf("%s was committed while %s was still being written", second, first)
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(backend.release)
+	c.Close(context.Background())
+	if backend.overlap.Load() {
+		t.Error("two commits ran against the same repository at once")
+	}
+	if first != "docs/a.md" {
+		t.Errorf("first commit = %s, want docs/a.md", first)
+	}
+	// The release let the held-back commit through; Close waited for it.
+	if got := len(backend.entered); got != 1 {
+		t.Errorf("%d further commits after the release, want 1", got)
 	}
 }

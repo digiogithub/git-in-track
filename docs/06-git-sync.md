@@ -173,6 +173,15 @@ report success while `git` was still writing into `.git`, and a process that
 exits — or a sync run that carries on — right after an explicit commit would
 race it.
 
+**Commits to one repository never overlap.** Every batch has its own debounce
+timer, so two items edited together reach the end of their windows on two
+goroutines at once, and a flush may start while a timer's commit is running. The
+committer runs the commits of one repository one at a time (commits to different
+repositories still proceed in parallel): the in-process backend drives a single
+go-git repository, which is not safe for concurrent use, and two `git commit`
+processes would contend for one `index.lock`. A timer that fires just as a later
+edit re-arms its batch does nothing — only the batch's current timer commits it.
+
 Author selection: empty `authorName`/`authorEmail` uses the repo's
 `user.name`/`user.email`
 (companion: resolved by go-git's config chain; browser: read from
