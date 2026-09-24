@@ -232,6 +232,20 @@ because a commit list cannot express them.
   renderer for the MCP tool, the CLI and the HTTP API; the typical-PR fixture is ≈ 775 tokens as
   JSON and ≈ 475 as text (golden tests). See [docs/03-data-model.md](docs/03-data-model.md)
   §21.11 and [docs/08-mcp-server.md](docs/08-mcp-server.md) §4.21.
+- **Spec-driven MCP tools (`GIT-US-0124`, docs/08 §4.21).** Three new tools close the agent's
+  loop after a code change. `spec_impact` (read) returns the token-budgeted impact report of a
+  diff (`base`, `head` or the working tree, `story`, `tiers`, `budget`, `cursor`, `format`);
+  without Pando its tiers 2–3 say `unavailable` while tier 1 answers, and a session without git
+  history refuses with `unavailable` naming the fallback. `trace_requirement` (read) returns one
+  requirement's code, tests, stories and broken `trace:` entries, each edge with its origin —
+  `marker`, `trace` or both — and its marker lines. `verify_requirement` (write) stamps
+  `verified` on one requirement under its requirement rev only when every linked test passed
+  at one commit in the latest ingested results; otherwise it writes nothing and refuses with
+  `not_verified`, the reason and the failing or missing tests, and a stale rev is
+  `stale_revision` like `update_requirement`. `requirement.stamp` accepts a `rev` for this.
+  `gintrack mcp` over stdio now installs the same trace, coverage and impact backends as the
+  companion (`server.InstallTraceSeams`), so all three work there too. `gintrack mcp
+  --list-tools` now prints eleven read-only tools and thirty with `--allow-write`.
 
 ### Changed
 

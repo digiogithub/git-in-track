@@ -16,6 +16,7 @@ import (
 var readTools = []string{
 	"get_item", "get_kb_page", "list_inbox", "list_items", "list_kb_pages",
 	"list_requirements", "search_items", "search_kb", "search_semantic",
+	"spec_impact", "trace_requirement",
 }
 
 // writeTools is what enabling writes adds.
@@ -24,6 +25,7 @@ var writeTools = []string{
 	"create_requirement", "create_spec", "create_story", "create_task", "import_youtrack_issues", "move_on_board",
 	"publish_kb_page_to_youtrack", "push_comment_to_youtrack", "sync_kb_page_from_youtrack",
 	"transfer_sprint_items", "triage_inbox_item", "update_item", "update_requirement",
+	"verify_requirement",
 }
 
 func TestToolSurface(t *testing.T) {

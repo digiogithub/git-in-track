@@ -2512,9 +2512,9 @@ Two hashes per requirement, both `"sha256:" + lowercase_hex(sha256(x))[0:16]` li
 
 ### 21.6 Verification and coverage
 
-- **R-REQ-11 Verification cache.** Every `gintrack spec verify` run and MCP `verify_requirement`
-  call records its results in a local, derived **verification cache** and writes nothing into the
-  spec. One entry per requirement per run holds `ref`, `rev` (the block rev tested), `commit` (full
+- **R-REQ-11 Verification cache.** Every `gintrack spec verify` run records its results in a
+  local, derived **verification cache** and writes nothing into the spec (MCP
+  `verify_requirement` runs no tests: it only promotes that evidence, R-REQ-11a (c)). One entry per requirement per run holds `ref`, `rev` (the block rev tested), `commit` (full
   hex id of `HEAD`), `tests` (the test ids run: `Verifies:` markers ∪ `trace.tests`), `result`
   (`pass`|`fail`), `at` (UTC RFC 3339) and `by`. A run is `pass` only if every linked test passed
   and the traced files are unchanged in the working tree relative to `commit`; a run on a dirty
@@ -2529,8 +2529,11 @@ Two hashes per requirement, both `"sha256:" + lowercase_hex(sha256(x))[0:16]` li
   requirement's current (post-apply) block rev; with no such entry no stamp is written, the move
   is not refused, and the result lists the unstamped requirements — or (b) by
   `gintrack spec verify --commit`, intended for CI on `main`, which stamps every requirement whose
-  run passed (one write per spec, quoting requirement revs; the caller commits). A `fail` never
-  overwrites a stamp. A hand-written stamp means what its author says.
+  run passed (one write per spec, quoting requirement revs; the caller commits), or (c) by the MCP
+  tool `verify_requirement` (`GIT-US-0124`) for one requirement, under the requirement rev the
+  agent read, when every linked test passed at one commit in the latest ingested results on the
+  current block rev — otherwise it writes nothing and refuses with the failing or missing tests. A
+  `fail` never overwrites a stamp. A hand-written stamp means what its author says.
 - **R-REQ-12 Coverage.** The coverage state — `untested`, `passing`, `failing`, `suspect` — is
   **computed, never stored**, from the cache first and the stamp as the durable baseline. The
   evidence is the most recent cache entry whose `rev` equals the current block rev and whose `at`
