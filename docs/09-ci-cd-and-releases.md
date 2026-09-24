@@ -146,6 +146,14 @@ never fails the gate. Tier 3 (semantic candidates) is not requested: candidates 
 (`web/node_modules`). `SPEC_TIERS`, `SPEC_FAIL_ON`, `SPEC_BUDGET` and `SPEC_DIR` override the
 script's defaults for experiments; CI uses the defaults.
 
+**Before every push** the same gate can run as a git `pre-push` hook: `gintrack spec hook
+install` (docs/07 §4.21, `GIT-US-0134`) writes one that runs `gintrack spec impact --since
+<upstream> --head <pushed commit> --tiers 1,2 --fail-on failing,suspect` for each pushed branch
+and refuses the push on any non-zero exit. It mirrors this job minus the test run: it reads the
+results already ingested, so run `make spec-check` (or the suites and `gintrack spec ingest`)
+first. In a Jujutsu repository, where `jj git push` runs no hooks, the command prints an
+equivalent `jj` alias instead.
+
 **When the gate trips.** A `failing` requirement is fixed, not acknowledged: fix the code or the
 test, or — when the requirement itself is wrong — change it. A `suspect` one passed before but
 has not been re-verified since the change (docs/03 R-REQ-12a, R-IMP-5). `suspect` means

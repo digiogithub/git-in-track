@@ -32,6 +32,7 @@ func newSpecCommand(flags *globalFlags) *cobra.Command {
 		newSpecCoverageCommand(flags),
 		newSpecVerifyCommand(flags),
 		newSpecTraceCommand(flags),
+		newSpecHookCommand(flags),
 	)
 	return cmd
 }

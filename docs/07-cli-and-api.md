@@ -1888,7 +1888,7 @@ test-result cache is the raw per-test input, the verification cache the per-requ
 > uses (`server.InstallSemanticSearch`) and hand them to the impact seam, so with
 > `search.pando.mcpUrl` configured impact tiers 2 and 3 answer; without it they report
 > `unavailable` and tier 1 still answers. The CI gate (`GIT-US-0133`: `make spec-check` and the
-> `spec-impact` job of `ci.yml`, docs/09 §2) and the pre-push hook (`GIT-US-0134`) build on
+> `spec-impact` job of `ci.yml`, docs/09 §2) and the pre-push hook (`GIT-US-0134`, §4.21) build on
 > `spec impact --fail-on`.
 
 Every command takes `--json`: the payload goes to stdout, human notes to stderr.
@@ -2005,6 +2005,89 @@ comment) or `trace` (a `trace:` entry of the spec), or both — and the marker l
 and tasks that implement or modify it; and the `trace:` entries that no longer resolve.
 `--json` prints the `trace.requirement` answer. Exit `0`, `2` for a malformed ref, `4` for an
 unknown requirement.
+
+### 4.21 `gintrack spec hook install|uninstall`
+
+> **Implemented** by `GIT-US-0134`. Native only. The local face of the CI gate (docs/09 §2): a
+> git `pre-push` hook that runs `gintrack spec impact --fail-on failing,suspect` (§4.20) on the
+> commits being pushed and refuses the push when it trips. Hook discovery and the managed-file
+> rules live in `internal/gitops` (`HooksDir`, `InstallHook`, `UninstallHook`); the command
+> renders the script and reports.
+
+```bash
+gintrack spec hook install                  # .git/hooks/pre-push, or under core.hooksPath
+gintrack spec hook install --project ACME   # the key spec impact needs with several projects
+gintrack spec hook install --force          # back up a foreign pre-push hook, then replace it
+gintrack spec hook uninstall                # remove it, restoring the backup if there is one
+```
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--hook <name>` | `pre-push` | the hook to manage; `pre-push` is the only one — a `pre-commit` gate would run on an uncommitted tree, where every touched requirement is `suspect` |
+| `--repo <path>` | `.` | repository whose hook to manage; its working-tree root is found upwards |
+| `--project <KEY>` | | install only: passed to `spec impact --project`, required when the workspace holds more than one project |
+| `--force` | | install only: move a hook gintrack did not write to `<hook>.gintrack-backup`, then write ours |
+| `--dry-run` | | decide everything, write nothing (`would be installed`, `would be removed`) |
+| `--json` | | print `{repo, vcs, hook, backend, dir, result: {path, action, backup?, dryRun?}}`; for a jj repository `{…, skipped, equivalent}` instead of `result` |
+
+**Where the hook goes.** The folder `git rev-parse --git-path hooks` names: `core.hooksPath`
+when it is set (relative to the working-tree root, `~` expanded), else the `hooks` folder of the
+common git directory, so a linked worktree shares its main worktree's hooks. With the system git
+backend the command asks git itself; with go-git it reads the repository and global
+configuration the same way. `git.backend` in the configuration picks the backend (§3), `auto`
+by default. A missing folder is created.
+
+**What it writes.** A POSIX `sh` script, mode `0755`, whose second line is the marker
+`# installed by gintrack spec hook (pre-push)`. For every ref git pushes (deletions are skipped)
+it runs
+
+```bash
+gintrack spec impact --since <upstream> --head <pushed commit> --tiers 1,2 --fail-on failing,suspect
+```
+
+— the tiers and states `make spec-check` gates on in CI. `<upstream>` is the pushed branch's
+`@{upstream}`, falling back to `origin/main`; `GINTRACK_HOOK_SINCE` in the environment overrides
+it (e.g. `origin/main` for a feature branch that tracks itself on the remote). `GINTRACK` names
+the binary, `gintrack` on `PATH` by default; when it is not found the hook fails rather than
+silently letting the push through. Any non-zero exit refuses the push — `7` when a requirement
+is `failing` or `suspect`, anything else when the gate could not run (an unknown base, no
+repository registered with `gintrack add`) — and `git push --no-verify` skips it once.
+
+**It runs no tests.** Unlike `make spec-check`, the hook only reads the results already recorded
+in the test-result cache. Run `make spec-check` before pushing, or run the suites with
+machine-readable output and `gintrack spec ingest` them (§4.19) at the commit being pushed:
+results ingested at an older commit leave a touched requirement `suspect` (docs/09 §2, "When the
+gate trips").
+
+**Foreign hooks.** A hook without the marker is never overwritten or removed. Install refuses
+it with exit `5` unless `--force`, which renames it to `<hook>.gintrack-backup` first (and
+refuses with `5` when a backup is already there); uninstall of a foreign hook exits `5` and
+leaves it alone. Reinstalling our own hook rewrites it (`updated`) or reports `unchanged`, so
+install is idempotent. Uninstall removes only our hook and moves a backup back (`restored`);
+with no hook it reports `absent` and exits `0`.
+
+**Jujutsu.** `jj git push` does not run git hooks, and a git hook in a colocated repository
+would only fire for a plain `git push`, which a jj repository should not use. In a jj
+repository (colocated or not) the command writes nothing, exits `0` and prints the equivalent,
+a repository alias to add with `jj config edit --repo`:
+
+```toml
+[aliases]
+push-gated = ["util", "exec", "--", "sh", "-c", """
+gintrack spec impact --since "${GINTRACK_HOOK_SINCE:-origin/main}" --tiers 1,2 --fail-on failing,suspect && jj git push "$@"
+""", "jj-push-gated"]
+```
+
+`jj push-gated --bookmark <name>` then gates and pushes; the working-copy head is diffed, so
+ingest the results at `@-` after `jj commit`.
+
+**Windows.** Git for Windows runs hooks with its bundled `sh`, so the script works there
+unchanged; `gintrack` (or `gintrack.exe`) must be on the `PATH` that shell sees, or named with
+`GINTRACK`. The executable bit is not needed on NTFS.
+
+**Exit codes**: `0` installed, updated, unchanged, removed, restored, absent, or a jj
+repository; `2` for an unknown `--hook` or a `--project` that is not a key; `5` for a foreign
+hook (or a backup) in the way; `6` when the path is not inside a git working tree.
 
 ---
 
