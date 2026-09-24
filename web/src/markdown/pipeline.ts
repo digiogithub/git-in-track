@@ -35,7 +35,11 @@ import { unified } from 'unified';
 import { rehypeResolveAssets } from '@/markdown/assets';
 import { remarkCallout } from '@/markdown/callout';
 import { hasHighlightableCode } from '@/markdown/code';
-import { collectHeadings, rehypeHeadingAnchors } from '@/markdown/headings';
+import {
+  collectHeadings,
+  rehypeHeadingAnchors,
+  rehypeRequirementAnchors,
+} from '@/markdown/headings';
 import { rehypeMermaid } from '@/markdown/mermaid';
 import { kbSanitizeSchema } from '@/markdown/sanitize';
 import { rehypeSourceLines } from '@/markdown/source-lines';
@@ -126,6 +130,7 @@ export async function renderMarkdown(
     .use(remarkCallout)
     .use(remarkRehype, { allowDangerousHtml: false })
     .use(rehypeSlug)
+    .use(rehypeRequirementAnchors)
     .use(rehypeHeadingAnchors)
     .use(rehypeMermaid, mermaid)
     .use(rehypeTaskList)

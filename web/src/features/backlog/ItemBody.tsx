@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 
 import { FeatureLink } from '@/features/backlog/FeatureLink';
 import {
@@ -65,6 +65,18 @@ export function ItemBody({
   );
 
   const markdown = useMarkdown(body, options);
+
+  // A deep link such as `#acme-sp-0003-r2` (a requirement row on the specs
+  // page) names an anchor that only exists once the body has rendered, which
+  // is after the router's own hash scroll ran.
+  const rendered = markdown.result !== null;
+  useEffect(() => {
+    if (!rendered || typeof window === 'undefined') return;
+    const hash = decodeURIComponent(window.location.hash.slice(1));
+    if (hash === '') return;
+    const target = document.getElementById(hash);
+    if (target && typeof target.scrollIntoView === 'function') target.scrollIntoView();
+  }, [rendered]);
 
   if (body.trim().length === 0) {
     return <p className="empty-state">This item has no body yet.</p>;

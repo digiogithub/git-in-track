@@ -15,4 +15,8 @@ describe('the route tree', () => {
 
     expect(agent).toHaveLength(1);
   });
+
+  it('registers the specs page under the project (story GIT-US-0128)', () => {
+    expect(paths(routeTree as unknown as TreeNode)).toContain('specs');
+  });
 });

@@ -71,6 +71,9 @@ export function FrontMatterForm({
   const customFields = customFieldsFor(schema, type);
   const parents = parentTypes(type);
   const estimateSuggestions = schema.estimation.values;
+  // A spec is a living description, not scheduled work: it has no milestone,
+  // estimate or due date (docs/03-data-model.md §21.1).
+  const scheduled = type !== 'spec';
 
   const applyRaw = (text: string) => {
     setRawText(text);
@@ -223,7 +226,7 @@ export function FrontMatterForm({
             </div>
           ) : null}
 
-          {type !== 'milestone' ? (
+          {type !== 'milestone' && scheduled ? (
             <div>
               <Label htmlFor="fm-milestone">Milestone</Label>
               <ItemPicker
@@ -270,43 +273,47 @@ export function FrontMatterForm({
             <FieldIssue diagnostics={diagnostics} field="labels" />
           </div>
 
-          <div>
-            <Label htmlFor="fm-estimate">Estimate</Label>
-            <Input
-              id="fm-estimate"
-              type="number"
-              inputMode="decimal"
-              list="estimate-scale"
-              value={values.estimate === null ? '' : String(values.estimate)}
-              disabled={disabled}
-              onChange={(event) => {
-                const next = event.target.value;
-                patch({ estimate: next === '' ? null : Number(next) });
-              }}
-            />
-            {estimateSuggestions.length > 0 ? (
-              <datalist id="estimate-scale">
-                {estimateSuggestions.map((value) => (
-                  <option key={value} value={value} />
-                ))}
-              </datalist>
-            ) : null}
-            <FieldIssue diagnostics={diagnostics} field="estimate" />
-          </div>
+          {scheduled ? (
+            <>
+              <div>
+                <Label htmlFor="fm-estimate">Estimate</Label>
+                <Input
+                  id="fm-estimate"
+                  type="number"
+                  inputMode="decimal"
+                  list="estimate-scale"
+                  value={values.estimate === null ? '' : String(values.estimate)}
+                  disabled={disabled}
+                  onChange={(event) => {
+                    const next = event.target.value;
+                    patch({ estimate: next === '' ? null : Number(next) });
+                  }}
+                />
+                {estimateSuggestions.length > 0 ? (
+                  <datalist id="estimate-scale">
+                    {estimateSuggestions.map((value) => (
+                      <option key={value} value={value} />
+                    ))}
+                  </datalist>
+                ) : null}
+                <FieldIssue diagnostics={diagnostics} field="estimate" />
+              </div>
 
-          <div>
-            <Label htmlFor="fm-due">Due</Label>
-            <Input
-              id="fm-due"
-              type="date"
-              value={values.due ?? ''}
-              disabled={disabled}
-              onChange={(event) => {
-                patch({ due: event.target.value === '' ? null : event.target.value });
-              }}
-            />
-            <FieldIssue diagnostics={diagnostics} field="due" />
-          </div>
+              <div>
+                <Label htmlFor="fm-due">Due</Label>
+                <Input
+                  id="fm-due"
+                  type="date"
+                  value={values.due ?? ''}
+                  disabled={disabled}
+                  onChange={(event) => {
+                    patch({ due: event.target.value === '' ? null : event.target.value });
+                  }}
+                />
+                <FieldIssue diagnostics={diagnostics} field="due" />
+              </div>
+            </>
+          ) : null}
 
           <div className="md:col-span-2">
             <Label>Links</Label>

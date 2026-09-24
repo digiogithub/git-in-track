@@ -79,6 +79,21 @@ describe('headings', () => {
   });
 });
 
+describe('requirement anchors', () => {
+  it('anchors a requirement heading on its ref, not on its slug', async () => {
+    const result = await renderMarkdown(
+      '## Requirements\n\n### ACME-SP-0003.R2 — Allocate the next ID\n\nWHEN x, the y SHALL z.\n\n### Plain heading',
+      { highlight: false },
+    );
+    expect(result.headings).toEqual([
+      { depth: 2, id: 'requirements', text: 'Requirements' },
+      { depth: 3, id: 'acme-sp-0003-r2', text: 'ACME-SP-0003.R2 — Allocate the next ID' },
+      { depth: 3, id: 'plain-heading', text: 'Plain heading' },
+    ]);
+    expect(toHtml(result.root)).toContain('<a href="#acme-sp-0003-r2" class="heading-anchor"');
+  });
+});
+
 describe('sanitisation', () => {
   it('drops raw script tags', async () => {
     const out = await html('<script>alert(1)</script>\n\nSafe.');

@@ -46,6 +46,18 @@ describe('NewItemPage', () => {
     );
   });
 
+  it('opens a spec with the spec template and no scheduling fields', async () => {
+    renderEditorRoute('/p/ACME/items/new?type=spec', provider);
+
+    expect(await screen.findByLabelText('Type')).toHaveValue('spec');
+    expect(screen.getByLabelText<HTMLTextAreaElement>('Item body').value).toBe(
+      '## Purpose\n\n\n\n## Scope\n\n\n\n## Requirements\n\n',
+    );
+    expect(screen.queryByLabelText('Milestone')).toBeNull();
+    expect(screen.queryByLabelText('Estimate')).toBeNull();
+    expect(screen.queryByLabelText('Due')).toBeNull();
+  });
+
   it('uses the story template and creates the item, then opens its detail page', async () => {
     const user = userEvent.setup();
     const create = vi.spyOn(provider, 'createItem');

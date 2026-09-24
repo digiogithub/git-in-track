@@ -57,6 +57,7 @@ web/
       search/                  # shared search hit rows, the Ctrl+Shift+F project overlay
       sync/                    # sync panel, conflicts, credentials, git log, job queue
       settings/                # workspace, repos, appearance, agents/MCP status, YouTrack
+      specs/                   # specs and requirement rows, coverage badges (ADR-037)
       workspace/               # the landing surface and the add-repository wizard
       youtrack/                # the import dialog and its query bar
     core-bridge/               # WASM worker client (browser-only mode)
@@ -145,6 +146,7 @@ state is shareable by URL and survives reloads.
   /p/$projectKey/epics                      EpicTree
   /p/$projectKey/milestones                 MilestoneList
   /p/$projectKey/milestones/$milestoneId    MilestoneDetail
+  /p/$projectKey/specs                      SpecsPage     (as built, ?status= &coverage=)
   /p/$projectKey/graph                      LinkGraph (Phase 6)
 /team/$teamId                            TeamLayout
   /team/$teamId/kb/*                        TeamKbViewer
@@ -349,6 +351,32 @@ progress bar, item count by status, overdue highlight, and a burnup sparkline
 (Phase 6). Detail view lists member items with the same table component as
 ItemTable, pre-filtered. The header creates a milestone, and each card creates a
 story already filed under it (§8.1).
+
+**SpecsPage (`/p/$projectKey/specs`, as built, story GIT-US-0128, ADR-037)** — Every spec of the
+project as a collapsible group (title, id linking to the spec, its status, its requirement count)
+and every requirement as a **row of its own** (decision 1 of ADR-037): its ref, its title, its
+workflow status and a coverage badge — `untested`, `passing`, `failing` or `suspect`, computed by
+`listCoverage` (doc 03 §21.6); a requirement the coverage answer does not name is `untested`. The
+badge always spells the state out; colour and icon only reinforce it. The sidebar lists a
+*`<KEY>` specs* entry under every project. Two chip rows filter by requirement status and by
+coverage; both live in the URL as comma-separated lists (`?status=todo,in_progress&coverage=failing`,
+`features/specs/search.ts`), and a filter hides the specs none of whose requirements match. The
+ref deep-links to the requirement's block anchor in the spec's detail view
+(`/p/$projectKey/items/<SPEC-ID>#acme-sp-0003-r2`, R-REQ-7): the Markdown pipeline gives every
+`### <REF> — <title>` heading that anchor as its id (§7), and the item body scrolls to the hash
+once it has rendered. **Browser-only mode:** `listCoverage` answers `unavailable`, so every badge
+reads `unavailable`, a notice carries the provider's hint to run `gintrack serve`, the coverage
+chips are disabled and a coverage filter in the URL is ignored rather than emptying the list — the
+specs, requirements, status filter and create actions work unchanged. **Creating:** the header's
+*New spec* opens the shared editor with `type=spec` (§8.1), whose template is `## Purpose`,
+`## Scope` and an empty `## Requirements`, and which hides milestone, estimate and due (a spec is
+not scheduled work, doc 03 §21.1). Each spec's *Add requirement* opens a dialog with a title and
+the block text prefilled with the EARS template (a `WHEN …, the … SHALL …` statement and one
+`#### Scenario:`) and calls `createRequirement`, so the core allocates `R<n>` and writes the
+heading. Both actions are absent in a read-only workspace. Every query key sits under
+`['items', <key>, 'specs', …]`, so the `items` change a requirement write or a spec edit emits
+refetches the page. The requirement detail, the coverage matrix and the impact view arrive as
+`specs/…` routes with GIT-US-0129 to GIT-US-0131.
 
 **BoardView (`/team/$teamId/boards/$boardSlug`)** — §9. Columns from the board
 file, cards resolved from every configured project. Kanban and Scrum share the
@@ -852,8 +880,10 @@ spec edited on disk (the watcher's `item.changed`), so a spec, requirement, cove
 view refetches on the spec id. `unavailable` is a `ProviderErrorCode` of its own: the runtime
 has no tracer, test results or git history for the answer — browser-only mode for trace,
 coverage and impact, and the companion for impact on a repository without history. A view
-renders it as a state with a hint to run the companion, never as an error. The spec screens that
-consume these members arrive with GIT-US-0128 to GIT-US-0131.
+renders it as a state with a hint to run the companion, never as an error. The specs page
+(GIT-US-0128, §3.1) consumes `listSpecs`, `listRequirements`, `listCoverage` and
+`createRequirement`; the requirement detail, coverage matrix and impact screens that consume the
+rest arrive with GIT-US-0129 to GIT-US-0131.
 
 `Capabilities` is what the UI branches on — never `kind`:
 
@@ -1218,6 +1248,11 @@ frontend does not re-implement it. Resolved links become router `<Link>`s to
 `.pmngr` file) render as an `ItemChip` with live status from the index.
 Unresolved links get `data-unresolved` styling and a "Create page" affordance.
 
+**Requirement anchors (GIT-US-0128).** `rehype-slug` ids every heading with its GitHub slug, then
+`rehypeRequirementAnchors` replaces the id of a level-3 heading that starts with a requirement ref
+(`### ACME-SP-0003.R2 — …`) with the block anchor of doc 03 R-REQ-7 (`acme-sp-0003-r2`), so a
+search hit, a specs-page row or a wikilink anchor lands on the block.
+
 **Images and assets.** `rehypeResolveAssets` rewrites repo-relative `src` values
 to a sentinel; a React `<RepoImage>` component asks the provider for the bytes.
 Browser mode: `URL.createObjectURL(blob)` with a per-page revocation registry on
@@ -1274,7 +1309,7 @@ CodeMirror 6, wrapped in `src/editor/`.
 
 **Status: implemented** (GIT-US-0033). There is exactly one create implementation,
 `features/editor/NewItemPage` at `/p/$projectKey/items/new`. It creates any of the
-four editable types — epic, story, task, milestone — and its draft goes through
+five editable types — epic, story, task, milestone, spec — and its draft goes through
 `provider.createItem` → `item.create`, so the core allocates the id and validates
 the draft exactly as it does for an agent writing over MCP.
 
@@ -1292,6 +1327,7 @@ is an owning item and `milestone` when it is a milestone.
 | EpicTree, on a story | New task | `type=task&parent=<story>` |
 | MilestoneList header | New milestone | `type=milestone` |
 | MilestoneList, on a milestone | New story | `type=story&milestone=<milestone>` |
+| SpecsPage header | New spec | `type=spec` |
 | ItemDetail, children panel of an epic | New story | `type=story&parent=<epic>` |
 | ItemDetail, children panel of a story | New task | `type=task&parent=<story>` |
 

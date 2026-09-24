@@ -315,6 +315,16 @@ because a commit list cannot express them.
   annotation per offending requirement. There is no Pando in CI, so tier 2 reports
   `unavailable` and tier 1 decides. `make spec-check SPEC_BASE=<ref>` runs the same gate
   locally; a repository without specs passes it with 0 hits.
+- **Specs page in the web app** (`GIT-US-0128`, docs/05 §3.1). `/p/$project/specs`, with a
+  *`<KEY>` specs* sidebar entry, lists every spec as a collapsible group and every requirement as
+  its own row: ref, title, workflow status and a coverage badge (`untested`, `passing`,
+  `failing`, `suspect`, or `unavailable` in browser-only mode, where the rest of the page works
+  unchanged). Status and coverage filters live in the URL (`?status=&coverage=`). A row's ref
+  deep-links to the requirement's block anchor in the spec view: the Markdown pipeline now ids
+  every `### <REF> — <title>` heading with its anchor (`#acme-sp-0003-r2`). *New spec* opens the
+  shared editor with a `spec` template (`## Purpose`, `## Scope`, `## Requirements`; no
+  milestone, estimate or due), and *Add requirement* appends a block from an EARS template
+  through `createRequirement`, so the core allocates `R<n>`.
 
 ### Changed
 

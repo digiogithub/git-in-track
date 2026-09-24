@@ -18,6 +18,32 @@ const HEADINGS = new Set(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']);
 /** `mdast-util-to-hast` labels the footnote section; it is not page structure. */
 const GENERATED_IDS = new Set(['footnote-label']);
 
+/**
+ * A requirement heading, `### ACME-SP-0003.R2 — Title` (docs/03-data-model.md
+ * §21.2). The separator is not checked: the ref alone decides the anchor.
+ */
+const REQUIREMENT_HEADING = /^([A-Z][A-Z0-9_]*-SP-\d+\.R\d+)(?=\s|$)/;
+
+/** The block anchor of a requirement ref (R-REQ-7): lower-cased, `.` → `-`. */
+export function requirementAnchor(ref: string): string {
+  return ref.toLowerCase().replace('.', '-');
+}
+
+/**
+ * Gives every requirement heading its block anchor as its id instead of the
+ * github-slugger slug, so `#acme-sp-0003-r2` — what search hits, the specs page
+ * and wikilinks point at — lands on the block. Runs after `rehype-slug`.
+ */
+export const rehypeRequirementAnchors: Plugin<[], Root> = () => (tree: Root) => {
+  visit(tree, 'element', (node: Element) => {
+    if (node.tagName !== 'h3') return;
+    const match = REQUIREMENT_HEADING.exec(textContent(node).trim());
+    if (!match?.[1]) return;
+    node.properties ??= {};
+    node.properties['id'] = requirementAnchor(match[1]);
+  });
+};
+
 export const rehypeHeadingAnchors: Plugin<[], Root> = () => (tree: Root) => {
   visit(tree, 'element', (node: Element) => {
     if (!HEADINGS.has(node.tagName)) return;
