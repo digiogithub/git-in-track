@@ -12,9 +12,13 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
 import { DataProviderProvider } from '@/api/DataProviderProvider';
-import { FakeProvider, sampleItems } from '@/api/fake-provider';
+import { FakeProvider, sampleItems, sampleProject } from '@/api/fake-provider';
 import type { ImpactResult } from '@/api/provider';
-import { BROWSER_SPEC_ANALYSIS_REASON } from '@/api/provider';
+import {
+  BROWSER_GIT_REFS_REASON,
+  BROWSER_SPEC_ANALYSIS_REASON,
+  ProviderError,
+} from '@/api/provider';
 import { ToastProvider } from '@/components/ui/toast';
 import { validateImpactSearch } from '@/features/specs/impact';
 import { ImpactView } from '@/features/specs/ImpactView';
@@ -59,11 +63,19 @@ const impact: ImpactResult = {
   ],
 };
 
-function renderImpact(path: string, analysis: { impact?: ImpactResult } | null = { impact }) {
+function renderImpact(
+  path: string,
+  analysis: { impact?: ImpactResult } | null = { impact },
+  setup?: (provider: FakeProvider) => void,
+) {
   const provider = new FakeProvider({
     items: sampleItems,
+    projects: [{ ...sampleProject, vaultId: 'repo-1' }],
     ...(analysis ? { specAnalysis: analysis } : {}),
   });
+  // A companion: the ref pickers only load where git answers at all.
+  Object.assign(provider.capabilities, { git: true });
+  setup?.(provider);
   const spy = vi.spyOn(provider, 'queryImpact');
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -107,7 +119,7 @@ function renderImpact(path: string, analysis: { impact?: ImpactResult } | null =
       </DataProviderProvider>
     </QueryClientProvider>,
   );
-  return { router, spy };
+  return { router, spy, provider };
 }
 
 function tier(n: 1 | 2 | 3): HTMLElement {
@@ -120,6 +132,23 @@ function hit(ref: string): HTMLElement {
   const row = document.querySelector(`li[data-ref="${ref}"]`);
   if (!(row instanceof HTMLElement)) throw new Error(`no hit ${ref}`);
   return row;
+}
+
+/** The values a picker's datalist offers, in order. */
+function options(label: 'Base' | 'Head'): string[] {
+  return datalistOf(label).map((option) => option.value);
+}
+
+/** The label of one offered value. */
+function optionLabel(label: 'Base' | 'Head', value: string): string | undefined {
+  return datalistOf(label).find((option) => option.value === value)?.label;
+}
+
+function datalistOf(label: 'Base' | 'Head'): HTMLOptionElement[] {
+  const input = screen.getByLabelText(label);
+  const list = document.getElementById(input.getAttribute('list') ?? '');
+  if (!list) throw new Error(`no datalist for ${label}`);
+  return [...list.querySelectorAll('option')];
 }
 
 describe('ImpactView', () => {
@@ -204,6 +233,57 @@ describe('ImpactView', () => {
     await waitFor(() => expect(router.state.location.search).toEqual({ base: 'release' }));
     await screen.findByText('release..worktree');
     expect(spy).toHaveBeenLastCalledWith('ACME', { base: 'release' });
+  });
+
+  it('offers the branches and recent commits of the ref listing in both pickers', async () => {
+    const { provider } = renderImpact('/p/ACME/specs/impact');
+    const refs = vi.spyOn(provider, 'listGitRefs');
+    await screen.findByText('main..worktree');
+
+    await waitFor(() => expect(options('Base')).toContain('origin/main'));
+    expect(refs).toHaveBeenCalledWith('repo-1', { limit: 20 });
+    const base = options('Base');
+    expect(base[0]).toBe('main');
+    expect(base).toContain('c0ffee000000');
+    // The sync status names the upstream; the listing adds every other branch.
+    expect(optionLabel('Base', 'origin/main')).toBe('upstream');
+    expect(optionLabel('Head', 'c0ffee000000')).toBe('feat: second · 2026-09-02');
+    const head = options('Head');
+    expect(head[0]).toBe('worktree');
+    // The listing replaces the HEAD~n guesses of the fallback.
+    expect(head).not.toContain('HEAD~1');
+  });
+
+  it('applies a picked commit and still accepts a ref typed by hand', async () => {
+    const { router, spy } = renderImpact('/p/ACME/specs/impact');
+    await waitFor(() => expect(options('Base')).toContain('c0ffee000000'));
+
+    const user = userEvent.setup();
+    await user.clear(screen.getByLabelText('Base'));
+    await user.type(screen.getByLabelText('Base'), 'c0ffee000000');
+    await user.click(screen.getByRole('button', { name: 'Show impact' }));
+    await waitFor(() => expect(router.state.location.search).toEqual({ base: 'c0ffee000000' }));
+    expect(spy).toHaveBeenLastCalledWith('ACME', { base: 'c0ffee000000' });
+
+    // A tag the listing does not offer is still a valid ref.
+    await user.clear(screen.getByLabelText('Base'));
+    await user.type(screen.getByLabelText('Base'), 'v2.0');
+    await user.click(screen.getByRole('button', { name: 'Show impact' }));
+    await waitFor(() => expect(router.state.location.search).toEqual({ base: 'v2.0' }));
+    expect(spy).toHaveBeenLastCalledWith('ACME', { base: 'v2.0' });
+  });
+
+  it('falls back to the sync-status suggestions when the ref listing is unavailable', async () => {
+    renderImpact('/p/ACME/specs/impact', { impact }, (provider) => {
+      provider.gitRefs = new ProviderError('unavailable', BROWSER_GIT_REFS_REASON);
+    });
+    await screen.findByText('main..worktree');
+
+    await waitFor(() => expect(options('Head')).toContain('HEAD~1'));
+    expect(options('Base')).not.toContain('c0ffee000000');
+    expect(screen.queryByText(BROWSER_GIT_REFS_REASON)).not.toBeInTheDocument();
+    // Free text still works without any listing.
+    expect(screen.getByLabelText('Base')).toBeEnabled();
   });
 
   it('reports tiers 2 and 3 unavailable without Pando, keeping tier 1', async () => {

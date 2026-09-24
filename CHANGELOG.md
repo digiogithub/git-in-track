@@ -65,6 +65,13 @@ because a commit list cannot express them.
   The document is kept as opaque text, and a missing, blocked or failing IndexedDB reads as an
   empty cache. It is groundwork: browser-only mode still has no ingest and no coverage host, so
   nothing records into it or reads from it yet.
+- **Branch and recent-commit pickers in the impact view** (`GIT-US-0149`, docs/05, docs/06
+  §7.5, docs/07). A new read-only `GET /api/v1/git/refs?repo=<id>&limit=<n>` lists a
+  repository's local and remote branches and its last `n` commits (sha, subject, date), backed
+  by a new `gitops.Backend.Branches` on go-git, system git and jj (bookmarks listed as
+  branches, remote bookmarks as `origin/main`, without writing an operation). The web provider
+  gains `listGitRefs` — `unavailable` in browser-only mode — and the impact view's *Base* and
+  *Head* fields suggest those branches and commits while still accepting any typed ref.
 - **Spec templates and duplicate detection on create** (`GIT-US-0111`, docs/03 §21.1,
   docs/07). The core ships a spec template (`## Purpose`, `## Scope`, `## Glossary` and one
   example requirement block) and a requirement-block template in `internal/core/templates/`,

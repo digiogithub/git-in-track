@@ -289,6 +289,12 @@ type Backend interface {
 	// history, and none of them writes anything: a jj backend does not
 	// snapshot the working copy to answer.
 	ChangedFiles(ctx context.Context, from, to string) ([]FileChange, error)
+	// Branches lists the local and remote-tracking branches — the bookmarks of
+	// a jj repository — local first, each sorted by name, with the commit each
+	// points at (GIT-US-0149). A remote-tracking branch is named the git way,
+	// `origin/main`, on every backend, so each name is a ref ChangedFiles and
+	// Commits accept. Like ChangedFiles it writes nothing.
+	Branches(ctx context.Context) ([]Branch, error)
 
 	// ConflictFile reads the three sides of a conflicted path — the merge base,
 	// the user's own side and the incoming one — however the backend can

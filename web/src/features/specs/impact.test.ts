@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { ImpactResult, SyncRepoStatus } from '@/api/provider';
+import type { GitRefs, ImpactResult, SyncRepoStatus } from '@/api/provider';
 import {
   formatRange,
   groupByTier,
@@ -126,8 +126,37 @@ describe('range', () => {
       },
     ] satisfies SyncRepoStatus[];
     const got = refSuggestions(rows);
-    expect(got.base.slice(0, 3)).toEqual(['main', 'feat/x', 'origin/feat/x']);
-    expect(got.head[0]).toBe('worktree');
-    expect(got.head).toContain('HEAD~1');
+    expect(got.base.slice(0, 3).map((o) => o.value)).toEqual(['main', 'feat/x', 'origin/feat/x']);
+    expect(got.head[0]).toEqual({ value: 'worktree', label: 'working tree' });
+    expect(got.head.map((o) => o.value)).toContain('HEAD~1');
+  });
+
+  it('suggests every branch and the recent commits of the ref listing', () => {
+    const refs = {
+      repo: 'r',
+      backend: 'jj',
+      branches: [
+        { name: 'main', sha: 'a'.repeat(40), current: true },
+        { name: 'feat/y', sha: 'b'.repeat(40) },
+        { name: 'origin/main', remote: 'origin', sha: 'c'.repeat(40) },
+      ],
+      commits: [
+        { sha: '0123456789abcdef0123', subject: 'feat: add y', date: '2026-09-02T10:00:00Z' },
+        { sha: 'fedcba9876543210fedc', subject: '' },
+      ],
+    } satisfies GitRefs;
+    const got = refSuggestions(undefined, refs);
+    expect(got.base).toEqual([
+      { value: 'main' },
+      { value: 'feat/y', label: 'branch' },
+      { value: 'origin/main', label: 'remote branch' },
+      { value: 'HEAD' },
+      { value: '0123456789ab', label: 'feat: add y · 2026-09-02' },
+      { value: 'fedcba987654', label: '(no description)' },
+    ]);
+    // The listing replaces the HEAD~n guesses; the working tree leads the head.
+    expect(got.head[0]?.value).toBe('worktree');
+    expect(got.head.map((o) => o.value)).not.toContain('HEAD~1');
+    expect(got.head.find((o) => o.value === 'main')?.label).toBe('current branch');
   });
 });

@@ -12,7 +12,7 @@
 import type { SearchSchemaInput } from '@tanstack/react-router';
 import { z } from 'zod';
 
-import type { ImpactResult, SyncRepoStatus } from '@/api/provider';
+import type { GitRefs, ImpactResult, SyncCommit, SyncRepoStatus } from '@/api/provider';
 
 /** One requirement a diff affects (doc 03 §21.11 R-IMP-5). */
 export type ImpactHit = ImpactResult['hits'][number];
@@ -159,26 +159,68 @@ export function readReason(reason: string): ReadReason {
   return { kind: reasonKinds[key] ?? key, text: reason.slice(colon + 1), title: reason };
 }
 
+/** One entry of a ref picker: the ref it fills in, and what it is. */
+export type RefOption = { value: string; label?: string };
+
 /** The ref suggestions of the base picker, then the head picker. */
-export type RefSuggestions = { base: string[]; head: string[] };
+export type RefSuggestions = { base: RefOption[]; head: RefOption[] };
+
+/** How many characters of a commit id a picker fills in; every backend resolves the prefix. */
+export const SHORT_SHA = 12;
+
+/** A commit read aloud in the picker: `subject · 2026-09-02`. */
+function commitLabel(commit: SyncCommit): string {
+  const subject = commit.subject.trim() || '(no description)';
+  const day = commit.date ? commit.date.slice(0, 10) : '';
+  return day ? `${subject} · ${day}` : subject;
+}
 
 /**
- * What the pickers offer: the current branch and its upstream from the sync
- * status, the default branch, `HEAD` and its recent ancestors, and — for the
- * head — the working tree first.
+ * What the pickers offer (GIT-US-0149). With the ref listing of the companion
+ * (`GET /api/v1/git/refs`): the default branch, every local and remote
+ * branch — a jj repository's bookmarks — and the recent commits by short id,
+ * labelled with their subject and date; for the head, the working tree first.
+ * Without it (`unavailable`, or not loaded yet), the current branch and its
+ * upstream from the sync status and `HEAD` with a few ancestors. The inputs
+ * stay free text either way: a tag or any other ref can still be typed.
  */
-export function refSuggestions(rows: readonly SyncRepoStatus[] | undefined): RefSuggestions {
-  const branches: string[] = [];
+export function refSuggestions(
+  rows: readonly SyncRepoStatus[] | undefined,
+  refs?: GitRefs,
+): RefSuggestions {
+  const options: RefOption[] = [];
   for (const row of rows ?? []) {
     const status = row.status;
     if (!status) continue;
-    if (!status.detached && status.branch && status.branch !== '@') branches.push(status.branch);
-    if (status.upstream) branches.push(status.upstream);
+    if (!status.detached && status.branch && status.branch !== '@') {
+      options.push({ value: status.branch, label: 'current branch' });
+    }
+    if (status.upstream) options.push({ value: status.upstream, label: 'upstream' });
   }
-  const recent = ['HEAD', 'HEAD~1', 'HEAD~2', 'HEAD~5'];
-  const unique = (values: string[]) => [...new Set(values.filter(Boolean))];
+  for (const branch of refs?.branches ?? []) {
+    options.push({
+      value: branch.name,
+      label: branch.current ? 'current branch' : branch.remote ? 'remote branch' : 'branch',
+    });
+  }
+  const commits = refs?.commits ?? [];
+  if (commits.length > 0) {
+    options.push({ value: 'HEAD' });
+    for (const commit of commits) {
+      options.push({ value: commit.sha.slice(0, SHORT_SHA), label: commitLabel(commit) });
+    }
+  } else {
+    for (const value of ['HEAD', 'HEAD~1', 'HEAD~2', 'HEAD~5']) options.push({ value });
+  }
+  const unique = (values: RefOption[]): RefOption[] => {
+    const seen = new Map<string, RefOption>();
+    for (const option of values) {
+      if (option.value && !seen.has(option.value)) seen.set(option.value, option);
+    }
+    return [...seen.values()];
+  };
   return {
-    base: unique([DEFAULT_BASE, ...branches, ...recent]),
-    head: unique([WORKTREE, ...branches, ...recent]),
+    base: unique([{ value: DEFAULT_BASE }, ...options]),
+    head: unique([{ value: WORKTREE, label: 'working tree' }, ...options]),
   };
 }

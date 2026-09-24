@@ -359,6 +359,9 @@ func (s *Server) mountGit(r chi.Router) {
 	r.Get("/settings", s.handleGitSettings)
 	r.Patch("/settings", s.handleGitSettingsPatch)
 	r.Get("/status", s.handleGitStatus)
+	// The branches and recent commits of one repository, for the ref pickers
+	// of the impact view (GIT-US-0149). A read: it writes nothing.
+	r.Get("/refs", s.handleGitRefs)
 	r.Post("/commit", s.handleGitCommit)
 	// Where the companion's CORS proxy is and which hosts it will speak to, so
 	// that browser-only mode can adopt it without the user typing a URL

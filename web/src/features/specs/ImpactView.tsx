@@ -26,9 +26,10 @@ import {
   WORKTREE,
   type ImpactHit,
   type ImpactSearch,
+  type RefSuggestions,
   type TierGroup,
 } from '@/features/specs/impact';
-import { useImpact, useRefStatus } from '@/features/specs/queries';
+import { useGitRefs, useImpact, useRefStatus } from '@/features/specs/queries';
 import { requirementRouteParams } from '@/features/specs/trace-groups';
 import { cn } from '@/lib/cn';
 
@@ -64,8 +65,15 @@ export function ImpactView() {
   const failed = unavailable ? undefined : impactQuery.error;
 
   // The pickers only matter where impact answers at all: companion mode.
-  const refStatus = useRefStatus(project?.vaultId, provider.capabilities.git && !unavailable);
-  const suggestions = useMemo(() => refSuggestions(refStatus.data), [refStatus.data]);
+  // The companion's ref listing backs them (GIT-US-0149); the sync status is
+  // the fallback when it answers `unavailable`.
+  const pickable = provider.capabilities.git && !unavailable;
+  const refStatus = useRefStatus(project?.vaultId, pickable);
+  const gitRefs = useGitRefs(project?.vaultId, pickable);
+  const suggestions = useMemo(
+    () => refSuggestions(refStatus.data, gitRefs.data),
+    [refStatus.data, gitRefs.data],
+  );
 
   const groups = useMemo(
     () => (impactQuery.data ? groupByTier(impactQuery.data) : []),
@@ -163,7 +171,11 @@ export function ImpactView() {
   );
 }
 
-/** The base and head pickers: free refs with suggestions, the working tree as the default head. */
+/**
+ * The base and head pickers: comboboxes offering the repository's branches and
+ * recent commits, still accepting any ref typed by hand, with the working
+ * tree as the default head.
+ */
 function RangeForm({
   base,
   head,
@@ -172,7 +184,7 @@ function RangeForm({
 }: {
   base: string;
   head: string | undefined;
-  suggestions: { base: string[]; head: string[] };
+  suggestions: RefSuggestions;
   onApply: (next: ImpactSearch) => void;
 }) {
   const id = useId();
@@ -206,7 +218,7 @@ function RangeForm({
         />
         <datalist id={`${id}-base-refs`}>
           {suggestions.base.map((ref) => (
-            <option key={ref} value={ref} />
+            <option key={ref.value} value={ref.value} label={ref.label} />
           ))}
         </datalist>
       </div>
@@ -225,7 +237,7 @@ function RangeForm({
         />
         <datalist id={`${id}-head-refs`}>
           {suggestions.head.map((ref) => (
-            <option key={ref} value={ref} label={ref === WORKTREE ? 'working tree' : undefined} />
+            <option key={ref.value} value={ref.value} label={ref.label} />
           ))}
         </datalist>
       </div>
@@ -234,7 +246,8 @@ function RangeForm({
         Show impact
       </Button>
       <p id={`${id}-head-hint`} className="w-full text-xs text-muted-foreground">
-        A branch, tag or commit (<code className="font-mono">HEAD~1</code>). Head{' '}
+        Pick a branch or a recent commit, or type any ref — a tag,{' '}
+        <code className="font-mono">HEAD~1</code>. Head{' '}
         <code className="font-mono">{WORKTREE}</code> is the working tree, uncommitted changes
         included; another head is exact only when it is <code className="font-mono">HEAD</code> of a
         clean tree.

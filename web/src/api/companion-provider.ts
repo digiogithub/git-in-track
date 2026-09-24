@@ -92,6 +92,8 @@ import type {
   Priority,
   ProjectSummary,
   GitCommit,
+  GitBranch,
+  GitRefs,
   GitRepoStatus,
   GitSettings,
   GitSettingsPatch,
@@ -126,6 +128,7 @@ import type {
   SprintResult,
   SprintSummary,
   SprintView,
+  SyncCommit,
   SyncOptions,
   SyncRepoStatus,
   SyncResult,
@@ -2653,6 +2656,20 @@ export class CompanionProvider implements DataProvider {
     const body = await this.#json(`${API_PREFIX}/git/status${buildQuery({ repo: repoId })}`);
     const record = asRecord(body);
     return asArray(record ? record['repos'] : body) as GitRepoStatus[];
+  }
+
+  /** `GET /api/v1/git/refs` (GIT-US-0149). */
+  async listGitRefs(repoId: string, opts: { limit?: number } = {}): Promise<GitRefs> {
+    const body = asRecord(
+      await this.#json(`${API_PREFIX}/git/refs${buildQuery({ repo: repoId, limit: opts.limit })}`),
+    );
+    if (body === null) throw malformed('git refs');
+    return {
+      repo: typeof body['repo'] === 'string' ? body['repo'] : repoId,
+      backend: typeof body['backend'] === 'string' ? body['backend'] : '',
+      branches: asArray(body['branches']) as GitBranch[],
+      commits: asArray(body['commits']) as SyncCommit[],
+    };
   }
 
   // ------------------------------------------------ semantic search settings

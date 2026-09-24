@@ -997,7 +997,7 @@ describe('BrowserProvider specs (GIT-US-0127)', () => {
     });
   });
 
-  it('answers trace, coverage and impact with unavailable without calling the core', async () => {
+  it('answers trace, coverage, impact and the ref listing with unavailable without calling the core', async () => {
     const { provider, call } = await mount();
     const before = call.mock.calls.length;
 
@@ -1006,6 +1006,7 @@ describe('BrowserProvider specs (GIT-US-0127)', () => {
       provider.listCoverage('ACME'),
       provider.queryImpact('ACME', { base: 'main' }),
       provider.getImpactReport('ACME', { budget: 500 }),
+      provider.listGitRefs('repo-1', { limit: 20 }),
     ]) {
       await expect(pending).rejects.toMatchObject({ name: 'ProviderError', code: 'unavailable' });
     }

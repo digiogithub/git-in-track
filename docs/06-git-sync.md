@@ -808,7 +808,8 @@ and `Commits`) and the structured conflict surface added by GIT-US-0022
 (`ConflictFile` and `ResolvePath`, §5.7). GIT-US-0039 restated every one of
 those in terms both git and jj have (§14.8); `Undo` and `Resume` are what
 GIT-US-0021 called `Abort` and `Continue`. GIT-US-0112 added the read-only
-`ChangedFiles` diff primitive (§7.4).
+`ChangedFiles` diff primitive (§7.4), and GIT-US-0149 the read-only
+`Branches` listing (§7.5).
 
 A third go-git gap matters to sync, on top of the two below: **go-git has no
 rebase, and its merge is fast-forward only.** The go-git backend therefore
@@ -914,6 +915,27 @@ suspect detection and impact sets on. It is native only: `internal/core` and
   store, as for `History`, ADR-023). Rename pairing and line ranges are
   computed once, in shared code, so the three backends return the same list on
   the same history rather than three diff engines' opinions of it.
+
+### 7.5 Branches (GIT-US-0149)
+
+`Backend.Branches(ctx)` lists the local and remote-tracking branches, each with
+the commit it points at — local first, then remote-tracking, each sorted by
+name. It is what the base and head pickers of the impact view offer, next to
+the recent commits `Commits` already lists (`GET /api/v1/git/refs`, docs/07).
+
+- **One spelling.** A remote-tracking branch is named `origin/main` on every
+  backend, so every name is a ref `ChangedFiles` and `Commits` accept. On a jj
+  repository the bookmarks are the branches: a local bookmark is a local
+  branch, and the remote bookmark `main@origin` is listed as `origin/main`
+  (§14.5 translates it back). The `git` pseudo-remote of a colocated
+  repository, a conflicted bookmark and a deleted one are left out; so are
+  symbolic refs such as `origin/HEAD`.
+- **Current.** `current` marks git's checked-out branch — none on a detached
+  HEAD — and, on jj, the bookmark the line of work publishes to (§14.3).
+- **A read.** go-git walks its reference store, system git runs
+  `for-each-ref refs/heads refs/remotes`, and jj runs
+  `bookmark list --all-remotes` with `--ignore-working-copy`: nothing is
+  fetched, snapshotted or written.
 
 ---
 
