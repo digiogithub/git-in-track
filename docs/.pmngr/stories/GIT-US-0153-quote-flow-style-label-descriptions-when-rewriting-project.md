@@ -2,13 +2,13 @@
 id: GIT-US-0153
 type: story
 title: Quote flow-style label descriptions when rewriting project.yaml
-status: todo
+status: in_review
 priority: high
 author: mcp
 labels: [core, agent-ok]
 estimate: 2
 created: 2026-09-24T22:25:19Z
-updated: 2026-09-24T22:25:19Z
+updated: 2026-09-24T22:32:51Z
 ---
 
 ## Description
@@ -24,8 +24,8 @@ The original descriptions, "Shared Go core (model, parser, index)" and "Small, w
 
 ## Acceptance Criteria
 
-- [ ] A failing test reproduces the corruption through the real write path, for example creating an item through the vault on a project whose label descriptions contain commas.
-- [ ] The writer quotes flow-style scalars that need it, or preserves the original node style. Round-tripping `project.yaml` is byte-stable apart from the counters.
-- [ ] `gintrack doctor` warns about label entries with unexpected keys.
-- [ ] This repository's `project.yaml` descriptions are repaired, as a separate data fix in the same PR.
-- [ ] `make test` and `make lint` pass.
+- [x] A failing test reproduces the corruption through the real write path, for example creating an item through the vault on a project whose label descriptions contain commas.
+- [x] The writer quotes flow-style scalars that need it, or preserves the original node style. Round-tripping `project.yaml` is byte-stable apart from the counters.
+- [x] `gintrack doctor` warns about label entries with unexpected keys.
+- [x] This repository's `project.yaml` descriptions are repaired, as a separate data fix in the same PR.
+- [x] `make test` and `make lint` pass.
