@@ -2,7 +2,7 @@
 id: GIT-US-0100
 type: story
 title: Enable a project's inbox from the workspace list
-status: in_review
+status: done
 priority: high
 parent: GIT-EP-0021
 milestone: GIT-M-0014
@@ -10,8 +10,9 @@ author: mcp
 labels: [core, server, web]
 estimate: 5
 created: 2026-09-17T09:31:52Z
-updated: 2026-09-17T09:47:01Z
+updated: 2026-09-24T11:07:59Z
 started: 2026-09-17T09:33:16Z
+closed: 2026-09-24T11:07:59Z
 ---
 
 ## Description
@@ -22,9 +23,9 @@ A project has an inbox when its workflow declares a status of category `triage` 
 
 ## Acceptance Criteria
 
-- [ ] A core/vault method (e.g. `project.inbox.enable`) adds the triage status to one project's `project.yaml`, rev-guarded, preserving the rest of the file (comments and key order as far as the YAML layer allows) and refusing a project that already has one.
-- [ ] An id clash (a non-triage status already called `triage`) is refused with a clear problem code.
-- [ ] Companion route and both providers (companion, browser/wasm) plus the fake provider expose it.
-- [ ] The workspace project list shows the button only for writable projects without a triage status; after success the inbox nav link appears without a reload.
-- [ ] Go, server and component tests cover success, already-enabled and read-only.
-- [ ] docs/07 (API) and docs/05 (web app) updated.
+- [x] A core/vault method (e.g. `project.inbox.enable`) adds the triage status to one project's `project.yaml`, rev-guarded, preserving the rest of the file (comments and key order as far as the YAML layer allows) and refusing a project that already has one.
+- [x] An id clash (a non-triage status already called `triage`) is refused with a clear problem code.
+- [x] Companion route and both providers (companion, browser/wasm) plus the fake provider expose it.
+- [x] The workspace project list shows the button only for writable projects without a triage status; after success the inbox nav link appears without a reload.
+- [x] Go, server and component tests cover success, already-enabled and read-only.
+- [x] docs/07 (API) and docs/05 (web app) updated.

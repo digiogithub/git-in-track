@@ -2,10 +2,12 @@
 id: GIT-M-0014
 type: milestone
 title: Phase 10 — workspace ergonomics
-status: backlog
+status: done
 author: mcp
 created: 2026-09-17T09:31:32Z
-updated: 2026-09-17T09:31:32Z
+updated: 2026-09-24T11:08:51Z
+started: 2026-09-24T11:08:40Z
+closed: 2026-09-24T11:08:51Z
 due: 2026-10-15
 ---
 
@@ -15,7 +17,7 @@ Make the workspace the place where a project is switched on and searched: enable
 
 ## Acceptance Criteria
 
-- [ ] GIT-EP for workspace ergonomics is done.
+- [x] GIT-EP for workspace ergonomics is done.
 
 ## Notes
 
