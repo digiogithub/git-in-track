@@ -254,6 +254,17 @@ type FileStore struct {
 	// It defaults to true and is only turned off by an importer that knowingly
 	// writes items it will repair afterwards.
 	Validate bool
+
+	// RequirementRefs returns every requirement ref to a spec found in the
+	// project index (link targets, Spec Delta headings), which keeps those
+	// numbers reserved when applying a Spec Delta allocates one (R-REQ-5). The
+	// vault installs its index; nil counts the spec file alone.
+	RequirementRefs func(spec ItemID) []RequirementRef
+
+	// DoneHook runs in the write that moves a story or a task into a
+	// done-category status, after its Spec Delta was applied (specapply.go).
+	// Nil by default: the verification stamp of GIT-US-0116 installs it.
+	DoneHook DoneHook
 }
 
 // Ensure FileStore satisfies the interface at compile time.
@@ -450,18 +461,27 @@ func (s *FileStore) applyDefaults(it *Item) {
 // expected rev writes unconditionally, which is what a CLI edit without --rev
 // does; every API and MCP caller supplies one (R-REV-3).
 func (s *FileStore) Update(ctx context.Context, id ItemID, patch ItemPatch, expected Rev) (*Item, error) {
+	it, _, err := s.UpdateReport(ctx, id, patch, expected)
+	return it, err
+}
+
+// UpdateReport is Update that also reports the Spec Delta it applied: a patch
+// that moves a story or a task into a done-category status applies the item's
+// "## Spec Delta" in the same write (docs/03 R-DELTA-12). The report is nil
+// when no delta was applied.
+func (s *FileStore) UpdateReport(ctx context.Context, id ItemID, patch ItemPatch, expected Rev) (*Item, *DeltaApplication, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, wrapContext("update", err)
+		return nil, nil, wrapContext("update", err)
 	}
 	if err := s.cfg.WriteGate(); err != nil {
-		return nil, fmt.Errorf("update %s: %w", id, err)
+		return nil, nil, fmt.Errorf("update %s: %w", id, err)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	it, err := s.readChecked(id, expected, patch.conflictWith)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	oldPath := it.Path
 	hadSpecConstruct := HasSpecConstruct(it)
@@ -473,11 +493,11 @@ func (s *FileStore) Update(ctx context.Context, id ItemID, patch ItemPatch, expe
 	moving := patch.Status != nil && *patch.Status != from
 	if moving {
 		if err := s.checkTransition(it, *patch.Status, false); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 	if err := applyPatch(it, patch); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	now := s.now()
 	it.Updated = now
@@ -485,13 +505,25 @@ func (s *FileStore) Update(ctx context.Context, id ItemID, patch ItemPatch, expe
 		s.stampTransition(it, from, it.Status, now)
 	}
 	s.retarget(it, oldPath)
+	if moving && s.entersDone(it, from, it.Status) {
+		plan, err := s.planDone(it)
+		if err != nil {
+			return nil, nil, err
+		}
+		if plan != nil {
+			if err := s.writeDone(it, oldPath, hadSpecConstruct, plan); err != nil {
+				return nil, nil, err
+			}
+			return it, plan.report(), nil
+		}
+	}
 	if err := s.validateAndUpgrade(it, hadSpecConstruct); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := s.writeItem(it, oldPath); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return it, nil
+	return it, nil, nil
 }
 
 // Delete soft-deletes an item: the file stays, with `deleted: true`, so that the
@@ -534,34 +566,56 @@ func (s *FileStore) Move(ctx context.Context, id ItemID, status Status, expected
 
 // MoveWith is Move with the option to bypass the workflow transitions.
 func (s *FileStore) MoveWith(ctx context.Context, id ItemID, status Status, expected Rev, opts MoveOptions) (*Item, error) {
+	it, _, err := s.MoveReport(ctx, id, status, expected, opts)
+	return it, err
+}
+
+// MoveReport is MoveWith that also reports the Spec Delta it applied: moving a
+// story or a task into a done-category status applies the item's
+// "## Spec Delta" in the same write, or refuses the move and changes nothing
+// (docs/03 R-DELTA-12). The report is nil when no delta was applied.
+func (s *FileStore) MoveReport(ctx context.Context, id ItemID, status Status, expected Rev, opts MoveOptions) (*Item, *DeltaApplication, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, wrapContext("move", err)
+		return nil, nil, wrapContext("move", err)
 	}
 	if err := s.cfg.WriteGate(); err != nil {
-		return nil, fmt.Errorf("move %s: %w", id, err)
+		return nil, nil, fmt.Errorf("move %s: %w", id, err)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	it, err := s.readChecked(id, expected, statusIntent(status))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := s.checkTransition(it, status, opts.Force); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	had := HasSpecConstruct(it)
 	now := s.now()
 	from := it.Status
 	it.Status = status
 	it.Updated = now
 	s.stampTransition(it, from, status, now)
+	if s.entersDone(it, from, status) {
+		plan, err := s.planDone(it)
+		if err != nil {
+			return nil, nil, err
+		}
+		if plan != nil {
+			if err := s.writeDone(it, "", had, plan); err != nil {
+				return nil, nil, err
+			}
+			return it, plan.report(), nil
+		}
+	}
 	if err := s.validate(it); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := s.writeItem(it, ""); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return it, nil
+	return it, nil, nil
 }
 
 // checkTransition applies the workflow rules to a status change. An unknown

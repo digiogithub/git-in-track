@@ -344,8 +344,9 @@ func readDeltaContent(op *DeltaOperation, lines []bodyLine) []SpecFinding {
 // SpecDeltaDiagnostics returns the findings about the Spec Delta of a story or
 // a task that the item and its project decide (docs/03 section 21.8): the
 // parser's findings, E-DELTA-TARGET for an ADDED heading that carries a number
-// while the item is not in a done-category status — the number is allocated
-// only when the delta is applied — and the LINT-REQ-* grammar lint of every
+// while the item is not in a done-category status and does not declare
+// implements for that number — the number is allocated only when the delta is
+// applied, which writes that link — and the LINT-REQ-* grammar lint of every
 // added and replacement block, at the severity specs.lint gives each rule. A
 // nil cfg skips the status check and lints at warning.
 //
@@ -371,7 +372,11 @@ func specDeltaDiagnostics(item *Item, delta SpecDelta, cfg *ProjectConfig) []Dia
 	applied := cfg != nil && cfg.CategoryOf(item.Status) == CategoryDone
 	for _, op := range delta.Operations {
 		field := "body." + op.Target()
-		if op.Op == DeltaAdded && op.Ref != nil && cfg != nil && !applied {
+		// The applied form is accepted on a done item, and on one that
+		// declares implements for the ref: applying wrote that link, so a
+		// story reopened after its delta was applied keeps a valid body.
+		recorded := op.Ref != nil && hasLink(item.Links, Link{Kind: LinkImplements, Target: op.Ref.String()})
+		if op.Op == DeltaAdded && op.Ref != nil && cfg != nil && !applied && !recorded {
 			d.errorf(field, CodeDeltaTarget,
 				"line %d of the body: ADDED names the requirement %s: an added block gets its number when the %s is done; write \"### ADDED %s %s <title>\"",
 				op.Line, op.Ref, item.Type, op.Spec, ReqSeparator)

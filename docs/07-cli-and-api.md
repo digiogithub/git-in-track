@@ -2029,7 +2029,7 @@ and the YouTrack connection's own: `youtrack_not_configured`,
 `read_only` also answers **every write** to a project whose `project.yaml` declares no `schema`
 or one newer than the build supports: the project is open read-only (doc 03 R-EVO-2, ADR-037
 §11). Reads keep working. The other side of the same rule: `item.create` and `item.update`
-results (and those of `requirement.create` and `requirement.update`, §6.7) carry
+results (and those of `item.move`, `requirement.create` and `requirement.update`, §6.7) carry
 `"schemaUpgraded": 2` when the write introduced the first spec construct into a
 `schema: 1` project and raised `project.yaml` in the same write, which is then in `writes`
 (doc 03 §21.10). `gintrack item new --json` reports it the same way.
@@ -4906,6 +4906,33 @@ Both writes go through the same canonical serializer as `item.update` (front-mat
 `requirements:` keys in numeric order, unknown keys preserved), refuse a project gated read-only
 (`read_only`, R-EVO-2) and report `schemaUpgraded` like `item.update` does, although a requirement
 write only ever touches a spec that already exists.
+
+**Applying a Spec Delta on done (`GIT-US-0110`).** `item.move`, and `item.update` whose patch
+sets a status, apply the item's `## Spec Delta` (doc 03 §21.8, R-DELTA-12 to R-DELTA-16) when
+they move a story or a task into a `done`-category status; so does a board card move, which goes
+through the same store write. The story, every spec it changes and, when the move raises the
+schema, `project.yaml` are validated together and written as one staged transaction, all of them
+in `writes`. The result then carries:
+
+```json
+"specDelta": {
+  "item": "ACME-US-0042",
+  "added": [{"ref": "ACME-SP-0003.R5", "supersedes": "ACME-SP-0001.R2"}],
+  "modified": ["ACME-SP-0003.R2"],
+  "removed": ["ACME-SP-0001.R2"],
+  "unchanged": [],
+  "specs": ["ACME-SP-0003", "ACME-SP-0001"]
+}
+```
+
+`specs` lists the spec files written; `unchanged` the refs an operation named that already held
+what it asks for (a re-applied delta). A delta that cannot be applied refuses the whole move and
+changes nothing: `conflict` for a missing spec or block, a spec of another project, a requirement
+modified twice or modified after its removal, or a workflow with no `cancelled`-category status;
+`stale_revision` for a stale item `rev` or a spec edited on disk after it was read;
+`validation_failed` for any error-severity finding, including `LINT-REQ-*` at `specs.lint: error`.
+`item.move` also reports `schemaUpgraded` now. The `verified` stamp written on done (R-REQ-11a) is
+not written yet: `GIT-US-0116` installs it through the same transition (`FileStore.DoneHook`).
 
 **Search.** `search` with `requirements: true` adds one hit of `kind: "requirement"` per matching
 requirement, with `id` set to the ref, `path` to the spec's file, and `spec` and `status` set; it

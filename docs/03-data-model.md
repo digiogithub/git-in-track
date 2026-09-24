@@ -1931,7 +1931,7 @@ every write and by the index (so by `gintrack doctor`):
 | `E-PROJ-SPECS` | E | Invalid `specs.lint` configuration ([§6.3](#63-validation-rules-for-projectyaml)); since `GIT-US-0108` |
 | `LINT-REQ-*` | W, configurable | Requirement grammar ([§21.9](#219-grammar-lint-and-specslint)); `off`, `warning` or `error` under `specs.lint`; since `GIT-US-0108`. Also run on the added and replacement blocks of a Spec Delta, as findings of the story or task |
 | `E-DELTA-OP` | E | A level-3 heading of a `## Spec Delta` has an unknown operation (the words are uppercase) or is malformed: no target, a target that is neither a spec nor a requirement, no separator or no title ([§21.8](#218--spec-delta)); since `GIT-US-0109` |
-| `E-DELTA-TARGET` | E | `ADDED` names a requirement while the item is not in a `done`-category status, `MODIFIED`/`REMOVED` names a spec, a heading names another item type, or a `Supersedes:` line is not a requirement ref; since `GIT-US-0109` |
+| `E-DELTA-TARGET` | E | `ADDED` names a requirement while the item is not in a `done`-category status and declares no `implements` link to it (R-DELTA-9), `MODIFIED`/`REMOVED` names a spec, a heading names another item type, or a `Supersedes:` line is not a requirement ref; since `GIT-US-0109` |
 | `E-DELTA-REASON` | E | `REMOVED` without a `Reason:` line, or with an empty one; since `GIT-US-0109` |
 | `W-DELTA-DANGLING` | W | A Spec Delta operation or its `Supersedes:` line names a spec the index does not hold, or a requirement whose block its spec does not declare; emitted by the index; since `GIT-US-0109` |
 
@@ -2326,8 +2326,10 @@ validation, and produce the `E-STATUS-UNKNOWN`, `W-LABEL-UNDECLARED`, and `E-CF-
 > markers and `trace.tests` entries spell, its last result is kept in a per-machine test-result
 > cache outside the repository, and each requirement's linked tests are aggregated into raw
 > evidence (`pass`, `fail`, `partial`, `untested`) — never written into a spec.
-> Not implemented yet: applying a Spec Delta when the story is done (§21.8, `GIT-US-0110`), and
-> the verification cache `verify.json`, the `verified` stamp and the coverage state of §21.6. This
+> `GIT-US-0110` applies a Spec Delta when the story or task reaches a `done`-category
+> status (R-DELTA-12 to R-DELTA-16).
+> Not implemented yet: the verification cache `verify.json`, the `verified` stamp (including the
+> one written on done, R-REQ-11a, `GIT-US-0116`) and the coverage state of §21.6. This
 > section is the normative format; the ADR records the reasoning,
 > the consequences and the alternatives rejected. Using specs raises the project to `schema: 2`
 > ([§21.10](#2110-schema-version-2)).
@@ -2651,8 +2653,10 @@ Reading a delta, precisely (implemented by `GIT-US-0109`, `ParseSpecDelta` and
   linted under `specs.lint` ([§21.9](#219-grammar-lint-and-specslint)); a finding is a diagnostic
   of the story or task with field `body.<target>`, and at `error` it refuses the write to it.
 - **R-DELTA-9 Applied form.** `### ADDED <REQREF> — …` is what applying writes back (R-DELTA-1). It
-  is accepted on an item in a `done`-category status and is `E-DELTA-TARGET` on any other; with no
-  project configuration the check is skipped.
+  is accepted on an item in a `done`-category status, and on any item that declares an
+  `implements` link to that exact ref (applying writes it, R-DELTA-13, so a story reopened after
+  its delta was applied stays valid); on any other it is `E-DELTA-TARGET`. With no project
+  configuration the check is skipped.
 - **R-DELTA-10 Index.** The index parses the delta of every story and task. While the item's status
   is neither in the `done` nor in the `cancelled` category, each `MODIFIED`/`REMOVED` target is a
   `modifies` edge of the item in the link graph, flagged `pending: true` (its computed
@@ -2664,6 +2668,47 @@ Reading a delta, precisely (implemented by `GIT-US-0109`, `ParseSpecDelta` and
   target, the ref of an applied `ADDED`, a `Supersedes:` ref — counts as an inbound ref of its spec
   for allocation (R-REQ-5), whatever the item's status. An unapplied `ADDED` holds no number: the
   number is allocated when the delta is applied.
+
+Applying a delta, precisely (implemented by `GIT-US-0110`, `internal/core/specapply.go`):
+
+- **R-DELTA-12 When.** A delta is applied by the write that moves a story or a task from a status
+  outside the `done` category into one inside it, whichever surface spells the move (`item.move`,
+  `item.update` with a status, a board card move, the YouTrack importer). Any other write — including an
+  edit of an item already done — applies nothing. The operations run in body order; only specs of
+  the item's own project are changed.
+- **R-DELTA-13 Effects.** `ADDED`: the number is allocated by R-REQ-5 (the spec's headings and
+  keys and every inbound ref of the index), the block is appended as `requirement.create` appends
+  one, its entry is materialized with `workflow.initial`, and the story heading is rewritten to
+  `### ADDED <REQREF> — <title>`. With `Supersedes: <old>`, the new entry gets
+  `links: [{kind: supersedes, target: <old>}]` and `<old>` is removed as by `REMOVED`; nothing is
+  written on the old side (R-LINK-1). `MODIFIED`: the heading title and the text below it are
+  replaced; `verified` is not touched, so an existing stamp no longer matches the block rev and
+  reads as suspect (R-REQ-12). `REMOVED`: the entry's status becomes the first `cancelled`-category
+  status of the workflow, the block and number stay. The item gains `implements <REQREF>` for each
+  `ADDED` and `modifies <REQREF>` for each `MODIFIED`, `REMOVED` and superseded ref, unless it
+  already declares the same link.
+- **R-DELTA-14 Atomic per item.** The item and every spec it changes are prepared in memory and
+  validated together (the item's delta lint, every spec's `RequirementDiagnostics` at the
+  project's `specs.lint`); each spec's file rev is re-checked immediately before writing; then the
+  files are written as one staged transaction, item first, rolled back if a write fails. The
+  transition is refused, and no file changes, on: an error-severity finding of the delta; a
+  missing spec or block (`ADDED` spec, `MODIFIED`/`REMOVED` target, `Supersedes:` ref); a spec of
+  another project; one requirement modified twice, or modified and removed; a `MODIFIED` of a
+  requirement already in a `cancelled`-category status; a workflow with no `cancelled`-category
+  status for a `REMOVED`; a stale item rev or a spec changed on disk since it was read
+  (`stale_revision`); or any validation error. A crash of the process between two renames is the
+  one case a staged write cannot cover: the item is written first, so it is left done and naming
+  a requirement its spec lacks, reported as `W-REF-DANGLING`, rather than numbers being allocated
+  twice on a retry.
+- **R-DELTA-15 Idempotent.** An `ADDED` that already carries its number, a `MODIFIED` whose block
+  already holds the proposed title and text and a `REMOVED` of a requirement already cancelled
+  change nothing (they are reported as unchanged); moving a reopened item to done again rewrites no
+  spec.
+- **R-DELTA-16 Schema and gate.** The transition honours the write gate (`read_only`, R-EVO-2).
+  When it gives a `schema: 1` project its first spec construct (the first `implements` link), it
+  raises `project.yaml` in the same transaction and every file is validated at schema 2
+  (R-SCHEMA-2-3). The `verified` stamp of R-REQ-11a is written by a hook of this same transition
+  (`FileStore.DoneHook`), which `GIT-US-0116` installs; until then no stamp is written.
 
 ### 21.9 Grammar lint and `specs.lint`
 
