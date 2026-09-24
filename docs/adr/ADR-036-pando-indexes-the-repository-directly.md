@@ -213,3 +213,18 @@ than the repository's.
 KB walk having no exclusions at all: `.git` and `node_modules` would be indexed and watched. The
 documentation folder gives the same coverage of what matters — backlog and knowledge base — with
 none of that, and the code indexation covers the rest of the tree with exclusions of its own.
+
+## Follow-up: requirement hits (`GIT-US-0118`, 2026-09-24)
+
+ADR-037 made every spec requirement a unit of its own, and decision 1 of `GIT-T-0238` asked for
+each one to have its own Pando entry. `GIT-US-0118` proposed getting there by feeding Pando one
+derived document per requirement block. That was **not** done, because it is the "push documents
+to Pando" alternative this ADR rejected: a second copy with a sync model, needing the writing
+`kb_add_document` the allow-list excludes, beside a spec file Pando already indexes through
+`KBPath`.
+
+Instead the entry is made at resolution time. A knowledge-base hit on a spec file is mapped onto
+the requirement block its chunk lies in, using the block byte ranges of the core parser, and is
+answered as `kind: "requirement"` with the ref, the spec id and the block anchor (docs/21 §2.1).
+This decision stands unchanged: Pando indexes the repository's own files, nothing is written to
+`docs/.pmngr/specs/`, and every field of the row is re-read from git-in-track's own index.

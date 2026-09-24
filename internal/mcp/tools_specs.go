@@ -446,3 +446,16 @@ func requirementWrite(ctx context.Context, s *Server, tool, method string, param
 		SchemaUpgraded: payload.SchemaUpgraded,
 	}, nil
 }
+
+// requirementRev reads the requirement rev and status of one ref, the token a
+// later update_requirement quotes, so acting on a requirement search hit does
+// not cost an extra read. A ref that no longer resolves answers empty strings.
+func (s *Server) requirementRev(ctx context.Context, ref string) (rev, status string) {
+	got, err := dispatch[struct {
+		Requirement core.RequirementView `json:"requirement"`
+	}](ctx, s, "requirement.get", map[string]any{"ref": strings.TrimSpace(ref)})
+	if err != nil {
+		return "", ""
+	}
+	return string(got.Requirement.Rev), string(got.Requirement.Status)
+}

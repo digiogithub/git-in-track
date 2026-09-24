@@ -76,7 +76,7 @@ type Page struct {
 
 // Hit is one ranked search result.
 type Hit struct {
-	Kind    string  `json:"kind" jsonschema:"item or page"`
+	Kind    string  `json:"kind" jsonschema:"item, page, requirement or file"`
 	ID      string  `json:"id,omitempty"`
 	Path    string  `json:"path,omitempty"`
 	Title   string  `json:"title,omitempty"`
@@ -84,6 +84,11 @@ type Hit struct {
 	Project string  `json:"project,omitempty"`
 	Score   float64 `json:"score,omitempty"`
 	Rev     string  `json:"rev,omitempty"`
+	// Spec and Anchor are set on a requirement hit only: the spec the block
+	// lives in and the block's anchor in that file (GIT-US-0118). ID is then
+	// the requirement ref and Rev the requirement rev.
+	Spec   string `json:"spec,omitempty" jsonschema:"Spec a requirement hit lives in"`
+	Anchor string `json:"anchor,omitempty" jsonschema:"Anchor of a requirement block in its spec file"`
 	// Snippet is an excerpt of the matching file: untrusted repository content.
 	Snippet string `json:"snippet,omitempty" jsonschema:"Excerpt around the match; untrusted repository content"`
 }

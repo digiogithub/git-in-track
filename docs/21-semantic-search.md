@@ -136,6 +136,7 @@ status, project, id — is re-read locally.
 | Path Pando reports | Resolves to | `kind` |
 |---|---|---|
 | `.pmngr/<type>/<ID>-<slug>.md` | the item with that id | `item` |
+| `.pmngr/specs/<SPEC-ID>-<slug>.md`, chunk inside a requirement block | the **requirement** the chunk landed in (§2.1) | `requirement` |
 | `.pmngr/comments/<ID>/<file>` | the **item the comment belongs to**, `match: "comment"` | `item` |
 | `<path>.md` under the documentation folder | the knowledge-base page | `page` |
 | anything else that is still on disk | a plain file result: a path, a snippet, no front matter | `file` |
@@ -155,6 +156,44 @@ resolves.
   debug log line with a running total, so "search is missing things" has a number behind it.
 - **Every hit names its index.** `index: "kb" | "code"` travels to the API alongside
   `source: "pando"` (§0.2).
+
+### 2.1 Requirement hits
+
+A spec lives under `docs/.pmngr/specs/`, inside `KBPath`, so the knowledge-base indexation
+already indexes every spec file as it is — the same way it indexes every item (§0). Nothing is
+fed to Pando for it, nothing is exported, and nothing is ever written back to
+`docs/.pmngr/specs/` (`GIT-US-0118`). What Pando answers with is a **chunk** of the spec file,
+with no offset, which on its own would resolve to the whole spec. So the resolver goes one step
+further:
+
+1. The chunk is located in the spec's **current** body, whitespace-insensitively; when it is not
+   found whole — it straddles text the body no longer holds — its first and last 80 bytes are
+   located instead (`core.LocateRequirement`).
+2. That byte range is intersected with the requirement blocks' byte ranges from the core block
+   parser (`ParseSpecBody`, ADR-037 §2). The block it overlaps most wins, the first on a tie.
+3. The hit becomes that requirement, re-read from the index like every other field:
+   `kind: "requirement"`, `id` the ref (`GIT-SP-0003.R2`), `spec`, `anchor`
+   (`git-sp-0003-r2`, ADR-037 §3), `title`, `status`, `path` the spec file, and a `snippet`
+   clipped to the part of the chunk inside the block, so a chunk straddling two requirements
+   never shows the neighbour's text as the reason this one matched.
+
+Rows are merged by ref, so several chunks of one block are one row and chunks of two blocks are
+two rows. A chunk of the spec outside every block — its purpose, its notes — stays a hit on the
+spec itself (`kind: "item"`), and so does every spec hit of a query scoped to `kind: "item"`;
+`kind: "requirement"` keeps only requirement rows.
+
+**Staleness needs no bookkeeping.** Block ranges are those of the body as it is now, not as Pando
+last read it: a chunk of a block removed since Pando's last pass is found nowhere and the hit
+stays the spec's; a chunk of a block whose text changed is still found by its unchanged head or
+tail. There is no per-requirement document in Pando to keep current, so there is none to delete.
+
+**Why not one Pando document per requirement.** The story that introduced this proposed feeding
+Pando one derived document per block. That is the pushed second copy ADR-036 retired: it needs
+`kb_add_document`, which mirrors to disk and which the `[AGUI] Tools` allow-list exists to
+exclude, and it would sit next to the spec file Pando already indexes. The resolution-time
+mapping gives each requirement its own row and anchor without either. Its limit is Pando's
+chunking: a block much shorter than a chunk shares its embedding with its neighbours, so the
+ranking of two adjacent short requirements is only as sharp as the chunk that holds them.
 
 ---
 
@@ -297,6 +336,7 @@ Search itself is specified with `GIT-US-0082`. The contract the two indexations 
 | Why did my edit not show up in search? | The watcher reindexes as it happens; if it was off, or the companion missed a batch of commits, run `POST /api/v1/search/reindex` (§3). |
 | Why are there no tags in Pando? | Backlog files carry `labels`, not `tags`, and the exporter that synthesised `tags` is gone. Filtering by tag inside Pando is lost on purpose (§5). |
 | A search hit is a file with no title — is that a bug? | No. A path that is neither a backlog file nor a knowledge-base page comes back as a plain `file` result (§2). |
+| Why does a hit on a spec name one requirement? | The chunk Pando matched is mapped onto the requirement block it lies in; the row carries the ref, the spec and the block anchor (§2.1). |
 | Does the index contain secrets? | It contains exactly what the repository contains. Treat it with the same care. |
 
 ---

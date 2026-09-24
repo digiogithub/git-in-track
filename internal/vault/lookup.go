@@ -86,3 +86,18 @@ func (v *Vault) PageByProjectPath(project core.ProjectKey, rel string) (*core.KB
 	}
 	return nil, false
 }
+
+// Requirement returns one requirement by its ref and reports whether its spec
+// still holds that block. It takes the vault lock. The view is built from the
+// spec's current body; its trace, links and extra values may share the
+// index's, so a caller treats it as read-only. It is how a semantic hit inside a spec is re-read as the live
+// requirement it landed in (GIT-US-0118).
+func (v *Vault) Requirement(ref core.RequirementRef) (core.RequirementView, bool) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	view, err := v.index.Requirement(ref)
+	if err != nil {
+		return core.RequirementView{}, false
+	}
+	return view, true
+}

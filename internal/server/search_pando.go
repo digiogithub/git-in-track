@@ -197,7 +197,9 @@ func overFetch(limit int) int {
 // pandoRef is one Pando hit taken apart: what the path says the document is,
 // before anything is looked up.
 type pandoRef struct {
-	// kind is "item", "page" or "file", matching core.SearchHit.Kind.
+	// kind is "item", "page" or "file", matching core.SearchHit.Kind. A spec
+	// is an "item" here; the resolver refines it into a "requirement" once it
+	// knows which block the chunk landed in.
 	kind string
 	// id is the item an item hit is, or the item a comment hit belongs to.
 	id core.ItemID
@@ -302,6 +304,8 @@ func (p *pandoSearcher) resolve(c pando.KBHit, q vault.SemanticQuery) (core.Sear
 		}
 		if ref.comment {
 			hit.Match = core.SearchMatchComment
+		} else if it.Type == core.TypeSpec && wantsRequirements(q) {
+			refineRequirement(m.vlt, it, c.Chunk, &hit)
 		}
 	case "page":
 		page, m, ok := p.page(ref.path)

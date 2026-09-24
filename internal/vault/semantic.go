@@ -33,7 +33,10 @@ type SemanticQuery struct {
 	// Project (GIT-US-0102). A hit naming no project — a plain file — is
 	// outside any non-empty scope.
 	Projects []string `json:"projects,omitempty"`
-	// Kind scopes the query to "item" or "page". Empty searches both.
+	// Kind scopes the query to "item", "page" or "requirement". Empty
+	// searches every kind. A hit inside a spec resolves to the requirement
+	// block it landed in unless Kind is "item", which keeps the spec itself
+	// (GIT-US-0118).
 	Kind string `json:"kind,omitempty"`
 }
 
@@ -108,6 +111,7 @@ func (w *Workspace) semanticHit(h core.SearchHit) searchHit {
 		Kind: h.Kind, ID: string(h.ID), Path: h.Path, Title: h.Title,
 		Snippet: h.Snippet, Score: h.Score, Project: string(h.Project), Source: source,
 		Index: h.Index, Match: h.Match, MoreMatches: h.MoreMatches,
+		Spec: string(h.Spec), Status: string(h.Status), Anchor: h.Anchor,
 	}
 	if m, ok := w.MountForProject(h.Project); ok {
 		out.VaultID = m.ID

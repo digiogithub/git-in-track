@@ -381,6 +381,9 @@ type SearchHit struct {
 	// the block lives in and the requirement's status.
 	Spec   string `json:"spec,omitempty"`
 	Status string `json:"status,omitempty"`
+	// Anchor is the block anchor of a requirement hit inside its spec file,
+	// e.g. "git-sp-0003-r2" (GIT-US-0118).
+	Anchor string `json:"anchor,omitempty"`
 	// VaultID names the repository the hit came from, so that a workspace-wide
 	// search can say which project — and which clone — answered.
 	VaultID string `json:"vaultId,omitempty"`

@@ -66,6 +66,32 @@ describe('search response mapping', () => {
     expect(result.hits[1]?.kind).toBe('file');
   });
 
+  it('keeps a requirement hit with its ref, spec, status and anchor (GIT-US-0118)', () => {
+    const result = toSearchResult({
+      hits: [
+        {
+          kind: 'requirement',
+          id: 'ACME-SP-0003.R2',
+          path: 'docs/.pmngr/specs/ACME-SP-0003-tokens.md',
+          title: 'Rotate refresh tokens',
+          source: 'pando',
+          index: 'kb',
+          spec: 'ACME-SP-0003',
+          status: 'todo',
+          anchor: 'acme-sp-0003-r2',
+        },
+      ],
+    });
+
+    expect(result.hits[0]).toMatchObject({
+      kind: 'requirement',
+      id: 'ACME-SP-0003.R2',
+      spec: 'ACME-SP-0003',
+      status: 'todo',
+      anchor: 'acme-sp-0003-r2',
+    });
+  });
+
   it('reads an unknown origin as the local index', () => {
     const result = toSearchResult({ hits: [{ kind: 'item', path: 'a.md', source: 'martian' }] });
     expect(result.hits[0]?.source).toBe('core');
