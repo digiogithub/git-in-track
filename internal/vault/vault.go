@@ -444,6 +444,8 @@ func (v *Vault) Dispatch(ctx context.Context, method string, raw []byte) (any, e
 		return v.requirementStamp(ctx, raw)
 	case "impact.query":
 		return v.impactQuery(ctx, raw)
+	case "impact.report":
+		return v.impactReport(ctx, raw)
 	case "inbox.list":
 		return v.inboxList(ctx, raw)
 	case "inbox.triage":

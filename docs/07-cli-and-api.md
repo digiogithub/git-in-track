@@ -5001,6 +5001,23 @@ A hit's `reasons` are short codes — `symbol:src/alloc.go#NextID`, `delta:ACME-
 of `coverage.list`. The answer is compact: the three-requirement fixture of `internal/impact`
 is about 750 bytes (≈ 190 tokens); the token-budgeted report of `GIT-US-0120` renders from it.
 
+**Impact report (`GIT-US-0120`).** `impact.report` runs the same query and renders one page of
+the ranked, token-budgeted report agents read (doc 03 §21.11, R-IMP-8 to R-IMP-10). It is the
+one renderer the MCP tool `spec_impact` (`GIT-US-0124`), `gintrack spec impact`
+(`GIT-US-0125`) and the HTTP API share.
+
+| Method | Params | Result |
+|---|---|---|
+| `impact.report` | `impact.query`'s params and `{budget?, cursor?, format?: "json" \| "text"}` | `{report: {base, head?, files, symbols, tiers?, hits?, text?, total, offset?, truncated?, nextCursor?, budget, tokens}}` |
+
+`budget` is in tokens (default 1500, at most 20000), estimated as `ceil(bytes / 3)` of the
+report's compact JSON. The `json` form (the default) carries `tiers` and the ranked `hits`; the
+`text` form carries `text`, one line per requirement, with the tier status in its second line.
+Hits are ranked failing, suspect, then tier (candidates last), then ref; the lowest-ranked are
+cut, `truncated` counts them and `nextCursor` — passed back as `cursor` with the query unchanged —
+fetches the rest. A cursor from another result, a budget out of range or an unknown `format` is
+`invalid_request`; browser-only mode answers `unavailable`.
+
 ---
 
 ## 7. Cross-platform concerns

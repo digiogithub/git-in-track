@@ -57,6 +57,56 @@ func (v *Vault) impactQuery(ctx context.Context, raw []byte) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	res, err := v.resolveImpact(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"impact": res}, nil
+}
+
+// impactReportParams are the params of "impact.report": the query, and the
+// page of the token-budgeted report to render from its answer.
+type impactReportParams struct {
+	core.ImpactQuery
+	Budget int                     `json:"budget,omitempty"`
+	Cursor string                  `json:"cursor,omitempty"`
+	Format core.ImpactReportFormat `json:"format,omitempty"`
+}
+
+// impactReport answers "impact.report": the compact, ranked, token-budgeted
+// report of GIT-US-0120 (docs/03 section 21.11, R-IMP-8 to R-IMP-10). It is
+// the one renderer the MCP tool, the CLI and the HTTP API share.
+func (v *Vault) impactReport(ctx context.Context, raw []byte) (any, error) {
+	p, err := decodeParams[impactReportParams](raw)
+	if err != nil {
+		return nil, err
+	}
+	if p.Budget < 0 || p.Budget > core.MaxImpactBudget {
+		return nil, failf("invalid_request", "budget %d is out of range: use 1 to %d tokens (0 is %d)",
+			p.Budget, core.MaxImpactBudget, core.DefaultImpactBudget)
+	}
+	switch p.Format {
+	case "", core.ImpactReportJSON, core.ImpactReportText:
+	default:
+		return nil, failf("invalid_request", "unknown report format %q: use json or text", p.Format)
+	}
+	res, err := v.resolveImpact(ctx, p.ImpactQuery)
+	if err != nil {
+		return nil, err
+	}
+	report, err := core.RenderImpactReport(res, core.ImpactReportOptions{Budget: p.Budget, Cursor: p.Cursor, Format: p.Format})
+	if errors.Is(err, core.ErrInvalidCursor) {
+		return nil, failf("invalid_request", "%v", err)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("impact report: %w", err)
+	}
+	return map[string]any{"report": report}, nil
+}
+
+// resolveImpact validates an impact query and runs it on the installed
+// backend.
+func (v *Vault) resolveImpact(ctx context.Context, q core.ImpactQuery) (core.ImpactResult, error) {
 	q.Base = strings.TrimSpace(q.Base)
 	q.Head = strings.TrimSpace(q.Head)
 	if q.Base == "" {
@@ -64,34 +114,34 @@ func (v *Vault) impactQuery(ctx context.Context, raw []byte) (any, error) {
 	}
 	for _, t := range q.Tiers {
 		if t < core.ImpactTierDirect || t > core.ImpactTierSemantic {
-			return nil, failf("invalid_request", "unknown impact tier %d: use 1, 2 or 3", t)
+			return core.ImpactResult{}, failf("invalid_request", "unknown impact tier %d: use 1, 2 or 3", t)
 		}
 	}
 	if q.Depth < 0 || q.Depth > impactMaxDepth {
-		return nil, failf("invalid_request", "depth %d is out of range: use 1 to %d", q.Depth, impactMaxDepth)
+		return core.ImpactResult{}, failf("invalid_request", "depth %d is out of range: use 1 to %d", q.Depth, impactMaxDepth)
 	}
 	if q.Limit < 0 || q.Limit > impactMaxLimit {
-		return nil, failf("invalid_request", "limit %d is out of range: use 1 to %d", q.Limit, impactMaxLimit)
+		return core.ImpactResult{}, failf("invalid_request", "limit %d is out of range: use 1 to %d", q.Limit, impactMaxLimit)
 	}
 	backend := v.requirementImpact()
 	if backend == nil {
-		return nil, failf("unavailable",
+		return core.ImpactResult{}, failf("unavailable",
 			"the impact query is not available: this session cannot read git history or the code (browser-only mode, or a repository without git)")
 	}
 	if q.Story != "" {
 		if _, err := v.index.Item(q.Story); err != nil {
-			return nil, fmt.Errorf("impact of %s: %w", q.Story, err)
+			return core.ImpactResult{}, fmt.Errorf("impact of %s: %w", q.Story, err)
 		}
 	}
 	res, err := backend.Impact(ctx, v.index, q)
 	if errors.Is(err, core.ErrUnknownRevision) {
-		return nil, failf("invalid_request", "%v", err)
+		return core.ImpactResult{}, failf("invalid_request", "%v", err)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("impact: %w", err)
+		return core.ImpactResult{}, fmt.Errorf("impact: %w", err)
 	}
 	if res.Hits == nil {
 		res.Hits = []core.ImpactHit{}
 	}
-	return map[string]any{"impact": res}, nil
+	return res, nil
 }

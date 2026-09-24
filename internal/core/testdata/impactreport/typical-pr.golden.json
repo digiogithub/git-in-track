@@ -1,0 +1,151 @@
+{
+  "base": "main",
+  "files": 6,
+  "symbols": 9,
+  "tiers": [
+    {
+      "tier": 1,
+      "status": "ok",
+      "hits": 6
+    },
+    {
+      "tier": 2,
+      "status": "ok",
+      "hits": 3
+    },
+    {
+      "tier": 3,
+      "status": "ok",
+      "hits": 3
+    }
+  ],
+  "hits": [
+    {
+      "ref": "ACME-SP-0002.R3",
+      "title": "Reject an id whose key is not the project's",
+      "tier": 1,
+      "status": "failing",
+      "reasons": [
+        "file:internal/core/ids.go",
+        "implements:ACME-US-0042"
+      ]
+    },
+    {
+      "ref": "ACME-SP-0001.R1",
+      "title": "Allocate the next id by scanning the folder",
+      "tier": 1,
+      "status": "passing",
+      "suspect": true,
+      "reasons": [
+        "symbol:internal/core/allocator.go#NextID"
+      ]
+    },
+    {
+      "ref": "ACME-SP-0001.R2",
+      "title": "Zero-pad ids to four digits",
+      "tier": 1,
+      "status": "passing",
+      "suspect": true,
+      "reasons": [
+        "symbol:internal/core/allocator.go#Format",
+        "marker:internal/core/allocator_test.go#TestFormat"
+      ]
+    },
+    {
+      "ref": "ACME-SP-0002.R7",
+      "title": "Never renumber an existing item",
+      "tier": 1,
+      "status": "suspect",
+      "suspect": true,
+      "reasons": [
+        "renamed:internal/core/ids.go#ParseID"
+      ]
+    },
+    {
+      "ref": "ACME-SP-0003.R1",
+      "title": "Write the item file atomically",
+      "tier": 1,
+      "status": "passing",
+      "suspect": true,
+      "reasons": [
+        "symbol:internal/core/store.go#WriteItem",
+        "symbol:internal/core/store.go#rename",
+        "symbol:internal/core/store.go#tempName",
+        "symbol:internal/core/store.go#fsync",
+        "+2"
+      ]
+    },
+    {
+      "ref": "ACME-SP-0003.R4",
+      "title": "Refuse a write whose rev is stale",
+      "tier": 2,
+      "status": "passing",
+      "suspect": true,
+      "reasons": [
+        "call:internal/core/store.go#Update calls WriteItem d1"
+      ]
+    },
+    {
+      "ref": "ACME-SP-0001.R4",
+      "title": "Reserve numbers for drafts",
+      "tier": 1,
+      "status": "untested",
+      "reasons": [
+        "delta:ACME-US-0042"
+      ],
+      "pending": [
+        "ACME-US-0042"
+      ]
+    },
+    {
+      "ref": "ACME-SP-0004.R2",
+      "title": "Show the new id in the create dialog",
+      "tier": 2,
+      "status": "untested",
+      "reasons": [
+        "call:web/src/components/CreateDialog.tsx#submit calls NextID d2"
+      ]
+    },
+    {
+      "ref": "ACME-SP-0005.R1",
+      "title": "Answer create_story with the allocated id",
+      "tier": 2,
+      "reasons": [
+        "call:internal/mcp/tools.go#createStory calls NextID d2"
+      ]
+    },
+    {
+      "ref": "ACME-SP-0006.R2",
+      "title": "Allocate ids per team repository when a team project is registered",
+      "tier": 3,
+      "candidate": true,
+      "score": 0.812,
+      "reasons": [
+        "semantic"
+      ]
+    },
+    {
+      "ref": "ACME-SP-0006.R5",
+      "title": "Detect duplicate ids after a merge",
+      "tier": 3,
+      "candidate": true,
+      "score": 0.774,
+      "reasons": [
+        "semantic"
+      ]
+    },
+    {
+      "ref": "ACME-SP-0007.R1",
+      "title": "Import YouTrack issues with their own numbers",
+      "tier": 3,
+      "candidate": true,
+      "score": 0.701,
+      "reasons": [
+        "semantic"
+      ]
+    }
+  ],
+  "total": 12,
+  "budget": 1500,
+  "tokens": 775
+}

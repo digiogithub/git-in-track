@@ -166,7 +166,8 @@ advertised yet; they arrive with sections 5 and 6.
 7. **Token budgets.** *Planned.* Each result will be measured; if it would exceed
    `--max-tokens` the server truncates the list (never an individual object) and sets
    `truncated: true, hint: "narrow the filter or use fields"`. Until then the page-size cap
-   is what bounds a result.
+   is what bounds a result. The impact report is the first result budgeted in tokens
+   (section 4.21, doc 03 §21.11 R-IMP-9).
 8. **One obvious tool per intent.** No tool overlaps another's purpose: `list_items` is
    structured, `search_items` is ranked prose over the backlog, `search_kb` is ranked prose
    over the knowledge base, and `search_semantic` is ranked *meaning* over both (§4.19). Fewer, sharper tools reduce mis-selection by the model. Tools
@@ -1072,6 +1073,43 @@ behind its own story: `list_workspaces`, `list_projects`, `get_kb_tree`, `link_i
 `list_comments`, `list_boards`, `get_board`, `get_sprint`, `list_retros`, `get_sync_status`
 and `run_sync` — verb first, like the twenty-seven above. Every one of them already has a core
 method behind it, so the work is framing rather than domain logic.
+
+**`spec_impact` and the impact report.** `spec_impact` (`GIT-US-0124`) is planned too, but the
+report it answers with is fixed: the vault method `impact.report` (`GIT-US-0120`, doc 07 §6.7)
+renders it, and `gintrack spec impact` and the HTTP API return the same bytes. It ranks the
+requirements a diff affects — failing, then suspect, then tier (semantic candidates last), then
+ref — and cuts them at a `budget` in tokens (default 1500, estimated as `ceil(bytes / 3)` of the
+compact JSON, so the estimate errs high). The per-tier status is always kept; the cut hits are
+counted in `truncated` and fetched with `nextCursor`, the same filter-bound `{offset,
+fingerprint}` cursor as section 3 principle 4: pass it back as `cursor` with the query
+unchanged, and it resumes exactly where the page stopped. A 12-hit PR cut at `budget: 300` in
+the `text` form:
+
+```json
+{ "base": "main", "files": 6, "symbols": 9,
+  "text": "impact main..worktree: 6 files, 9 symbols, 12 hits, showing 1-5\ntiers: 1 ok 6; 2 ok 3; 3 ok 3\n…",
+  "total": 12, "truncated": 7, "nextCursor": "eyJvIjo1LCJmIjoiYTRlYjdmNzkifQ",
+  "budget": 300, "tokens": 282 }
+```
+
+whose `text` reads, one line per requirement (ref, tier, status, suspect flag, clipped title,
+first reason and how many more):
+
+```text
+impact main..worktree: 6 files, 9 symbols, 12 hits, showing 1-5
+tiers: 1 ok 6; 2 ok 3; 3 ok 3
+ACME-SP-0002.R3 t1 failing "Reject an id whose key is not the pro..." file:internal/core/ids.go +1
+ACME-SP-0001.R1 t1 passing suspect "Allocate the next id by scanning the..." symbol:internal/core/allocator.go#NextID
+ACME-SP-0001.R2 t1 passing suspect "Zero-pad ids to four digits" symbol:internal/core/allocator.go#Format +1
+ACME-SP-0002.R7 t1 suspect "Never renumber an existing item" renamed:internal/core/ids.go#ParseID
+ACME-SP-0003.R1 t1 passing suspect "Write the item file atomically" symbol:internal/core/store.go#WriteItem +5
+truncated: 7, cursor: eyJvIjo1LCJmIjoiYTRlYjdmNzkifQ
+```
+
+The whole report of that PR is ≈ 775 tokens as JSON and ≈ 475 as text — within the 1.5k success
+criterion of the spec-driven milestone. A tier that could not run takes one short line
+(`3 unavailable (Pando is not configured)`), and the `json` form carries `tiers` and the ranked
+`hits` in the shape of doc 03 §21.11 R-IMP-5 instead of `text`.
 
 `delete_item` is deliberately **not** on that list: deleting a backlog item is a human action
 in the UI or the CLI, and an agent may only move an item to `cancelled`.
