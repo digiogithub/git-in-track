@@ -57,7 +57,7 @@ web/
       search/                  # shared search hit rows, the Ctrl+Shift+F project overlay
       sync/                    # sync panel, conflicts, credentials, git log, job queue
       settings/                # workspace, repos, appearance, agents/MCP status, YouTrack
-      specs/                   # specs and requirement rows, coverage badges (ADR-037)
+      specs/                   # specs and requirement rows, coverage badges and matrix (ADR-037)
       workspace/               # the landing surface and the add-repository wizard
       youtrack/                # the import dialog and its query bar
     core-bridge/               # WASM worker client (browser-only mode)
@@ -147,6 +147,7 @@ state is shareable by URL and survives reloads.
   /p/$projectKey/milestones                 MilestoneList
   /p/$projectKey/milestones/$milestoneId    MilestoneDetail
   /p/$projectKey/specs                      SpecsPage     (as built, ?status= &coverage=)
+  /p/$projectKey/specs/coverage             CoverageMatrixPage (as built, ?spec= &status=)
   /p/$projectKey/graph                      LinkGraph (Phase 6)
 /team/$teamId                            TeamLayout
   /team/$teamId/kb/*                        TeamKbViewer
@@ -375,8 +376,37 @@ the block text prefilled with the EARS template (a `WHEN …, the … SHALL …`
 `#### Scenario:`) and calls `createRequirement`, so the core allocates `R<n>` and writes the
 heading. Both actions are absent in a read-only workspace. Every query key sits under
 `['items', <key>, 'specs', …]`, so the `items` change a requirement write or a spec edit emits
-refetches the page. The requirement detail, the coverage matrix and the impact view arrive as
-`specs/…` routes with GIT-US-0129 to GIT-US-0131.
+refetches the page. The header links the coverage matrix below; the requirement detail and the
+impact view arrive as `specs/…` routes with GIT-US-0129 and GIT-US-0131.
+
+**CoverageMatrixPage (`/p/$projectKey/specs/coverage`, as built, story GIT-US-0130)** — The
+requirements × tests matrix, from the same `listRequirements` and `listCoverage` answers as the
+specs page (`features/specs/CoverageMatrix.tsx`, the pure model in `features/specs/matrix.ts`).
+*What it looks like:* under a *← Specs* back link and the title, two chip rows — **Status**
+(`untested`, `passing`, `failing`, `suspect`, each with its count over the specs picked) and
+**Spec** (one chip per spec id) — then a compact *Coverage by spec* table (spec, requirement
+count, one count column per state), then the matrix in a bordered box at most 70% of the
+viewport high. The matrix's first header row names each **test file** over the columns of its
+tests, the second names each **test symbol** (the `#symbol` of the trace ref
+`<path>[#<symbol>]`, doc 03 §21.7; `(file)` for a file-level test). Each row's sticky first
+column carries the requirement's ref (a link to its block anchor in the spec view, like a specs
+page row, until GIT-US-0129 adds a detail route), its title, the coverage badge and the reason
+codes of doc 03 §21.6 as muted text (`failed · results`; the full list in the tooltip). Each cell
+is that test's last local result spelled out with an icon — `pass`, `fail`, `skip`, or `—`
+(read as "no result") for `missing` — and a blank cell means the test is not linked to that
+requirement; colour only reinforces the word. Only the tests of the rows shown are columns, so a
+spec filter narrows the matrix. **Filters** live in the URL as comma-separated lists
+(`?spec=ACME-SP-0001&status=failing,suspect`); here `status` is the coverage state, since the
+matrix has no workflow-status filter. **Large matrices:** a native `<table>` (`aria-rowcount`,
+`aria-rowindex`, `th scope="colgroup|col|row"`) inside its own focusable scroll region; the
+header rows and the requirement column are `position: sticky`, and body rows are windowed
+without a library — every row is 64px, so the rows in view plus an overscan of 8 each side are
+rendered and two spacer rows keep the scroll height. **Phone width:** the scroll region is
+sized to its container (`width: 0; min-width: 100%`), so a wide matrix scrolls horizontally
+inside it and the page itself never does; the requirement column narrows to 11rem.
+**Browser-only mode:** `listCoverage` answers `unavailable`, so the page shows *Coverage
+unavailable* with the provider's reason and a hint to run `gintrack serve` and open the app it
+serves, and no matrix.
 
 **BoardView (`/team/$teamId/boards/$boardSlug`)** — §9. Columns from the board
 file, cards resolved from every configured project. Kanban and Scrum share the

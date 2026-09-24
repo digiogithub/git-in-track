@@ -325,6 +325,14 @@ because a commit list cannot express them.
   shared editor with a `spec` template (`## Purpose`, `## Scope`, `## Requirements`; no
   milestone, estimate or due), and *Add requirement* appends a block from an EARS template
   through `createRequirement`, so the core allocates `R<n>`.
+- **Requirement coverage matrix in the web app** (`GIT-US-0130`, docs/05 §3.1).
+  `/p/$project/specs/coverage`, linked from the Specs page, shows requirements as rows and their
+  linked tests as columns grouped by file, each cell the test's last result (`pass`, `fail`,
+  `skip`, `—` for none) and each row its computed state (`untested`, `passing`, `failing`,
+  `suspect`) with the reason codes. Counts per state and per spec; spec and state filters in the
+  URL (`?spec=&status=`). Sticky headers and requirement column, windowed rows for large
+  matrices, horizontal scroll inside the matrix only at phone width, and `unavailable` with a
+  hint to run `gintrack serve` in browser-only mode.
 
 ### Changed
 
