@@ -2,13 +2,13 @@
 id: GIT-US-0154
 type: story
 title: Write the integrations block of project.yaml without re-encoding the file
-status: todo
+status: in_review
 priority: medium
 author: mcp
 labels: [core, agent-ok]
 estimate: 2
 created: 2026-09-24T22:32:35Z
-updated: 2026-09-24T22:32:35Z
+updated: 2026-09-24T22:43:24Z
 ---
 
 ## Description
@@ -17,6 +17,6 @@ GIT-US-0153 (PR #67) fixed the counter write so that it edits `project.yaml` in 
 
 ## Acceptance Criteria
 
-- [ ] A failing test: linking a project rewrites unrelated lines of `project.yaml`, such as comments, quoting or flow mappings.
-- [ ] The integrations write uses the in-place splice from `internal/core/yamlsplice.go`, or an equivalent that preserves the file. The result is byte-identical apart from the changed block.
-- [ ] `make test` and `make lint` pass.
+- [x] A failing test: linking a project rewrites unrelated lines of `project.yaml`, such as comments, quoting or flow mappings.
+- [x] The integrations write uses the in-place splice from `internal/core/yamlsplice.go`, or an equivalent that preserves the file. The result is byte-identical apart from the changed block.
+- [x] `make test` and `make lint` pass.
