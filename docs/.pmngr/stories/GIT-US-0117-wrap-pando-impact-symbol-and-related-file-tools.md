@@ -2,7 +2,7 @@
 id: GIT-US-0117
 type: story
 title: Wrap Pando impact, symbol and related-file tools
-status: todo
+status: in_review
 priority: high
 parent: GIT-EP-0025
 milestone: GIT-M-0015
@@ -10,7 +10,7 @@ author: claude
 labels: [server, agent-ok]
 estimate: 3
 created: 2026-09-24T12:10:32Z
-updated: 2026-09-24T12:10:32Z
+updated: 2026-09-24T15:27:38Z
 ---
 
 ## Description
@@ -19,10 +19,10 @@ As the impact resolver, I need typed access to Pando's `code_impact_analysis`, `
 
 ## Acceptance Criteria
 
-- [ ] `internal/pando` gains `ImpactAnalysis(project, symbols)`, `FindSymbol(project, name)` and `RelatedFiles(project, path)` with typed results (symbol, path, line range, depth/score).
-- [ ] Errors map to the existing `unavailable` classification when Pando is not configured or unreachable.
-- [ ] Tests against a fake MCP transport cover success, empty results and unavailability.
-- [ ] The search/Pando section of the docs lists the new wrappers.
+- [x] `internal/pando` gains `ImpactAnalysis(project, symbols)`, `FindSymbol(project, name)` and `RelatedFiles(project, path)` with typed results (symbol, path, line range, depth/score).
+- [x] Errors map to the existing `unavailable` classification when Pando is not configured or unreachable.
+- [x] Tests against a fake MCP transport cover success, empty results and unavailability.
+- [x] The search/Pando section of the docs lists the new wrappers.
 
 ## Notes
 

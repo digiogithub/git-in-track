@@ -322,6 +322,29 @@ Search itself is specified with `GIT-US-0082`. The contract the two indexations 
   method. A session with no backend installed (every browser-only one) answers `unavailable`
   rather than an empty result.
 
+### 6.1 Code-graph wrappers
+
+Next to the two searches, `internal/pando` wraps the three tools that read the call and import
+edges Pando builds while it indexes a code project (`GIT-US-0117`, for the impact resolver of
+`GIT-EP-0025`). All three take the Pando project id of §0.1; an empty one falls back to
+`search.pando.projectId`.
+
+| Wrapper | Pando tool | Returns |
+|---|---|---|
+| `Client.ImpactAnalysis(ctx, project, symbols, opts)` | `code_impact_analysis`, once per distinct symbol | `ImpactResult`: callers with the analyzed `Symbol`, name, name path, file, line range, call `Depth`; `Truncated` when Pando cut a list |
+| `Client.FindSymbol(ctx, project, name, opts)` | `code_find_symbol` | `[]Symbol`: name, name path, type, file, line range, signature, `Rank` |
+| `Client.RelatedFiles(ctx, project, path, opts)` | `code_related_files` | `RelatedFilesResult`: files ranked by `Score` (imports weigh 1.0, call coupling 0.8) with their `Reasons` |
+
+- The graph tools answer in TOON and `code_find_symbol` in `structuredContent.metadata` JSON;
+  the wrappers read either, and tolerate fields Pando adds.
+- Pando reports a start line only, so `EndLine` is `0` ("unknown") until it reports one.
+- Impact resolution is by **name** over call edges: approximate when unrelated symbols share a
+  name. Pin a definition with `FindSymbol` first.
+- Pando's `No …` sentence is an empty result, never an error. `pando.IsUnavailable(err)` is true
+  for `ErrNotConfigured`, `ErrUnreachable`, `ErrUnauthorized` and `ErrTimeout` — the cases a
+  caller reports as `unavailable` and degrades over — and false for `ErrToolFailed` (for example
+  a project that is not indexed) and `ErrInvalidOptions`.
+
 ---
 
 ## 7. Operating notes

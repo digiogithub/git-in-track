@@ -93,3 +93,15 @@ func (e *httpError) Unwrap() error {
 		return ErrUnreachable
 	}
 }
+
+// IsUnavailable reports whether err means Pando could not answer at all: it is
+// not configured, not reachable, refused the credential or ran out of time.
+// Callers map it onto the `unavailable` code and degrade (an impact resolver
+// falls back to what it can compute without the code graph). It is false for
+// ErrToolFailed and ErrInvalidOptions, which are answers, not absences.
+func IsUnavailable(err error) bool {
+	return errors.Is(err, ErrNotConfigured) ||
+		errors.Is(err, ErrUnreachable) ||
+		errors.Is(err, ErrUnauthorized) ||
+		errors.Is(err, ErrTimeout)
+}
