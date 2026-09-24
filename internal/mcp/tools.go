@@ -25,6 +25,7 @@ func registerTools(s *Server) {
 	registerItemTools(s)
 	registerSpecTools(s)
 	registerTraceTools(s)
+	registerSpecContextTools(s)
 	registerInboxTools(s)
 	registerBoardTools(s)
 	registerSprintTools(s)

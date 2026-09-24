@@ -650,6 +650,40 @@ export type ImpactReport = {
   tokens: number;
 };
 
+/**
+ * One page of the token-budgeted spec context of a story or task (doc 03
+ * §21.11, GIT-US-0123): the requirements it implements or modifies, with a
+ * one-line statement, scenarios, coverage and related pages.
+ */
+export type SpecContextReport = {
+  item: string;
+  title: string;
+  /** `unavailable` when the session has no coverage backend (browser-only mode). */
+  coverage?: 'ok' | 'unavailable';
+  /** `steps` when the page carries scenario steps, `names` when the budget dropped them. */
+  detail: 'steps' | 'names';
+  requirements?: {
+    ref: string;
+    title: string;
+    via: string[];
+    wholeSpec?: boolean;
+    proposed?: boolean;
+    statement?: string;
+    scenarios?: { name: string; steps?: string[] }[];
+    status?: CoverageRow['status'];
+    reasons?: string[];
+  }[];
+  pages?: { path: string; title?: string }[];
+  morePages?: number;
+  text?: string;
+  total: number;
+  offset?: number;
+  truncated?: number;
+  nextCursor?: string;
+  budget: number;
+  tokens: number;
+};
+
 /** What a stamp run wrote, and what it left alone and why. */
 export type StampReport = {
   stamped: { ref: string; verified: { rev: string; commit: string; at: string; by: string } }[];
@@ -2142,6 +2176,14 @@ export type CoreApi = {
       format?: 'json' | 'text';
     };
     result: { report: ImpactReport };
+  };
+  /**
+   * The spec context of a story or task cut at a token budget (default 1500).
+   * Answers in the browser too, with `coverage: 'unavailable'`.
+   */
+  'spec.context': {
+    params: { id: string; budget?: number; cursor?: string; format?: 'json' | 'text' };
+    result: { report: SpecContextReport };
   };
   'inbox.list': { params: InboxFilter | undefined; result: InboxPage };
   /**

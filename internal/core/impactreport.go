@@ -2,15 +2,11 @@ package core
 
 import (
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"sort"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 )
 
 // The token-budgeted impact report (docs/03 section 21.11, R-IMP-8 to
@@ -20,49 +16,6 @@ import (
 // first, cuts the list at a token budget and hands back a cursor for the rest.
 // It is pure: the MCP tool, the CLI and the HTTP API all render through it
 // (the vault method "impact.report"), so the three cannot drift apart.
-
-// DefaultImpactBudget is the token budget of a report that names none: the
-// milestone's success criterion for the impact report of a typical PR.
-const DefaultImpactBudget = 1500
-
-// MaxImpactBudget bounds a budget a caller may ask for. A caller that wants
-// everything walks the cursor instead.
-const MaxImpactBudget = 20000
-
-// ErrInvalidCursor reports a report cursor that this package did not issue,
-// or that was issued for a different impact result: the diff, the base or the
-// ranking changed under the walk, so resuming would skip or repeat hits.
-var ErrInvalidCursor = errors.New("invalid cursor")
-
-// ImpactReportFormat is the form a report is rendered and budgeted in.
-type ImpactReportFormat string
-
-// The two forms.
-const (
-	// ImpactReportJSON: the report's hits as structured data.
-	ImpactReportJSON ImpactReportFormat = "json"
-	// ImpactReportText: one terse line per requirement.
-	ImpactReportText ImpactReportFormat = "text"
-)
-
-// EstimateTokens is the tokenizer approximation every impact budget is
-// measured with: one token per three bytes of UTF-8, rounded up. Real BPE
-// tokenizers average about four bytes per token over English prose and three
-// to three and a half over JSON, identifiers and paths, which is what a report
-// is made of, so the rule errs on the side of overestimating: a report within
-// its estimated budget is within it for the model too.
-func EstimateTokens(s string) int { return (len(s) + 2) / 3 }
-
-// ImpactReportOptions shapes one page of a report.
-type ImpactReportOptions struct {
-	// Budget is the token budget of the page (EstimateTokens over the
-	// rendered form); 0 is DefaultImpactBudget.
-	Budget int
-	// Cursor resumes a walk where the previous page stopped; empty starts it.
-	Cursor string
-	// Format is the form the page is rendered and measured in; empty is JSON.
-	Format ImpactReportFormat
-}
 
 // ImpactReport is one page of the token-budgeted impact report.
 type ImpactReport struct {
@@ -131,15 +84,6 @@ func RankImpactHits(hits []ImpactHit) []ImpactHit {
 	return out
 }
 
-// impactCursor is the decoded report cursor: the same {offset, filter
-// fingerprint} shape the MCP server's own cursors carry (docs/08 section 3,
-// principle 4). Its fingerprint binds it to the ranked result, not to the
-// budget or the form, so a walk may change either between pages.
-type impactCursor struct {
-	Offset int    `json:"o"`
-	Filter string `json:"f"`
-}
-
 // impactFingerprint hashes what a cursor offset depends on: the range and the
 // ranked refs. A result whose hits changed under a walk fails it.
 func impactFingerprint(res ImpactResult, ranked []ImpactHit) string {
@@ -152,35 +96,7 @@ func impactFingerprint(res ImpactResult, ranked []ImpactHit) string {
 	return hex.EncodeToString(sum[:])[:8]
 }
 
-func encodeImpactCursor(offset int, filter string) string {
-	raw, err := json.Marshal(impactCursor{Offset: offset, Filter: filter})
-	if err != nil { // unreachable: an int and a string
-		return ""
-	}
-	return base64.RawURLEncoding.EncodeToString(raw)
-}
-
-func decodeImpactCursor(token, filter string, total int) (int, error) {
-	if token == "" {
-		return 0, nil
-	}
-	raw, err := base64.RawURLEncoding.DecodeString(token)
-	if err != nil {
-		return 0, fmt.Errorf("%w: %q is not an impact report cursor", ErrInvalidCursor, token)
-	}
-	var c impactCursor
-	if err := json.Unmarshal(raw, &c); err != nil {
-		return 0, fmt.Errorf("%w: %q is not an impact report cursor", ErrInvalidCursor, token)
-	}
-	if c.Filter != filter {
-		return 0, fmt.Errorf("%w: the cursor was issued for a different impact result; "+
-			"restart without a cursor after the diff or the query changed", ErrInvalidCursor)
-	}
-	if c.Offset < 0 || c.Offset > total {
-		return 0, fmt.Errorf("%w: the cursor's offset %d is out of range", ErrInvalidCursor, c.Offset)
-	}
-	return c.Offset, nil
-}
+func encodeImpactCursor(offset int, filter string) string { return encodeReportCursor(offset, filter) }
 
 // RenderImpactReport renders one page of the report of an impact result: the
 // ranked hits from the cursor on, as many as fit in the budget in the asked
@@ -189,20 +105,13 @@ func decodeImpactCursor(token, filter string, total int) (int, error) {
 // hit alone may exceed a very small budget. The only error is a cursor that
 // does not belong to this result (ErrInvalidCursor).
 func RenderImpactReport(res ImpactResult, opt ImpactReportOptions) (ImpactReport, error) {
-	budget := opt.Budget
-	if budget <= 0 {
-		budget = DefaultImpactBudget
-	}
-	format := opt.Format
-	if format == "" {
-		format = ImpactReportJSON
-	}
-	if format != ImpactReportJSON && format != ImpactReportText {
-		return ImpactReport{}, fmt.Errorf("unknown impact report format %q: use json or text", format)
+	budget, format, err := opt.resolve()
+	if err != nil {
+		return ImpactReport{}, err
 	}
 	ranked := RankImpactHits(res.Hits)
 	filter := impactFingerprint(res, ranked)
-	offset, err := decodeImpactCursor(opt.Cursor, filter, len(ranked))
+	offset, err := decodeReportCursor(opt.Cursor, filter, len(ranked), "impact report")
 	if err != nil {
 		return ImpactReport{}, err
 	}
@@ -224,48 +133,10 @@ func RenderImpactReport(res ImpactResult, opt ImpactReportOptions) (ImpactReport
 			r.Tiers = res.Tiers
 			r.Hits = rest[:n]
 		}
-		// Tokens is part of what it measures: raise it until it covers its
-		// own digits. It only grows, so it settles within a round or two and
-		// never reports less than the page costs.
-		for {
-			est := EstimateTokens(mustMarshal(r))
-			if est <= r.Tokens {
-				break
-			}
-			r.Tokens = est
-		}
-		return r, r.Tokens
+		cost := settleTokens(&r, &r.Tokens)
+		return r, cost
 	}
-
-	// The cost grows with every hit added (each is tens of bytes, the
-	// truncation fields change by a byte or two), so a binary search finds the
-	// largest page that fits; every candidate is measured in full.
-	if len(rest) == 0 {
-		r, _ := page(0)
-		return r, nil
-	}
-	if r, cost := page(len(rest)); cost <= budget {
-		return r, nil
-	}
-	best, _ := page(1)
-	lo, hi := 2, len(rest)-1
-	for lo <= hi {
-		mid := (lo + hi) / 2
-		if r, cost := page(mid); cost <= budget {
-			best, lo = r, mid+1
-		} else {
-			hi = mid - 1
-		}
-	}
-	return best, nil
-}
-
-func mustMarshal(v any) string {
-	raw, err := json.Marshal(v)
-	if err != nil { // unreachable: plain data
-		return ""
-	}
-	return string(raw)
+	return fitBudget(len(rest), budget, page), nil
 }
 
 // Clip widths of the text form.
@@ -274,16 +145,6 @@ const (
 	impactReasonWidth  = 60
 	impactMessageWidth = 48
 )
-
-// clipText shortens s to at most width runes, marking the cut with "...".
-func clipText(s string, width int) string {
-	s = strings.Join(strings.Fields(s), " ")
-	if utf8.RuneCountInString(s) <= width {
-		return s
-	}
-	runes := []rune(s)
-	return strings.TrimSpace(string(runes[:width-3])) + "..."
-}
 
 // impactText renders the text form of a page:
 //

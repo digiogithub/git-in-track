@@ -36,7 +36,7 @@ func (v *Vault) freshen(ctx context.Context, method string, raw []byte) core.Ind
 	}
 	var paths []string
 	switch method {
-	case "item.get", "comment.list":
+	case "item.get", "comment.list", "spec.context":
 		p, err := decodeParams[struct {
 			ID string `json:"id"`
 		}](raw)

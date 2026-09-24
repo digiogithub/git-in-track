@@ -31,7 +31,7 @@ func TestMCPListTools(t *testing.T) {
 			want: []string{
 				"list_items", "get_item", "search_items", "search_semantic",
 				"get_kb_page", "search_kb", "list_kb_pages", "list_requirements",
-				"spec_impact", "trace_requirement",
+				"spec_impact", "trace_requirement", "spec_context", "spec_coverage",
 			},
 			absent: []string{
 				"create_epic", "create_story", "create_task", "create_milestone",
@@ -162,8 +162,8 @@ func TestMCPOverStdio(t *testing.T) {
 		if err != nil {
 			t.Fatalf("tools/list: %v", err)
 		}
-		if len(listed.Tools) != 30 {
-			t.Errorf("tools = %d, want 30", len(listed.Tools))
+		if len(listed.Tools) != 32 {
+			t.Errorf("tools = %d, want 32", len(listed.Tools))
 		}
 		for _, tool := range listed.Tools {
 			if tool.InputSchema == nil || tool.OutputSchema == nil {

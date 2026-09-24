@@ -246,6 +246,19 @@ because a commit list cannot express them.
   `gintrack mcp` over stdio now installs the same trace, coverage and impact backends as the
   companion (`server.InstallTraceSeams`), so all three work there too. `gintrack mcp
   --list-tools` now prints eleven read-only tools and thirty with `--allow-write`.
+- **`spec_context` and `spec_coverage` MCP tools** (`GIT-US-0123`, docs/08 §4.22). Two read
+  tools, present without `--allow-write`. `spec_context(story, budget?, cursor?, format?)`
+  returns what a story or task requires — the requirements its `implements`/`modifies` links
+  and its unapplied Spec Delta name, unnumbered ADDED blocks included, each with a one-line
+  statement, scenarios, coverage status and reasons — plus the knowledge-base pages the story
+  and those specs wikilink, cut at a token budget (default 1500) with a cursor. It drops
+  scenario steps before it cuts requirements, and answers without a coverage backend with
+  `coverage: "unavailable"`. It is the new vault method `spec.context`, which renders through
+  the impact report's token estimator, budget bounds and cursor, now shared in
+  `internal/core/budget.go`. `spec_coverage(project?, spec?, status?, fields?)` pages the rows
+  of `coverage.list` — status, reasons, linked tests — with counts per state, and answers
+  `unavailable` when the host installed no coverage backend. `gintrack mcp --list-tools` now
+  prints thirteen read-only tools and thirty-two with `--allow-write`.
 
 ### Changed
 
