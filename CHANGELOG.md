@@ -344,6 +344,16 @@ because a commit list cannot express them.
   carries `currentRev` and `conflicts[]` in every provider. Specs page rows and coverage matrix
   row headers link here, with *Open in spec* kept as a secondary link. Browser-only mode reads and
   edits the block; trace and coverage show `unavailable`.
+- **Impact view for a branch or ref range in the web app** (`GIT-US-0131`, docs/05 §3.1).
+  `/p/$project/specs/impact`, linked from the Specs page, takes a base and a head (`?base=&head=`
+  in the URL; base `main`, head the working tree by default), with suggestions from the
+  repository's current branch, its upstream and `HEAD~n`, and lists the requirements
+  `queryImpact` reports in three sections: tier 1 direct, tier 2 transitive with the call reason
+  read as *called from `<caller>` → `<symbol>`, depth n*, and tier 3 candidates with their score,
+  drawn dashed and labelled *candidate*, never among the certain hits. Each hit shows its reasons,
+  coverage badge, `suspect` flag and pending Spec Delta items, and links to the requirement
+  detail. Each tier carries its status line (`unavailable` without Pando, `error`, `skipped`);
+  browser-only mode shows the whole view `unavailable` with a hint to run `gintrack serve`.
 - **Verification cache `verify.json` and the stamp on done** (`GIT-US-0141`, ADR-037 §7,
   docs/03 R-REQ-11, R-REQ-11a (a), R-LOC-5). `gintrack spec ingest` now also records, for
   every requirement a report touched, one entry in its project's `<docs>/.pmngr/verify.json`:

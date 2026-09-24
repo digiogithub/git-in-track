@@ -11,12 +11,15 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   CoverageList,
   CoverageRow,
+  ImpactQuery,
+  ImpactResult,
   Item,
   RequirementDraft,
   RequirementList,
   RequirementPatch,
   RequirementRead,
   RequirementWriteResult,
+  SyncRepoStatus,
   TracedRequirement,
 } from '@/api/provider';
 import { ProviderError } from '@/api/provider';
@@ -32,6 +35,8 @@ export const specKeys = {
   trace: (project: string, ref: string) => ['items', project, 'specs', 'trace', ref] as const,
   coverageOf: (project: string, ref: string) =>
     ['items', project, 'specs', 'coverage-of', ref] as const,
+  impact: (project: string, base: string, head: string) =>
+    ['items', project, 'specs', 'impact', base, head] as const,
 };
 
 /** `unavailable` is a state, never retried; anything else gets two more tries. */
@@ -158,5 +163,36 @@ export function useCreateRequirement(project: string) {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['items', project] });
     },
+  });
+}
+
+/**
+ * The requirements a diff affects (doc 03 §21.11). `head` undefined is the
+ * working tree. `unavailable` — browser-only mode, or a repository without
+ * git history — is a state, never retried.
+ */
+export function useImpact(project: string, query: Pick<ImpactQuery, 'base' | 'head'>) {
+  const provider = useProvider();
+  return useQuery({
+    queryKey: specKeys.impact(project, query.base ?? '', query.head ?? ''),
+    queryFn: (): Promise<ImpactResult> => provider.queryImpact(project, query),
+    enabled: project !== '',
+    retry: retryUnlessUnavailable,
+  });
+}
+
+/**
+ * The sync status of the project's repository, read only to seed the ref
+ * pickers with its branch and upstream. A failure leaves the static
+ * suggestions; it is never shown.
+ */
+export function useRefStatus(repoId: string | undefined, enabled: boolean) {
+  const provider = useProvider();
+  return useQuery({
+    queryKey: ['sync', 'status', 'impact-refs', repoId ?? ''] as const,
+    queryFn: (): Promise<SyncRepoStatus[]> => provider.getSyncStatus(repoId),
+    enabled,
+    retry: false,
+    staleTime: 30_000,
   });
 }

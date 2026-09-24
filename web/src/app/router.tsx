@@ -13,6 +13,7 @@ import { validateNewItemSearch } from '@/features/editor/search';
 import { validateInboxSearch } from '@/features/inbox/search';
 import { KbViewer } from '@/features/kb/KbViewer';
 import { SettingsPage } from '@/features/settings/SettingsPage';
+import { validateImpactSearch } from '@/features/specs/impact';
 import { validateMatrixSearch } from '@/features/specs/matrix';
 import { validateSpecSearch } from '@/features/specs/search';
 import { SyncPanel } from '@/features/sync/SyncPanel';
@@ -114,7 +115,7 @@ const milestonesRoute = createRoute({
  * Specs and their requirements, one row per requirement (story GIT-US-0128,
  * ADR-037). The status and coverage filters live in the search params. The
  * requirement detail is `specs/$spec/$req` (GIT-US-0129); the impact view
- * arrives later as a `specs/...` route (GIT-US-0131).
+ * is `specs/impact` (GIT-US-0131).
  */
 const specsRoute = createRoute({
   getParentRoute: () => projectRoute,
@@ -136,6 +137,18 @@ const specsCoverageRoute = createRoute({
     () => import('@/features/specs/CoverageMatrix'),
     'CoverageMatrixPage',
   ),
+});
+
+/**
+ * The requirement impact of a ref range (story GIT-US-0131): `?base=&head=`
+ * in the URL, head absent for the working tree. Two segments, so it never
+ * shadows `specs/$spec/$req`. Lazy, like the rest of the specs views.
+ */
+const specsImpactRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: 'specs/impact',
+  validateSearch: validateImpactSearch,
+  component: lazyRouteComponent(() => import('@/features/specs/ImpactView'), 'ImpactView'),
 });
 
 /**
@@ -241,6 +254,7 @@ export const routeTree = rootRoute.addChildren([
     milestonesRoute,
     specsRoute,
     specsCoverageRoute,
+    specsImpactRoute,
     requirementRoute,
   ]),
   boardsRoute,

@@ -378,8 +378,7 @@ the block text prefilled with the EARS template (a `WHEN …, the … SHALL …`
 `#### Scenario:`) and calls `createRequirement`, so the core allocates `R<n>` and writes the
 heading. Both actions are absent in a read-only workspace. Every query key sits under
 `['items', <key>, 'specs', …]`, so the `items` change a requirement write or a spec edit emits
-refetches the page. The header links the coverage matrix below; the impact view arrives as a
-`specs/…` route with GIT-US-0131.
+refetches the page. The header links the coverage matrix and the impact view below.
 
 **CoverageMatrixPage (`/p/$projectKey/specs/coverage`, as built, story GIT-US-0130)** — The
 requirements × tests matrix, from the same `listRequirements` and `listCoverage` answers as the
@@ -446,6 +445,35 @@ draft and shows the file; *Save mine over theirs* repeats the same patch quoting
 workspace. **Browser-only mode:** the block, the status control and editing work over the WASM
 core; the trace panel reads *Trace unavailable* and coverage `unavailable`, each with the
 provider's hint to run `gintrack serve`.
+
+**ImpactView (`/p/$projectKey/specs/impact`, as built, story GIT-US-0131)** — Which requirements
+a diff affects (doc 03 §21.11), lazily loaded (`features/specs/ImpactView.tsx`, the pure model in
+`features/specs/impact.ts`), from `queryImpact` — the same resolver as `spec_impact` and
+`impact.report`. *What it looks like:* under a *← Specs* back link and the title, a **range form**
+with a *Base* and a *Head* field and *Show impact*. Both fields take any revision (a branch, a tag,
+a commit) and suggest, through a native `<datalist>`, the repository's current branch and its
+upstream from `getSyncStatus`, the default `main` and `HEAD`, `HEAD~1`, `HEAD~2`, `HEAD~5`; the
+head also offers `worktree`, the working tree with uncommitted changes, which is what an empty
+head means (R-IMP-1). The range lives in the URL (`?base=v1.0&head=HEAD~1`): base defaults to
+`main`, and a head of `worktree` is left out of both the URL and the query. No companion route
+lists refs or recent commits, so the pickers are free text with suggestions rather than closed
+lists. Under the form a summary line (`main..worktree: 3 files, 4 symbols, 3 requirements`), then
+three sections — **Tier 1 · Direct**, **Tier 2 · Transitive**, **Tier 3 · Candidates** — always
+in that order. A hit whose `candidate` is set is shown in tier 3 whatever its `tier`, so a guess
+never sits among the certain hits; candidates are ranked by `score` (highest first), drawn with a
+dashed border and muted text, and carry a *candidate · score 0.812* badge. Each hit shows its ref
+(a link to the requirement detail), title, coverage badge, a `suspect` flag — *changed and not
+re-verified at head* (`GIT-US-0148`), shown when the coverage state is not already `suspect` — its
+reasons as chips (`symbol a.go#Trim`, `pending delta ACME-US-0007`, and for tier 2 *called from
+`b.go#Keep` → `Trim`, depth 2*, the raw code in the tooltip; `+<n>` reads *n more*) and the items
+whose pending Spec Delta modifies it, each a link. **Tier status:** a tier that is not a plain
+`ok` carries a status line — `unavailable` (no Pando, or Pando unreachable) and `error` with the
+answer's message, `skipped`, or *Partial* when the per-symbol limit truncated tier 2; tier 1
+always answers when the query does. **Phone width:** the form fields wrap to one per line, and
+refs and reasons break inside their cards, so the page never scrolls sideways. **Browser-only
+mode**, and a companion repository without git history: `queryImpact` answers `unavailable`, so
+the page shows *Impact unavailable* with the provider's reason and a hint to run `gintrack serve`,
+and no form.
 
 **BoardView (`/team/$teamId/boards/$boardSlug`)** — §9. Columns from the board
 file, cards resolved from every configured project. Kanban and Scrum share the
@@ -952,7 +980,8 @@ coverage and impact, and the companion for impact on a repository without histor
 renders it as a state with a hint to run the companion, never as an error. The specs page
 (GIT-US-0128, §3.1) consumes `listSpecs`, `listRequirements`, `listCoverage` and
 `createRequirement`; the requirement detail (GIT-US-0129) adds `getRequirement`,
-`updateRequirement` and `traceRequirement`, and the impact screen (GIT-US-0131) the rest. A
+`updateRequirement` and `traceRequirement`, and the impact view (GIT-US-0131) `queryImpact`;
+`getImpactReport` is the ranked, token-budgeted form agents and the CLI page through. A
 refused conditional write surfaces as a `ProviderError` with `code: 'stale_revision'` that also
 carries `currentRev` and `conflicts[]` (`{field, current?, proposed?}`) when the runtime reported
 them — the problem document's fields on the companion, the core's error envelope over WASM — so a
