@@ -2,13 +2,13 @@
 id: GIT-US-0146
 type: story
 title: Serialize go-git access in the server and fix the dead-letter retry flake
-status: todo
+status: in_review
 priority: high
 author: mcp
 labels: [server, git, agent-ok]
 estimate: 3
 created: 2026-09-24T20:23:59Z
-updated: 2026-09-24T20:23:59Z
+updated: 2026-09-24T22:23:26Z
 ---
 
 ## Description

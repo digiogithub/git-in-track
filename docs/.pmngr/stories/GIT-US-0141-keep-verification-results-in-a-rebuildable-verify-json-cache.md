@@ -2,7 +2,7 @@
 id: GIT-US-0141
 type: story
 title: Keep verification results in a rebuildable verify.json cache
-status: backlog
+status: in_review
 priority: high
 parent: GIT-EP-0024
 milestone: GIT-M-0015
@@ -10,7 +10,7 @@ author: mcp
 labels: [core, cli, wasm, agent-ok]
 estimate: 3
 created: 2026-09-24T15:29:49Z
-updated: 2026-09-24T15:29:49Z
+updated: 2026-09-24T22:23:26Z
 links:
   - { kind: blocked_by, target: GIT-US-0105 }
 ---

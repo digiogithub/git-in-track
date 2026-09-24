@@ -2,7 +2,7 @@
 id: GIT-US-0147
 type: story
 title: Wire Pando into stdio MCP and the spec CLI for impact tiers 2 and 3
-status: todo
+status: in_review
 priority: high
 parent: GIT-EP-0026
 milestone: GIT-M-0015
@@ -10,7 +10,7 @@ author: mcp
 labels: [mcp, cli, agent-ok]
 estimate: 3
 created: 2026-09-24T20:35:42Z
-updated: 2026-09-24T20:35:42Z
+updated: 2026-09-24T22:23:26Z
 ---
 
 ## Description

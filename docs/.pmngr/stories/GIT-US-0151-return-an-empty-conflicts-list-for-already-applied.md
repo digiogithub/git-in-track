@@ -2,7 +2,7 @@
 id: GIT-US-0151
 type: story
 title: Return an empty conflicts list for already-applied requirement updates
-status: todo
+status: in_review
 priority: medium
 parent: GIT-EP-0026
 milestone: GIT-M-0015
@@ -10,7 +10,7 @@ author: mcp
 labels: [core, mcp, agent-ok]
 estimate: 2
 created: 2026-09-24T21:55:53Z
-updated: 2026-09-24T21:55:53Z
+updated: 2026-09-24T22:23:26Z
 ---
 
 ## Description

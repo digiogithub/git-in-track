@@ -2,7 +2,7 @@
 id: GIT-US-0144
 type: story
 title: Report requirement diagnostics with file line numbers
-status: backlog
+status: in_review
 priority: low
 parent: GIT-EP-0022
 milestone: GIT-M-0015
@@ -10,7 +10,7 @@ author: mcp
 labels: [core, good-first-issue, agent-ok]
 estimate: 1
 created: 2026-09-24T15:29:50Z
-updated: 2026-09-24T15:29:50Z
+updated: 2026-09-24T22:23:26Z
 links:
   - { kind: blocked_by, target: GIT-US-0105 }
 ---

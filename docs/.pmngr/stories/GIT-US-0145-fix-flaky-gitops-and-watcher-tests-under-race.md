@@ -2,13 +2,13 @@
 id: GIT-US-0145
 type: story
 title: Fix flaky gitops and watcher tests under -race
-status: todo
+status: in_review
 priority: high
 author: mcp
 labels: [git, ci, agent-ok]
 estimate: 2
 created: 2026-09-24T17:20:06Z
-updated: 2026-09-24T17:20:06Z
+updated: 2026-09-24T22:23:26Z
 ---
 
 ## Description

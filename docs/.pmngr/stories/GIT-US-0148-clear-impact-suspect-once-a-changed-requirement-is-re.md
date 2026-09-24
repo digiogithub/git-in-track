@@ -2,7 +2,7 @@
 id: GIT-US-0148
 type: story
 title: Clear impact suspect once a changed requirement is re-verified at head
-status: todo
+status: in_review
 priority: high
 parent: GIT-EP-0028
 milestone: GIT-M-0015
@@ -10,7 +10,7 @@ author: mcp
 labels: [core, ci, agent-ok]
 estimate: 3
 created: 2026-09-24T21:19:05Z
-updated: 2026-09-24T21:19:05Z
+updated: 2026-09-24T22:23:26Z
 ---
 
 ## Description
