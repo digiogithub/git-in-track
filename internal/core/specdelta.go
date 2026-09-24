@@ -381,20 +381,55 @@ func specDeltaDiagnostics(item *Item, delta SpecDelta, cfg *ProjectConfig) []Dia
 				"line %d of the body: ADDED names the requirement %s: an added block gets its number when the %s is done; write \"### ADDED %s %s <title>\"",
 				op.Line, op.Ref, item.Type, op.Spec, ReqSeparator)
 		}
-		if op.Op == DeltaRemoved {
-			continue
-		}
-		ref := RequirementRef{Spec: op.Spec}
-		if op.Ref != nil {
-			ref = *op.Ref
-		}
-		name := string(op.Op) + " " + op.Target()
-		for _, f := range lintBlockText(ref, name, op.lintText, op.Line, cfg.SpecLint()) {
+		for _, f := range lintDeltaOperation(op, cfg.SpecLint()) {
 			d.add(f.Rule, f.Severity, field, fmt.Sprintf("line %d of the body: %s", f.Line, f.Message))
 		}
 	}
 	orderDiagnostics(d.out)
 	return d.out
+}
+
+// LintSpecDelta runs the grammar lint over the added and replacement blocks of
+// a parsed Spec Delta, exactly as SpecDeltaDiagnostics does before a write, and
+// returns the findings with their body lines. It is the live half of R-DELTA-8:
+// the web editor underlines them as the author types (GIT-US-0132). delta must
+// come from ParseSpecDelta in this process; a delta decoded from JSON has lost
+// the text the linter reads.
+func LintSpecDelta(delta SpecDelta, cfg *SpecLintConfig) []LintFinding {
+	var out []LintFinding
+	for _, op := range delta.Operations {
+		out = append(out, lintDeltaOperation(op, cfg)...)
+	}
+	return out
+}
+
+// lintDeltaOperation lints the block of one ADDED or MODIFIED operation; a
+// REMOVED operation carries no block.
+func lintDeltaOperation(op DeltaOperation, cfg *SpecLintConfig) []LintFinding {
+	if op.Op == DeltaRemoved {
+		return nil
+	}
+	ref := RequirementRef{Spec: op.Spec}
+	if op.Ref != nil {
+		ref = *op.Ref
+	}
+	return lintBlockText(ref, string(op.Op)+" "+op.Target(), op.lintText, op.Line, cfg)
+}
+
+// ProposedText is the block an ADDED or MODIFIED operation proposes: its text
+// below the heading, without the Supersedes: line and the blank lines around
+// it. A REMOVED operation proposes no text. Like LintSpecDelta it reads an
+// operation parsed in this process.
+func (o DeltaOperation) ProposedText() string {
+	if o.Op == DeltaRemoved {
+		return ""
+	}
+	src := o.lintText
+	if src == "" {
+		src = o.Text
+	}
+	_, rest, _ := strings.Cut(normalizeNewlines(src), "\n")
+	return trimBlankLines(rest)
 }
 
 // validateSpecDelta adds the Spec Delta findings of a story or a task.

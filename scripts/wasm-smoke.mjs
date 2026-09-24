@@ -414,6 +414,52 @@ async function main() {
     JSON.stringify(rows.ok ? rows.result?.total : rows.error),
   );
 
+  console.log('gintrackCore.call("spec.lint" | "spec.delta.preview", …)');
+  const lint = envelope(
+    "call(spec.lint)",
+    core.call(
+      "spec.lint",
+      JSON.stringify({
+        project: "DEMO",
+        id: "DEMO-SP-0001",
+        type: "spec",
+        body:
+          "## Requirements\n\n### DEMO-SP-0001.R1 — Load the core\n\n" +
+          "The worker SHALL load the core fast.\n",
+      }),
+    ),
+  );
+  const lintCodes = (lint.result?.findings ?? []).map((f) => `${f.code}@${f.line}`);
+  check(
+    "spec.lint reports the grammar findings with their lines",
+    lint.ok === true &&
+      lintCodes.includes("LINT-REQ-VAGUE@5") &&
+      lintCodes.includes("LINT-REQ-SCENARIO@3"),
+    JSON.stringify(lint.ok ? lintCodes : lint.error),
+  );
+  const preview = envelope(
+    "call(spec.delta.preview)",
+    core.call(
+      "spec.delta.preview",
+      JSON.stringify({
+        project: "DEMO",
+        body:
+          "## Spec Delta\n\n### MODIFIED DEMO-SP-0001.R1 — Load the core\n\n" +
+          "The worker SHALL load core.wasm once.\n\n" +
+          "### REMOVED DEMO-SP-0001.R9 — Gone\n\nReason: unused.\n",
+      }),
+    ),
+  );
+  const [modifiedOp, danglingOp] = preview.result?.operations ?? [];
+  check(
+    "spec.delta.preview pairs the current text with the proposed one",
+    preview.ok === true &&
+      modifiedOp?.current?.text?.includes("SHALL instantiate core.wasm") === true &&
+      modifiedOp?.proposed === "The worker SHALL load core.wasm once." &&
+      isNonEmptyString(danglingOp?.dangling),
+    JSON.stringify(preview.ok ? preview.result : preview.error),
+  );
+
   console.log("gintrackCore.call() error path");
   const unknown = envelope("call(nope)", core.call("nope", "null"));
   check("an unknown method yields ok: false", unknown.ok === false);

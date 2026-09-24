@@ -112,6 +112,10 @@ import type {
   ImpactQuery,
   ImpactReport,
   ImpactReportQuery,
+  DeltaPreviewOperation,
+  SpecDeltaPreviewInput,
+  SpecLintFinding,
+  SpecLintInput,
   ImpactResult,
   RequirementDraft,
   RequirementFilter,
@@ -1826,6 +1830,24 @@ export class BrowserProvider implements DataProvider {
 
   getImpactReport(_project: string, _query?: ImpactReportQuery): Promise<ImpactReport> {
     return Promise.reject(new ProviderError('unavailable', BROWSER_SPEC_ANALYSIS_REASON));
+  }
+
+  // The live lint and the Spec Delta preview are pure reads the WASM core
+  // answers from the text sent, exactly as the companion does (GIT-US-0132).
+
+  async lintSpecText(project: string, input: SpecLintInput): Promise<SpecLintFinding[]> {
+    await this.#ensureActive();
+    const { findings } = await this.#call('spec.lint', { ...input, project });
+    return findings;
+  }
+
+  async previewSpecDelta(
+    project: string,
+    input: SpecDeltaPreviewInput,
+  ): Promise<DeltaPreviewOperation[]> {
+    await this.#ensureActive();
+    const { operations } = await this.#call('spec.delta.preview', { ...input, project });
+    return operations;
   }
 
   subscribe(handler: (event: ChangeEvent) => void): Unsubscribe {

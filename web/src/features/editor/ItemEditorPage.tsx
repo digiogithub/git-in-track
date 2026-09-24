@@ -26,6 +26,8 @@ import {
   valuesFromItem,
 } from '@/features/editor/front-matter';
 import { readProjectSchema } from '@/features/editor/project-schema';
+import { lintsSpecText, specLintSource } from '@/features/editor/spec-lint';
+import { SpecDeltaPreview } from '@/features/editor/SpecDeltaPreview';
 import { inboxKeys } from '@/features/inbox/queries';
 import { acceptStatus } from '@/features/inbox/search';
 
@@ -117,6 +119,16 @@ export function ItemEditorPage({ mode = 'edit' }: { mode?: ItemEditorMode } = {}
   const defaultStatus = useMemo(
     () => (accepting ? acceptStatus(project) : ''),
     [accepting, project],
+  );
+  // The live grammar lint of the body (GIT-US-0132): the core lints a spec
+  // block by block and a story or task through its Spec Delta.
+  const itemType = item?.type;
+  const bodyLint = useMemo(
+    () =>
+      itemType && projectKey && lintsSpecText(itemType)
+        ? specLintSource(provider, projectKey, { id, type: itemType })
+        : undefined,
+    [provider, projectKey, id, itemType],
   );
   const references = useMemo(
     () => (referencesQuery.data?.items ?? []).map((i) => ({ id: i.id, title: i.title })),
@@ -473,12 +485,17 @@ export function ItemEditorPage({ mode = 'edit' }: { mode?: ItemEditorMode } = {}
           value={body}
           readOnly={readOnly}
           references={references}
+          lint={bodyLint}
           onChange={(next) => {
             setBody(next);
             setDirty(true);
           }}
         />
       </section>
+
+      {base.type === 'story' || base.type === 'task' ? (
+        <SpecDeltaPreview project={projectKey} id={base.id} body={body} />
+      ) : null}
 
       {conflict ? (
         <ConflictDialog

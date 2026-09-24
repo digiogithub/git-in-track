@@ -684,6 +684,43 @@ export type SpecContextReport = {
   tokens: number;
 };
 
+/**
+ * One finding of `spec.lint` (GIT-US-0132): a grammar-lint rule (`LINT-REQ-*`,
+ * at the severity `specs.lint` gives it — a rule at `off` yields nothing), a
+ * Spec Delta parse finding (`E-DELTA-*`, `W-REQ-SEPARATOR`) or
+ * `W-DELTA-DANGLING`, on a 1-based line of the body that was sent.
+ */
+export type SpecLintFinding = {
+  code: string;
+  severity: 'error' | 'warning' | 'info';
+  line: number;
+  ref?: string;
+  message: string;
+};
+
+/** The current text of one requirement, as `spec.delta.preview` shows it. */
+export type DeltaPreviewCurrent = { ref: string; title: string; status?: string; text: string };
+
+/**
+ * One operation of a `## Spec Delta` (doc 03 §21.8) next to what the spec
+ * holds today. `current` is the MODIFIED or REMOVED target, or the
+ * `Supersedes:` target of an ADDED move; `dangling` explains a target the
+ * repository does not hold.
+ */
+export type DeltaPreviewOperation = {
+  op: 'ADDED' | 'MODIFIED' | 'REMOVED';
+  spec: string;
+  specTitle?: string;
+  target: string;
+  title: string;
+  line: number;
+  supersedes?: string;
+  reason?: string;
+  proposed?: string;
+  current?: DeltaPreviewCurrent;
+  dangling?: string;
+};
+
 /** What a stamp run wrote, and what it left alone and why. */
 export type StampReport = {
   stamped: { ref: string; verified: { rev: string; commit: string; at: string; by: string } }[];
@@ -2184,6 +2221,20 @@ export type CoreApi = {
   'spec.context': {
     params: { id: string; budget?: number; cursor?: string; format?: 'json' | 'text' };
     result: { report: SpecContextReport };
+  };
+  /**
+   * The live grammar lint of a body the editor holds (GIT-US-0132): a spec
+   * block by block, a story or task through its Spec Delta; any other type
+   * has nothing to lint. Nothing is written.
+   */
+  'spec.lint': {
+    params: { project?: string; id?: string; type: ItemType; body: string };
+    result: { findings: SpecLintFinding[] };
+  };
+  /** The Spec Delta of a body, each operation with the current text of its target. */
+  'spec.delta.preview': {
+    params: { project?: string; id?: string; body: string };
+    result: { operations: DeltaPreviewOperation[] };
   };
   'inbox.list': { params: InboxFilter | undefined; result: InboxPage };
   /**

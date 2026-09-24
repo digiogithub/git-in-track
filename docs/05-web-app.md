@@ -966,6 +966,11 @@ export interface DataProvider {
   listCoverage(project: string, filter?: CoverageFilter): Promise<CoverageList>;
   queryImpact(project: string, query?: ImpactQuery): Promise<ImpactResult>;
   getImpactReport(project: string, query?: ImpactReportQuery): Promise<ImpactReport>;
+  // The editor's live lint and Spec Delta preview (GIT-US-0132, §8.7): pure reads
+  // of the text the editor holds, answered by the core in both modes.
+  lintSpecText(project: string, input: SpecLintInput): Promise<SpecLintFinding[]>;
+  previewSpecDelta(project: string, input: SpecDeltaPreviewInput)
+    : Promise<DeltaPreviewOperation[]>;
 
   // events
   subscribe(handler: (e: ChangeEvent) => void): Unsubscribe;
@@ -1585,6 +1590,43 @@ still lands the right status in the form; and an acceptance is always a write,
 even when nobody touched the form, because clearing the triage state is the point
 of pressing the button.
 
+
+### 8.7 Live grammar lint and the Spec Delta preview (as built, GIT-US-0132)
+
+The body editor of a **spec**, a **story** and a **task** is linted as the author types, and a
+story or task that carries a `## Spec Delta` (doc 03 §21.8) shows what it proposes next to what
+the spec holds today. Both answers come from the core — the grammar rules of doc 03 §21.9 exist
+once, in `internal/core`, and there is no copy of them in TypeScript.
+
+- **Where the rules run.** The provider calls `lintSpecText` and `previewSpecDelta`, which are
+  the vault methods `spec.lint` and `spec.delta.preview` (docs/07 §6.7). Browser-only mode
+  reaches them through `gintrackCore.call` in the WASM worker; the companion through
+  `POST /api/v1/projects/{key}/specs/lint` and `…/specs/delta/preview`, which call the same
+  vault methods. The WASM module exports them through its generic `call` entry point rather
+  than as functions of their own, which is what keeps the two modes identical: there is one
+  dispatcher and one implementation behind both.
+- **Diagnostics.** `MarkdownEditor` takes a `lint` source; `@codemirror/lint`'s `linter()`
+  calls it once typing pauses for 500 ms (the debounce is CodeMirror's own, and an answer that
+  arrives after the document moved on is dropped). A finding carries a 1-based body line;
+  `components/editor/lint.ts` maps it onto a range from the line's first non-blank character to
+  its end (a blank line gets one character, a line past the end clamps to the last) and keeps
+  its severity. The severity is the one `specs.lint` gives the rule — `warning` or `error`,
+  globally or per rule — and a rule at `off` does not run at all, so it never reaches the
+  editor. The tooltip shows the rule code (`LINT-REQ-VAGUE`, …) before the message.
+- **What is linted.** A spec body block by block (`LintSpec`, plus the parser's own findings such
+  as `W-REQ-SEPARATOR`); a story or task body through its Spec Delta: the parse findings
+  (`E-DELTA-OP`, `E-DELTA-TARGET`, `E-DELTA-REASON`), the lint of every ADDED and MODIFIED block
+  (`LintSpecDelta`), and `W-DELTA-DANGLING` for a target the repository does not hold. Any other
+  type is not linted. A lint call that fails underlines nothing: the save-time validation
+  (`item.validate`) still reports the same findings.
+- **Spec Delta preview.** Under the body editor of a story or task, `SpecDeltaPreview` lists
+  every operation once the body has a `## Spec Delta` heading (400 ms after typing stops):
+  ADDED shows the proposed block, and the requirement it supersedes when it has a
+  `Supersedes:` line; MODIFIED shows the target's current text beside the proposed one;
+  REMOVED shows the current text struck through and the `Reason:`. A target the repository
+  does not hold shows the `W-DELTA-DANGLING` message in place of a current text. Targets are
+  resolved in the repository of the item being edited, as the index resolves them for
+  `W-DELTA-DANGLING`.
 ---
 
 ## 9. Boards UX

@@ -58,6 +58,12 @@ func main() {
 //	gintrackCore.call("item.list", '{"type":"story"}')
 //	  -> {"ok": true,  "result": {...}}
 //	  -> {"ok": false, "error": {"code": "...", "message": "...", "path": "..."}}
+//
+// The core's domain functions are exported through this entry point rather
+// than as functions of their own, so the companion serves the same methods
+// over HTTP. The requirement grammar linter and the Spec Delta parser of the
+// editor's live lint, for one, are "spec.lint" and "spec.delta.preview"
+// (GIT-US-0132, internal/vault/speclive.go).
 func jsCall(_ js.Value, args []js.Value) any {
 	if len(args) < 1 {
 		return failure("invalid_request", "call(method, paramsJSON) needs a method name")

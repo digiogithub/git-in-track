@@ -84,4 +84,44 @@ describe('MarkdownEditor', () => {
     await user.click(screen.getByRole('button', { name: 'Bold' }));
     expect(onChange).not.toHaveBeenCalled();
   });
+
+  it('underlines the findings of its lint source once typing pauses', async () => {
+    const lint = vi.fn((text: string) =>
+      Promise.resolve(
+        [
+          {
+            line: 3,
+            severity: 'error' as const,
+            message: 'vague word "fast"',
+            source: 'LINT-REQ-VAGUE',
+          },
+          {
+            line: 1,
+            severity: 'warning' as const,
+            message: 'no scenario',
+            source: 'LINT-REQ-SCENARIO',
+          },
+        ].filter(() => text.length > 0),
+      ),
+    );
+    render(
+      <MarkdownEditor
+        value={'### ACME-SP-0001.R1 — Load\n\nThe page SHALL load fast.'}
+        onChange={vi.fn()}
+        label="Item body"
+        lint={lint}
+        lintDelayMs={10}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(document.querySelector('.cm-lintRange-error')?.textContent).toBe(
+        'The page SHALL load fast.',
+      );
+    });
+    expect(document.querySelector('.cm-lintRange-warning')?.textContent).toBe(
+      '### ACME-SP-0001.R1 — Load',
+    );
+    expect(lint).toHaveBeenCalledWith('### ACME-SP-0001.R1 — Load\n\nThe page SHALL load fast.');
+  });
 });

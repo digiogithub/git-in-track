@@ -2,7 +2,7 @@
 id: GIT-US-0132
 type: story
 title: Live grammar lint and Spec Delta preview in the editor
-status: backlog
+status: in_review
 priority: medium
 parent: GIT-EP-0027
 milestone: GIT-M-0015
@@ -10,7 +10,7 @@ author: claude
 labels: [web, wasm, agent-ok]
 estimate: 3
 created: 2026-09-24T12:11:35Z
-updated: 2026-09-24T12:11:35Z
+updated: 2026-09-24T22:09:57Z
 links:
   - { kind: blocked_by, target: GIT-US-0108 }
   - { kind: blocked_by, target: GIT-US-0109 }
@@ -22,10 +22,10 @@ As an author, I want lint findings underlined as I type a requirement or a Spec 
 
 ## Acceptance Criteria
 
-- [ ] `wasm/main_js.go` exports the grammar linter and delta parser; the CodeMirror 6 editor shows findings as diagnostics (warning vs error per `project.yaml`).
-- [ ] In a story body, the `## Spec Delta` section shows a preview of ADDED/MODIFIED/REMOVED against the current spec.
-- [ ] Works identically in browser-only and companion mode; `make wasm` and `make wasm-smoke` pass.
-- [ ] Vitest tests with a mocked core; docs/05 updated.
+- [x] `wasm/main_js.go` exports the grammar linter and delta parser; the CodeMirror 6 editor shows findings as diagnostics (warning vs error per `project.yaml`).
+- [x] In a story body, the `## Spec Delta` section shows a preview of ADDED/MODIFIED/REMOVED against the current spec.
+- [x] Works identically in browser-only and companion mode; `make wasm` and `make wasm-smoke` pass.
+- [x] Vitest tests with a mocked core; docs/05 updated.
 
 ## Notes
 

@@ -393,3 +393,68 @@ func TestIndexSpecDeltaReservesRequirementNumbers(t *testing.T) {
 		t.Errorf("RequirementRefsTo() numbers = %v, want %v", nums, want)
 	}
 }
+
+func TestLintSpecDeltaAndProposedText(t *testing.T) {
+	t.Parallel()
+
+	body := "## Spec Delta\n\n" +
+		"### ADDED ACME-SP-0003 — Reject fast input\n\nSupersedes: ACME-SP-0003.R1\n\n" +
+		"The form SHALL reject input fast.\n\n" +
+		"#### Scenario: typed\n- **WHEN** a person types\n- **THEN** it is rejected\n\n" +
+		"### MODIFIED ACME-SP-0003.R2 — Trim\n\nthe form trims input.\n\n" +
+		"### REMOVED ACME-SP-0003.R4 — Gone\n\nReason: nobody used it.\n"
+	delta := ParseSpecDelta(body)
+	if len(delta.Operations) != 3 {
+		t.Fatalf("operations = %d, want 3", len(delta.Operations))
+	}
+
+	tests := []struct {
+		name string
+		cfg  *SpecLintConfig
+		want []string
+	}{
+		{
+			name: "default levels",
+			cfg:  nil,
+			want: []string{
+				"LINT-REQ-VAGUE warning 7",
+				"LINT-REQ-STATEMENT warning 15",
+				"LINT-REQ-SCENARIO warning 13",
+			},
+		},
+		{
+			name: "vague is an error, the scenario rule is off",
+			cfg: &SpecLintConfig{Severity: LintWarning, Rules: map[Code]LintLevel{
+				LintReqVague: LintError, LintReqScenario: LintOff,
+			}},
+			want: []string{"LINT-REQ-VAGUE error 7", "LINT-REQ-STATEMENT warning 15"},
+		},
+		{name: "everything off", cfg: &SpecLintConfig{Severity: LintOff}, want: nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var got []string
+			for _, f := range LintSpecDelta(delta, tt.cfg) {
+				got = append(got, fmt.Sprintf("%s %s %d", f.Rule, f.Severity, f.Line))
+			}
+			sort.Strings(got)
+			want := append([]string(nil), tt.want...)
+			sort.Strings(want)
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("findings = %q, want %q", got, want)
+			}
+		})
+	}
+
+	proposed := []string{
+		"The form SHALL reject input fast.\n\n#### Scenario: typed\n- **WHEN** a person types\n- **THEN** it is rejected",
+		"the form trims input.",
+		"",
+	}
+	for i, op := range delta.Operations {
+		if got := op.ProposedText(); got != proposed[i] {
+			t.Errorf("%s ProposedText() = %q, want %q", op.Op, got, proposed[i])
+		}
+	}
+}

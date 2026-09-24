@@ -382,6 +382,19 @@ because a commit list cannot express them.
   to `<hook>.gintrack-backup` for uninstall to restore. `--dry-run` and `--json` as elsewhere.
   In a Jujutsu repository nothing is written: the command prints an equivalent `jj` alias and
   exits 0.
+- **Live grammar lint and Spec Delta preview in the editor** (`GIT-US-0132`, docs/05 §8.7,
+  docs/03 §21.8–§21.9). The body editor of a spec, a story and a task underlines the core's
+  findings as the author types (500 ms after typing pauses, through `@codemirror/lint`, now a
+  direct dependency — it was already in the lock file through the CodeMirror family): the
+  `LINT-REQ-*` rules at the `warning` or `error` severity `specs.lint` gives them (a rule at
+  `off` does not run), the Spec Delta parse findings and `W-DELTA-DANGLING`. Under the body of a
+  story or task with a `## Spec Delta`, a preview lists every ADDED, MODIFIED and REMOVED
+  operation next to the current text of the requirement it changes, and names a dangling target.
+  Both come from the new vault methods `spec.lint` and `spec.delta.preview` (docs/07 §6.7),
+  reached through the WASM module's `call` in browser-only mode and through
+  `POST /api/v1/projects/{key}/specs/lint` and `…/specs/delta/preview` on the companion, so both
+  modes run the same code and no rule exists in TypeScript. The core gains `LintSpecDelta` and
+  `DeltaOperation.ProposedText`.
 
 ### Changed
 

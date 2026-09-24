@@ -5,24 +5,34 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { FakeProvider } from '@/api/fake-provider';
 import { renderEditorRoute } from '@/features/editor/test-utils';
 
+/** The lint source the page last handed the editor. */
+const editorLint = vi.hoisted(() => ({
+  current: undefined as ((text: string) => Promise<unknown[]>) | undefined,
+}));
+
 vi.mock('@/components/editor/MarkdownEditor', () => ({
   MarkdownEditor: ({
     value,
     onChange,
     label,
+    lint,
   }: {
     value: string;
     onChange: (next: string) => void;
     label: string;
-  }) => (
-    <textarea
-      aria-label={label}
-      value={value}
-      onChange={(event) => {
-        onChange(event.target.value);
-      }}
-    />
-  ),
+    lint?: (text: string) => Promise<unknown[]>;
+  }) => {
+    editorLint.current = lint;
+    return (
+      <textarea
+        aria-label={label}
+        value={value}
+        onChange={(event) => {
+          onChange(event.target.value);
+        }}
+      />
+    );
+  },
 }));
 
 const storyId = 'ACME-US-0042';
@@ -241,5 +251,38 @@ describe('ItemEditorPage', () => {
     await waitFor(() => {
       expect(localStorage.getItem(`gintrack:draft:browser:ACME:${storyId}`)).toBeNull();
     });
+  });
+
+  it('lints the body live and previews its Spec Delta through the core', async () => {
+    const lint = vi.fn(() => [
+      { code: 'LINT-REQ-VAGUE', severity: 'error' as const, line: 5, message: 'vague "fast"' },
+    ]);
+    const preview = vi.fn(() => [
+      {
+        op: 'MODIFIED' as const,
+        spec: 'ACME-SP-0003',
+        target: 'ACME-SP-0003.R1',
+        title: 'Trim',
+        line: 3,
+        proposed: 'The checkout SHALL trim fast.',
+        current: { ref: 'ACME-SP-0003.R1', title: 'Trim input', text: 'The checkout SHALL trim.' },
+      },
+    ]);
+    provider = new FakeProvider({ specLive: { lint, preview } });
+    renderEditorRoute(editPath, provider);
+    await screen.findByLabelText('Title');
+
+    const delta =
+      '## Spec Delta\n\n### MODIFIED ACME-SP-0003.R1 — Trim\n\nThe checkout SHALL trim fast.\n';
+    fireEvent.change(screen.getByLabelText('Item body'), { target: { value: delta } });
+
+    expect(await editorLint.current?.(delta)).toEqual([
+      { line: 5, severity: 'error', message: 'vague "fast"', source: 'LINT-REQ-VAGUE' },
+    ]);
+    expect(lint).toHaveBeenCalledWith({ id: storyId, type: 'story', body: delta });
+
+    const section = await screen.findByRole('region', { name: 'Spec Delta preview' });
+    expect(section).toHaveTextContent('Current — Trim input');
+    expect(preview).toHaveBeenCalledWith({ id: storyId, body: delta });
   });
 });
