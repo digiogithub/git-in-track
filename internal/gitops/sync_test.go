@@ -510,6 +510,10 @@ func (s *stubBackend) Identity(context.Context) (Identity, error) {
 
 func (s *stubBackend) Status(context.Context) (Status, error) { return Status{Clean: true}, nil }
 
+func (s *stubBackend) ChangedFiles(context.Context, string, string) ([]FileChange, error) {
+	return []FileChange{}, nil
+}
+
 func (s *stubBackend) Commit(context.Context, CommitRequest) (CommitResult, error) {
 	return CommitResult{Empty: true}, nil
 }

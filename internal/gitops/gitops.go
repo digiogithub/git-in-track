@@ -280,6 +280,15 @@ type Backend interface {
 	// their time series from (ADR-017); the result is derived data that can be
 	// rebuilt from the repository at any time.
 	History(ctx context.Context, req HistoryRequest) (FileHistory, error)
+	// ChangedFiles lists the files that differ between the commit `from` names
+	// and the one `to` names — or the working tree when `to` is WorkingTree —
+	// sorted by path, with renames paired and the changed line ranges of the
+	// new side (GIT-US-0112). Refs are branch names, SHAs or remote-tracking
+	// refs such as `origin/main`; one that names no commit fails with
+	// CodeUnknownRevision. Every backend returns the same result on the same
+	// history, and none of them writes anything: a jj backend does not
+	// snapshot the working copy to answer.
+	ChangedFiles(ctx context.Context, from, to string) ([]FileChange, error)
 
 	// ConflictFile reads the three sides of a conflicted path — the merge base,
 	// the user's own side and the incoming one — however the backend can

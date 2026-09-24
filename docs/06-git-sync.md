@@ -807,7 +807,8 @@ GIT-US-0021 (`SyncStatus`, `Fetch`, `Integrate`, `Push`, `Undo`, `Resume`
 and `Commits`) and the structured conflict surface added by GIT-US-0022
 (`ConflictFile` and `ResolvePath`, §5.7). GIT-US-0039 restated every one of
 those in terms both git and jj have (§14.8); `Undo` and `Resume` are what
-GIT-US-0021 called `Abort` and `Continue`.
+GIT-US-0021 called `Abort` and `Continue`. GIT-US-0112 added the read-only
+`ChangedFiles` diff primitive (§7.4).
 
 A third go-git gap matters to sync, on top of the two below: **go-git has no
 rebase, and its merge is fast-forward only.** The go-git backend therefore
@@ -875,6 +876,44 @@ host and path and nothing else — and the answer is used for one fetch or push
 and then dropped. There is no `hosts.go`: the two username shapes above live
 next to the rest of the credential code. We never fall back to a keychain of our
 own (§8.1).
+
+### 7.4 Changed files between two revisions (GIT-US-0112)
+
+`Backend.ChangedFiles(ctx, from, to)` answers "which files changed, and which
+lines of them" — the diff the trace and impact engines of GIT-EP-0024 build
+suspect detection and impact sets on. It is native only: `internal/core` and
+`internal/vault` never import it.
+
+- **Refs.** `from` and `to` are branch names, full or abbreviated SHAs, tags,
+  `HEAD` or remote-tracking refs such as `origin/main`. On a jj repository they
+  are resolved by jj: bookmarks, commit ids, and `origin/main` translated to the
+  remote bookmark `main@origin` (§14.5); `HEAD` is `@`. A ref that names no
+  commit — or, in jj, a revset that names several — fails with
+  `git_unknown_revision`.
+- **The working tree.** `to` set to `gitops.WorkingTree` (the empty string)
+  compares against the files on disk: every tracked path still present (the
+  index for git, the last snapshot of `@` for jj) plus every untracked file the
+  ignore rules do not exclude (`.gitignore` files, `.git/info/exclude`, the
+  global excludes file). jj is **not** asked to snapshot — that would write an
+  operation (§14.5) — so the disk is read directly. Files are compared byte for
+  byte: clean filters (autocrlf, LFS) are not applied, and a mode change alone
+  is not a change. The cost is one read of every non-ignored file.
+- **The result.** A list of `FileChange{path, oldPath, status, lines, binary}`
+  sorted by path. `status` is `added`, `modified`, `deleted` or `renamed`;
+  `oldPath` is set only on a rename. Renames pair a deleted and an added path
+  with identical content first, then — when there are at most 100 × 100
+  candidates — the most similar text pairs at or above git's default 50 %
+  similarity; empty files are never paired. `lines` are the changed hunks on the
+  **new** side in `git diff -U0` form: `{start, count}`, 1-based, where
+  `count: 0` is a pure deletion after line `start`. An added text file has one
+  hunk covering it; a deletion, a pure rename and a binary file (a NUL byte in
+  the first 8 000 bytes of either side) have none.
+- **Identical on every backend.** The backends only produce the two sides — a
+  path → content-id map and a reader (go-git's object store; `ls-tree` plus
+  one `cat-file --batch` for system git; jj's resolution plus its git object
+  store, as for `History`, ADR-023). Rename pairing and line ranges are
+  computed once, in shared code, so the three backends return the same list on
+  the same history rather than three diff engines' opinions of it.
 
 ---
 
