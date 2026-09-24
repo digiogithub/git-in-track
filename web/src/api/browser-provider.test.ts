@@ -9,7 +9,7 @@ import {
   type ProjectSummary,
 } from '@/api/provider';
 import type { CoreMethodName } from '@/core-bridge/api';
-import type { CoreClient } from '@/core-bridge/client';
+import { CoreError, type CoreClient } from '@/core-bridge/client';
 import {
   clearHandleRecords,
   clearVaultRegistry,
@@ -976,6 +976,25 @@ describe('BrowserProvider specs (GIT-US-0127)', () => {
     await expect(
       provider.updateRequirement('ACME', 'ACME-SP-0001.R1', { status: 'todo' }, 'sha256:stale'),
     ).rejects.toMatchObject({ code: 'stale_revision' });
+  });
+
+  it('keeps the current rev and the conflicts of a stale requirement write', async () => {
+    const { provider } = await mount({
+      'requirement.update': () => {
+        throw new CoreError('stale_revision', 'ACME-SP-0001.R1 changed', 'specs/a.md', {
+          currentRev: 'sha256:now',
+          conflicts: [{ field: 'status', current: 'done', proposed: 'todo' }],
+        });
+      },
+    });
+
+    await expect(
+      provider.updateRequirement('ACME', 'ACME-SP-0001.R1', { status: 'todo' }, 'sha256:stale'),
+    ).rejects.toMatchObject({
+      code: 'stale_revision',
+      currentRev: 'sha256:now',
+      conflicts: [{ field: 'status', current: 'done', proposed: 'todo' }],
+    });
   });
 
   it('answers trace, coverage and impact with unavailable without calling the core', async () => {

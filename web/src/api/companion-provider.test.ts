@@ -656,6 +656,34 @@ describe('CompanionProvider error mapping', () => {
     });
   }
 
+  it('keeps the current rev and the fields in conflict of a stale revision', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      response(
+        {
+          code: 'stale_revision',
+          detail: 'ACME-SP-0001.R2 changed on disk.',
+          currentRev: 'sha256:now',
+          conflicts: [
+            { field: 'text' },
+            { field: 'title', current: 'Keep the basket', proposed: 'Keep the cart' },
+          ],
+        },
+        { status: 409, statusText: 'Conflict' },
+      ),
+    );
+
+    const error = (await provider(fetchImpl)
+      .updateRequirement('ACME', 'ACME-SP-0001.R2', { title: 'Keep the cart' }, 'sha256:then')
+      .catch((reason: unknown) => reason)) as ProviderError;
+
+    expect(error.code).toBe('stale_revision');
+    expect(error.currentRev).toBe('sha256:now');
+    expect(error.conflicts).toEqual([
+      { field: 'text' },
+      { field: 'title', current: 'Keep the basket', proposed: 'Keep the cart' },
+    ]);
+  });
+
   it('surfaces per-field details of a validation problem', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       response(

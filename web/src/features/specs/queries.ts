@@ -10,10 +10,14 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import type {
   CoverageList,
+  CoverageRow,
   Item,
   RequirementDraft,
   RequirementList,
+  RequirementPatch,
+  RequirementRead,
   RequirementWriteResult,
+  TracedRequirement,
 } from '@/api/provider';
 import { ProviderError } from '@/api/provider';
 import { useProvider } from '@/api/provider-context';
@@ -23,7 +27,17 @@ export const specKeys = {
   list: (project: string) => ['items', project, 'specs', 'list'] as const,
   requirements: (project: string) => ['items', project, 'specs', 'requirements'] as const,
   coverage: (project: string) => ['items', project, 'specs', 'coverage'] as const,
+  requirement: (project: string, ref: string) =>
+    ['items', project, 'specs', 'requirement', ref] as const,
+  trace: (project: string, ref: string) => ['items', project, 'specs', 'trace', ref] as const,
+  coverageOf: (project: string, ref: string) =>
+    ['items', project, 'specs', 'coverage-of', ref] as const,
 };
+
+/** `unavailable` is a state, never retried; anything else gets two more tries. */
+function retryUnlessUnavailable(count: number, error: Error): boolean {
+  return !(error instanceof ProviderError && error.code === 'unavailable') && count < 2;
+}
 
 /** Specs are few; the page reads every one, walking the cursor. */
 const SPEC_PAGE = 500;
@@ -68,8 +82,69 @@ export function useCoverage(project: string) {
     queryKey: specKeys.coverage(project),
     queryFn: (): Promise<CoverageList> => provider.listCoverage(project),
     enabled: project !== '',
-    retry: (count, error) =>
-      !(error instanceof ProviderError && error.code === 'unavailable') && count < 2,
+    retry: retryUnlessUnavailable,
+  });
+}
+
+/** One requirement with its text, its requirement `rev` (the write token) and its `blockRev`. */
+export function useRequirement(project: string, ref: string) {
+  const provider = useProvider();
+  return useQuery({
+    queryKey: specKeys.requirement(project, ref),
+    queryFn: (): Promise<RequirementRead> => provider.getRequirement(project, ref),
+    enabled: project !== '' && ref !== '',
+  });
+}
+
+/** The computed trace of one requirement; `unavailable` in browser-only mode. */
+export function useRequirementTrace(project: string, ref: string) {
+  const provider = useProvider();
+  return useQuery({
+    queryKey: specKeys.trace(project, ref),
+    queryFn: (): Promise<TracedRequirement> => provider.traceRequirement(project, ref),
+    enabled: project !== '' && ref !== '',
+    retry: retryUnlessUnavailable,
+  });
+}
+
+/** The coverage row of one requirement, `undefined` when the answer names none (`untested`). */
+export function useRequirementCoverage(project: string, ref: string) {
+  const provider = useProvider();
+  return useQuery({
+    queryKey: specKeys.coverageOf(project, ref),
+    queryFn: async (): Promise<CoverageRow | null> => {
+      const list = await provider.listCoverage(project, { refs: [ref] });
+      return list.coverage.find((row) => row.ref === ref) ?? null;
+    },
+    enabled: project !== '' && ref !== '',
+    retry: retryUnlessUnavailable,
+  });
+}
+
+/**
+ * Patches one requirement under its requirement `rev` — never its `blockRev`
+ * (ADR-037 §6, doc 03 §21.5). The caller handles `stale_revision`.
+ */
+export function useUpdateRequirement(project: string) {
+  const provider = useProvider();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      ref,
+      patch,
+      rev,
+    }: {
+      ref: string;
+      patch: RequirementPatch;
+      rev: string;
+    }): Promise<RequirementWriteResult> => provider.updateRequirement(project, ref, patch, rev),
+    onSuccess: (result) => {
+      queryClient.setQueryData<RequirementRead>(
+        specKeys.requirement(project, result.requirement.ref),
+        { requirement: result.requirement, specRev: result.specRev },
+      );
+      void queryClient.invalidateQueries({ queryKey: ['items', project] });
+    },
   });
 }
 

@@ -38,6 +38,7 @@ import type {
   CommentPushEntry,
   CommentPushInput,
   CommentPushResult,
+  ConflictField,
   External,
   InboxDraft,
   InboxFilter,
@@ -95,6 +96,7 @@ import type {
   GitSettings,
   GitSettingsPatch,
   ProviderErrorCode,
+  ProviderErrorDetails,
   RefResolution,
   RepoInfo,
   SearchCodeIndex,
@@ -315,6 +317,8 @@ export type ProblemDocument = {
   detail?: string;
   code?: string;
   currentRev?: string;
+  /** The fields a refused conditional write would still change (`stale_revision`). */
+  conflicts?: ConflictField[];
   instance?: string;
   errors?: { field?: string; code?: string; message?: string }[];
 };
@@ -471,6 +475,18 @@ function parseProblem(body: unknown): ProblemDocument | null {
       return detail;
     });
   if (errors.length > 0) problem.errors = errors;
+  const conflicts = asArray(record['conflicts'])
+    .map((entry) => asRecord(entry))
+    .filter((entry): entry is Record<string, unknown> => entry !== null)
+    .flatMap((entry): ConflictField[] => {
+      const field = asString(entry['field']);
+      if (field === undefined) return [];
+      const conflict: ConflictField = { field };
+      put(conflict, 'current', asString(entry['current']));
+      put(conflict, 'proposed', asString(entry['proposed']));
+      return [conflict];
+    });
+  if (conflicts.length > 0) problem.conflicts = conflicts;
   return problem;
 }
 
@@ -3378,7 +3394,10 @@ export class CompanionProvider implements DataProvider {
     }
 
     const code = mapped ?? codeFromStatus(status, this.#capabilities.write);
-    return new ProviderError(code, problemMessage(problem ?? {}, fallback), path);
+    const details: ProviderErrorDetails = {};
+    put(details, 'currentRev', problem?.currentRev);
+    put(details, 'conflicts', problem?.conflicts);
+    return new ProviderError(code, problemMessage(problem ?? {}, fallback), path, details);
   }
 
   #setConnection(state: ConnectionState): void {

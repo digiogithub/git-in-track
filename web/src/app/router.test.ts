@@ -23,4 +23,8 @@ describe('the route tree', () => {
   it('registers the coverage matrix under the project (story GIT-US-0130)', () => {
     expect(paths(routeTree as unknown as TreeNode)).toContain('specs/coverage');
   });
+
+  it('registers the requirement detail under the project (story GIT-US-0129)', () => {
+    expect(paths(routeTree as unknown as TreeNode)).toContain('specs/$spec/$req');
+  });
 });

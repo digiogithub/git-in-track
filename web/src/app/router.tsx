@@ -113,8 +113,8 @@ const milestonesRoute = createRoute({
 /**
  * Specs and their requirements, one row per requirement (story GIT-US-0128,
  * ADR-037). The status and coverage filters live in the search params. The
- * requirement detail and impact views arrive later as `specs/...` routes
- * (GIT-US-0129, GIT-US-0131).
+ * requirement detail is `specs/$spec/$req` (GIT-US-0129); the impact view
+ * arrives later as a `specs/...` route (GIT-US-0131).
  */
 const specsRoute = createRoute({
   getParentRoute: () => projectRoute,
@@ -135,6 +135,21 @@ const specsCoverageRoute = createRoute({
   component: lazyRouteComponent(
     () => import('@/features/specs/CoverageMatrix'),
     'CoverageMatrixPage',
+  ),
+});
+
+/**
+ * One requirement (story GIT-US-0129): the block, its status, `verified`
+ * stamp, coverage and trace panel. `$req` is the local `R<n>`, so
+ * `/p/ACME/specs/ACME-SP-0003/R2` names `ACME-SP-0003.R2`. Three segments, so
+ * it never shadows `specs/coverage`. Lazy, like the rest of the specs views.
+ */
+const requirementRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: 'specs/$spec/$req',
+  component: lazyRouteComponent(
+    () => import('@/features/specs/RequirementDetail'),
+    'RequirementDetail',
   ),
 });
 
@@ -226,6 +241,7 @@ export const routeTree = rootRoute.addChildren([
     milestonesRoute,
     specsRoute,
     specsCoverageRoute,
+    requirementRoute,
   ]),
   boardsRoute,
   boardRoute,

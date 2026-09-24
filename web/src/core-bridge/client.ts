@@ -30,6 +30,7 @@ import type {
 import {
   isCoreResponse,
   type CoreErrorCode,
+  type CoreErrorPayload,
   type CoreRequest,
   type CoreResponse,
   type PingResult,
@@ -58,12 +59,20 @@ export class CoreError extends Error {
   readonly code: CoreErrorCode;
   /** Vault-relative path the failure is about, when it is about one file. */
   readonly path: string | undefined;
+  /** What a refused conditional write carries (`stale_revision`), when the core said. */
+  readonly details: Pick<CoreErrorPayload, 'currentRev' | 'conflicts'>;
 
-  constructor(code: CoreErrorCode, message: string, path?: string) {
+  constructor(
+    code: CoreErrorCode,
+    message: string,
+    path?: string,
+    details: Pick<CoreErrorPayload, 'currentRev' | 'conflicts'> = {},
+  ) {
     super(message);
     this.name = 'CoreError';
     this.code = code;
     this.path = path;
+    this.details = details;
   }
 }
 
@@ -346,7 +355,12 @@ export class CoreClient {
       pending.resolve(response.result);
     } else {
       pending.reject(
-        new CoreError(response.error.code, response.error.message, response.error.path),
+        new CoreError(response.error.code, response.error.message, response.error.path, {
+          ...(response.error.currentRev ? { currentRev: response.error.currentRev } : {}),
+          ...(Array.isArray(response.error.conflicts) && response.error.conflicts.length > 0
+            ? { conflicts: response.error.conflicts }
+            : {}),
+        }),
       );
     }
   }

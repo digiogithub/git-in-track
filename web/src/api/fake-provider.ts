@@ -150,6 +150,7 @@ import type {
   YouTrackIssue,
   YouTrackIssuePage,
   YouTrackIssueQuery,
+  ConflictField,
   CoverageFilter,
   CoverageList,
   CoverageRow,
@@ -4959,8 +4960,23 @@ export class FakeProvider implements DataProvider {
       return Promise.reject(new ProviderError('not_found', `Requirement ${ref} not found`));
     }
     if (rev !== '*' && current.rev !== rev) {
+      // Like the core (R-REV-3a): the fields the refused patch would still
+      // change against what is stored now; the text is named, never quoted.
+      const conflicts: ConflictField[] = [];
+      if (patch.text !== undefined && patch.text !== (current.text ?? '')) {
+        conflicts.push({ field: 'text' });
+      }
+      for (const field of ['title', 'status'] as const) {
+        const proposed = patch[field];
+        if (proposed !== undefined && proposed !== current[field]) {
+          conflicts.push({ field, current: current[field], proposed });
+        }
+      }
       return Promise.reject(
-        new ProviderError('stale_revision', `Requirement ${ref} changed on disk`),
+        new ProviderError('stale_revision', `Requirement ${ref} changed on disk`, current.path, {
+          currentRev: current.rev,
+          ...(conflicts.length > 0 ? { conflicts } : {}),
+        }),
       );
     }
     const { unset, ...set } = patch;
