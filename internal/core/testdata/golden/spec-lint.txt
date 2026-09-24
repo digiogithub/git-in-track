@@ -1,0 +1,16 @@
+# LintSpec(ACME-SP-0004, spec-lint-body.md) with LINT-REQ-MULTI at error
+ACME-SP-0004.R4:37 warning LINT-REQ-STATEMENT: the statement of ACME-SP-0004.R4 has no SHALL: want one EARS pattern (The <system> SHALL …; WHEN/WHILE/WHERE <condition>, the <system> SHALL …; IF <condition>, THEN the <system> SHALL …) or a plain SHALL sentence
+ACME-SP-0004.R4:37 warning LINT-REQ-VAGUE: vague word "quickly" in ACME-SP-0004.R4: state a measurable, observable condition instead
+ACME-SP-0004.R5:43 warning LINT-REQ-SCENARIO: ACME-SP-0004.R5 has no "#### Scenario:": want at least one, with **WHEN** and **THEN** steps
+ACME-SP-0004.R5:45 warning LINT-REQ-STATEMENT: the statement of ACME-SP-0004.R5 writes "shall" in lower case: EARS keywords are uppercase (SHALL)
+ACME-SP-0004.R5:45 warning LINT-REQ-VAGUE: vague word "robust" in ACME-SP-0004.R5: state a measurable, observable condition instead
+ACME-SP-0004.R6:50 warning LINT-REQ-VAGUE: vague word "as appropriate" in ACME-SP-0004.R6: state a measurable, observable condition instead
+ACME-SP-0004.R6:50 error LINT-REQ-MULTI: the statement of ACME-SP-0004.R6 has 2 SHALLs: one requirement per block
+ACME-SP-0004.R6:53 warning LINT-REQ-WHEN-THEN: scenario "THEN first" has a **THEN** before its first **WHEN**
+ACME-SP-0004.R6:56 warning LINT-REQ-WHEN-THEN: scenario "no steps" has no **WHEN** and no **THEN** step
+ACME-SP-0004.R7:60 warning LINT-REQ-STATEMENT: the statement of ACME-SP-0004.R7 opens with IF but has no THEN before SHALL: want IF <condition>, THEN the <system> SHALL …
+ACME-SP-0004.R7:62 warning LINT-REQ-WHEN-THEN: scenario "odd steps" has no **WHEN** and no **THEN** step
+ACME-SP-0004.R7:63 warning LINT-REQ-WHEN-THEN: step keyword **when** of scenario "odd steps" is not uppercase: write **WHEN**
+ACME-SP-0004.R7:65 warning LINT-REQ-WHEN-THEN: step keyword **SO** of scenario "odd steps" is not GIVEN, WHEN, AND or THEN
+ACME-SP-0004.R7:66 warning LINT-REQ-WHEN-THEN: a step of scenario "odd steps" has no **GIVEN**, **WHEN**, **AND** or **THEN** keyword
+ACME-SP-0004.R8:74 warning LINT-REQ-VAGUE: vague word "etc" in ACME-SP-0004.R8: state a measurable, observable condition instead

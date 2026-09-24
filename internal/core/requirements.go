@@ -11,8 +11,8 @@ import (
 )
 
 // The diagnostic codes of the spec layer (ADR-037, docs/03 section 16). The
-// grammar-lint LINT-REQ-* codes, the Spec Delta codes and the marker codes are
-// emitted by the stories that implement those parts.
+// grammar-lint LINT-REQ-* codes live in speclint.go; the Spec Delta codes and
+// the marker codes are emitted by the stories that implement those parts.
 const (
 	CodeReqForeign     Code = "E-REQ-FOREIGN"
 	CodeReqDuplicate   Code = "E-REQ-DUPLICATE"
@@ -624,8 +624,9 @@ func specFieldSet(item *Item, field string) bool {
 // RequirementDiagnostics returns the findings about the requirement blocks and
 // the requirements: map of a spec (docs/03 sections 21.2 to 21.4): the parser's
 // findings, E-REQ-DUPLICATE, E-REQ-FIELD, E-REQ-STATUS, E-STATUS-UNKNOWN,
-// E-LINK-TARGET-TYPE, W-REQ-NO-ENTRY and W-REQ-ORPHAN-ENTRY. A nil cfg skips the
-// status checks. The index runs it over every spec so that doctor reports it;
+// E-LINK-TARGET-TYPE, W-REQ-NO-ENTRY, W-REQ-ORPHAN-ENTRY and the LINT-REQ-*
+// grammar lint at the severity specs.lint gives each rule. A nil cfg skips the
+// status checks and lints at warning. The index runs it over every spec so that doctor reports it;
 // ValidateItem runs it before every write.
 func RequirementDiagnostics(item *Item, cfg *ProjectConfig) []Diagnostic {
 	if item == nil || item.Type != TypeSpec {
@@ -649,6 +650,7 @@ func RequirementDiagnostics(item *Item, cfg *ProjectConfig) []Diagnostic {
 			continue
 		}
 		seen[blk.Ref.Number] = blk.Line
+		lintDiagnostics(d, blk, cfg.SpecLint())
 		entry, ok := item.Requirements[blk.Ref.Key()]
 		switch {
 		case !ok:

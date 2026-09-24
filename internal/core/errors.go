@@ -75,6 +75,7 @@ const (
 	CodeProjStatusCategory   Code = "E-PROJ-STATUS-CATEGORY"
 	CodeProjInitial          Code = "E-PROJ-INITIAL"
 	CodeProjTransitionTarget Code = "E-PROJ-TRANSITION-TARGET"
+	CodeProjSpecs            Code = "E-PROJ-SPECS"
 
 	// Team-repository codes (docs/04 section 3.5). The rules that need a local
 	// clone (W-TEAM-KEY-MISMATCH) are raised by the workspace, not by the parser.

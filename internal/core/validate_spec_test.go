@@ -47,7 +47,9 @@ func validSpec(t *testing.T) *Item {
 			},
 		},
 		Body: "## Requirements\n\n### TEST-SP-0001.R1 — One\n\nThe system SHALL do one.\n\n" +
-			"### TEST-SP-0001.R2 — Two\n\nThe system SHALL do two.\n",
+			"#### Scenario: one\n- **WHEN** asked\n- **THEN** it does one\n\n" +
+			"### TEST-SP-0001.R2 — Two\n\nThe system SHALL do two.\n\n" +
+			"#### Scenario: two\n- **WHEN** asked\n- **THEN** it does two\n",
 		Path: "docs/.pmngr/specs/TEST-SP-0001-item-id-allocation.md",
 	}
 }
@@ -345,8 +347,9 @@ func TestIndexReportsSpecFindings(t *testing.T) {
 		codes = append(codes, d.Code)
 	}
 	sort.Slice(codes, func(i, j int) bool { return codes[i] < codes[j] })
-	// counters.spec is a hint like every other counter.
-	want := []Code{CodeSchemaFeature, CodeWarnCounterStale, CodeWarnReqNoEntry}
+	// counters.spec is a hint like every other counter; the block has no
+	// scenario, which the grammar lint reports at its default, warning.
+	want := []Code{CodeSchemaFeature, LintReqScenario, CodeWarnCounterStale, CodeWarnReqNoEntry}
 	if !reflect.DeepEqual(codes, want) {
 		t.Errorf("index findings = %v, want %v", codes, want)
 	}

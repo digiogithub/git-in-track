@@ -423,10 +423,50 @@ const scenarioPrefix = "#### Scenario:"
 // lines after the heading. headingLine is the body line of the heading, so that
 // scenario lines are reported in the same numbering.
 func readBlockContent(lines []bodyLine, headingLine int) (string, []Scenario) {
-	var fence fenceTracker
+	scan := scanBlockContent(lines, headingLine)
 	var statement []string
-	statementDone := false
+	for _, l := range scan.statement {
+		statement = append(statement, l.text)
+	}
 	var scenarios []Scenario
+	for _, sc := range scan.scenarios {
+		out := Scenario{Name: sc.name, Line: sc.line}
+		for _, st := range sc.steps {
+			out.Steps = append(out.Steps, st.text)
+		}
+		scenarios = append(scenarios, out)
+	}
+	return strings.Join(statement, "\n"), scenarios
+}
+
+// numberedLine is a line of text with its 1-based body line and, for a list
+// item, the indentation of its bullet.
+type numberedLine struct {
+	text   string
+	line   int
+	indent int
+}
+
+// scannedScenario is a scenario with the body line of each step.
+type scannedScenario struct {
+	name  string
+	line  int
+	steps []numberedLine
+}
+
+// blockScan is the content of a block with body line numbers kept, which the
+// grammar lint needs to point at the offending line.
+type blockScan struct {
+	statement []numberedLine
+	scenarios []scannedScenario
+}
+
+// scanBlockContent is the one reading of a block's statement and scenarios,
+// shared by the parser and the grammar lint so the two never disagree.
+func scanBlockContent(lines []bodyLine, headingLine int) blockScan {
+	var fence fenceTracker
+	var out blockScan
+	statementDone := false
 	current := -1
 
 	for i, ln := range lines {
@@ -440,12 +480,12 @@ func readBlockContent(lines []bodyLine, headingLine int) (string, []Scenario) {
 				// A fence ends the statement; one before any prose means the
 				// block has none.
 				statementDone = true
-			case trimmed == "" && len(statement) == 0:
+			case trimmed == "" && len(out.statement) == 0:
 				continue
 			case trimmed == "" || atxLevel(ln.text) > 0:
 				statementDone = true
 			default:
-				statement = append(statement, trimmed)
+				out.statement = append(out.statement, numberedLine{text: trimmed, line: lineNo})
 				continue
 			}
 		}
@@ -455,18 +495,20 @@ func readBlockContent(lines []bodyLine, headingLine int) (string, []Scenario) {
 		if atxLevel(ln.text) >= 4 {
 			current = -1
 			if name, ok := strings.CutPrefix(ln.text, scenarioPrefix); ok {
-				scenarios = append(scenarios, Scenario{Name: strings.TrimSpace(name), Line: lineNo})
-				current = len(scenarios) - 1
+				out.scenarios = append(out.scenarios, scannedScenario{name: strings.TrimSpace(name), line: lineNo})
+				current = len(out.scenarios) - 1
 			}
 			continue
 		}
 		if current >= 0 {
 			if step, ok := listItemText(ln.text); ok {
-				scenarios[current].Steps = append(scenarios[current].Steps, step)
+				indent := len(ln.text) - len(strings.TrimLeft(ln.text, " \t"))
+				out.scenarios[current].steps = append(out.scenarios[current].steps,
+					numberedLine{text: step, line: lineNo, indent: indent})
 			}
 		}
 	}
-	return strings.Join(statement, "\n"), scenarios
+	return out
 }
 
 // listItemText returns the text of a bullet list item ("- ", "* " or "+ ").

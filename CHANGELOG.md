@@ -121,6 +121,16 @@ because a commit list cannot express them.
   refs to a missing spec or block are `W-MARKER-DANGLING`. The result is an in-memory derived
   cache, rebuilt fully or incrementally from a list of changed paths; it is never written into
   a spec, and neither `internal/core` nor `internal/vault` imports it. No CLI or MCP surface yet.
+- **Requirement grammar lint** (`GIT-US-0108`, ADR-037 §10, docs/03 §21.9). Every requirement
+  block is checked against the EARS/SHALL grammar: `LINT-REQ-STATEMENT` (one EARS pattern or a
+  plain `SHALL` sentence, uppercase keywords), `LINT-REQ-SCENARIO` (at least one
+  `#### Scenario:`), `LINT-REQ-WHEN-THEN` (`**WHEN**` then `**THEN**` steps), `LINT-REQ-VAGUE`
+  (a configurable `vague_words` list) and `LINT-REQ-MULTI` (one `SHALL` per statement). The
+  new `project.yaml` key `specs.lint` sets the severity — `off`, `warning` (default) or
+  `error`, globally, as the scalar shorthand `specs.lint: <value>`, or per rule; at `error` a
+  finding blocks writes to the spec and fails `gintrack doctor`. An invalid `specs.lint` is
+  `E-PROJ-SPECS`. The linter lives in `internal/core` (`LintSpec`, `LintRequirement`), so it
+  compiles to WebAssembly for the web editor.
 
 ### Changed
 

@@ -545,7 +545,7 @@ The only non-Markdown file in `.pmngr/`. Plain YAML, no front matter.
 | `team` | mapping | no | — | Back-pointer to the team repo (`repo`, `key`). |
 | `links` | mapping | no | — | Host info for building blob URLs (`host: github\|gitlab\|gitea\|bitbucket`, `web_url`). |
 | `integrations` | mapping | no | — | External trackers this backlog mirrors ([§6.5](#65-integrations)). Credentials never appear here. |
-| `specs` | mapping | no | `{lint: {severity: warning}}` | Spec settings; today only `lint`, the requirement-grammar severity `off\|warning\|error` ([§21.9](#219-grammar-lint-and-specslint), ADR-037). |
+| `specs` | mapping | no | `{lint: {severity: warning}}` | Spec settings; today only `lint`: the requirement-grammar severity `off\|warning\|error` (globally, as the scalar shorthand `specs.lint: <value>`, or per rule under `rules`) and the `vague_words` list ([§21.9](#219-grammar-lint-and-specslint), ADR-037). |
 
 `docs` sub-keys: `path` (relative to repo root, informational — the real path is where the file
 was found), `wikilinks` (bool, default `true`), `mermaid` (bool, default `true`), `math` (bool,
@@ -680,7 +680,10 @@ integrations:
 
 specs:                    # ADR-037 (section 21.9)
   lint:
-    severity: warning     # off | warning | error
+    severity: warning     # off | warning | error; or `lint: warning` as a scalar
+    rules:                # optional, per rule, same three values
+      LINT-REQ-VAGUE: error
+    vague_words: [fast, quickly, user-friendly, easy, as appropriate, as needed, etc, robust]
 ```
 
 ### 6.3 Validation rules for `project.yaml`
@@ -705,7 +708,10 @@ specs:                    # ADR-037 (section 21.9)
   not an absolute `http`/`https` URL, an empty `project`, an unknown mode, or a `field_map` key that
   is not a git-in-track field ([§6.5](#65-integrations)).
 - `E-PROJ-SPECS` — `specs.lint` (scalar shorthand), `specs.lint.severity` or a `specs.lint.rules`
-  value is not `off`/`warning`/`error`, or `rules` names an unknown lint rule ([§21.9](#219-grammar-lint-and-specslint)).
+  value is not `off`/`warning`/`error`, `rules` names an unknown lint rule, `vague_words` is not a
+  list or holds an empty word, or `specs`/`specs.lint` has the wrong shape
+  ([§21.9](#219-grammar-lint-and-specslint)). The file still loads; the invalid value reads as
+  `warning`.
 
 ### 6.4 The `triage` category and the inbox
 
@@ -1922,6 +1928,8 @@ every write and by the index (so by `gintrack doctor`):
 | `W-REQ-HEADING` | W | A level-3 heading under `## Requirements` that is not a requirement heading, or a heading whose ref is well formed but whose separator or title is missing |
 | `W-REQ-NO-ENTRY` | W | A block with no `requirements:` entry, or an entry with no `status` |
 | `W-REQ-ORPHAN-ENTRY` | W | A `requirements:` key with no block |
+| `E-PROJ-SPECS` | E | Invalid `specs.lint` configuration ([§6.3](#63-validation-rules-for-projectyaml)); since `GIT-US-0108` |
+| `LINT-REQ-*` | W, configurable | Requirement grammar ([§21.9](#219-grammar-lint-and-specslint)); `off`, `warning` or `error` under `specs.lint`; since `GIT-US-0108` |
 
 A misspelled requirement ref in a heading (`R02`, `r2`) is `E-ID-GRAMMAR`.
 
@@ -1932,9 +1940,7 @@ Added by ADR-037, not yet emitted:
 | `E-DELTA-OP` | E | A `## Spec Delta` heading has an unknown operation or is malformed |
 | `E-DELTA-TARGET` | E | `ADDED` names a requirement, or `MODIFIED`/`REMOVED` names a spec |
 | `E-DELTA-REASON` | E | `REMOVED` without a `Reason:` line |
-| `E-PROJ-SPECS` | E | Invalid `specs.lint` configuration ([§6.3](#63-validation-rules-for-projectyaml)) |
 | `W-DELTA-DANGLING` | W | A Spec Delta targets an unknown spec or block |
-| `LINT-REQ-*` | W, configurable | Requirement grammar ([§21.9](#219-grammar-lint-and-specslint)); `off`, `warning` or `error` under `specs.lint` |
 
 `W-MARKER-SYNTAX`, `W-MARKER-DANGLING` and `W-TRACE-BROKEN` (a `trace:` path or symbol that no
 longer exists) are emitted by the native trace engine, which reads source code; `internal/core`
@@ -2312,9 +2318,11 @@ validation, and produce the `E-STATUS-UNKNOWN`, `W-LABEL-UNDECLARED`, and `E-CF-
 > the requirement rev of §21.5. `GIT-US-0122` exposes them over MCP (`list_requirements`,
 > `create_spec`, `create_requirement`, `update_requirement`, and `get_item` on a requirement
 > ref; docs/08 §4.20). `GIT-US-0113` implements the marker scan of §21.7 as the native package
-> `internal/trace` (no CLI or MCP surface yet).
-> Not implemented yet: the grammar lint of §21.9 (`GIT-US-0108`), `## Spec Delta` (§21.8), and
-> verification and coverage (§21.6). This section is the normative format; the ADR records the reasoning,
+> `internal/trace` (no CLI or MCP surface yet). `GIT-US-0108` implements the grammar lint of
+> §21.9 and the `specs.lint` key in the core (the web editor's live lint consumes it in a later
+> story).
+> Not implemented yet: `## Spec Delta` (§21.8), and verification and coverage (§21.6). This
+> section is the normative format; the ADR records the reasoning,
 > the consequences and the alternatives rejected. Using specs raises the project to `schema: 2`
 > ([§21.10](#2110-schema-version-2)).
 
@@ -2609,14 +2617,36 @@ specs:
 | `LINT-REQ-VAGUE` | a word of `vague_words` (whole word, case-insensitive) in the statement or a scenario |
 | `LINT-REQ-MULTI` | more than one `SHALL` in the statement |
 
+What each rule reports, precisely (inline code spans are never read as prose by any rule):
+
+- `LINT-REQ-STATEMENT` — the block has no statement; the statement has no uppercase whole-word
+  `SHALL` (a lower-case `shall` is reported as such); it opens with an EARS keyword
+  (`WHEN`, `WHILE`, `WHERE`, `IF`) written in another case; a `WHEN`/`WHILE`/`WHERE` statement has
+  no comma before `SHALL`; an `IF` statement has no uppercase `THEN` before `SHALL`. The
+  ubiquitous form (`The <system> SHALL …`) and any other sentence with one `SHALL` pass.
+- `LINT-REQ-SCENARIO` — the block has no `#### Scenario:` heading; reported on the heading line.
+- `LINT-REQ-WHEN-THEN` — per scenario: no `**WHEN**` or no `**THEN**` step, or the first `**THEN**`
+  before the first `**WHEN**`; a `**GIVEN**` after a `**WHEN**`; a top-level step whose bold
+  keyword is not `GIVEN`, `WHEN`, `AND` or `THEN` (or is one of them in another case), or that has
+  none. Indented bullets are sub-points of a step and are not checked.
+- `LINT-REQ-VAGUE` — one finding per listed word and line, in the statement, a scenario name or a
+  step. Words and phrases match whole (no letter, digit or `_` on either side), ignoring case and
+  runs of white space. The built-in list is the one above.
+- `LINT-REQ-MULTI` — two or more uppercase `SHALL`s in the statement; reported on the line of the
+  second.
+
 - **R-LINT-1** Findings carry the requirement ref, the rule and a line. At `off` the rule does not
   run and reports nothing; at `warning` findings never block anything; at `error` they are validation errors of the spec (writes through the API and MCP
-  are refused, `gintrack doctor` exits non-zero).
+  are refused, `gintrack doctor` exits non-zero). As a diagnostic of the spec file a finding
+  has the rule as its code, `body.<REQREF>` as its field and a message opening with
+  `line <n> of the body:`, like the parser's findings. Only the first block of a duplicated
+  `R<n>` is linted.
 - **R-LINT-2** `vague_words`, when present, replaces the built-in list. A per-rule value wins over
   `severity` in both directions. `specs.lint: <value>` (a scalar) is shorthand for
   `specs.lint: {severity: <value>}`. A value other than `off`, `warning`, `error`, or an unknown
   rule, is `E-PROJ-SPECS`.
-- **R-LINT-3** The linter lives in `internal/core` and runs in the browser through WASM, so
+- **R-LINT-3** The linter lives in `internal/core` (`LintSpec`, `LintRequirement`, pure functions
+  over the body) and runs in the browser through WASM, so
   authoring and lint work in browser-only mode; impact and coverage, which need git and test
   results, answer `unavailable` there.
 
