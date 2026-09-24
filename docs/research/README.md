@@ -21,6 +21,7 @@ were verified then and may have moved since. They explain *why* the epics in
 | [Pando gap analysis: AG-UI server](./2026-09-13-pando-gap-agui-server.md) | Pando `internal/agui`, `internal/api`, `cmd/agui_serve.go` | `PANDO-EP-0002` … `PANDO-EP-0004`, `GIT-US-0049` |
 | [Pando gap analysis: TypeScript SDK and AG-UI client](./2026-09-13-pando-gap-sdk-client.md) | Pando `sdk/typescript`, `examples/copilotkit` | `PANDO-EP-0001`, `GIT-US-0053` |
 | [Pando gap analysis: search fidelity and plan fit](./2026-09-13-pando-gap-search-and-fit.md) | Pando `internal/rag`, `internal/mesnada/server`; GIT stories 0049–0091 | `PANDO-EP-0005` … `PANDO-EP-0007`, `GIT-EP-0019` |
+| [Spec impact benchmark](./2026-09-25-spec-impact-benchmark.md) | this repository: 12 replayed PRs over the dogfood specs | `GIT-US-0137`, `GIT-EP-0029` |
 
 The three Pando gap-analysis pages were written on the evening of 2026-09-13 against Pando `d805b77a`; their "Proposed backlog items" became the epics of the `PANDO` project (milestones `PANDO-M-0001`, `PANDO-M-0002`), and their "Decisions for the user" were settled the same day: one `agui-serve` per repository, `[AGUI] Tools` allow-list first and named profiles later, thread lifecycle funded in Pando, and `@pando-ai/sdk/agui` as a direct dependency.
 
