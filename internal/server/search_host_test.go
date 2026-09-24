@@ -46,14 +46,21 @@ func TestInstallSemanticSearch(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			closeFn := InstallSemanticSearch(tt.settings, space,
+			host := InstallSemanticSearch(tt.settings, space,
 				[]SemanticRepo{{ID: "project-basic", Path: root, Vault: v}}, nil)
-			if closeFn == nil {
-				t.Fatal("the close function is nil")
+			if host == nil {
+				t.Fatal("the host is nil")
 			}
-			defer func() { _ = closeFn() }()
+			defer func() { _ = host.Close() }()
 			if got := space.SemanticAvailable(); got != tt.want {
 				t.Errorf("SemanticAvailable() = %v, want %v", got, tt.want)
+			}
+			// The impact seam gets the same client and searcher (GIT-US-0147).
+			if got := host.CallGraph() != nil; got != tt.want {
+				t.Errorf("CallGraph() present = %v, want %v", got, tt.want)
+			}
+			if got := host.Semantic() != nil; got != tt.want {
+				t.Errorf("Semantic() present = %v, want %v", got, tt.want)
 			}
 		})
 	}

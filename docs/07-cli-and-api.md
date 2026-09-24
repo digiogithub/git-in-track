@@ -1869,8 +1869,11 @@ ingest — never an error. Deleting it loses only evidence; ingesting the report
 > installs the same requirement trace, coverage and impact backends
 > (`server.InstallTraceSeams`), and calls the vault methods of §6.7 — `item.validate`,
 > `impact.query`, `coverage.list`, `requirement.stamp`, `trace.requirement`. No spec logic lives
-> in `cmd/`. Pando is not wired on the command line, as over stdio MCP: impact tiers 2 and 3
-> report `unavailable` and tier 1 still answers. The CI gate (`GIT-US-0133`) and the pre-push
+> in `cmd/`. Pando is wired as over stdio MCP (`GIT-US-0147`): the commands that install the
+> seams build the Pando client and semantic searcher through the constructor `gintrack serve`
+> uses (`server.InstallSemanticSearch`) and hand them to the impact seam, so with
+> `search.pando.mcpUrl` configured impact tiers 2 and 3 answer; without it they report
+> `unavailable` and tier 1 still answers. The CI gate (`GIT-US-0133`) and the pre-push
 > hook (`GIT-US-0134`) build on `spec impact --fail-on`.
 
 Every command takes `--json`: the payload goes to stdout, human notes to stderr.
@@ -5081,8 +5084,10 @@ a host seam, `Vault.SetRequirementTracer` (`vault.RequirementTracer`, implemente
 session installs none, where both methods fail with `unavailable` — never an empty trace.
 `gintrack mcp` over stdio installs the same three seams of this section (trace, coverage,
 impact) through the companion's constructor, `server.InstallTraceSeams` (`GIT-US-0124`), reading
-test results from the cache directory `gintrack spec ingest` writes to; it wires no Pando, so its
-impact tiers 2 and 3 report `unavailable`.
+test results from the cache directory `gintrack spec ingest` writes to. Its impact tiers 2 and 3
+read the Pando client and semantic searcher it builds for `search.semantic`
+(`server.InstallSemanticSearch`, `GIT-US-0147`), as the companion's do; with no Pando configured
+they report `unavailable`.
 
 | Method | Params | Result |
 |---|---|---|

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -43,14 +44,7 @@ func TestMCPStdioSemanticSearch(t *testing.T) {
 			var fake *fakeSemanticPando
 			if tt.pando {
 				fake = newFakeSemanticPando(t)
-				cfg, err := config.Load(h.Config)
-				if err != nil {
-					t.Fatalf("load the configuration: %v", err)
-				}
-				cfg.Search.Pando.MCPURL = fake.url()
-				if err := config.Save(h.Config, cfg); err != nil {
-					t.Fatalf("save the configuration: %v", err)
-				}
+				fake.usePando(t, h.Config)
 			}
 
 			res := callSemanticOverStdio(t, binary, h.Config)
@@ -123,25 +117,35 @@ func toolErrorOf(t *testing.T, res *sdk.CallToolResult) (code, retry string) {
 }
 
 // fakeSemanticPando is an in-process Pando MCP endpoint answering every tool
-// the semantic searcher calls with Pando's own "nothing found" text.
+// the semantic searcher calls with Pando's own "nothing found" text, and
+// code_impact_analysis — the call graph of impact tier 2 — with no callers.
+// It counts the calls of each tool.
 type fakeSemanticPando struct {
 	srv      *httptest.Server
 	requests atomic.Int64
+	mu       sync.Mutex
+	calls    map[string]int
 }
 
 func newFakeSemanticPando(t *testing.T) *fakeSemanticPando {
 	t.Helper()
-	f := &fakeSemanticPando{}
+	f := &fakeSemanticPando{calls: map[string]int{}}
 	srv := sdk.NewServer(&sdk.Implementation{Name: "pando-fake", Version: "test"}, nil)
 	for _, name := range []string{
 		"kb_search_documents", "code_hybrid_search", "code_list_projects", "code_index_project",
+		"code_impact_analysis",
 	} {
+		text := "No documents found matching the query."
+		if name == "code_impact_analysis" {
+			text = `{"symbol":"NextID","count":0,"truncated":false,"callers":[]}`
+		}
 		srv.AddTool(
 			&sdk.Tool{Name: name, Description: name, InputSchema: map[string]any{"type": "object"}},
 			func(context.Context, *sdk.CallToolRequest) (*sdk.CallToolResult, error) {
-				return &sdk.CallToolResult{Content: []sdk.Content{
-					&sdk.TextContent{Text: "No documents found matching the query."},
-				}}, nil
+				f.mu.Lock()
+				f.calls[name]++
+				f.mu.Unlock()
+				return &sdk.CallToolResult{Content: []sdk.Content{&sdk.TextContent{Text: text}}}, nil
 			},
 		)
 	}
@@ -155,3 +159,23 @@ func newFakeSemanticPando(t *testing.T) *fakeSemanticPando {
 }
 
 func (f *fakeSemanticPando) url() string { return f.srv.URL + "/mcp" }
+
+// called reports how many times a tool was called.
+func (f *fakeSemanticPando) called(tool string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls[tool]
+}
+
+// usePando points the configuration at the fake.
+func (f *fakeSemanticPando) usePando(t *testing.T, configPath string) {
+	t.Helper()
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatalf("load the configuration: %v", err)
+	}
+	cfg.Search.Pando.MCPURL = f.url()
+	if err := config.Save(configPath, cfg); err != nil {
+		t.Fatalf("save the configuration: %v", err)
+	}
+}

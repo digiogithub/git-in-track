@@ -1132,7 +1132,11 @@ criterion of the spec-driven milestone. A tier that could not run takes one shor
 (`3 unavailable (Pando is not configured)`), and the `json` form carries `tiers` and the ranked
 `hits` in the shape of doc 03 §21.11 R-IMP-5 instead of `text`.
 
-When a tier cannot run — no Pando configured, which is always the case over stdio today — its
+Tiers 2 and 3 read the Pando client and semantic searcher that `search_semantic` uses, built by
+the same constructor (`server.InstallSemanticSearch`) on both transports: `gintrack serve` and
+stdio `gintrack mcp` alike hand them to the impact seam (`GIT-US-0147`), so with
+`search.pando.mcpUrl` configured the two tiers answer over stdio exactly as over HTTP.
+When a tier cannot run — no Pando configured, or Pando not answering — its
 status says `unavailable` and the other tiers still answer, so an agent without Pando still gets
 the tier-1 hits: the direct trace, the Spec Delta and the links. Only a session that cannot read
 git history at all (browser-only mode, or a repository without git) refuses the whole call with

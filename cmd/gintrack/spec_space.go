@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/digiogithub/git-in-track/internal/core"
+	"github.com/digiogithub/git-in-track/internal/server"
 	corevault "github.com/digiogithub/git-in-track/internal/vault"
 )
 
@@ -14,13 +15,21 @@ import (
 // the workspace they run against. It is the one `gintrack mcp` serves — the
 // same corevault.Workspace, with the same requirement trace, coverage and
 // impact seams installed by installMCPTraceSeams — so a command and the MCP
-// tool of the same name answer from one implementation. Pando is not wired
-// here, exactly as over stdio: impact tiers 2 and 3 report unavailable and
-// tier 1 still answers.
+// tool of the same name answer from one implementation. Pando is wired the
+// same way too, through installMCPSemantic: with `search.pando` configured
+// impact tiers 2 and 3 answer, and without it they report unavailable while
+// tier 1 still answers (GIT-US-0147).
 
 // specSpace is a mounted workspace for one spec command.
 type specSpace struct {
 	space *corevault.Workspace
+	// pando is the Pando session the seams read; nil when none was built.
+	pando *server.SemanticHost
+}
+
+// close ends the Pando session, if the workspace opened one.
+func (s *specSpace) close() {
+	_ = s.pando.Close()
 }
 
 // specSpaceOptions shape how the workspace is mounted.
@@ -51,11 +60,13 @@ func openSpecSpace(cmd *cobra.Command, flags *globalFlags, opts specSpaceOptions
 	if err != nil {
 		return nil, err
 	}
+	out := &specSpace{space: space}
 	if opts.seams {
 		logger := slog.New(slog.NewTextHandler(cmd.ErrOrStderr(), nil))
-		installMCPTraceSeams(mounts, res.Config.Git.Backend, res.Config.CacheDir(res.Path), logger)
+		out.pando = installMCPSemantic(res.Config, space, mounts, logger)
+		installMCPTraceSeams(mounts, res.Config.Git.Backend, res.Config.CacheDir(res.Path), out.pando, logger)
 	}
-	return &specSpace{space: space}, nil
+	return out, nil
 }
 
 // projectMounts returns the project repositories: the ones that can hold

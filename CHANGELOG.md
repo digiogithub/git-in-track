@@ -274,6 +274,13 @@ because a commit list cannot express them.
   main) it writes the `verified` stamps through `requirement.stamp`. `spec trace <ref>` prints
   the code, tests and work traced to one requirement. Without Pando the impact tiers 2 and 3
   report unavailable, as over stdio MCP.
+- **Impact tiers 2 and 3 over stdio `gintrack mcp` and `gintrack spec impact`**
+  (`GIT-US-0147`). Only `gintrack serve` handed the impact seam a Pando code-graph client and
+  semantic searcher, so `spec_impact` over stdio and `gintrack spec impact` always reported
+  tiers 2–3 `unavailable`. Both now build them through the constructor the companion uses
+  (`server.InstallSemanticSearch`, which returns a `SemanticHost` whose `CallGraph` and
+  `Semantic` feed `server.InstallTraceSeams`). Without `search.pando.mcpUrl` nothing changes:
+  tier 1 answers and tiers 2–3 report `unavailable`.
 
 ### Changed
 

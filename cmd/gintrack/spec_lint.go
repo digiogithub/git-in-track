@@ -56,6 +56,7 @@ func runSpecLint(cmd *cobra.Command, flags *globalFlags, local *specLintFlags, a
 	if err != nil {
 		return err
 	}
+	defer s.close()
 	ctx := cmd.Context()
 	ids := make([]core.ItemID, 0, len(args))
 	for _, arg := range args {

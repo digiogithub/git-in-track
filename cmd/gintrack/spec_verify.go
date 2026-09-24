@@ -81,6 +81,7 @@ func runSpecVerify(cmd *cobra.Command, flags *globalFlags, local *specVerifyFlag
 	if err != nil {
 		return err
 	}
+	defer s.close()
 	by := commentAuthor(strings.TrimSpace(local.by), flags.config())
 	if by == "" {
 		if local.commit {

@@ -64,6 +64,7 @@ func runSpecCoverage(cmd *cobra.Command, flags *globalFlags, local *specCoverage
 	if err != nil {
 		return err
 	}
+	defer s.close()
 	params := map[string]any{"spec": local.spec, "project": local.project, "status": local.status}
 	// A spec or a project names one repository; otherwise every project
 	// repository answers for its own requirements.
@@ -147,6 +148,7 @@ func runSpecTrace(cmd *cobra.Command, flags *globalFlags, local *specTraceFlags,
 	if err != nil {
 		return err
 	}
+	defer s.close()
 	got, err := dispatch[struct {
 		Trace core.TracedRequirement `json:"trace"`
 	}](cmd.Context(), s.space, "trace.requirement", map[string]any{"ref": ref})
