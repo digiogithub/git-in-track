@@ -345,6 +345,16 @@ edges Pando builds while it indexes a code project (`GIT-US-0117`, for the impac
   caller reports as `unavailable` and degrades over — and false for `ErrToolFailed` (for example
   a project that is not indexed) and `ErrInvalidOptions`.
 
+**Impact tiers 2 and 3 (`GIT-US-0119`).** The requirement impact query (docs/03 §21.11) is the
+first consumer. Tier 2 calls `ImpactAnalysis` once per changed symbol (its simple name, test
+files skipped, at most 25, depth 2 and 20 callers each by default, 10 s for the whole tier) on
+the repository's own project id (§0.1), and maps each caller's file and start line back to the
+traced symbols of the trace graph. Tier 3 sends one `search.semantic` query of kind
+`requirement` (§2.1) built from the story title and the changed symbol names; its hits are
+`candidate`s with a score and never raise a tier-1 or tier-2 hit. Both read the client at call
+time, so a settings change applies to the next query. An `IsUnavailable` error, or no Pando at
+all, makes the tier `unavailable`; any other error makes it `error`; tier 1 answers regardless.
+
 ---
 
 ## 7. Operating notes

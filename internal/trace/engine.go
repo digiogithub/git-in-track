@@ -167,3 +167,8 @@ func (e *Engine) TraceTouching(ctx context.Context, ix *core.Index, changes []co
 	}
 	return hits, nil
 }
+
+// Tree returns the working tree the engine scans, rooted at the repository
+// root. The impact query (GIT-US-0119) reads changed files and callers from
+// the same tree, so a line maps to the same symbol everywhere.
+func (e *Engine) Tree() fs.FS { return e.tree }

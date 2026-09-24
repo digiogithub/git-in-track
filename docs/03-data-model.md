@@ -2332,6 +2332,8 @@ validation, and produce the `E-STATUS-UNKNOWN`, `W-LABEL-UNDECLARED`, and `E-CF-
 > the `verified` stamp (R-REQ-11a) through the requirement write path, on request
 > (`requirement.stamp`) and as a function the done transition can call; until `GIT-US-0141` adds
 > `verify.json`, the evidence is the test-result cache of `GIT-US-0115` (R-REQ-12a).
+> `GIT-US-0119` resolves the requirement impact of a diff in three tiers (§21.11, the vault
+> method `impact.query`): direct trace, transitive calls through Pando and semantic candidates.
 > Not implemented yet: calling the stamp from the done transition (`GIT-US-0141`), the
 > verification cache `verify.json` (`GIT-US-0141`) and the `gintrack spec verify --commit`
 > command (`GIT-US-0125`). This
@@ -2834,3 +2836,49 @@ What each rule reports, precisely (inline code spans are never read as prose by 
   introduces specs (`GIT-US-0105`), with no 2.0.2 backport, and that release's upgrade note says
   every writing binary, web build and CI job must be upgraded before a project's first spec
   construct.
+
+### 21.11 Requirement impact
+
+The impact query answers "which requirements does this diff affect?" (ADR-037, `GIT-US-0119`).
+It is computed natively by `internal/impact`, reached through a host seam (`impact.query`,
+docs/07 §6.7), and never stored; a browser-only session, or a repository without git history,
+answers `unavailable`.
+
+- **R-IMP-1 Input.** `base` (a revision; default `HEAD`) and `head` (a revision; empty means the
+  working tree). The changed files and their changed line ranges come from
+  `gitops.ChangedFiles(base, head)` (`GIT-US-0112`). Lines are mapped to symbols on the **working
+  tree**, with the marker scanner's own spans, as coverage does (R-REQ-12a): pass a `head` other
+  than the working tree only when it is `HEAD` of a clean tree, or the symbols may be wrong.
+  Optional: `story` (the story or task the diff is for), `title` (more text for tier 3),
+  `tiers` (a subset of `1, 2, 3`), `depth` (tier-2 caller depth, default 2, at most 5) and `limit`
+  (callers per symbol for tier 2, default 20; candidates for tier 3, default 8; at most 50).
+- **R-IMP-2 Tier 1, direct.** The trace graph's reverse query (§21.7) over the changes: each
+  touched edge adds `<reason>:<trace ref>` with `reason` one of `file`, `symbol`, `marker`,
+  `renamed`, `removed`. The `implements`/`modifies` links of `story` that name a requirement add
+  `<kind>:<story>`, and its **pending** `modifies` edges (an unapplied Spec Delta, R-DELTA-10) add
+  `delta:<story>`.
+- **R-IMP-3 Tier 2, transitive.** Each changed symbol outside a test file (its simple name: the
+  method of `Type.Method`, the test of `TestX/case`), at most 25 in sorted order, is sent to
+  Pando's `code_impact_analysis` — one call per symbol, all within 10 s. A caller whose file and
+  start line fall inside a traced symbol (or whose file has whole-file edges) reaches those
+  edges' requirements, with `call:<caller trace ref> calls <symbol> d<depth>`. Pando reports the
+  caller and its call depth, not the intermediate calls.
+- **R-IMP-4 Tier 3, semantic.** One semantic search of kind `requirement` (docs/21 §2.1) with the
+  story title, `title` and up to 12 changed symbol names. A hit becomes a `candidate` with a
+  `score` (rounded to three decimals) and the reason `semantic`, only when tiers 1–2 did not
+  reach the requirement: a candidate never adds to or overrides their certainty.
+- **R-IMP-5 Hit.** `{ref, title, tier, candidate?, score?, status?, suspect?, reasons[],
+  pending?[]}`, one per requirement at its strongest tier, with the reasons of every tier that
+  reached it with certainty, sorted by tier and text, at most four then `+<n>`. `status` is the
+  coverage state (R-REQ-12a). `suspect` is set when the state is `suspect`, or when it is
+  `passing` and the diff changes a traced edge directly (tier 1) or through a call (tier 2) —
+  this is how suspect covers transitive changes. `pending` lists the open items whose unapplied
+  Spec Delta modifies the requirement.
+- **R-IMP-6 Result.** `{base, head?, files, symbols, tiers: {tier, status, hits, truncated?,
+  message?}[], hits}`. A tier's `status` is `ok`, `unavailable` (no Pando, or Pando unreachable,
+  unauthorized or timing out: `pando.IsUnavailable`), `error` (Pando's tool failed, e.g. a project
+  not indexed) or `skipped` (not asked for); tier 1 always answers when the query does. Hits are
+  sorted by tier, then spec and number.
+- **R-IMP-7 Determinism.** Tiers 1 and 2 are deterministic: the same diff, index and Pando answer
+  give a byte-identical result (golden test). No timestamp or map order reaches it. The token
+  budget and the ranking for agents are `GIT-US-0120`'s.

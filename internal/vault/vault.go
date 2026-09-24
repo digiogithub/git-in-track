@@ -84,6 +84,10 @@ type Vault struct {
 	// stamp copies. Nil where no host installed one, which is every
 	// browser-only session (see SetRequirementCoverage).
 	coverage RequirementCoverage
+	// impact answers the requirement impact query. Nil where no host
+	// installed one, which is every browser-only session (see
+	// SetRequirementImpact).
+	impact RequirementImpact
 }
 
 // Options configures a Vault.
@@ -438,6 +442,8 @@ func (v *Vault) Dispatch(ctx context.Context, method string, raw []byte) (any, e
 		return v.coverageList(ctx, raw)
 	case "requirement.stamp":
 		return v.requirementStamp(ctx, raw)
+	case "impact.query":
+		return v.impactQuery(ctx, raw)
 	case "inbox.list":
 		return v.inboxList(ctx, raw)
 	case "inbox.triage":

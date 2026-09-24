@@ -4981,6 +4981,26 @@ never refuses a requirement and never writes anything but `verified`. The done-t
 of `GIT-US-0110` calls the same code from inside its own write. The coverage state itself is
 never written.
 
+**Requirement impact (`GIT-US-0119`).** One more method resolves the requirements a diff affects
+(doc 03 §21.11), through a third host seam, `Vault.SetRequirementImpact`
+(`vault.RequirementImpact`, implemented by `internal/impact`'s `Resolver` over the trace engine,
+the coverage backend, `gitops.ChangedFiles` and, for tiers 2 and 3, Pando). The companion
+installs one per repository that has git history; a browser-only session, or a repository
+without history, installs none, where the method fails with `unavailable`.
+
+| Method | Params | Result |
+|---|---|---|
+| `impact.query` | `{base?, head?, story?, title?, tiers?: (1 \| 2 \| 3)[], depth?, limit?}` | `{impact: {base, head?, files, symbols, tiers: {tier, status, hits, truncated?, message?}[], hits: {ref, title, tier, candidate?, score?, status?, suspect?, reasons, pending?}[]}}` |
+
+`base` defaults to `HEAD` and an empty `head` is the working tree, so `{}` asks what the
+uncommitted changes affect. `status` of a tier is `ok`, `unavailable` (no Pando, or Pando not
+answering), `error` or `skipped`; tier 1 always answers when the method does. An unknown revision
+is `invalid_request`, an unknown `story` `not_found`; `depth` is at most 5 and `limit` at most 50.
+A hit's `reasons` are short codes — `symbol:src/alloc.go#NextID`, `delta:ACME-US-0001`,
+`call:src/format.go#Format calls NextID d1`, `semantic` — and its `status` is the coverage state
+of `coverage.list`. The answer is compact: the three-requirement fixture of `internal/impact`
+is about 750 bytes (≈ 190 tokens); the token-budgeted report of `GIT-US-0120` renders from it.
+
 ---
 
 ## 7. Cross-platform concerns
