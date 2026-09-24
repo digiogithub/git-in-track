@@ -8,6 +8,7 @@ import (
 // bomString is the UTF-8 byte order mark, which a Windows editor may prepend.
 const bomString = "\xef\xbb\xbf"
 
+// Verifies: GIT-SP-0001.R1
 func TestComputeRev(t *testing.T) {
 	t.Parallel()
 
@@ -51,6 +52,7 @@ func TestComputeRev(t *testing.T) {
 	}
 }
 
+// Verifies: GIT-SP-0001.R1
 func TestComputeRevIsStable(t *testing.T) {
 	t.Parallel()
 
@@ -63,6 +65,7 @@ func TestComputeRevIsStable(t *testing.T) {
 	}
 }
 
+// Verifies: GIT-SP-0001.R1
 func TestCanonicalize(t *testing.T) {
 	t.Parallel()
 

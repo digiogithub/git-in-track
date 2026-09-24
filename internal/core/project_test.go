@@ -21,7 +21,9 @@ func TestLoadProjectConfigDogfood(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadProjectConfig(): %v", err)
 	}
-	if cfg.Key != "GIT" || cfg.Schema != 1 || cfg.Name != "git-in-track" {
+	// The dogfood specs (GIT-SP-0001 onwards) raised the project to schema 2
+	// (docs/03 section 21.10).
+	if cfg.Key != "GIT" || cfg.Schema != 2 || cfg.Name != "git-in-track" {
 		t.Errorf("identity = (%q, %d, %q)", cfg.Key, cfg.Schema, cfg.Name)
 	}
 	if got := cfg.InitialStatus(); got != "backlog" {

@@ -77,6 +77,7 @@ func (v *Vault) requirementList(raw []byte) (any, error) {
 
 // requirementGet answers "requirement.get": one requirement with its text and
 // both of its hashes, plus the file rev of its spec.
+// Implements: GIT-SP-0001.R8
 func (v *Vault) requirementGet(raw []byte) (any, error) {
 	p, err := decodeParams[struct {
 		Ref string `json:"ref"`
@@ -102,6 +103,7 @@ func (v *Vault) requirementGet(raw []byte) (any, error) {
 // requirementCreate answers "requirement.create": it allocates R<n> as max + 1
 // over the spec's blocks, its requirements: keys and every inbound ref in the
 // index (R-REQ-5), and appends the block.
+// Implements: GIT-SP-0002.R7
 func (v *Vault) requirementCreate(ctx context.Context, raw []byte) (any, error) {
 	p, err := decodeParams[struct {
 		Spec string `json:"spec"`
@@ -130,6 +132,7 @@ func (v *Vault) requirementCreate(ctx context.Context, raw []byte) (any, error) 
 // requirementUpdate answers "requirement.update": a sparse patch of one
 // requirement's block and requirements: entry, conditional on its requirement
 // rev. The rev is required; "*" is the explicit, unsafe waiver (R-REV-3b).
+// Implements: GIT-SP-0001.R9, GIT-SP-0001.R10
 func (v *Vault) requirementUpdate(ctx context.Context, raw []byte) (any, error) {
 	p, err := decodeParams[struct {
 		Ref   string                `json:"ref"`

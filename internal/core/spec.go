@@ -613,6 +613,7 @@ func canonicalBlock(text string) []byte {
 // covers the heading, the statement and the scenarios and nothing else, so the
 // blank lines between blocks, edits to other blocks and every front-matter
 // change leave it unchanged.
+// Implements: GIT-SP-0001.R8
 func BlockRev(text string) Rev {
 	return hashRev(canonicalBlock(text))
 }
@@ -622,6 +623,7 @@ func BlockRev(text string) Rev {
 // when there is none. Writing verified or changing the status changes it, but
 // never the block rev the stamp records. A requirement whose block is missing
 // hashes its entry alone.
+// Implements: GIT-SP-0001.R8
 func RequirementRev(blockText string, entry *Requirement) (Rev, error) {
 	data, err := entry.CanonicalJSON()
 	if err != nil {

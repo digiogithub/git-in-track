@@ -23,6 +23,7 @@ func (h *harness) agentSession(t *testing.T) *harness {
 	return &other
 }
 
+// Verifies: GIT-SP-0001.R5
 func TestWritesRequireARev(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -81,6 +82,7 @@ func TestWritesRequireARev(t *testing.T) {
 // TestWriteToolsAdvertiseTheirRev checks the half of the contract a client sees
 // before it calls anything: rev is a required property of every write schema,
 // so a well-behaved agent cannot omit it by accident.
+// Verifies: GIT-SP-0001.R5
 func TestWriteToolsAdvertiseTheirRev(t *testing.T) {
 	h := newHarness(t, true)
 	listed, err := h.session.ListTools(t.Context(), nil)
@@ -123,6 +125,7 @@ func required(schema any, field string) bool {
 	return contains(decoded.Required, field)
 }
 
+// Verifies: GIT-SP-0001.R3, GIT-SP-0001.R6
 func TestStaleRevisionTeachesTheRetry(t *testing.T) {
 	h := newHarness(t, true)
 	before := call[ItemResult](t, h, "get_item", map[string]any{"id": "DEMO-US-0002"})
@@ -205,6 +208,7 @@ func contains(values []string, want string) bool {
 // agents read one story, both decide to claim it, and both write. Exactly one
 // write lands; the loser is told so, is handed the current rev, and its retry
 // preserves what the winner wrote instead of overwriting it.
+// Verifies: GIT-SP-0001.R2, GIT-SP-0001.R6
 func TestTwoAgentsCannotLoseAnUpdate(t *testing.T) {
 	h := newHarness(t, true)
 	first := h.agentSession(t)

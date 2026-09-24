@@ -97,6 +97,7 @@ func ParseItemID(s string) (ProjectKey, TypeCode, int, error) {
 
 // FormatItemID builds an id from its parts, zero-padding the number to at least
 // four digits.
+// Implements: GIT-SP-0002.R6
 func FormatItemID(key ProjectKey, code TypeCode, number int) ItemID {
 	return ItemID(fmt.Sprintf("%s-%s-%0*d", key, code, minIDDigits, number))
 }

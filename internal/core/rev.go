@@ -21,6 +21,7 @@ var bom = []byte{0xEF, 0xBB, 0xBF}
 // Canonicalize returns the bytes a rev is computed over: no UTF-8 BOM, LF line
 // endings and exactly one trailing LF (R-REV-1). It never returns the input
 // slice, so the caller may keep mutating its own buffer.
+// Implements: GIT-SP-0001.R1
 func Canonicalize(data []byte) []byte {
 	out := bytes.TrimPrefix(data, bom)
 	out = bytes.ReplaceAll(out, []byte("\r\n"), []byte("\n"))
@@ -35,6 +36,7 @@ func Canonicalize(data []byte) []byte {
 // the algorithm name, e.g. "sha256:9f2b1c7d0a4e5b31".
 //
 // rev is never stored in a file: it is recomputed on every read (R-REV-1).
+// Implements: GIT-SP-0001.R1
 func ComputeRev(data []byte) Rev {
 	return hashRev(Canonicalize(data))
 }

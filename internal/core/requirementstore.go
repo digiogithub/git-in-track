@@ -360,6 +360,7 @@ func applyRequirementPatch(it *Item, n int, patch RequirementPatch, cfg *Project
 // (GIT-US-0151). A patch that cannot be applied to the current content — one
 // the store would refuse — has no field diff, so it names every field it
 // carries rather than reading as already applied.
+// Implements: GIT-SP-0001.R3, GIT-SP-0001.R4
 func requirementConflicts(current *Item, n int, patch RequirementPatch, cfg *ProjectConfig) []ConflictField {
 	if current == nil {
 		return patchConflicts(RequirementView{}, patch)
@@ -559,6 +560,7 @@ func (s *FileStore) readSpec(spec ItemID) (*Item, error) {
 //
 // The write goes through the canonical serializer, the validator and the
 // implicit schema upgrade exactly like an item update.
+// Implements: GIT-SP-0001.R2, GIT-SP-0001.R9, GIT-SP-0001.R10
 func (s *FileStore) UpdateRequirement(
 	ctx context.Context, ref RequirementRef, patch RequirementPatch, expected Rev,
 ) (*Item, RequirementView, error) {
@@ -615,6 +617,7 @@ func (s *FileStore) UpdateRequirement(
 // over the spec's blocks, its requirements: keys and the inbound refs the
 // caller found in the project index (R-REQ-5), so a removed number is never
 // handed out again. A create conflicts with nothing: it needs no rev.
+// Implements: GIT-SP-0002.R7
 func (s *FileStore) CreateRequirement(
 	ctx context.Context, spec ItemID, draft RequirementDraft, inbound []RequirementRef,
 ) (*Item, RequirementView, error) {

@@ -30,6 +30,7 @@ import (
 // never keep that promise, because nothing it asked for can have happened; it
 // is reported field by field instead, so a refused change never reads as a
 // saved one (GIT-US-0152).
+// Implements: GIT-SP-0001.R3, GIT-SP-0001.R4
 func (p ItemPatch) conflictWith(current *Item) []ConflictField {
 	if current == nil {
 		return nil
@@ -219,6 +220,7 @@ func (it *Item) clone() *Item {
 // versions of one item, in a fixed order so that two identical conflicts render
 // identically. Derived fields (path, rev, updated) are never reported: they are
 // consequences of a write, not the subject of one.
+// Implements: GIT-SP-0001.R3
 func diffFields(current, proposed *Item) []ConflictField {
 	var out []ConflictField
 	add := func(field, currentValue, proposedValue string) {

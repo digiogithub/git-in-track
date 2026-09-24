@@ -209,6 +209,7 @@ func TestListRequirements(t *testing.T) {
 // TestRequirementRevProtocol is the per-block optimistic lock: a stale rev on
 // one requirement is refused exactly like update_item's, while a write to a
 // sibling requirement of the same spec does not make it stale.
+// Verifies: GIT-SP-0001.R4, GIT-SP-0001.R5, GIT-SP-0001.R7, GIT-SP-0001.R8, GIT-SP-0001.R9, GIT-SP-0001.R10
 func TestRequirementRevProtocol(t *testing.T) {
 	read := func(t *testing.T, h *harness, ref string) Requirement {
 		t.Helper()

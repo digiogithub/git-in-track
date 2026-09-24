@@ -147,6 +147,7 @@ func (a *Allocator) SetUser(user string) {
 }
 
 // Next reserves and returns the next free id of a type.
+// Implements: GIT-SP-0002.R1
 func (a *Allocator) Next(ctx context.Context, t ItemType) (ItemID, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -179,6 +180,7 @@ func (a *Allocator) reserveNext(ctx context.Context, t ItemType) (ItemID, error)
 
 // allocate computes the next id and, when reserve is set, remembers it and
 // optionally writes the counter hint back to project.yaml.
+// Implements: GIT-SP-0002.R5
 func (a *Allocator) allocate(ctx context.Context, t ItemType, reserve bool) (ItemID, error) {
 	code, ok := TypeCodeFor(t)
 	if !ok {
@@ -209,6 +211,7 @@ func (a *Allocator) allocate(ctx context.Context, t ItemType, reserve bool) (Ite
 
 // nextNumber implements steps 2 to 4 of docs/03 section 4.1, plus the reserved
 // ranges of section 4.5 and the per-user ranges of the ranges strategy.
+// Implements: GIT-SP-0002.R1, GIT-SP-0002.R2, GIT-SP-0002.R3, GIT-SP-0002.R4
 func (a *Allocator) nextNumber(ctx context.Context, t ItemType, code TypeCode) (int, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, wrapContext("allocate", err)
@@ -701,6 +704,7 @@ func encodeYAMLNode(n *yaml.Node) ([]byte, error) {
 //
 // Inbound refs naming another spec are ignored, which lets a caller pass every
 // ref it collected without filtering.
+// Implements: GIT-SP-0002.R7
 func NextRequirementNumber(spec *Item, inbound []RequirementRef) int {
 	maxSeen := maxInt(RequirementNumbers(spec))
 	for _, r := range inbound {

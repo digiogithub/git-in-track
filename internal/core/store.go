@@ -56,6 +56,7 @@ type ConflictField struct {
 
 // StaleRevisionError carries the current rev of a file so that a client or an
 // agent can retry the merge without a second round trip (R-REV-3).
+// Implements: GIT-SP-0001.R2
 type StaleRevisionError struct {
 	ID       ItemID
 	Path     string
@@ -672,6 +673,7 @@ type conflictIntent func(current *Item) []ConflictField
 // readChecked locates an item, reads it and enforces the optimistic lock. When
 // the lock fails, intent turns the caller's proposal into the field list the
 // conflict reports; a nil intent reports the revisions only.
+// Implements: GIT-SP-0001.R2, GIT-SP-0001.R3
 func (s *FileStore) readChecked(id ItemID, expected Rev, intent conflictIntent) (*Item, error) {
 	found, err := s.locate(id)
 	if err != nil {

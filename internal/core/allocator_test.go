@@ -44,6 +44,7 @@ func allocVault(files map[string]string) *MemFS {
 	return NewMemFSFromMap(seed)
 }
 
+// Verifies: GIT-SP-0002.R1, GIT-SP-0002.R2, GIT-SP-0002.R3
 func TestAllocatorNextUsesTheScan(t *testing.T) {
 	t.Parallel()
 
@@ -81,6 +82,7 @@ func TestAllocatorNextUsesTheScan(t *testing.T) {
 	}
 }
 
+// Verifies: GIT-SP-0002.R1
 func TestAllocatorPeekDoesNotReserve(t *testing.T) {
 	t.Parallel()
 
@@ -112,6 +114,7 @@ func TestAllocatorPeekDoesNotReserve(t *testing.T) {
 	}
 }
 
+// Verifies: GIT-SP-0002.R4
 func TestAllocatorCounterHint(t *testing.T) {
 	t.Parallel()
 
@@ -146,6 +149,7 @@ func TestAllocatorCounterHint(t *testing.T) {
 	}
 }
 
+// Verifies: GIT-SP-0002.R3
 func TestAllocatorSkipsReservedRanges(t *testing.T) {
 	t.Parallel()
 
@@ -189,6 +193,7 @@ func TestAllocatorSkipsReservedRanges(t *testing.T) {
 	})
 }
 
+// Verifies: GIT-SP-0002.R3
 func TestAllocatorRedirectsParticipateInTheScan(t *testing.T) {
 	t.Parallel()
 
@@ -267,6 +272,7 @@ func TestAllocatorRangesStrategy(t *testing.T) {
 	})
 }
 
+// Verifies: GIT-SP-0002.R5
 func TestAllocatorConcurrentNextNeverRepeats(t *testing.T) {
 	t.Parallel()
 
@@ -422,6 +428,7 @@ func TestAllocatorRejectsTypesWithoutACode(t *testing.T) {
 	}
 }
 
+// Verifies: GIT-SP-0002.R3
 func TestAllocatorCountsBrokenFiles(t *testing.T) {
 	t.Parallel()
 
