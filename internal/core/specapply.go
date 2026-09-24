@@ -2,6 +2,7 @@ package core
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"path"
@@ -76,6 +77,28 @@ type DeltaApplication struct {
 	Unchanged []RequirementRef `json:"unchanged,omitempty"`
 	// Specs are the spec files written.
 	Specs []ItemID `json:"specs,omitempty"`
+	// Stamped are the requirements the DoneHook stamped `verified` in the
+	// same write (ADR-037 section 7, R-REQ-11a (a), GIT-US-0141).
+	Stamped []StampedRequirement `json:"stamped,omitempty"`
+	// Unstamped are the requirements the item implements or modifies that
+	// were left without a new stamp, each with its reason. Leaving one
+	// unstamped never refuses the transition.
+	Unstamped []UnstampedRequirement `json:"unstamped,omitempty"`
+}
+
+// StampedRequirement is a requirement whose `verified` stamp was written.
+type StampedRequirement struct {
+	Ref      RequirementRef `json:"ref"`
+	Verified Verification   `json:"verified"`
+}
+
+// UnstampedRequirement is a requirement left without a new stamp, and why
+// (docs/03 R-REQ-12a: failed, partial, no-results, no-tests, no-commit,
+// mixed-commits, text, unchanged, stamp-newer, unavailable, stale, and on
+// done also missing and removed).
+type UnstampedRequirement struct {
+	Ref    RequirementRef `json:"ref"`
+	Reason string         `json:"reason"`
 }
 
 // empty reports whether the application changed nothing at all.
@@ -87,8 +110,12 @@ func (a *DeltaApplication) empty() bool {
 // done-category status, after its Spec Delta was applied in memory and before
 // anything is validated or written.
 type DoneTransition struct {
+	// Context is the context of the write.
+	Context context.Context //nolint:containedctx // lives for one DoneHook call
 	// Item is the item as it will be written.
 	Item *Item
+	// Config is the configuration of the item's project.
+	Config *ProjectConfig
 	// Refs are the requirements the item implements or modifies after the
 	// delta was applied, from its front-matter links.
 	Refs []RequirementRef
@@ -106,10 +133,17 @@ type DoneTransition struct {
 // are validated and written. An error refuses the whole transition.
 //
 // It is the seam of the durable verification stamp (ADR-037 section 7,
-// R-REQ-11a, GIT-US-0116/GIT-US-0141): that story installs a hook that copies
-// the most recent passing cache entry into requirements.R<n>.verified of each
-// requirement in Refs. No hook is installed yet, so no stamp is written.
+// R-REQ-11a (a), GIT-US-0141): the vault installs a hook that copies the most
+// recent passing verification-cache entry into requirements.R<n>.verified of
+// each requirement in Refs (StageVerified), and records in Delta.Stamped and
+// Delta.Unstamped what it did.
 type DoneHook func(t *DoneTransition) error
+
+// StageVerified sets requirements.R<n>.verified of a staged spec to v, the
+// way a requirement write does: it is written together with the transition.
+func (t *DoneTransition) StageVerified(spec *Item, n int, v Verification) error {
+	return applyRequirementPatch(spec, n, RequirementPatch{Verified: &v}, t.Config)
+}
 
 // deltaPlan is a done transition prepared in memory: the specs it changes,
 // staged, and the revs they were read at.
@@ -189,7 +223,7 @@ func (s *FileStore) cancelledStatus() (Status, bool) {
 // staged specs and to its own body and links, then the DoneHook. It returns nil
 // when there is nothing to do beyond the ordinary write: no delta operation and
 // no hook. it is changed in place.
-func (s *FileStore) planDone(it *Item) (*deltaPlan, error) {
+func (s *FileStore) planDone(ctx context.Context, it *Item) (*deltaPlan, error) {
 	body := normalizeNewlines(it.Body)
 	delta := ParseSpecDelta(body)
 	if len(delta.Operations) == 0 && len(delta.Findings) == 0 && s.DoneHook == nil {
@@ -240,7 +274,7 @@ func (s *FileStore) planDone(it *Item) (*deltaPlan, error) {
 
 	if s.DoneHook != nil {
 		if err := s.DoneHook(&DoneTransition{
-			Item: it, Refs: workRefs(it.Links), Delta: p.result,
+			Context: ctx, Item: it, Config: s.cfg, Refs: workRefs(it.Links), Delta: p.result,
 			Spec: p.spec,
 		}); err != nil {
 			return nil, err
@@ -562,7 +596,7 @@ func (s *FileStore) writeDone(it *Item, oldPath string, had bool, p *deltaPlan) 
 // report returns what the transition applied, or nil when its delta changed
 // and named nothing.
 func (p *deltaPlan) report() *DeltaApplication {
-	if p.result.empty() && len(p.result.Unchanged) == 0 {
+	if p.result.empty() && len(p.result.Unchanged) == 0 && len(p.result.Unstamped) == 0 && len(p.result.Stamped) == 0 {
 		return nil
 	}
 	return p.result

@@ -263,7 +263,8 @@ type FileStore struct {
 
 	// DoneHook runs in the write that moves a story or a task into a
 	// done-category status, after its Spec Delta was applied (specapply.go).
-	// Nil by default: the verification stamp of GIT-US-0116 installs it.
+	// Nil by default: the vault installs the verification stamp of
+	// GIT-US-0141 (vault/donestamp.go).
 	DoneHook DoneHook
 }
 
@@ -506,7 +507,7 @@ func (s *FileStore) UpdateReport(ctx context.Context, id ItemID, patch ItemPatch
 	}
 	s.retarget(it, oldPath)
 	if moving && s.entersDone(it, from, it.Status) {
-		plan, err := s.planDone(it)
+		plan, err := s.planDone(ctx, it)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -598,7 +599,7 @@ func (s *FileStore) MoveReport(ctx context.Context, id ItemID, status Status, ex
 	it.Updated = now
 	s.stampTransition(it, from, status, now)
 	if s.entersDone(it, from, status) {
-		plan, err := s.planDone(it)
+		plan, err := s.planDone(ctx, it)
 		if err != nil {
 			return nil, nil, err
 		}

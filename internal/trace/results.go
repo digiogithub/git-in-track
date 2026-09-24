@@ -14,10 +14,10 @@ import (
 // MatchRequirements joins the resolved results with the trace graph.
 //
 // Results are derived data: they live in a per-machine cache outside the
-// repository (ResultStore) and are never written into a spec. Stamping
-// `verified:` and computing the coverage state are the consumers' business
-// (GIT-US-0116), as is the per-requirement verification cache verify.json
-// (GIT-US-0141).
+// repository (ResultStore) and are never written into a spec. They are the
+// raw input of the per-requirement verification cache verify.json
+// (GIT-US-0141, verify.go), which coverage and the `verified:` stamp read
+// (GIT-US-0116).
 
 // ReportFormat names a test report format.
 type ReportFormat string

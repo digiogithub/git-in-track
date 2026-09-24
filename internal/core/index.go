@@ -511,11 +511,12 @@ func (ix *Index) scanBacklog(ctx context.Context, p ProjectRef, pass *buildPass)
 	}
 
 	known := map[string]bool{
-		ProjectFileName:    true,
-		commentsDirName:    true,
-		attachmentsDirName: true,
-		indexDirName:       true,
-		indexFileName:      true,
+		ProjectFileName:     true,
+		commentsDirName:     true,
+		attachmentsDirName:  true,
+		indexDirName:        true,
+		indexFileName:       true,
+		VerifyCacheFileName: true,
 	}
 	for _, f := range itemFolders {
 		known[f.Dir] = true

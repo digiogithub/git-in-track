@@ -93,8 +93,12 @@ Rules:
   subfolders keyed by item ID. Nested subfolders under `epics/`, `stories/`, `tasks/`,
   `milestones/` or `specs/` are ignored by the indexer and reported by `gintrack doctor` as `W-LAYOUT-NESTED`.
 - **R-LOC-5** `index.json` is derived. The default `.gitignore` snippet emitted by `gintrack init`
-  ignores it inside project repositories, together with the verification cache `verify.json`
-  ([§21.6](#216-verification-and-coverage)). (In the *team* repository the equivalent snapshots under
+  (`.pmngr/.gitignore`) ignores it inside project repositories, together with the verification
+  cache `verify.json` ([§21.6](#216-verification-and-coverage)): both lines, `index.json` and
+  `verify.json`, are always written. A backlog created by hand, or by a build older than
+  `GIT-US-0141`, adds them itself — to `.pmngr/.gitignore` or to the repository's `.gitignore`
+  (`**/.pmngr/index.json`, `**/.pmngr/verify.json`, as this repository does). Neither file is
+  reported `W-LAYOUT-STRAY` (R-LOC-6). (In the *team* repository the equivalent snapshots under
   `.pmngr/index/` ARE committed — that is the one deliberate exception, specified in doc 04.)
 - **R-LOC-6** Any file under `.pmngr/` that is not `project.yaml`, not under `attachments/`, and
   does not end in `.md` is ignored with warning `W-LAYOUT-STRAY`.
@@ -135,7 +139,7 @@ When a tool does create one, it writes exactly this and nothing else:
 ```
 <docsFolder>/.pmngr/
   project.yaml              # schema 1, the key, the name, the default workflow of section 6.2
-  .gitignore                # `index.json` (R-LOC-5)
+  .gitignore                # `index.json` and `verify.json` (R-LOC-5)
   epics/  stories/  tasks/  milestones/  specs/  comments/  attachments/
 ```
 
@@ -2330,13 +2334,14 @@ validation, and produce the `E-STATUS-UNKNOWN`, `W-LABEL-UNDECLARED`, and `E-CF-
 > status (R-DELTA-12 to R-DELTA-16). `GIT-US-0116`
 > computes the coverage state of §21.6 (R-REQ-12, the vault method `coverage.list`) and writes
 > the `verified` stamp (R-REQ-11a) through the requirement write path, on request
-> (`requirement.stamp`) and as a function the done transition can call; until `GIT-US-0141` adds
-> `verify.json`, the evidence is the test-result cache of `GIT-US-0115` (R-REQ-12a).
+> (`requirement.stamp`) and as a function the done transition calls. `GIT-US-0141` adds the
+> verification cache `verify.json` (R-REQ-11) that coverage and every stamp read their evidence
+> from, and stamps the requirements of a story or task when it moves to done (R-REQ-11a (a)).
 > `GIT-US-0119` resolves the requirement impact of a diff in three tiers (§21.11, the vault
 > method `impact.query`): direct trace, transitive calls through Pando and semantic candidates.
-> Not implemented yet: calling the stamp from the done transition (`GIT-US-0141`), the
-> verification cache `verify.json` (`GIT-US-0141`) and the `gintrack spec verify --commit`
-> command (`GIT-US-0125`). This
+> `GIT-US-0125` adds the `gintrack spec verify --commit` command. The browser half of the
+> verification cache (an IndexedDB record, R-REQ-11) is a core store the web app does not persist
+> yet; browser-only mode has no coverage host, so its cache would stay empty anyway. This
 > section is the normative format; the ADR records the reasoning,
 > the consequences and the alternatives rejected. Using specs raises the project to `schema: 2`
 > ([§21.10](#2110-schema-version-2)).
@@ -2534,6 +2539,49 @@ Two hashes per requirement, both `"sha256:" + lowercase_hex(sha256(x))[0:16]` li
   agent read, when every linked test passed at one commit in the latest ingested results on the
   current block rev — otherwise it writes nothing and refuses with the failing or missing tests. A
   `fail` never overwrites a stamp. A hand-written stamp means what its author says.
+- **R-REQ-11b Verification cache as implemented (`GIT-US-0141`).** `gintrack spec verify` runs
+  no tests (`GIT-US-0125`), so the cache is written by **`gintrack spec ingest`** (docs/07
+  §4.19): after the per-test results are merged into the per-machine test-result cache, every
+  requirement with at least one linked test matched by a result of *this* ingest gets one entry,
+  aggregating the latest results of **all** its linked tests, recorded against the block rev
+  the index holds now. The file is one versioned JSON document per project:
+
+  ```json
+  {"version": 1, "entries": [
+    {"ref": "ACME-SP-0003.R2", "rev": "sha256:9f2c…", "commit": "4b1d…(40 hex)",
+     "tests": [{"test": "src/alloc_test.go#TestNextID", "result": "pass"}],
+     "result": "pass", "at": "2026-09-24T10:00:00Z", "by": "jose"}
+  ]}
+  ```
+
+  Beyond the fields of R-REQ-11: `commits` (sorted) replaces `commit` when the results come from
+  several commits, `uncommitted: true` when a result records none, each test carries its result
+  (`pass`, `fail`, `skip`, `missing`), `result` may also be `partial` (never evidence a stamp may
+  copy), and `by` is `git.authorName`, omitted when unset. A requirement whose aggregate is
+  `untested` gets no entry. A new entry replaces the one of the same `ref` and `rev`; per
+  requirement only the newest entries of its last four block revs are kept. A missing file, one
+  that does not parse, or one of another `version` reads as **empty** and is rebuilt by the next
+  ingest — never an error; entries without a ref, a rev or a known result are dropped. The
+  dirty-tree rule of R-REQ-11 is not enforced: `--commit` (default `HEAD`) is the caller's claim.
+  **One source per concern:** the test-result cache holds the raw last result of each test (the
+  input, per machine, outside the repository); `verify.json` holds the per-requirement evidence
+  every reader uses — coverage (R-REQ-12a), `requirement.stamp` (`gintrack spec verify --commit`,
+  MCP `verify_requirement`) and the done transition; the stamp is the committed baseline.
+  Behind the core interface `core.VerifyCache` the native store is the file
+  (`core.FileVerifyCache`, over the vault's FS abstraction) and the browser store holds the same
+  document in memory (`core.MemVerifyCache`) for the host to keep as one IndexedDB record.
+- **R-REQ-11c Stamp on done as implemented (`GIT-US-0141`).** The vault installs
+  `FileStore.DoneHook` on every project store. When a story or task enters a `done`-category
+  status, after its Spec Delta was applied in memory, the hook reads each requirement it
+  `implements` or `modifies` from the staged spec (so a MODIFIED block is judged on its new
+  text), asks the coverage host for the stamp its evidence allows, applies the same decision as
+  `requirement.stamp` (R-REQ-12a **Stamp**) and stages `verified` into the spec — written in the
+  same transaction as the move, or not at all. When the evidence names nobody, `by` is the item's
+  first assignee, else its author. The move is **never refused** for want of evidence: the result's
+  `specDelta.stamped` lists `{ref, verified}`, and `specDelta.unstamped` lists `{ref, reason}` with
+  the reasons of R-REQ-12a plus `missing` (no such spec or block), `removed` (the item's own delta
+  removed it), `other-project` (a qualified ref to another project, whose specs this write does
+  not touch) and `unavailable` (no coverage host — browser-only mode — or unreadable evidence).
 - **R-REQ-12 Coverage.** The coverage state — `untested`, `passing`, `failing`, `suspect` — is
   **computed, never stored**, from the cache first and the stamp as the durable baseline. The
   evidence is the most recent cache entry whose `rev` equals the current block rev and whose `at`
@@ -2577,10 +2625,15 @@ Two hashes per requirement, both `"sha256:" + lowercase_hex(sha256(x))[0:16]` li
   reason names the evidence that decided, `results` or `stamp`. Each linked test's `result` is its
   latest local result, `missing` when there is none — so a row decided by the stamp on a fresh
   clone lists its tests as `missing`.
-  **Evidence source.** Until `verify.json` exists (`GIT-US-0141`), the evidence is the per-test
-  result cache of `gintrack spec ingest` (docs/07 §4.19), which does not record the tested block
-  rev: its runs count per rule 1, but they can never clear a `text` suspect — only a new stamp
-  does. Its `at` is the ingest time of the newest matched result.
+  **Evidence source.** The evidence is the verification cache `verify.json` (R-REQ-11b): per
+  requirement, the newest entry of its current block rev, else its newest entry at any rev —
+  which records another text and so never counts per rule 1. A requirement with no entry has no
+  run, and the stamp decides; an empty, deleted or corrupt cache therefore shows every
+  requirement's stamp. Because an entry records the tested block rev, a run of the current text
+  clears a `text` suspect. A run's `at` is the ingest time of the newest matched result, its
+  commit the entry's `commit` (or `commits`), and each linked test's `result` the one the entry
+  recorded. (Before `GIT-US-0141` the evidence was the per-test result cache itself, which records
+  no block rev.)
   **Stamp.** A stamp is offered only when every linked test passed (`pass`, not `partial`), all
   at one full hex commit; it copies that commit, the current block rev, the newest result's `at`
   and the evidence's `by`, or the caller's handle when the evidence has none. It is written with

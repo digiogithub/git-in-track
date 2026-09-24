@@ -1,9 +1,9 @@
 package server
 
 import (
-	"path/filepath"
 	"time"
 
+	"github.com/digiogithub/git-in-track/internal/core/osfs"
 	"github.com/digiogithub/git-in-track/internal/gitops"
 	"github.com/digiogithub/git-in-track/internal/impact"
 	"github.com/digiogithub/git-in-track/internal/pando"
@@ -34,9 +34,6 @@ var (
 type TraceSeams struct {
 	// Root is the repository's working tree on disk. Required.
 	Root string
-	// CacheDir is the directory `gintrack spec ingest` keeps its test-result
-	// cache under. Empty means no results: every requirement reads untested.
-	CacheDir string
 	// Git is the repository's history. Nil means no history: coverage cannot
 	// check drift, and "impact.query" answers unavailable.
 	Git gitops.Backend
@@ -53,7 +50,8 @@ type TraceSeams struct {
 
 // InstallTraceSeams hands a vault a requirement trace engine over its
 // repository's working tree, a coverage backend over that engine, the
-// test-result cache and the git history (GIT-US-0116), and — where the
+// verification cache of each project (<docs>/.pmngr/verify.json, GIT-US-0141)
+// and the git history (GIT-US-0116), and — where the
 // repository has git history — an impact resolver over the same engine and
 // coverage, with Pando's call graph and semantic search read at call time
 // (GIT-US-0119). The engine scans lazily, on the first "trace.*" or
@@ -61,9 +59,9 @@ type TraceSeams struct {
 func InstallTraceSeams(v *vault.Vault, o TraceSeams) {
 	engine := trace.NewEngine(o.Root, trace.EngineOptions{MaxAge: traceMaxAge, Now: o.Now})
 	v.SetRequirementTracer(engine)
-	var evidence trace.ResultEvidence
-	if o.CacheDir != "" {
-		evidence.Store = trace.NewResultStore(trace.DefaultResultCachePath(o.CacheDir, o.Root))
+	var evidence trace.VerifyEvidence
+	if fsys, err := osfs.New(o.Root); err == nil {
+		evidence.FS = fsys
 	}
 	var changes trace.ChangeLister
 	if o.Git != nil {
@@ -86,13 +84,9 @@ func InstallTraceSeams(v *vault.Vault, o TraceSeams) {
 
 // installTraceSeams installs the requirement seams on every mounted vault.
 func (s *Server) installTraceSeams(now func() time.Time) {
-	cacheDir := s.opts.SyncEngine.CacheDir
-	if cacheDir == "" && s.opts.ConfigPath != "" {
-		cacheDir = filepath.Dir(s.opts.ConfigPath)
-	}
 	for _, m := range s.repos.ready() {
 		seams := TraceSeams{
-			Root: m.path, CacheDir: cacheDir, Now: now,
+			Root: m.path, Now: now,
 			ProjectID: codeProjectID(m),
 			CallGraph: s.impactCallGraph,
 			Semantic:  s.impactSemantic,

@@ -64,7 +64,7 @@ func openSpecSpace(cmd *cobra.Command, flags *globalFlags, opts specSpaceOptions
 	if opts.seams {
 		logger := slog.New(slog.NewTextHandler(cmd.ErrOrStderr(), nil))
 		out.pando = installMCPSemantic(res.Config, space, mounts, logger)
-		installMCPTraceSeams(mounts, res.Config.Git.Backend, res.Config.CacheDir(res.Path), out.pando, logger)
+		installMCPTraceSeams(mounts, res.Config.Git.Backend, out.pando, logger)
 	}
 	return out, nil
 }

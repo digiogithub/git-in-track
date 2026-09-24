@@ -40,6 +40,9 @@ func specRepo(t *testing.T) string {
 	for name, data := range map[string]string{
 		"go.mod": "module example.com/acme\n",
 		".git":   "", // a directory marker is enough for FindRoot
+		// The R-LOC-5 snippet `gintrack init` writes: the derived caches,
+		// verify.json included, never show up as changes.
+		"docs/.pmngr/.gitignore": "index.json\nverify.json\n",
 	} {
 		p := filepath.Join(root, name)
 		if data == "" {
@@ -96,6 +99,15 @@ func TestSpecIngest(t *testing.T) {
 		if want := "fail src/alloc_test.go#TestNextID/stale_counter 0123abcd"; r1 != want {
 			t.Errorf("R1 = %q, want %q", r1, want)
 		}
+		// The touched requirements are recorded in the project's
+		// verification cache (GIT-US-0141).
+		if len(got.Verify) != 1 || got.Verify[0].Path != "docs/.pmngr/verify.json" || got.Verify[0].Added == 0 {
+			t.Errorf("verify = %+v, want entries added to docs/.pmngr/verify.json", got.Verify)
+		}
+		data, err := os.ReadFile(filepath.Join(root, "docs", ".pmngr", "verify.json"))
+		if err != nil || !strings.Contains(string(data), `"ref": "ACME-SP-0001.R1"`) || !strings.Contains(string(data), `"result": "fail"`) {
+			t.Errorf("verify.json = %s, %v", data, err)
+		}
 	})
 
 	t.Run("text from stdin replaces the last result", func(t *testing.T) {
@@ -105,6 +117,7 @@ func TestSpecIngest(t *testing.T) {
 		for _, want := range []string{
 			"- (go): 1 test — 1 passed, 0 failed, 0 skipped, 0 unmapped",
 			"0 added, 1 replaced, 4 total",
+			"verification cache docs/.pmngr/verify.json:",
 			"ACME-SP-0001.R1          pass     1/1 linked tests passed",
 		} {
 			if !strings.Contains(out, want) {

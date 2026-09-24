@@ -1340,7 +1340,8 @@ gintrack init [path] [flags]           # path defaults to "."
 
 It writes exactly what doc 03 §2.2 prescribes — `project.yaml` with schema 1, the key, the
 name and the default six-status workflow of doc 03 §6.2; a `.gitignore` holding
-`index.json`; and the five item folders plus `attachments/` — and nothing else. No commit is
+`index.json` and `verify.json` (doc 03 R-LOC-5); and the five item folders plus `attachments/` —
+and nothing else. No commit is
 made: the new files are left for the user or for `gintrack sync`.
 
 The command is **fully non-interactive**, because agents and scripts use it:
@@ -1790,8 +1791,10 @@ agui-serve --cwd <repo> --port <n> --no-tls --token-file <f>` and `gintrack serv
 > doc 03 R-REQ-11 is `GIT-US-0141`. Native only: browser-only mode cannot run or ingest tests.
 
 Record the last result of every test a run reported, so the requirements those tests verify can
-be answered from real runs (ADR-037 §7, doc 03 §21.6). Nothing is written into a spec or anywhere
-in the repository.
+be answered from real runs (ADR-037 §7, doc 03 §21.6), and record what they say about each
+requirement they touch in its project's verification cache `<docs>/.pmngr/verify.json`. Nothing
+is written into a spec, and nothing that is committed: `verify.json` is git-ignored (doc 03
+R-LOC-5).
 
 ```bash
 go test -json ./... > go.json;            gintrack spec ingest go.json
@@ -1807,7 +1810,7 @@ go test -json ./... | gintrack spec ingest -
 | `--base <dir>` | root | repository-relative directory the report's **relative** paths start from, e.g. `web` for a Vitest run in `web/` |
 | `--commit <sha>` | `HEAD` | commit the run was taken at; defaults to the working tree's current commit (`@` under jj), empty when there is none |
 | `--cache <file>` | see below | the test-result cache file |
-| `--json` | | print `{root, commit, cache, reports[], stored, requirements[]}` |
+| `--json` | | print `{root, commit, cache, reports[], stored, requirements[], verify[]}` |
 
 **Supported formats.**
 
@@ -1861,6 +1864,17 @@ new result replaces the cached one with the same `path#symbol` (so a JUnit run r
 `go test` run of the same test), or with the same format and `id` when unmapped. The file is
 versioned; a missing, corrupt or other-version file reads as empty and is rebuilt by the next
 ingest — never an error. Deleting it loses only evidence; ingesting the reports again rebuilds it.
+
+**The verification cache (`GIT-US-0141`).** After merging, every requirement with at least one
+linked test matched by a result of *this* ingest gets one entry in its project's
+`<docs>/.pmngr/verify.json` (doc 03 R-REQ-11b): the block rev of its text now, the commit (or
+`commits`), its linked tests with their results from the whole test-result cache, the aggregate
+`pass`, `fail` or `partial`, the ingest time and `git.authorName` as `by`. `verify[]` in the JSON
+output — and one `verification cache <path>: <n> added, <n> replaced, <n> total` line in the
+text output — reports each file written as `{project, path, added, replaced, total, rebuilt?}`.
+A corrupt file is rebuilt, never an error. This file, not the test-result cache, is the evidence
+`spec coverage`, `spec verify`, the MCP `verify_requirement` and the done transition read: the
+test-result cache is the raw per-test input, the verification cache the per-requirement evidence.
 
 ### 4.20 `gintrack spec lint|impact|coverage|verify|trace`
 
@@ -2215,7 +2229,7 @@ restart with a token, and the problem detail says so.
 that a client learns "not yet" from the code instead of guessing from a 404.
 
 `unavailable` (HTTP 503) means this session has no backend for the answer: requirement trace,
-coverage and impact need the marker scanner, the test-result cache and git history (§6.7), and
+coverage and impact need the marker scanner, the verification cache and git history (§6.7), and
 impact is `unavailable` on a repository without history. Nothing is wrong with the request and a
 retry will not help; the web app shows the state with a hint instead of an error (GIT-US-0127).
 Browser-only mode answers the same code for the same calls without a request.
@@ -5126,8 +5140,20 @@ changes nothing: `conflict` for a missing spec or block, a spec of another proje
 modified twice or modified after its removal, or a workflow with no `cancelled`-category status;
 `stale_revision` for a stale item `rev` or a spec edited on disk after it was read;
 `validation_failed` for any error-severity finding, including `LINT-REQ-*` at `specs.lint: error`.
-`item.move` also reports `schemaUpgraded` now. The `verified` stamp written on done (R-REQ-11a) is
-not written yet: `GIT-US-0116` installs it through the same transition (`FileStore.DoneHook`).
+`item.move` also reports `schemaUpgraded` now. The same write stamps `verified` (doc 03
+R-REQ-11a (a), R-REQ-11c, `GIT-US-0141`) on each requirement the item `implements` or
+`modifies` — after the delta, on its new text — whose verification-cache evidence allows it,
+through the vault's `FileStore.DoneHook`. The stamped specs are in `writes`, and `specDelta`
+(present whenever the item names a requirement, even with no `## Spec Delta`) adds:
+
+```json
+"stamped": [{"ref": "ACME-SP-0003.R2", "verified": {"rev": "sha256:…", "commit": "4b1d…", "at": "2026-09-24T10:00:00Z", "by": "jose"}}],
+"unstamped": [{"ref": "ACME-SP-0003.R5", "reason": "no-results"}]
+```
+
+A requirement left unstamped never refuses the move. The reasons are those of
+`requirement.stamp` plus `missing`, `removed`, `other-project` and `unavailable` (no coverage
+host, as in browser-only mode, or evidence that cannot be read).
 
 **Search.** `search` with `requirements: true` adds one hit of `kind: "requirement"` per matching
 requirement, with `id` set to the ref, `path` to the spec's file, and `spec` and `status` set; it
@@ -5142,7 +5168,7 @@ a host seam, `Vault.SetRequirementTracer` (`vault.RequirementTracer`, implemente
 session installs none, where both methods fail with `unavailable` — never an empty trace.
 `gintrack mcp` over stdio installs the same three seams of this section (trace, coverage,
 impact) through the companion's constructor, `server.InstallTraceSeams` (`GIT-US-0124`), reading
-test results from the cache directory `gintrack spec ingest` writes to. Its impact tiers 2 and 3
+the verification evidence from each project's `verify.json`, which `gintrack spec ingest` writes. Its impact tiers 2 and 3
 read the Pando client and semantic searcher it builds for `search.semantic`
 (`server.InstallSemanticSearch`, `GIT-US-0147`), as the companion's do; with no Pando configured
 they report `unavailable`.
@@ -5162,7 +5188,8 @@ nothing is written.
 **Coverage and the verification stamp (`GIT-US-0116`).** Two more methods answer from the
 coverage backend of doc 03 §21.6 (R-REQ-12a), a second host seam, `Vault.SetRequirementCoverage`
 (`vault.RequirementCoverage`, implemented by `internal/trace`'s `Coverage` over the trace engine,
-the test-result cache of `gintrack spec ingest` and the repository's git history). The companion
+the verification cache `<docs>/.pmngr/verify.json` that `gintrack spec ingest` fills, and the
+repository's git history). The companion
 installs one per repository; a browser-only session installs none, where both fail with
 `unavailable`.
 
@@ -5179,7 +5206,7 @@ the tests: it writes `requirements.R<n>.verified` for each named requirement who
 passed at one commit, through `UpdateRequirement` under the requirement rev, and lists every
 other one in `unstamped` with its reason; `by` is recorded when the evidence names nobody. It
 never refuses a requirement and never writes anything but `verified`. The done-transition stamp
-of `GIT-US-0110` calls the same code from inside its own write. The coverage state itself is
+(`GIT-US-0141`) applies the same decision from inside its own write. The coverage state itself is
 never written. With `rev` (`GIT-US-0124`, the MCP `verify_requirement`) the call names exactly
 one ref — `invalid_request` otherwise, and for `rev: "*"` — and stamps it only under that
 requirement rev: a rev that moved fails with `stale_revision`, `currentRev` and a `verified`

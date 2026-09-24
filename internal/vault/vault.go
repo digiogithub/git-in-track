@@ -565,6 +565,9 @@ func (v *Vault) rediscover() (bool, error) {
 		store.RequirementRefs = func(spec core.ItemID) []core.RequirementRef {
 			return v.index.RequirementRefsTo(spec)
 		}
+		// Moving a story or a task to done stamps the requirements it
+		// implements or modifies, in the same write (R-REQ-11a (a)).
+		store.DoneHook = v.doneStamp
 		v.stores[p.Key] = store
 	}
 	return changed, nil

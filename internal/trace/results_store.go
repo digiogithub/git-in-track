@@ -12,9 +12,6 @@ import (
 	"path/filepath"
 	"sort"
 	"time"
-
-	"github.com/digiogithub/git-in-track/internal/core"
-	"github.com/digiogithub/git-in-track/internal/core/osfs"
 )
 
 // resultCacheVersion is the format version of a test-result cache file. A
@@ -201,26 +198,8 @@ func Stamp(r *TestResolver, raws []RawResult, commit string, at time.Time) ([]Te
 // scratch: its backlog index, a full marker scan and the working tree. It
 // returns nil and no error when the repository holds no backlog.
 func RepositoryGraph(ctx context.Context, root string) (*Graph, error) {
-	fsys, err := osfs.New(root)
-	if err != nil {
-		return nil, fmt.Errorf("open %s: %w", root, err)
-	}
-	projects, err := core.DiscoverProjects(fsys, ".")
-	if err != nil {
-		return nil, fmt.Errorf("discover the projects of %s: %w", root, err)
-	}
-	if len(projects) == 0 {
-		return nil, nil
-	}
-	ix := core.NewIndex(fsys, projects)
-	if _, err := ix.Build(ctx, true); err != nil {
-		return nil, fmt.Errorf("index %s: %w", root, err)
-	}
-	c, err := Scan(ctx, root, Options{})
-	if err != nil {
-		return nil, err
-	}
-	return BuildGraph(ix, c.Markers(), os.DirFS(root))
+	_, _, g, err := RepositoryTrace(ctx, root)
+	return g, err
 }
 
 // FindRoot returns the working-tree root enclosing dir: the nearest ancestor

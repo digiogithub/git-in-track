@@ -164,7 +164,7 @@ func runMCP(cmd *cobra.Command, build buildInfo, flags *globalFlags, local *mcpF
 	// as they do over HTTP (GIT-US-0147).
 	semantic := installMCPSemantic(res.Config, space, mounts, logger)
 	defer func() { _ = semantic.Close() }()
-	installMCPTraceSeams(mounts, res.Config.Git.Backend, res.Config.CacheDir(res.Path), semantic, logger)
+	installMCPTraceSeams(mounts, res.Config.Git.Backend, semantic, logger)
 
 	_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
 		"gintrack mcp %s: workspace %s, %d repositories, %d tools (%s)\n",
@@ -184,16 +184,16 @@ func runMCP(cmd *cobra.Command, build buildInfo, flags *globalFlags, local *mcpF
 // coverage and impact seams the companion installs (GIT-US-0124), through the
 // companion's own constructor, so trace_requirement, verify_requirement and
 // spec_impact answer over stdio exactly as they do over HTTP. The coverage
-// evidence is the test-result cache `gintrack spec ingest` fills under the
-// same cache directory. A repository git cannot open keeps trace and coverage
+// evidence is the verification cache `gintrack spec ingest` fills in each
+// project's .pmngr/verify.json (GIT-US-0141). A repository git cannot open keeps trace and coverage
 // and answers the impact query `unavailable`. Impact tiers 2 and 3 read the
 // Pando client and semantic searcher of pandoHost at call time, the ones
 // installMCPSemantic built (GIT-US-0147); a nil host, or one with no Pando
 // configured, leaves them unavailable while tier 1 answers.
-func installMCPTraceSeams(mounts []mcpMount, backend config.Backend, cacheDir string, pandoHost *server.SemanticHost, log *slog.Logger) {
+func installMCPTraceSeams(mounts []mcpMount, backend config.Backend, pandoHost *server.SemanticHost, log *slog.Logger) {
 	for _, m := range mounts {
 		seams := server.TraceSeams{
-			Root: m.root, CacheDir: cacheDir, ProjectID: pando.SanitizeProjectID(m.root),
+			Root: m.root, ProjectID: pando.SanitizeProjectID(m.root),
 			CallGraph: pandoHost.CallGraph, Semantic: pandoHost.Semantic,
 		}
 		repo, err := gitops.Open(m.root, gitops.Options{Backend: gitops.Kind(backend)})

@@ -20,13 +20,15 @@ var (
 )
 
 // gitignoreFileName is the ignore file written inside a fresh backlog so that
-// the derived index.json of R-LOC-5 never reaches a commit.
+// the derived index.json and verify.json of R-LOC-5 never reach a commit.
 const gitignoreFileName = ".gitignore"
 
 // backlogGitignore is the snippet of R-LOC-5: index.json is derived data and can
-// be rebuilt from the files at any time.
-const backlogGitignore = "# Derived index, rebuilt from the files (docs/03 R-LOC-5).\n" +
-	indexFileName + "\n"
+// be rebuilt from the files at any time, and verify.json is the local
+// verification cache of section 21.6, rebuilt by the next test run.
+const backlogGitignore = "# Derived caches, rebuilt from the files and test runs (docs/03 R-LOC-5).\n" +
+	indexFileName + "\n" +
+	VerifyCacheFileName + "\n"
 
 // NewProject is the input of CreateProject: everything the scaffolder needs
 // that is not a workflow default.

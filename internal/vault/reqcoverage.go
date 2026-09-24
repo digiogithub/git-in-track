@@ -20,8 +20,8 @@ import (
 // The stamp itself is written here, through the requirement write path and
 // under the requirement rev (docs/03 section 21.5), and only at the
 // moments the ADR allows: when a story or task that implements or modifies
-// the requirement moves to a done-category status (GIT-US-0110 calls
-// stampVerified from inside that write), and on an explicit request, which is
+// the requirement moves to a done-category status (donestamp.go, from inside
+// that write, GIT-US-0141), and on an explicit request, which is
 // what `gintrack spec verify --commit` sends (GIT-US-0125) and, for one ref
 // under its requirement rev, the MCP verify_requirement (GIT-US-0124). Nothing else is
 // ever written: the coverage state, suspect included, is computed.
@@ -125,11 +125,9 @@ func (v *Vault) coverageList(ctx context.Context, raw []byte) (any, error) {
 	return map[string]any{"coverage": out, "total": len(out)}, nil
 }
 
-// StampedRequirement is a requirement whose stamp was written.
-type StampedRequirement struct {
-	Ref      core.RequirementRef `json:"ref"`
-	Verified core.Verification   `json:"verified"`
-}
+// StampedRequirement is a requirement whose stamp was written. The type lives
+// in the core because the done transition reports it too (GIT-US-0141).
+type StampedRequirement = core.StampedRequirement
 
 // UnstampedRequirement is a requirement left without a new stamp, and why:
 // a coverage reason code of the evidence (failed, partial, no-results,
@@ -137,10 +135,7 @@ type StampedRequirement struct {
 // current one), unchanged (the stamp already says this), stamp-newer (the
 // existing stamp records a later run), unavailable (no coverage host) or
 // stale (the requirement changed while the stamp was being written).
-type UnstampedRequirement struct {
-	Ref    core.RequirementRef `json:"ref"`
-	Reason string              `json:"reason"`
-}
+type UnstampedRequirement = core.UnstampedRequirement
 
 // StampReport is the result of a stamp run.
 type StampReport struct {
