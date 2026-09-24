@@ -37,6 +37,7 @@ const (
 	StoriesDirName     = "stories"
 	TasksDirName       = "tasks"
 	MilestonesDirName  = "milestones"
+	SpecsDirName       = "specs"
 	CommentsDirName    = "comments"
 	AttachmentsDirName = "attachments"
 )
@@ -63,6 +64,8 @@ func ItemDirName(t ItemType) (string, bool) {
 		return TasksDirName, true
 	case TypeMilestone:
 		return MilestonesDirName, true
+	case TypeSpec:
+		return SpecsDirName, true
 	case TypeComment:
 		return CommentsDirName, true
 	default:
@@ -70,10 +73,10 @@ func ItemDirName(t ItemType) (string, bool) {
 	}
 }
 
-// itemDirNames lists the four item folders in a stable order, so that two runs
+// itemDirNames lists the five item folders in a stable order, so that two runs
 // of a scan visit the tree identically.
 func itemDirNames() []string {
-	return []string{EpicsDirName, MilestonesDirName, StoriesDirName, TasksDirName}
+	return []string{EpicsDirName, MilestonesDirName, SpecsDirName, StoriesDirName, TasksDirName}
 }
 
 // BacklogDir normalises the folder a caller points at: it accepts either the
@@ -371,7 +374,7 @@ func (a *Allocator) Reconcile(ctx context.Context) (Reconciliation, error) {
 		Duplicates: duplicatesOf(items),
 	}
 	numbers := numbersByCode(items, a.cfg.Key)
-	for _, t := range []ItemType{TypeEpic, TypeStory, TypeTask, TypeMilestone} {
+	for _, t := range []ItemType{TypeEpic, TypeStory, TypeTask, TypeMilestone, TypeSpec} {
 		code, ok := TypeCodeFor(t)
 		if !ok {
 			continue
@@ -688,4 +691,22 @@ func encodeYAMLNode(n *yaml.Node) ([]byte, error) {
 		return nil, fmt.Errorf("encode yaml: %w", err)
 	}
 	return Canonicalize([]byte(b.String())), nil
+}
+
+// NextRequirementNumber returns the number the next requirement of a spec gets:
+// max + 1 over every block heading and every requirements: key of the spec,
+// and every inbound ref to it the caller found in the project (link targets,
+// Spec Delta headings), so that a number stays reserved after somebody deleted
+// its block by hand (R-REQ-5). Numbers are never reused; gaps are normal.
+//
+// Inbound refs naming another spec are ignored, which lets a caller pass every
+// ref it collected without filtering.
+func NextRequirementNumber(spec *Item, inbound []RequirementRef) int {
+	maxSeen := maxInt(RequirementNumbers(spec))
+	for _, r := range inbound {
+		if spec != nil && r.Spec == spec.ID && r.Number > maxSeen {
+			maxSeen = r.Number
+		}
+	}
+	return maxSeen + 1
 }

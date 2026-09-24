@@ -49,7 +49,7 @@ const customFieldTypes = new Set<string>([
   'list',
   'url',
 ]);
-const itemTypes = new Set<string>(['epic', 'story', 'task', 'milestone', 'comment']);
+const itemTypes = new Set<string>(['epic', 'story', 'task', 'milestone', 'spec', 'comment']);
 
 const scaleDefaults: Record<EstimationScale, number[]> = {
   fibonacci: [1, 2, 3, 5, 8, 13, 21],

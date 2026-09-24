@@ -37,6 +37,9 @@ type itemWritePayload struct {
 	Status core.Status `json:"status,omitempty"`
 	From   core.Status `json:"from,omitempty"`
 	DryRun bool        `json:"dryRun,omitempty"`
+	// SchemaUpgraded is set when the write raised project.yaml's schema
+	// (ADR-037 section 11).
+	SchemaUpgraded int `json:"schemaUpgraded,omitempty"`
 }
 
 // newItemWritePayload projects a written item onto its payload.
@@ -52,7 +55,7 @@ func newItemNewCommand(flags *globalFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "new",
 		Short: "Create an item",
-		Long: `Create an epic, a story, a task or a milestone.
+		Long: `Create an epic, a story, a task, a milestone or a spec.
 
 The id is allocated by the core, which takes the maximum of the counter in
 project.yaml and the highest id on disk, so two writers never collide. The
@@ -65,7 +68,7 @@ project defaults fill whatever the flags leave out.`,
 
 	f := cmd.Flags()
 	f.StringVar(&local.project, "project", "", "project key (required when the workspace holds more than one)")
-	f.StringVar(&local.typ, "type", "", "epic, story, task or milestone (required)")
+	f.StringVar(&local.typ, "type", "", "epic, story, task, milestone or spec (required)")
 	f.StringVar(&local.title, "title", "", "title (required)")
 	f.StringVar(&local.parent, "parent", "", "epic of a story, story of a task")
 	f.StringVar(&local.status, "status", "", "initial status (default: the first status of the workflow)")
@@ -89,7 +92,7 @@ func runItemNew(cmd *cobra.Command, flags *globalFlags, local *itemNewFlags) err
 	}
 	typ := core.ItemType(strings.TrimSpace(local.typ))
 	if !typ.Valid() || typ == core.TypeComment {
-		return usagef("--type is required: use epic, story, task or milestone")
+		return usagef("--type is required: use epic, story, task, milestone or spec")
 	}
 	body, err := readBody(cmd, local.body)
 	if err != nil {
@@ -134,20 +137,32 @@ func runItemNew(cmd *cobra.Command, flags *globalFlags, local *itemNewFlags) err
 		draft.Due = due
 	}
 
+	schemaBefore := store.Schema()
 	it, err := store.Create(cmd.Context(), draft)
 	if err != nil {
 		return fmt.Errorf("create: %w", err)
 	}
+	schemaUpgraded := 0
+	if after := store.Schema(); after > schemaBefore {
+		schemaUpgraded = after
+	}
 
 	p := flags.printer(cmd, local.asJSON)
 	if p.JSONMode() {
-		return render(p.JSON(newItemWritePayload(it, local.dryRun)))
+		payload := newItemWritePayload(it, local.dryRun)
+		payload.SchemaUpgraded = schemaUpgraded
+		return render(p.JSON(payload))
 	}
 	if local.dryRun {
 		reportDryRun(p, overlay)
 		return nil
 	}
 	p.Printf("created %s  %s\n", it.ID, displayPath(it.Path))
+	if schemaUpgraded > 0 {
+		// The first spec construct raises project.yaml in the same write
+		// (ADR-037 section 11); say so, so the one-line change has a cause.
+		p.Printf("schemaUpgraded: %d  (project.yaml now declares schema %d)\n", schemaUpgraded, schemaUpgraded)
+	}
 	return nil
 }
 

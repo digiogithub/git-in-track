@@ -17,13 +17,18 @@ func (k ProjectKey) String() string { return string(k) }
 // TypeCode is the two-letter (or one-letter) code embedded in an item id.
 type TypeCode string
 
-// The four type codes of the id grammar (R-ID-1).
+// The five type codes of the id grammar (R-ID-1). SP is the spec type of
+// ADR-037.
 const (
 	CodeEpic      TypeCode = "EP"
 	CodeStory     TypeCode = "US"
 	CodeTask      TypeCode = "T"
 	CodeMilestone TypeCode = "M"
+	CodeSpec      TypeCode = "SP"
 )
+
+// idGrammar is the human-readable form of the id grammar, used in messages.
+const idGrammar = "<KEY>-<EP|US|T|M|SP>-<NNNN>"
 
 // minIDDigits is the minimum zero padding of the numeric part. Padding is a
 // minimum, not a maximum: after 9999 items an id simply grows a digit (R-ID-3).
@@ -33,7 +38,7 @@ const minIDDigits = 4
 var projectKeyRE = regexp.MustCompile(`^[A-Z][A-Z0-9]{1,9}$`)
 
 // itemIDRE is the grammar of an item id: <KEY>-<TYPECODE>-<NUMBER>.
-var itemIDRE = regexp.MustCompile(`^([A-Z][A-Z0-9]{1,9})-(EP|US|T|M)-(\d{4,})$`)
+var itemIDRE = regexp.MustCompile(`^([A-Z][A-Z0-9]{1,9})-(EP|US|T|M|SP)-(\d{4,})$`)
 
 // ValidProjectKey reports whether k matches the project-key grammar.
 func ValidProjectKey(k ProjectKey) bool { return projectKeyRE.MatchString(string(k)) }
@@ -49,6 +54,8 @@ func TypeCodeFor(t ItemType) (TypeCode, bool) {
 		return CodeTask, true
 	case TypeMilestone:
 		return CodeMilestone, true
+	case TypeSpec:
+		return CodeSpec, true
 	case TypeComment:
 		return "", false
 	default:
@@ -67,6 +74,8 @@ func ItemTypeFor(c TypeCode) (ItemType, bool) {
 		return TypeTask, true
 	case CodeMilestone:
 		return TypeMilestone, true
+	case CodeSpec:
+		return TypeSpec, true
 	default:
 		return "", false
 	}
@@ -77,7 +86,7 @@ func ItemTypeFor(c TypeCode) (ItemType, bool) {
 func ParseItemID(s string) (ProjectKey, TypeCode, int, error) {
 	m := itemIDRE.FindStringSubmatch(s)
 	if m == nil {
-		return "", "", 0, fmt.Errorf("parse item id %q: want <KEY>-<EP|US|T|M>-<NNNN>", s)
+		return "", "", 0, fmt.Errorf("parse item id %q: want %s", s, idGrammar)
 	}
 	n, err := strconv.Atoi(m[3])
 	if err != nil { // unreachable: the regexp only matches digits

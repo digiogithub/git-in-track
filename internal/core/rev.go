@@ -36,7 +36,14 @@ func Canonicalize(data []byte) []byte {
 //
 // rev is never stored in a file: it is recomputed on every read (R-REV-1).
 func ComputeRev(data []byte) Rev {
-	sum := sha256.Sum256(Canonicalize(data))
+	return hashRev(Canonicalize(data))
+}
+
+// hashRev renders the rev token of bytes that are already canonical. The file
+// rev, the block rev and the requirement rev of docs/03 sections 5 and 21.5 all
+// share it, so the three can never drift apart in shape.
+func hashRev(data []byte) Rev {
+	sum := sha256.Sum256(data)
 	return Rev(revPrefix + hex.EncodeToString(sum[:])[:revHexLen])
 }
 

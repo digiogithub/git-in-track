@@ -71,6 +71,10 @@ func DefaultWorkflow() Workflow {
 // documented default, the default workflow, and the identity spec carries.
 func NewProjectConfig(spec NewProject, docsPath string) ProjectConfig {
 	cfg := DefaultProjectConfig()
+	// A new project starts at the oldest schema that holds it, so that a
+	// teammate on an older binary can still write to it; the first spec
+	// construct raises it (ADR-037 section 11, R-SCHEMA-2-2).
+	cfg.Schema = InitialSchema
 	cfg.Key = spec.Key
 	cfg.Name = strings.TrimSpace(spec.Name)
 	if cfg.Name == "" {
@@ -107,7 +111,7 @@ func marshalProjectConfig(cfg ProjectConfig) ([]byte, error) {
 }
 
 // CreateProject writes a new backlog under docsPath: the project.yaml of
-// docs/03 section 6, the four item folders plus comments/ and attachments/ of
+// docs/03 section 6, the five item folders plus comments/ and attachments/ of
 // section 2, and the .gitignore of R-LOC-5.
 //
 // It is pure core: it touches nothing but the FS the caller supplies, so the

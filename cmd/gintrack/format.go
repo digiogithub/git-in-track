@@ -92,6 +92,7 @@ func countsByType(byType map[core.ItemType]int) string {
 		{core.TypeStory, "story", "stories"},
 		{core.TypeTask, "task", "tasks"},
 		{core.TypeMilestone, "milestone", "milestones"},
+		{core.TypeSpec, "spec", "specs"},
 	}
 	parts := make([]string, 0, len(labels))
 	for _, l := range labels {

@@ -83,7 +83,8 @@ func newDoctorCommand(flags *globalFlags) *cobra.Command {
 repositories, and every backlog file they hold.
 
 --fix applies the safe repairs only: it rewrites front matter in canonical key
-order and renames files whose slug drifted from the title. --renumber is
+order, renames files whose slug drifted from the title, and raises
+project.yaml to schema 2 where a spec was written by hand. --renumber is
 separate and destructive, because ids are public identifiers: it prints the full
 plan and asks before touching anything.`,
 		Args: noArgs,
@@ -392,7 +393,10 @@ func applyFixes(ctx context.Context, view *repoView) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read the items: %w", err)
 	}
-	var fixed []string
+	fixed, err := upgradeSchemas(view)
+	if err != nil {
+		return fixed, err
+	}
 	for i := range page.Items {
 		it := page.Items[i]
 		canonical, err := core.SerializeItem(&it)
@@ -417,6 +421,51 @@ func applyFixes(ctx context.Context, view *repoView) ([]string, error) {
 			}
 			fixed = append(fixed, it.Path+" renamed to "+want)
 		}
+	}
+	return fixed, nil
+}
+
+// upgradeSchemas raises project.yaml to the spec schema in every project where
+// the index found a spec construct written by hand (E-SCHEMA-FEATURE). It is
+// the same one-line edit a write through the vault makes on first use, and it
+// changes no other file (ADR-037 section 11, R-SCHEMA-2-3).
+func upgradeSchemas(view *repoView) ([]string, error) {
+	needs := map[string]bool{}
+	for _, d := range view.Index.Warnings() {
+		if d.Code == core.CodeSchemaFeature {
+			needs[d.Path] = true
+		}
+	}
+	var fixed []string
+	for _, ref := range view.Projects {
+		if ref.Config == nil || ref.Config.Schema == 0 || ref.Config.Schema >= core.SpecSchema {
+			continue
+		}
+		found := false
+		for p := range needs {
+			if strings.HasPrefix(p, ref.BacklogPath+"/") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			continue
+		}
+		data, err := view.FS.ReadFile(ref.ConfigPath)
+		if err != nil {
+			return fixed, fmt.Errorf("%s: %w", ref.ConfigPath, err)
+		}
+		out, err := core.UpgradeProjectSchema(data, core.SpecSchema)
+		if err != nil {
+			return fixed, fmt.Errorf("%s: %w", ref.ConfigPath, err)
+		}
+		if out == nil {
+			continue
+		}
+		if err := view.FS.WriteFile(ref.ConfigPath, out); err != nil {
+			return fixed, fmt.Errorf("%s: %w", ref.ConfigPath, err)
+		}
+		fixed = append(fixed, fmt.Sprintf("%s: schema raised to %d for its spec constructs", ref.ConfigPath, core.SpecSchema))
 	}
 	return fixed, nil
 }

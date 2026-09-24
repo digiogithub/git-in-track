@@ -50,6 +50,9 @@ func (s *FileStore) AddComment(ctx context.Context, id ItemID, c CommentDraft) (
 	if err := ctx.Err(); err != nil {
 		return nil, wrapContext("add comment", err)
 	}
+	if err := s.cfg.WriteGate(); err != nil {
+		return nil, fmt.Errorf("add comment: %w", err)
+	}
 	item, err := s.locate(id)
 	if err != nil {
 		return nil, err

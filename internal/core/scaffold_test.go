@@ -144,8 +144,10 @@ func TestNewProjectConfigDefaults(t *testing.T) {
 			if cfg.Docs.Path != tc.wantPath {
 				t.Errorf("docs.path = %q, want %q", cfg.Docs.Path, tc.wantPath)
 			}
-			if cfg.Schema != SupportedSchema {
-				t.Errorf("schema = %d, want %d", cfg.Schema, SupportedSchema)
+			// A new project starts at schema 1 even though this build supports
+			// 2: the spec layer raises it on first use (R-SCHEMA-2-2).
+			if cfg.Schema != InitialSchema {
+				t.Errorf("schema = %d, want %d", cfg.Schema, InitialSchema)
 			}
 			if diags := cfg.Validate(); len(diags) != 0 {
 				t.Errorf("a fresh configuration must validate cleanly, got %v", diags)

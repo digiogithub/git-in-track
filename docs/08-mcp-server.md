@@ -388,7 +388,11 @@ their `milestone` field, so give it a `due` date:
 
 The id is allocated by `core.IDAllocator`; **agents must never propose one**. `author`
 defaults to the `--agent` name. `changed` lists the vault-relative files the call wrote, so
-the agent can name them in a commit message or a pull request without guessing.
+the agent can name them in a commit message or a pull request without guessing. A write that
+introduces the first spec construct into a `schema: 1` project (for example a link whose target
+is a spec) also raises `project.yaml` to `schema: 2`: `changed` then lists `project.yaml` and the
+result carries `"schemaUpgraded": 2`, so the agent can explain the one-line change in its PR
+([doc 03 §21.10](./03-data-model.md#2110-schema-version-2)).
 
 An invalid draft is refused by the same validator the web UI runs:
 

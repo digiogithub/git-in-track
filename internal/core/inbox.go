@@ -223,7 +223,7 @@ func validateInbox(d *diagSet, item *Item, cfg *ProjectConfig) {
 			d.errorf("inbox.duplicate_of", CodeInboxDuplicate, "an item cannot be a duplicate of itself")
 		} else if _, _, _, err := ParseItemID(string(in.DuplicateOf)); err != nil {
 			d.errorf("inbox.duplicate_of", CodeInboxDuplicate,
-				"%q does not match <KEY>-<EP|US|T|M>-<NNNN>", in.DuplicateOf)
+				"%q does not match <KEY>-<EP|US|T|M|SP>-<NNNN>", in.DuplicateOf)
 		}
 	}
 	if in.Status == InboxDuplicate && in.DuplicateOf == "" {

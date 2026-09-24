@@ -851,7 +851,7 @@ func canonicalize(path string, raw []byte) []byte {
 				return out
 			}
 		}
-	case string(TypeEpic), string(TypeStory), string(TypeTask), string(TypeMilestone):
+	case string(TypeEpic), string(TypeStory), string(TypeTask), string(TypeMilestone), string(TypeSpec):
 		if it, err := ParseItem(path, raw); err == nil {
 			if out, err := SerializeItem(it); err == nil {
 				return out

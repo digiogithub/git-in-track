@@ -1937,6 +1937,13 @@ and the YouTrack connection's own: `youtrack_not_configured`,
 `youtrack_unauthorized`, `youtrack_forbidden`, `youtrack_not_found`,
 `youtrack_unreachable` (see YouTrack under §5.5).
 
+`read_only` also answers **every write** to a project whose `project.yaml` declares no `schema`
+or one newer than the build supports: the project is open read-only (doc 03 R-EVO-2, ADR-037
+§11). Reads keep working. The other side of the same rule: `item.create` and `item.update`
+results carry `"schemaUpgraded": 2` when the write introduced the first spec construct into a
+`schema: 1` project and raised `project.yaml` in the same write, which is then in `writes`
+(doc 03 §21.10). `gintrack item new --json` reports it the same way.
+
 `wip_limit_exceeded` (HTTP 409) is a *refusal the caller may repeat*: a board's WIP limit is
 advisory (doc 04 R-COL-5), so the move is declined once with the column and the limit in `detail`,
 and the same request with `force` goes through. It exists so that a limit is never exceeded
