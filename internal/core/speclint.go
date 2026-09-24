@@ -559,9 +559,9 @@ func containsWholeWord(s, w string) bool {
 func isWordRune(r rune) bool { return r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r) }
 
 // lintDiagnostics renders the lint findings of a block as diagnostics of the
-// spec file, in the same "line N of the body" form as the parser's findings.
-func lintDiagnostics(d *diagSet, blk RequirementBlock, cfg *SpecLintConfig) {
+// spec file, on the file line like the parser's findings.
+func lintDiagnostics(d *diagSet, lines *fileLines, blk RequirementBlock, cfg *SpecLintConfig) {
 	for _, f := range LintRequirement(blk, cfg) {
-		d.add(f.Rule, f.Severity, "body."+f.Ref.String(), fmt.Sprintf("line %d of the body: %s", f.Line, f.Message))
+		d.addAt(f.Rule, f.Severity, "body."+f.Ref.String(), lines.body(f.Line), f.Message)
 	}
 }

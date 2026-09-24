@@ -1610,7 +1610,9 @@ once, in `internal/core`, and there is no copy of them in TypeScript.
   dispatcher and one implementation behind both.
 - **Diagnostics.** `MarkdownEditor` takes a `lint` source; `@codemirror/lint`'s `linter()`
   calls it once typing pauses for 500 ms (the debounce is CodeMirror's own, and an answer that
-  arrives after the document moved on is dropped). A finding carries a 1-based body line;
+  arrives after the document moved on is dropped). A finding carries a 1-based body line — the
+  editor holds the body alone, so `spec.lint` numbers the body, never the file the save-time
+  validation numbers (`GIT-US-0144`);
   `components/editor/lint.ts` maps it onto a range from the line's first non-blank character to
   its end (a blank line gets one character, a line past the end clamps to the last) and keeps
   its severity. The severity is the one `specs.lint` gives the rule — `warning` or `error`,

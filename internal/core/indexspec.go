@@ -70,10 +70,11 @@ func (ix *Index) checkDeltaTargets() {
 			continue
 		}
 		it := ix.byID[id]
+		lines := &fileLines{item: it}
 		report := func(field string, line int, format string, args ...any) {
 			ix.derivedDiags = append(ix.derivedDiags, Diagnostic{
 				Code: CodeWarnDeltaDangling, Severity: SeverityWarning, Path: it.Path, Field: field,
-				Message: fmt.Sprintf("line %d of the body: ", line) + fmt.Sprintf(format, args...),
+				Line: lines.body(line), Message: fmt.Sprintf(format, args...),
 			})
 		}
 		check := func(field string, line int, what string, spec ItemID, ref *RequirementRef) {

@@ -487,6 +487,15 @@ type Item struct {
 	Body string `json:"body" yaml:"-"` // Markdown after the front matter
 	Path string `json:"path" yaml:"-"` // vault-relative, forward slashes
 	Rev  Rev    `json:"rev" yaml:"-"`  // content hash of the canonical bytes
+	// BodyLine is the 1-based file line Body starts on, as ParseItem read it
+	// and the store wrote it; 0 when unknown (an item built in memory or
+	// decoded from JSON), in which case the canonical layout is assumed. It
+	// turns the body lines of the spec parser into the file lines of
+	// diagnostics (bodyLines).
+	BodyLine int `json:"-" yaml:"-"`
+	// reqLines is the file line of every requirements: node, keyed by field
+	// path (requirementLines); nil alongside a BodyLine of 0.
+	reqLines map[string]int
 }
 
 // Comment is one entry under .pmngr/comments/<ITEM-ID>/. Comments have no id of

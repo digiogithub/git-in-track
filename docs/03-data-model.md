@@ -1942,6 +1942,18 @@ every write and by the index (so by `gintrack doctor`):
 A misspelled requirement ref in a requirement or Spec Delta heading (`R02`, `r2`) is
 `E-ID-GRAMMAR`. A non-canonical separator in a Spec Delta heading is `W-REQ-SEPARATOR`.
 
+**Lines of requirement diagnostics.** Every `E-REQ-*`, `W-REQ-*`, `LINT-REQ-*`, `E-DELTA-*` and
+`W-DELTA-DANGLING` finding, the `E-ID-GRAMMAR` of a heading, and every finding about a
+`requirements.R<n>` entry (its `status`, `trace`, `verified` and `links`, including a
+requirement-level `W-REF-DANGLING`) carries `line`: the 1-based line **of the file**, front matter
+and fences included — the line `gintrack doctor`, `gintrack spec lint` and `item.validate` print
+as `<path>:<line>`. A body finding points at its line of the body; an entry finding at the node
+of the entry (a link at its list entry), or at the closest enclosing node the file holds; a
+block with no entry (`W-REQ-NO-ENTRY`) at its heading. An item validated before it is written
+is numbered as the canonical file it would be written as. The message no longer repeats the
+line. The live lint of the web editor (`spec.lint`, docs/07 §6.7) is the one exception: it lints
+the body the editor holds and numbers lines of that body (since `GIT-US-0144`).
+
 `W-MARKER-SYNTAX`, `W-MARKER-DANGLING` and `W-TRACE-BROKEN` (a `trace:` path or symbol that no
 longer exists) are emitted by the native trace engine, which reads source code; `internal/core`
 cannot, and does not.
@@ -2861,8 +2873,8 @@ What each rule reports, precisely (inline code spans are never read as prose by 
 - **R-LINT-1** Findings carry the requirement ref, the rule and a line. At `off` the rule does not
   run and reports nothing; at `warning` findings never block anything; at `error` they are validation errors of the spec (writes through the API and MCP
   are refused, `gintrack doctor` exits non-zero). As a diagnostic of the spec file a finding
-  has the rule as its code, `body.<REQREF>` as its field and a message opening with
-  `line <n> of the body:`, like the parser's findings. Only the first block of a duplicated
+  has the rule as its code, `body.<REQREF>` as its field and the file line of the finding as
+  its `line`, like the parser's findings (§16, lines of requirement diagnostics). Only the first block of a duplicated
   `R<n>` is linted.
 - **R-LINT-2** `vague_words`, when present, replaces the built-in list. A per-rule value wins over
   `severity` in both directions. `specs.lint: <value>` (a scalar) is shorthand for

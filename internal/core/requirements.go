@@ -633,29 +633,31 @@ func RequirementDiagnostics(item *Item, cfg *ProjectConfig) []Diagnostic {
 		return nil
 	}
 	d := &diagSet{path: item.Path}
+	lines := &fileLines{item: item}
 	body := ParseSpecBody(item.ID, item.Body)
 	for _, f := range body.Findings {
 		field := "body"
 		if f.Ref != "" {
 			field = "body." + f.Ref
 		}
-		d.add(f.Code, f.Severity, field, fmt.Sprintf("line %d of the body: %s", f.Line, f.Message))
+		d.addAt(f.Code, f.Severity, field, lines.body(f.Line), f.Message)
 	}
 
 	seen := map[int]int{}
 	for _, blk := range body.Blocks {
 		if first, dup := seen[blk.Ref.Number]; dup {
-			d.errorf("body."+blk.Ref.String(), CodeReqDuplicate,
-				"%s is declared twice, on lines %d and %d of the body", blk.Ref, first, blk.Line)
+			d.addAt(CodeReqDuplicate, SeverityError, "body."+blk.Ref.String(), lines.body(blk.Line),
+				fmt.Sprintf("%s is declared twice, on lines %d and %d", blk.Ref, lines.body(first), lines.body(blk.Line)))
 			continue
 		}
 		seen[blk.Ref.Number] = blk.Line
-		lintDiagnostics(d, blk, cfg.SpecLint())
+		lintDiagnostics(d, lines, blk, cfg.SpecLint())
 		entry, ok := item.Requirements[blk.Ref.Key()]
 		switch {
 		case !ok:
-			d.warnf("requirements."+blk.Ref.Key(), CodeWarnReqNoEntry,
-				"%s has no requirements: entry; its status reads as the workflow's initial status", blk.Ref)
+			// Nothing in the front matter to point at: the block is.
+			d.addAt(CodeWarnReqNoEntry, SeverityWarning, "requirements."+blk.Ref.Key(), lines.body(blk.Line),
+				fmt.Sprintf("%s has no requirements: entry; its status reads as the workflow's initial status", blk.Ref))
 		case entry == nil || entry.Status == "":
 			d.warnf("requirements."+blk.Ref.Key()+".status", CodeWarnReqNoEntry,
 				"%s has no status; it reads as the workflow's initial status", blk.Ref)
@@ -673,6 +675,13 @@ func RequirementDiagnostics(item *Item, cfg *ProjectConfig) []Diagnostic {
 				"%s.%s has an entry but no block in the body; its number stays reserved", item.ID, key)
 		}
 		validateRequirementEntry(d, field, entry, cfg)
+	}
+	// Every finding about a requirements: entry points at its node, or at
+	// the closest one the file holds.
+	for i := range d.out {
+		if d.out[i].Line == 0 && strings.HasPrefix(d.out[i].Field, "requirements.") {
+			d.out[i].Line = lines.field(d.out[i].Field)
+		}
 	}
 	orderDiagnostics(d.out)
 	return d.out

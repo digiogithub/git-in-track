@@ -1265,7 +1265,9 @@ func (ix *Index) resolveReferences(graph *Graph) {
 // targets, and comment folders with no item (W-REF-DANGLING, W-CMT-ORPHAN).
 func (ix *Index) checkReferentialIntegrity() {
 	blocks := map[ItemID]map[int]bool{}
-	dangling := func(it *Item, field string, target string) {
+	// dangling reports a target nothing in the vault answers to; line is the
+	// file line of the link when the caller knows it, or 0.
+	dangling := func(it *Item, field string, line int, target string) {
 		if target == "" {
 			return
 		}
@@ -1288,7 +1290,7 @@ func (ix *Index) checkReferentialIntegrity() {
 			return
 		}
 		ix.derivedDiags = append(ix.derivedDiags, Diagnostic{
-			Code: idxCodeRefDangling, Severity: SeverityWarning, Path: it.Path, Field: field,
+			Code: idxCodeRefDangling, Severity: SeverityWarning, Path: it.Path, Field: field, Line: line,
 			Message: fmt.Sprintf("%s points at unknown %s %s", field, what, target),
 		})
 	}
@@ -1299,15 +1301,17 @@ func (ix *Index) checkReferentialIntegrity() {
 		if parent == "" && it.Epic != "" {
 			parent, field = it.Epic, "epic"
 		}
-		dangling(it, field, string(parent))
-		dangling(it, "milestone", string(it.Milestone))
+		dangling(it, field, 0, string(parent))
+		dangling(it, "milestone", 0, string(it.Milestone))
 		for _, l := range it.Links {
-			dangling(it, "links."+string(l.Kind), l.Target)
+			dangling(it, "links."+string(l.Kind), 0, l.Target)
 		}
+		lines := &fileLines{item: it}
 		for _, key := range it.Requirements.Keys() {
 			if e := it.Requirements[key]; e != nil {
-				for _, l := range e.Links {
-					dangling(it, "requirements."+key+".links."+string(l.Kind), l.Target)
+				for i, l := range e.Links {
+					dangling(it, "requirements."+key+".links."+string(l.Kind),
+						lines.field(fmt.Sprintf("requirements.%s.links[%d]", key, i)), l.Target)
 				}
 			}
 		}

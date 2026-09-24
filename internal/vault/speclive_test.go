@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/digiogithub/git-in-track/internal/core"
 )
 
 // specLintWire is the result of spec.lint.
@@ -152,5 +154,42 @@ func TestSpecDeltaPreview(t *testing.T) {
 	}
 	if ops := out.(map[string]any)["operations"].([]DeltaPreviewOperation); len(ops) != 0 {
 		t.Errorf("operations = %+v, want none", ops)
+	}
+}
+
+// TestSpecLintLinesAreBodyLines pins the one place the two line numberings
+// meet (GIT-US-0144): spec.lint answers on lines of the body it was sent, which
+// is the text the web editor holds, while item.validate — like doctor and the
+// CLI — answers on lines of the file, below the front matter.
+func TestSpecLintLinesAreBodyLines(t *testing.T) {
+	const body = "## Spec Delta\n\n" +
+		"### MODIFIED DEMO-SP-0001.R1 — Trim\n\nThe checkout SHALL trim input fast.\n\n" +
+		"#### Scenario: spaces\n- **WHEN** it ends in spaces\n- **THEN** they go\n"
+	v := deltaFixtureVault(t, func(s string) string {
+		return strings.Replace(s, "\nschema: 1\n", "\nschema: 2\n", 1)
+	}, body)
+
+	lint := decode[specLintWire](t, call(t, v, "spec.lint", map[string]any{"project": "DEMO", "type": "story", "body": body}))
+	diags := decode[[]core.Diagnostic](t, call(t, v, "item.validate", map[string]any{"id": "DEMO-US-0003"}))
+
+	// deltaFixtureVault writes the story as eight lines of front matter and
+	// fences, a blank line, then the body.
+	const offset = 9
+	var bodyLine, fileLine int
+	for _, f := range lint.Findings {
+		if f.Code == core.LintReqVague {
+			bodyLine = f.Line
+		}
+	}
+	for _, d := range diags {
+		if d.Code == core.LintReqVague {
+			fileLine = d.Line
+		}
+	}
+	if bodyLine != 5 {
+		t.Errorf("spec.lint: LINT-REQ-VAGUE on line %d of the body, want 5", bodyLine)
+	}
+	if fileLine != bodyLine+offset {
+		t.Errorf("item.validate: LINT-REQ-VAGUE on line %d of the file, want %d", fileLine, bodyLine+offset)
 	}
 }

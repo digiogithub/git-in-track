@@ -362,12 +362,13 @@ func SpecDeltaDiagnostics(item *Item, cfg *ProjectConfig) []Diagnostic {
 
 func specDeltaDiagnostics(item *Item, delta SpecDelta, cfg *ProjectConfig) []Diagnostic {
 	d := &diagSet{path: item.Path}
+	lines := &fileLines{item: item}
 	for _, f := range delta.Findings {
 		field := "body"
 		if f.Ref != "" {
 			field = "body." + f.Ref
 		}
-		d.add(f.Code, f.Severity, field, fmt.Sprintf("line %d of the body: %s", f.Line, f.Message))
+		d.addAt(f.Code, f.Severity, field, lines.body(f.Line), f.Message)
 	}
 	applied := cfg != nil && cfg.CategoryOf(item.Status) == CategoryDone
 	for _, op := range delta.Operations {
@@ -377,12 +378,12 @@ func specDeltaDiagnostics(item *Item, delta SpecDelta, cfg *ProjectConfig) []Dia
 		// story reopened after its delta was applied keeps a valid body.
 		recorded := op.Ref != nil && hasLink(item.Links, Link{Kind: LinkImplements, Target: op.Ref.String()})
 		if op.Op == DeltaAdded && op.Ref != nil && cfg != nil && !applied && !recorded {
-			d.errorf(field, CodeDeltaTarget,
-				"line %d of the body: ADDED names the requirement %s: an added block gets its number when the %s is done; write \"### ADDED %s %s <title>\"",
-				op.Line, op.Ref, item.Type, op.Spec, ReqSeparator)
+			d.addAt(CodeDeltaTarget, SeverityError, field, lines.body(op.Line), fmt.Sprintf(
+				"ADDED names the requirement %s: an added block gets its number when the %s is done; write \"### ADDED %s %s <title>\"",
+				op.Ref, item.Type, op.Spec, ReqSeparator))
 		}
 		for _, f := range lintDeltaOperation(op, cfg.SpecLint()) {
-			d.add(f.Rule, f.Severity, field, fmt.Sprintf("line %d of the body: %s", f.Line, f.Message))
+			d.addAt(f.Rule, f.Severity, field, lines.body(f.Line), f.Message)
 		}
 	}
 	orderDiagnostics(d.out)

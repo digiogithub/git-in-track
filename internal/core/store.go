@@ -713,7 +713,11 @@ func (s *FileStore) validateWith(it *Item, cfg *ProjectConfig) error {
 	if !s.Validate {
 		return nil
 	}
-	return JoinDiagnostics(ValidateItem(it, cfg))
+	// The item is about to be written in canonical form, whatever layout the
+	// file it was read from had: its diagnostics point at that form.
+	canonical := *it
+	canonical.BodyLine, canonical.reqLines = 0, nil
+	return JoinDiagnostics(ValidateItem(&canonical, cfg))
 }
 
 // validateAndUpgrade validates an item about to be written and, when the write
@@ -796,6 +800,7 @@ func (s *FileStore) writeItem(it *Item, oldPath string) error {
 		}
 	}
 	it.Rev = ComputeRev(data)
+	it.setLayout(data)
 	return nil
 }
 

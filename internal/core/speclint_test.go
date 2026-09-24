@@ -321,10 +321,17 @@ func TestLintSeverityGatesValidation(t *testing.T) {
 			if got := HasErrors(diags); got != tt.wantErrors {
 				t.Errorf("HasErrors() = %v, want %v; diagnostics:\n%v", got, tt.wantErrors, diags)
 			}
+			// An item built in memory is linted against the file it would
+			// be written as: the statement is on that file's line.
+			data, err := SerializeItem(item)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantLine := 1 + strings.Count(string(data[:strings.Index(string(data), "The system does two, fast.")]), "\n")
 			var codes []Code
 			for _, d := range diags {
 				codes = append(codes, d.Code)
-				if d.Field != "body.TEST-SP-0001.R2" || !strings.HasPrefix(d.Message, "line 13 of the body: ") {
+				if d.Field != "body.TEST-SP-0001.R2" || d.Line != wantLine || strings.Contains(d.Message, "of the body") {
 					t.Errorf("diagnostic %v does not point at R2's statement", d)
 				}
 			}

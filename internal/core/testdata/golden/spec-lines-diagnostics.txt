@@ -1,0 +1,29 @@
+# RequirementDiagnostics(spec-lines-item.md): file line, then the text on it
+E-ID-GRAMMAR error body.TEST-SP-0007.R02: "TEST-SP-0007.R02" is not a requirement ref: want <KEY>-SP-<NNNN>.R<n> with an unpadded R<n>
+    58 | ### TEST-SP-0007.R02 — Padded number
+E-LINK-TARGET-TYPE error requirements.R2.links[0].target: supersedes must target a requirement ref, not "TEST-SP-0001"
+    21 |       - {kind: supersedes, target: TEST-SP-0001}
+E-REQ-DUPLICATE error body.TEST-SP-0007.R1: TEST-SP-0007.R1 is declared twice, on lines 34 and 50
+    50 | ### TEST-SP-0007.R1 — Duplicated number
+E-REQ-FIELD error requirements.R2.links[1].kind: a requirement's links allow supersedes, superseded_by and relates_to, not "blocks"
+    22 |       - {kind: blocks, target: TEST-SP-0001.R1}
+E-REQ-FIELD error requirements.R2.trace.code[0]: "/abs/path.go" is absolute: trace paths are relative to the repository root
+    19 |       code: [/abs/path.go]
+E-REQ-FOREIGN error body.OTHER-SP-0001.R1: requirement heading names OTHER-SP-0001.R1, which belongs to OTHER-SP-0001, not to TEST-SP-0007
+    60 | ### OTHER-SP-0001.R1 — Foreign spec
+E-STATUS-UNKNOWN error requirements.R2.status: "shipped" is not declared in the workflow
+    17 |     status: shipped
+LINT-REQ-SCENARIO warning body.TEST-SP-0007.R3: TEST-SP-0007.R3 has no "#### Scenario:": want at least one, with **WHEN** and **THEN** steps
+    62 | ### TEST-SP-0007.R3 — No entry and no scenario
+LINT-REQ-VAGUE warning body.TEST-SP-0007.R2: vague word "fast" in TEST-SP-0007.R2: state a measurable, observable condition instead
+    44 | The system SHALL answer fast.
+W-REQ-HEADING warning body: level-3 heading "### Design notes" is not a requirement heading: want "### <REQREF> — <title>"
+    54 | ### Design notes
+W-REQ-NO-ENTRY warning requirements.R3: TEST-SP-0007.R3 has no requirements: entry; its status reads as the workflow's initial status
+    62 | ### TEST-SP-0007.R3 — No entry and no scenario
+W-REQ-NO-ENTRY warning requirements.R4.status: TEST-SP-0007.R4 has no status; it reads as the workflow's initial status
+    23 |   R4: {}
+W-REQ-ORPHAN-ENTRY warning requirements.R9: TEST-SP-0007.R9 has an entry but no block in the body; its number stays reserved
+    24 |   R9:
+W-REQ-SEPARATOR warning body.TEST-SP-0007.R2: heading of TEST-SP-0007.R2 uses "-" instead of "—"
+    42 | ### TEST-SP-0007.R2 - Hyphen separator and a vague word

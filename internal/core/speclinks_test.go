@@ -341,6 +341,13 @@ func TestIndexReportsDanglingRequirementTargets(t *testing.T) {
 		t.Errorf("W-REF-DANGLING findings =\n%v\nwant\n%v", got, want)
 	}
 	for _, d := range ix.Warnings() {
+		// A requirement-level link points at the file line of its list
+		// entry, "- { kind: supersedes, target: ACME-SP-0002.R7 }" (GIT-US-0144).
+		if d.Code == CodeWarnRefDangling && d.Field == "requirements.R3.links.supersedes" && d.Line != 18 {
+			t.Errorf("%s: line %d, want 18", d.Field, d.Line)
+		}
+	}
+	for _, d := range ix.Warnings() {
 		if d.Code == CodeLinkTargetType || d.Code == CodeSchemaFeature {
 			t.Errorf("unexpected finding %s: %s", d.Code, d.Message)
 		}
