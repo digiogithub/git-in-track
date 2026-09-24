@@ -2307,8 +2307,10 @@ validation, and produce the `E-STATUS-UNKNOWN`, `W-LABEL-UNDECLARED`, and `E-CF-
 > `GIT-US-0106` implements the six spec link kinds and requirement-ref link targets of §12.1
 > (R-LINK-6, R-LINK-7, R-LINK-8): validation, `E-LINK-TARGET-TYPE`, `E-LINK-COMPUTED-ONLY` on a
 > written `implemented_by`/`modified_by`, `W-REF-DANGLING` on a missing spec or block, and
-> requirement nodes in the link graph.
-> Not implemented yet: requirement reads and writes through the vault (`GIT-US-0107`), the grammar
+> requirement nodes in the link graph. `GIT-US-0107` implements single-requirement
+> reads and writes through the vault (`requirement.list|get|create|update`, docs/07 §6.7) under
+> the requirement rev of §21.5.
+> Not implemented yet: the MCP requirement tools, the grammar
 > lint of §21.9 (`GIT-US-0108`), `## Spec Delta` (§21.8), verification and coverage (§21.6), and
 > the marker scan (§21.7). This section is the normative format; the ADR records the reasoning,
 > the consequences and the alternatives rejected. Using specs raises the project to `schema: 2`
@@ -2477,7 +2479,9 @@ Two hashes per requirement, both `"sha256:" + lowercase_hex(sha256(x))[0:16]` li
   the **write token** of a single requirement: every requirement read returns it, every requirement
   write quotes it, and a mismatch fails with `stale_revision` exactly as §5 specifies, `conflicts[]`
   naming `text`, `title`, `status`, `trace`, `verified` or `links`. A write to one requirement never
-  invalidates another requirement's rev.
+  invalidates another requirement's rev. Every requirement read returns both hashes, the
+  requirement rev as `rev` and the block rev as `blockRev`; only `rev` is accepted as a write token
+  (docs/07 §6.7).
 - **R-REQ-REV-3** The file `rev` (§5) is unchanged; spec-level writes quote it. Neither requirement
   hash is ever stored, except the block rev as the value of `verified.rev`.
 

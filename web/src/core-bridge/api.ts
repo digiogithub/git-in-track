@@ -466,6 +466,76 @@ export type SearchHit = {
   vaultId?: string;
 };
 
+/**
+ * One requirement of a spec (ADR-037, doc 03 §21). `rev` is the requirement
+ * rev — the write token `requirement.update` quotes; `blockRev` is the block
+ * rev — the fingerprint of the text that a `verified.rev` stamp records. Never
+ * swap them.
+ */
+export type Requirement = {
+  /** `<SPEC-ID>.R<n>`, e.g. `GIT-SP-0003.R2`. */
+  ref: string;
+  spec: string;
+  project?: string;
+  path: string;
+  anchor: string;
+  line: number;
+  title: string;
+  status: string;
+  /** The entry has no status: `status` is the workflow's initial status. */
+  statusImplicit?: boolean;
+  /** The block below its heading; absent from list rows unless `text: true`. */
+  text?: string;
+  statement?: string;
+  scenarios?: { name: string; line: number; steps?: string[] }[];
+  trace?: RequirementTrace;
+  verified?: RequirementVerification;
+  links?: Link[];
+  extra?: Record<string, unknown>;
+  rev: string;
+  blockRev: string;
+};
+
+export type RequirementTrace = { code?: string[]; tests?: string[]; extra?: Record<string, unknown> };
+
+export type RequirementVerification = {
+  rev?: string;
+  commit?: string;
+  at?: string;
+  by?: string;
+  extra?: Record<string, unknown>;
+};
+
+/** A sparse change to one requirement; `unset` clears `trace`, `verified` or `links`. */
+export type RequirementPatch = {
+  title?: string;
+  text?: string;
+  status?: string;
+  trace?: RequirementTrace;
+  verified?: RequirementVerification;
+  links?: Link[];
+  unset?: ('trace' | 'verified' | 'links')[];
+};
+
+export type RequirementDraft = {
+  spec: string;
+  title: string;
+  text?: string;
+  status?: string;
+  trace?: RequirementTrace;
+  links?: Link[];
+};
+
+/** The result of a requirement write. */
+export type RequirementWrite = {
+  requirement: Requirement;
+  /** The spec's file rev after the write, for a spec-level write that follows. */
+  specRev: string;
+  writes: WriteSet;
+  /** Set when the write raised `project.yaml` to schema 2 (doc 03 §21.10). */
+  schemaUpgraded?: number;
+};
+
 /** One member of `team.yaml` (docs/04-team-repository.md §3.2). */
 export type TeamMember = {
   handle: string;
@@ -1888,6 +1958,27 @@ export type CoreApi = {
    * The triage queue of a project (ADR-033). `counts` and `pending` are over
    * the whole queue, and an expired snooze already counts as pending.
    */
+  /** Requirements as rows of their own (doc 03 §21); no text unless `text: true`. */
+  'requirement.list': {
+    params: {
+      project?: string;
+      spec?: string;
+      status?: string[];
+      q?: string;
+      text?: boolean;
+      includeDeleted?: boolean;
+    };
+    result: { requirements: Requirement[]; total: number };
+  };
+  /** One requirement with its text, both revs, and its spec's file rev. */
+  'requirement.get': { params: { ref: string }; result: { requirement: Requirement; specRev: string } };
+  /** Appends a requirement; `R<n>` is allocated as max + 1 and never reused. */
+  'requirement.create': { params: RequirementDraft; result: RequirementWrite };
+  /** Patches one requirement under its requirement rev (not its blockRev). */
+  'requirement.update': {
+    params: { ref: string; patch: RequirementPatch; rev: string };
+    result: RequirementWrite;
+  };
   'inbox.list': { params: InboxFilter | undefined; result: InboxPage };
   /**
    * One triage decision. Accepting clears triage and moves the item into the

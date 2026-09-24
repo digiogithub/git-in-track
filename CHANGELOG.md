@@ -84,6 +84,20 @@ because a commit list cannot express them.
   accepts the new kinds, never mirrors `implements`/`modifies` onto the spec, and refuses
   `implemented_by`/`modified_by` with a pointer to the kind to write instead; the web editor
   offers only the writable kinds, and accepts `duplicated_by`, which it used to reject.
+- **Single-requirement reads and writes through the vault** (`GIT-US-0107`, ADR-037 §6, docs/03
+  §21.5, docs/07 §6.7). The CoreApi contract gains `requirement.list`, `requirement.get`,
+  `requirement.create` and `requirement.update`, served by `internal/vault` and therefore by the
+  WASM module's `call` in browser-only mode. Every read returns two hashes: `rev`, the
+  **requirement rev** — the write token — and `blockRev`, the **block rev** a verification stamp
+  records. `requirement.update` patches only the requirement's block (`title`, `text`) and its
+  `requirements:` entry (`status`, `trace`, `verified`, `links`, `unset`) and requires the
+  requirement rev (`precondition_required` without one): a stale rev fails with
+  `stale_revision`, `currentRev` and per-field `conflicts[]`, while a concurrent write to another
+  requirement of the same spec succeeds. `requirement.create` allocates `R<n>` as max + 1 over
+  headings, map keys and inbound refs and appends the block. Writes use the canonical serializer,
+  materialize the status, follow the workflow transitions, honour the write gate and report
+  `schemaUpgraded`. `search` with `requirements: true` adds one `kind: "requirement"` hit per
+  matching block. No MCP tool, REST route or web UI yet.
 
 ### Changed
 

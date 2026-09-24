@@ -415,6 +415,14 @@ func (v *Vault) Dispatch(ctx context.Context, method string, raw []byte) (any, e
 		return v.itemDelete(ctx, raw)
 	case "item.task.set":
 		return v.itemTaskSet(ctx, raw)
+	case "requirement.list":
+		return v.requirementList(raw)
+	case "requirement.get":
+		return v.requirementGet(raw)
+	case "requirement.create":
+		return v.requirementCreate(ctx, raw)
+	case "requirement.update":
+		return v.requirementUpdate(ctx, raw)
 	case "inbox.list":
 		return v.inboxList(ctx, raw)
 	case "inbox.triage":
@@ -1586,6 +1594,9 @@ func (v *Vault) search(raw []byte) (any, error) {
 		limit *= 4
 	}
 	hits := v.index.Search(p.Q, limit)
+	if p.Requirements {
+		hits = mergeHits(hits, v.index.SearchRequirements(p.Q, limit), limit)
+	}
 	out := make([]searchHit, 0, len(hits))
 	for _, h := range hits {
 		if !InScope(scope, string(h.Project)) {
@@ -1598,6 +1609,7 @@ func (v *Vault) search(raw []byte) (any, error) {
 		out = append(out, searchHit{
 			Kind: h.Kind, ID: string(h.ID), Path: h.Path, Title: h.Title,
 			Snippet: h.Snippet, Score: h.Score, Project: string(h.Project), Source: source,
+			Spec: string(h.Spec), Status: string(h.Status),
 		})
 		if p.Limit > 0 && len(out) >= p.Limit {
 			break

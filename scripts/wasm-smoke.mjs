@@ -338,6 +338,82 @@ async function main() {
     );
   }
 
+  console.log('gintrackCore.call("requirement.*", …)');
+  const spec = envelope(
+    "call(item.create spec)",
+    core.call(
+      "item.create",
+      JSON.stringify({
+        project: "DEMO",
+        type: "spec",
+        title: "Smoke spec",
+        body:
+          "## Requirements\n\n### DEMO-SP-0001.R1 — Load the core\n\n" +
+          "The worker SHALL instantiate core.wasm.\n",
+      }),
+    ),
+  );
+  check(
+    "a spec is created and raises the schema",
+    spec.ok === true && spec.result?.schemaUpgraded === 2,
+    JSON.stringify(spec.ok ? spec.result?.schemaUpgraded : spec.error),
+  );
+  const created = envelope(
+    "call(requirement.create)",
+    core.call(
+      "requirement.create",
+      JSON.stringify({ spec: "DEMO-SP-0001", title: "Answer calls" }),
+    ),
+  );
+  check(
+    "requirement.create allocates R2",
+    created.ok === true && created.result?.requirement?.ref === "DEMO-SP-0001.R2",
+    JSON.stringify(created.ok ? created.result?.requirement?.ref : created.error),
+  );
+  const got = envelope(
+    "call(requirement.get)",
+    core.call("requirement.get", JSON.stringify({ ref: "DEMO-SP-0001.R1" })),
+  );
+  const req = got.result?.requirement ?? {};
+  check(
+    "requirement.get returns the requirement rev and the block rev",
+    got.ok === true && isNonEmptyString(req.rev) && isNonEmptyString(req.blockRev) && req.rev !== req.blockRev,
+    JSON.stringify(got.ok ? { rev: req.rev, blockRev: req.blockRev } : got.error),
+  );
+  const updated = envelope(
+    "call(requirement.update)",
+    core.call(
+      "requirement.update",
+      JSON.stringify({ ref: "DEMO-SP-0001.R1", rev: req.rev, patch: { status: "todo" } }),
+    ),
+  );
+  check(
+    "requirement.update applies under the requirement rev",
+    updated.ok === true && updated.result?.requirement?.status === "todo",
+    JSON.stringify(updated.ok ? updated.result?.requirement?.status : updated.error),
+  );
+  const stale = envelope(
+    "call(requirement.update stale)",
+    core.call(
+      "requirement.update",
+      JSON.stringify({ ref: "DEMO-SP-0001.R1", rev: req.rev, patch: { status: "in_progress" } }),
+    ),
+  );
+  check(
+    "a stale requirement rev yields stale_revision with conflicts",
+    stale.ok === false && stale.error?.code === "stale_revision" && Array.isArray(stale.error?.conflicts),
+    JSON.stringify(stale.error),
+  );
+  const rows = envelope(
+    "call(requirement.list)",
+    core.call("requirement.list", JSON.stringify({ spec: "DEMO-SP-0001" })),
+  );
+  check(
+    "requirement.list returns one row per requirement",
+    rows.ok === true && rows.result?.total === 2,
+    JSON.stringify(rows.ok ? rows.result?.total : rows.error),
+  );
+
   console.log("gintrackCore.call() error path");
   const unknown = envelope("call(nope)", core.call("nope", "null"));
   check("an unknown method yields ok: false", unknown.ok === false);

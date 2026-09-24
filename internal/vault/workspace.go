@@ -375,11 +375,19 @@ func (w *Workspace) teamSummary(m *Mount) teamSummary {
 // projects restricts the answer to those project keys; empty searches every
 // project (GIT-US-0102). A repository owning none of them is not asked.
 func (w *Workspace) Search(ctx context.Context, q string, limit int, projects []string) ([]searchHit, error) {
+	return w.SearchWith(ctx, searchParams{Q: q, Limit: limit, Projects: projects})
+}
+
+// SearchWith is Search driven by the full "search" params, which can also ask
+// for requirement hits.
+func (w *Workspace) SearchWith(ctx context.Context, p searchParams) ([]searchHit, error) {
 	w.mu.RLock()
 	mounts := w.snapshot()
 	w.mu.RUnlock()
 
-	params, err := json.Marshal(searchParams{Q: q, Limit: limit, Projects: projects})
+	q, limit := p.Q, p.Limit
+	projects := ScopeKeys(p.Project, p.Projects)
+	params, err := json.Marshal(searchParams{Q: q, Limit: limit, Projects: projects, Requirements: p.Requirements})
 	if err != nil {
 		return nil, failf("internal", "encode search params: %v", err)
 	}

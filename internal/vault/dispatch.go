@@ -20,6 +20,9 @@ type routeParams struct {
 	Project string `json:"project,omitempty"`
 	ID      string `json:"id,omitempty"`
 	Ref     string `json:"ref,omitempty"`
+	// Spec names the spec a requirement call is about (requirement.list,
+	// requirement.create).
+	Spec string `json:"spec,omitempty"`
 }
 
 // mountParams is the input of "workspace.mount".
@@ -294,7 +297,7 @@ func (w *Workspace) Dispatch(ctx context.Context, method string, raw []byte) (an
 		if err != nil {
 			return nil, err
 		}
-		return w.Search(ctx, p.Q, p.Limit, ScopeKeys(p.Project, p.Projects))
+		return w.SearchWith(ctx, p)
 	case "search.semantic":
 		// Ranked by meaning rather than by substring. The host installs the
 		// backend (see semantic.go); without one the method answers
@@ -353,10 +356,25 @@ func (w *Workspace) route(method string, raw []byte) (*Mount, error) {
 			}
 		}
 	}
+	if p.Spec != "" {
+		if key, _, _, err := core.ParseItemID(p.Spec); err == nil {
+			if m, ok := w.MountForProject(key); ok {
+				return m, nil
+			}
+		}
+	}
 	if p.Ref != "" {
 		if ref, err := core.ParseRef(p.Ref); err == nil {
 			if m, ok := w.MountForProject(ref.Project); ok {
 				return m, nil
+			}
+		}
+		// A requirement ref, bare or "<KEY>/"-qualified, routes by its spec.
+		if req, err := parseRequirementRef(p.Ref); err == nil {
+			if key, _, _, err := core.ParseItemID(string(req.Spec)); err == nil {
+				if m, ok := w.MountForProject(key); ok {
+					return m, nil
+				}
 			}
 		}
 	}
