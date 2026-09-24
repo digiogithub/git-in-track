@@ -69,6 +69,18 @@ because a commit list cannot express them.
   `E-LINK-TARGET-TYPE` (requirement-level links), `W-REQ-SEPARATOR`, `W-REQ-HEADING`,
   `W-REQ-NO-ENTRY`, `W-REQ-ORPHAN-ENTRY`. `gintrack doctor` reports them. `gintrack item new
   --type spec` creates one; the inbox and the YouTrack import never produce one.
+- **Spec link kinds and requirement-ref link targets** (`GIT-US-0106`, ADR-037 §5, docs/03
+  §12.1). `implements`/`implemented_by`, `modifies`/`modified_by` and
+  `supersedes`/`superseded_by` are valid link kinds, with their inverses computed by the index.
+  A link target may be a requirement ref (`ACME-SP-0003.R2`, optionally `<KEY>/`-qualified).
+  `implements`, `modifies` and their inverses need a spec or requirement target, and an
+  item-level `supersedes` links a spec to a spec; anything else is `E-LINK-TARGET-TYPE`. A ref
+  to an unknown spec, or to a block its spec does not declare, is `W-REF-DANGLING`, for
+  item-level and requirement-level links alike. Requirements are nodes of the link graph, so the
+  index answers "which stories implement `ACME-SP-0003.R2`" (`Index.Related`). The first such
+  link raises a `schema: 1` project to `schema: 2` in the same write. `gintrack item link`
+  accepts the new kinds and does not mirror `implements`/`modifies` onto the spec; the web
+  editor accepts them, and `duplicated_by`, which it used to reject.
 
 ### Changed
 

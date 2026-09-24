@@ -15,7 +15,19 @@ import type { Link, LinkKind } from '@/core-bridge/api';
 import type { EditorProjectSchema } from '@/features/editor/project-schema';
 import { customFieldsFor } from '@/features/editor/project-schema';
 
-export const linkKinds: LinkKind[] = ['blocks', 'blocked_by', 'relates_to', 'duplicates'];
+export const linkKinds: LinkKind[] = [
+  'blocks',
+  'blocked_by',
+  'relates_to',
+  'duplicates',
+  'duplicated_by',
+  'implements',
+  'implemented_by',
+  'modifies',
+  'modified_by',
+  'supersedes',
+  'superseded_by',
+];
 
 export const priorities: Priority[] = ['critical', 'high', 'medium', 'low'];
 

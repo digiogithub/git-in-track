@@ -45,7 +45,7 @@ type Item struct {
 
 // Link is one typed relation of an item.
 type Link struct {
-	Kind   string `json:"kind" jsonschema:"blocks, blocked_by, relates_to or duplicates"`
+	Kind   string `json:"kind" jsonschema:"blocks, blocked_by, relates_to, duplicates, duplicated_by, implements, implemented_by, modifies, modified_by, supersedes or superseded_by (docs/03 section 12.1)"`
 	Target string `json:"target"`
 }
 

@@ -36,6 +36,9 @@ func (n NodeID) Value() string {
 
 // GraphLink is one typed relation edge. Computed reports an edge the index
 // derived from the inverse kind: links are stored on one side only (R-LINK-1).
+// From and To are item ids or requirement refs ("ACME-SP-0003.R2", R-LINK-6):
+// a requirement is a node of the link graph in its own right, the source of the
+// links in its requirements: entry and the target of the links that name it.
 type GraphLink struct {
 	Kind     LinkKind `json:"kind"`
 	From     ItemID   `json:"from"`
@@ -102,7 +105,8 @@ func (g *Graph) addMilestone(item, milestone ItemID) {
 	g.milestone[milestone] = append(g.milestone[milestone], item)
 }
 
-// addLink records a declared relation and its computed inverse.
+// addLink records a declared relation and its computed inverse. from is an item
+// id or, for a link of a requirements: entry, the requirement ref.
 func (g *Graph) addLink(from ItemID, l Link) {
 	target := ItemID(bareTarget(l.Target))
 	if from == "" || target == "" || !l.Kind.Valid() {
@@ -177,6 +181,11 @@ func (g *Graph) AllLinks(id ItemID) []GraphLink {
 	return sortLinks(out)
 }
 
+// Related returns the nodes that stand in relation kind to id, declared on
+// either side: Related("ACME-SP-0003.R2", LinkImplementedBy) answers which
+// stories and tasks implement that requirement.
+func (g *Graph) Related(id ItemID, kind LinkKind) []ItemID { return g.targetsOfKind(id, kind) }
+
 // Blocking returns the items this item blocks, declared or inferred.
 func (g *Graph) Blocking(id ItemID) []ItemID { return g.targetsOfKind(id, LinkBlocks) }
 
@@ -232,7 +241,7 @@ func bareTarget(target string) string {
 }
 
 // targetProject returns the project a link target belongs to: the qualifier when
-// present, otherwise the key embedded in the item id.
+// present, otherwise the key embedded in the item id or requirement ref.
 func targetProject(target string) ProjectKey {
 	t := strings.TrimSpace(target)
 	if i := strings.Index(t, "/"); i > 0 {
@@ -240,7 +249,7 @@ func targetProject(target string) ProjectKey {
 			return key
 		}
 	}
-	if key, _, _, err := ParseItemID(t); err == nil {
+	if key, ok := linkTargetKey(t); ok {
 		return key
 	}
 	return ""

@@ -83,6 +83,20 @@ describe('raw YAML round trip', () => {
     if (!parsed.ok) expect(parsed.issues[0]?.code).toBe('E-FM-YAML');
   });
 
+  it('keeps the spec link kinds and requirement-ref targets', () => {
+    const parsed = valuesFromYaml(
+      'title: A\nlinks:\n  - { kind: implements, target: ACME-SP-0003.R2 }\n' +
+        '  - { kind: duplicated_by, target: ACME-US-0050 }\n',
+    );
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      expect(parsed.values.links).toEqual([
+        { kind: 'implements', target: 'ACME-SP-0003.R2' },
+        { kind: 'duplicated_by', target: 'ACME-US-0050' },
+      ]);
+    }
+  });
+
   it('rejects an unknown priority', () => {
     const parsed = valuesFromYaml('title: A\npriority: urgent\n');
     expect(parsed.ok).toBe(false);

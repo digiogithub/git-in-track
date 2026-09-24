@@ -15,7 +15,19 @@
 
 export type ItemType = 'epic' | 'story' | 'task' | 'milestone' | 'spec' | 'comment';
 export type Priority = 'critical' | 'high' | 'medium' | 'low';
-export type LinkKind = 'blocks' | 'blocked_by' | 'relates_to' | 'duplicates';
+/** Relation kinds of docs/03-data-model.md §12.1; the last six are ADR-037's spec kinds. */
+export type LinkKind =
+  | 'blocks'
+  | 'blocked_by'
+  | 'relates_to'
+  | 'duplicates'
+  | 'duplicated_by'
+  | 'implements'
+  | 'implemented_by'
+  | 'modifies'
+  | 'modified_by'
+  | 'supersedes'
+  | 'superseded_by';
 export type Severity = 'error' | 'warning' | 'info';
 
 export type Link = { kind: LinkKind; target: string; note?: string };

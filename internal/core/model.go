@@ -114,19 +114,38 @@ type Rev string
 // LinkKind is the semantic of a typed relation between two items.
 type LinkKind string
 
-// The relation kinds accepted in the links field.
+// The relation kinds accepted in the links field. The last six are the spec
+// kinds of ADR-037 section 5 (docs/03 section 12.1): their targets are specs or
+// requirement refs, and using one raises a project to schema 2.
 const (
-	LinkBlocks       LinkKind = "blocks"
-	LinkBlockedBy    LinkKind = "blocked_by"
-	LinkRelatesTo    LinkKind = "relates_to"
-	LinkDuplicates   LinkKind = "duplicates"
-	LinkDuplicatedBy LinkKind = "duplicated_by"
+	LinkBlocks        LinkKind = "blocks"
+	LinkBlockedBy     LinkKind = "blocked_by"
+	LinkRelatesTo     LinkKind = "relates_to"
+	LinkDuplicates    LinkKind = "duplicates"
+	LinkDuplicatedBy  LinkKind = "duplicated_by"
+	LinkImplements    LinkKind = "implements"
+	LinkImplementedBy LinkKind = "implemented_by"
+	LinkModifies      LinkKind = "modifies"
+	LinkModifiedBy    LinkKind = "modified_by"
+	LinkSupersedes    LinkKind = "supersedes"
+	LinkSupersededBy  LinkKind = "superseded_by"
 )
 
 // Valid reports whether k is one of the known relation kinds.
 func (k LinkKind) Valid() bool {
 	switch k {
 	case LinkBlocks, LinkBlockedBy, LinkRelatesTo, LinkDuplicates, LinkDuplicatedBy:
+		return true
+	default:
+		return k.Spec()
+	}
+}
+
+// Spec reports whether k is one of the six kinds ADR-037 adds. A link of one of
+// them is a spec construct (R-SCHEMA-2-1).
+func (k LinkKind) Spec() bool {
+	switch k {
+	case LinkImplements, LinkImplementedBy, LinkModifies, LinkModifiedBy, LinkSupersedes, LinkSupersededBy:
 		return true
 	default:
 		return false
@@ -144,6 +163,18 @@ func (k LinkKind) Inverse() LinkKind {
 		return LinkDuplicatedBy
 	case LinkDuplicatedBy:
 		return LinkDuplicates
+	case LinkImplements:
+		return LinkImplementedBy
+	case LinkImplementedBy:
+		return LinkImplements
+	case LinkModifies:
+		return LinkModifiedBy
+	case LinkModifiedBy:
+		return LinkModifies
+	case LinkSupersedes:
+		return LinkSupersededBy
+	case LinkSupersededBy:
+		return LinkSupersedes
 	case LinkRelatesTo:
 		return LinkRelatesTo
 	default:

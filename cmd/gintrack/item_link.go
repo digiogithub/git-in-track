@@ -42,10 +42,21 @@ func newItemLinkCommand(flags *globalFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "link <id> <relation> <target>",
 		Short: "Link two items",
-		Long: `Add or remove a typed relation: blocks, blocked_by, relates_to or duplicates.
+		Long: `Add or remove a typed relation. The kinds are blocks, blocked_by,
+relates_to, duplicates and duplicated_by, and the spec kinds implements,
+implemented_by, modifies, modified_by, supersedes and superseded_by.
 
-The inverse relation is written on the counterpart when it lives in the same
-workspace, so the two files never disagree about the relation between them.`,
+The target is an item id, or a requirement ref such as ACME-SP-0003.R2, and
+may be qualified with another project's key (WEB/WEB-US-0031). implements,
+modifies and their inverses need a spec or a requirement target; supersedes
+and superseded_by link a spec to a spec. A spec kind or a spec target raises
+the project to schema 2 on the first write (docs/03 section 21.10).
+
+The inverse relation is written on the counterpart when it is an item in the
+same workspace, so the two files never disagree about the relation between
+them. implements, modifies and their inverses are recorded on the work item
+only: the index computes the requirement's side, so a spec is not rewritten
+every time a story links to it.`,
 		Args: exactArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runItemLink(cmd, flags, local, args[0], args[1], args[2])
@@ -64,7 +75,7 @@ workspace, so the two files never disagree about the relation between them.`,
 func runItemLink(cmd *cobra.Command, flags *globalFlags, local *itemLinkFlags, raw, relation, target string) error {
 	kind := core.LinkKind(strings.TrimSpace(relation))
 	if !kind.Valid() {
-		return usagef("unknown relation %q: use blocks, blocked_by, relates_to or duplicates", relation)
+		return usagef("unknown relation %q: use %s", relation, strings.Join(linkKindNames, ", "))
 	}
 	v, err := openItemVault(cmd, flags)
 	if err != nil {
@@ -86,7 +97,7 @@ func runItemLink(cmd *cobra.Command, flags *globalFlags, local *itemLinkFlags, r
 	}
 
 	payload := linkPayload{ID: it.ID, Kind: kind, Target: link.Target, Removed: local.remove, Rev: it.Rev, DryRun: local.dryRun}
-	if local.inverse {
+	if local.inverse && mirrorsInverse(kind) {
 		side, err := writeInverse(cmd, v, local, core.ItemID(link.Target), core.Link{Kind: kind.Inverse(), Target: string(id)})
 		if err != nil {
 			return err
@@ -111,6 +122,28 @@ func runItemLink(cmd *cobra.Command, flags *globalFlags, local *itemLinkFlags, r
 		p.Printf("%s %s  %s %s\n", verb, payload.Inverse.ID, payload.Inverse.Kind, it.ID)
 	}
 	return nil
+}
+
+// linkKindNames lists the relation kinds in the order of docs/03 section 12.1.
+var linkKindNames = []string{
+	string(core.LinkBlocks), string(core.LinkBlockedBy), string(core.LinkRelatesTo),
+	string(core.LinkDuplicates), string(core.LinkDuplicatedBy),
+	string(core.LinkImplements), string(core.LinkImplementedBy),
+	string(core.LinkModifies), string(core.LinkModifiedBy),
+	string(core.LinkSupersedes), string(core.LinkSupersededBy),
+}
+
+// mirrorsInverse reports whether the inverse of a kind is written on the
+// counterpart. The work-to-requirement kinds are not: their target is a spec
+// or a requirement, which learns about the relation from the index alone
+// (R-LINK-1), and the mirrored side would not validate (R-LINK-6).
+func mirrorsInverse(kind core.LinkKind) bool {
+	switch kind {
+	case core.LinkImplements, core.LinkImplementedBy, core.LinkModifies, core.LinkModifiedBy:
+		return false
+	default:
+		return true
+	}
 }
 
 // linkPatch turns a relation into the patch that adds or removes it.

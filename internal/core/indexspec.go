@@ -92,3 +92,38 @@ func (ix *Index) NextRequirementNumber(spec ItemID) (int, error) {
 	}
 	return NextRequirementNumber(it, ix.requirementRefsTo(spec)), nil
 }
+
+// addRequirementLinks records the links of a spec's requirements: entries, whose
+// source is the requirement ref rather than the spec (R-REQ-13).
+func addRequirementLinks(g *Graph, it *Item) {
+	if it.Type != TypeSpec {
+		return
+	}
+	for _, key := range it.Requirements.Keys() {
+		e := it.Requirements[key]
+		n, ok := ParseRequirementKey(key)
+		if e == nil || !ok {
+			continue
+		}
+		from := ItemID(RequirementRef{Spec: it.ID, Number: n}.String())
+		for _, l := range e.Links {
+			g.addLink(from, l)
+		}
+	}
+}
+
+// hasRequirementBlock reports whether a spec's body declares the block R<n>. A
+// requirement whose block was deleted by hand is dangling even when its
+// requirements: entry survives (R-REQ-6). cache holds the parsed block numbers
+// of each spec for the duration of one integrity check.
+func (ix *Index) hasRequirementBlock(cache map[ItemID]map[int]bool, spec *Item, n int) bool {
+	nums, ok := cache[spec.ID]
+	if !ok {
+		nums = map[int]bool{}
+		for _, b := range ParseSpecBody(spec.ID, spec.Body).Blocks {
+			nums[b.Ref.Number] = true
+		}
+		cache[spec.ID] = nums
+	}
+	return nums[n]
+}

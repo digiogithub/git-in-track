@@ -347,6 +347,12 @@ func TestSerializeItemGolden(t *testing.T) {
 			path:   "specs/ACME-SP-0003-item-id-allocation.md",
 			golden: "spec-item.md",
 		},
+		{
+			name:   "spec link kinds and requirement-ref targets round-trip",
+			source: "spec-links-story.md",
+			path:   "stories/ACME-US-0044-allocate-ids-by-index-scan.md",
+			golden: "spec-links-story.md",
+		},
 	}
 
 	for _, tt := range tests {

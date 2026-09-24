@@ -240,7 +240,7 @@ func TestValidateItemRules(t *testing.T) {
 		},
 		{
 			name:   "unknown link kind",
-			mutate: func(it *Item) { it.Links = []Link{{Kind: "supersedes", Target: "TEST-US-0002"}} },
+			mutate: func(it *Item) { it.Links = []Link{{Kind: "replaces", Target: "TEST-US-0002"}} },
 			want:   []Code{CodeEnum},
 		},
 		{

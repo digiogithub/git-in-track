@@ -66,23 +66,6 @@ type Verification struct {
 	Extra  map[string]any `json:"extra,omitempty"`
 }
 
-// The requirement-level link kinds (R-REQ-13). They are plain strings here:
-// the item-level link kinds of ADR-037 section 5 belong to their own story, and
-// a requirement's links are validated by this file alone.
-const (
-	reqLinkSupersedes   = "supersedes"
-	reqLinkSupersededBy = "superseded_by"
-	reqLinkRelatesTo    = "relates_to"
-)
-
-// specLinkKinds are the six link kinds ADR-037 adds. Any link of one of these
-// kinds is a spec construct (R-SCHEMA-2-1).
-var specLinkKinds = map[string]bool{
-	"implements": true, "implemented_by": true,
-	"modifies": true, "modified_by": true,
-	"supersedes": true, "superseded_by": true,
-}
-
 // requirementKnownKeys, traceKnownKeys and verifiedKnownKeys are the keys a
 // requirement entry understands; everything else is preserved in Extra.
 var (
@@ -732,16 +715,13 @@ func validateRequirementEntry(d *diagSet, field string, e *Requirement, cfg *Pro
 	}
 	for i, l := range e.Links {
 		f := fmt.Sprintf("%s.links[%d]", field, i)
-		target := bareTarget(l.Target)
-		switch string(l.Kind) {
-		case reqLinkSupersedes, reqLinkSupersededBy:
-			if !IsRequirementRef(target) {
+		switch l.Kind {
+		case LinkSupersedes, LinkSupersededBy:
+			if validateLinkTarget(d, cfg, f+".target", l.Target) && classifyLinkTarget(l.Target) != targetRequirement {
 				d.errorf(f+".target", CodeLinkTargetType, "%s must target a requirement ref, not %q", l.Kind, l.Target)
 			}
-		case reqLinkRelatesTo:
-			if !IsRequirementRef(target) && !ItemID(target).Valid() {
-				d.errorf(f+".target", CodeIDGrammar, "%q is neither a requirement ref nor an item id", l.Target)
-			}
+		case LinkRelatesTo:
+			validateLinkTarget(d, cfg, f+".target", l.Target)
 		default:
 			d.errorf(f+".kind", CodeReqField,
 				"a requirement's links allow supersedes, superseded_by and relates_to, not %q", l.Kind)
@@ -803,13 +783,11 @@ func HasSpecConstruct(item *Item) bool {
 	return false
 }
 
-// linksHaveSpecConstruct reports whether any link is a spec construct. A kind
-// counts once this build knows it as an item-level kind; until then it is
-// E-ENUM, which already refuses the write, and reporting E-SCHEMA-FEATURE on
-// top would only repeat it.
+// linksHaveSpecConstruct reports whether any link is a spec construct: one of
+// the six spec kinds, or a spec or requirement target.
 func linksHaveSpecConstruct(links []Link) bool {
 	for _, l := range links {
-		if (l.Kind.Valid() && specLinkKinds[string(l.Kind)]) || isSpecTarget(l.Target) {
+		if l.Kind.Spec() || isSpecTarget(l.Target) {
 			return true
 		}
 	}
@@ -818,12 +796,8 @@ func linksHaveSpecConstruct(links []Link) bool {
 
 // isSpecTarget reports whether a link target names a spec or a requirement.
 func isSpecTarget(target string) bool {
-	bare := bareTarget(target)
-	if IsRequirementRef(bare) {
-		return true
-	}
-	_, code, _, err := ParseItemID(bare)
-	return err == nil && code == CodeSpec
+	t := classifyLinkTarget(target)
+	return t == targetSpec || t == targetRequirement
 }
 
 // validateSchemaFeature applies E-SCHEMA-FEATURE: a spec construct in a project
