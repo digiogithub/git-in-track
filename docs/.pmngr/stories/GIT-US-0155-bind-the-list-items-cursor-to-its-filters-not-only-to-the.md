@@ -2,13 +2,13 @@
 id: GIT-US-0155
 type: story
 title: Bind the list_items cursor to its filters, not only to the sort
-status: todo
+status: in_review
 priority: medium
 author: mcp
 labels: [mcp, agent-ok]
 estimate: 2
 created: 2026-09-24T23:02:40Z
-updated: 2026-09-24T23:02:40Z
+updated: 2026-09-24T23:06:56Z
 ---
 
 ## Description
