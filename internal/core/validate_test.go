@@ -78,6 +78,7 @@ func sortedCodes(diags []Diagnostic) []Code {
 	return out
 }
 
+// Verifies: GIT-SP-0003.R1, GIT-SP-0003.R4
 func TestValidateItemRules(t *testing.T) {
 	t.Parallel()
 	cfg := testConfig(t)

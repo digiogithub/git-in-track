@@ -266,6 +266,7 @@ func validateReference(d *diagSet, cfg *ProjectConfig, field, raw string) (TypeC
 }
 
 // validateItemLinks applies the rules of docs/03 section 12 to the links list.
+// Implements: GIT-SP-0003.R1, GIT-SP-0003.R3
 func validateItemLinks(d *diagSet, item *Item, cfg *ProjectConfig) {
 	for i, l := range item.Links {
 		field := fmt.Sprintf("links[%d]", i)
@@ -296,6 +297,7 @@ func validateItemLinks(d *diagSet, item *Item, cfg *ProjectConfig) {
 // which implies the current project, or qualified ("WEB/WEB-US-0031",
 // "WEB/WEB-SP-0001.R4"). It reports whether the target is well formed, so the
 // caller can go on to check its type.
+// Implements: GIT-SP-0003.R4
 func validateLinkTarget(d *diagSet, cfg *ProjectConfig, field, target string) bool {
 	qualifier := ProjectKey("")
 	id := target
@@ -325,6 +327,7 @@ func validateLinkTarget(d *diagSet, cfg *ProjectConfig, field, target string) bo
 
 // linkTargetKey returns the project key of an unqualified link target, an item
 // id or a requirement ref, and whether the target matches either grammar.
+// Implements: GIT-SP-0003.R4
 func linkTargetKey(id string) (ProjectKey, bool) {
 	if ref, err := ParseRequirementRef(id); err == nil {
 		key, _, _, _ := ParseItemID(string(ref.Spec))
@@ -346,6 +349,7 @@ const (
 
 // classifyLinkTarget tells an item id, a spec id and a requirement ref apart,
 // qualified or not.
+// Implements: GIT-SP-0003.R5
 func classifyLinkTarget(target string) linkTargetType {
 	bare := bareTarget(target)
 	if IsRequirementRef(bare) {
@@ -368,6 +372,7 @@ func classifyLinkTarget(target string) linkTargetType {
 // a requirement's supersession lives in requirements.R<n>.links (R-REQ-13).
 // Every other kind MAY target a spec or a requirement. The type is visible in
 // the ref itself, so a mismatch is E-LINK-TARGET-TYPE, not a warning.
+// Implements: GIT-SP-0003.R5
 func validateLinkTargetType(d *diagSet, item *Item, field string, l Link) {
 	t := classifyLinkTarget(l.Target)
 	switch l.Kind {

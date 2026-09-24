@@ -63,6 +63,7 @@ func TestGraphHierarchy(t *testing.T) {
 	}
 }
 
+// Verifies: GIT-SP-0003.R2
 func TestGraphComputesInverseLinks(t *testing.T) {
 	g := linkVault(t).LinkGraph()
 
@@ -119,6 +120,7 @@ func TestGraphComputesInverseLinks(t *testing.T) {
 	})
 }
 
+// Verifies: GIT-SP-0003.R7
 func TestGraphWikilinksAndBacklinks(t *testing.T) {
 	ix := linkVault(t)
 	g := ix.LinkGraph()

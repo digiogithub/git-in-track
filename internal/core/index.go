@@ -1263,6 +1263,7 @@ func (ix *Index) resolveReferences(graph *Graph) {
 
 // checkReferentialIntegrity reports dangling parents, milestones and link
 // targets, and comment folders with no item (W-REF-DANGLING, W-CMT-ORPHAN).
+// Implements: GIT-SP-0003.R7
 func (ix *Index) checkReferentialIntegrity() {
 	blocks := map[ItemID]map[int]bool{}
 	// dangling reports a target nothing in the vault answers to; line is the

@@ -106,6 +106,7 @@ var writeRequirementFields = []string{"spec", "title", "status", "blockRev", "tr
 
 // projectRequirement keeps the requested fields. `ref` and `rev` always
 // survive; an unknown field name is ignored, as projectItem does.
+// Implements: GIT-SP-0004.R6
 func projectRequirement(r Requirement, fields []string) Requirement {
 	if len(fields) == 0 {
 		fields = defaultRequirementFields

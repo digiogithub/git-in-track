@@ -40,7 +40,7 @@ id_allocation:
     story: 103
     task: 227
     milestone: 14
-    spec: 2
+    spec: 4
 priorities: [critical, high, medium, low]
 estimation:
   scale: fibonacci

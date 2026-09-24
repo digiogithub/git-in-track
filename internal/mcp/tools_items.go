@@ -244,6 +244,8 @@ func registerItemTools(s *Server) {
 // the walk, so it stays consistent with what the index knows rather than with a
 // snapshot this package took; this handler binds that position to every filter
 // and to the sort, because the core cursor alone only remembers the sort.
+// Implements: GIT-SP-0004.R1, GIT-SP-0004.R7
+
 func listItems(ctx context.Context, s *Server, in ListItemsInput) (ItemPage, error) {
 	limit := boundedLimit(in.Limit)
 	// The page size and the projection are deliberately not part of the
@@ -581,6 +583,7 @@ func sortOrder(order string) string {
 
 // withoutBody removes the body from a projection, for the tools that never
 // return one.
+// Implements: GIT-SP-0004.R7
 func withoutBody(fields []string) []string {
 	if len(fields) == 0 {
 		return nil

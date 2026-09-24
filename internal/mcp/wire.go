@@ -146,6 +146,7 @@ var defaultItemFields = []string{
 // and `rev` always survive: without them the entry cannot be read again or
 // written back. An unknown field name is ignored rather than rejected, so a
 // client that learned a field from a newer server still gets an answer.
+// Implements: GIT-SP-0004.R6
 func projectItem(it Item, fields []string) Item {
 	if len(fields) == 0 {
 		fields = defaultItemFields

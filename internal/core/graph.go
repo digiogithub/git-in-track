@@ -110,6 +110,7 @@ func (g *Graph) addMilestone(item, milestone ItemID) {
 
 // addLink records a declared relation and its computed inverse. from is an item
 // id or, for a link of a requirements: entry, the requirement ref.
+// Implements: GIT-SP-0003.R2
 func (g *Graph) addLink(from ItemID, l Link) {
 	target := ItemID(bareTarget(l.Target))
 	if from == "" || target == "" || !l.Kind.Valid() {

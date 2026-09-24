@@ -54,6 +54,7 @@ func validSpec(t *testing.T) *Item {
 	}
 }
 
+// Verifies: GIT-SP-0003.R6
 func TestValidateSpecRules(t *testing.T) {
 	t.Parallel()
 	cfg := specConfig(t)
