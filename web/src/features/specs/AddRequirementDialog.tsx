@@ -77,6 +77,15 @@ export function AddRequirementDialog({
                     title: `Added ${result.requirement.ref}`,
                     description: result.requirement.title,
                   });
+                  const similar = result.similar ?? [];
+                  if (similar.length > 0) {
+                    // Advisory only (GIT-US-0111): the block is written; the
+                    // author decides whether one of these makes it a duplicate.
+                    toast({
+                      title: 'Similar requirements exist',
+                      description: similar.map((s) => `${s.ref} — ${s.title}`).join('; '),
+                    });
+                  }
                   close(false);
                 },
                 onError: (error) => {

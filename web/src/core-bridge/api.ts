@@ -534,6 +534,24 @@ export type RequirementWrite = {
   writes: WriteSet;
   /** Set when the write raised `project.yaml` to schema 2 (doc 03 §21.10). */
   schemaUpgraded?: number;
+  /**
+   * `requirement.create` only: existing requirements that read like the new
+   * one, best first (GIT-US-0111). Advisory, and empty without Pando — always
+   * empty in browser-only mode.
+   */
+  similar?: SimilarRequirement[];
+};
+
+/** One near-duplicate `requirement.create` reports. `score` is on the backend's own scale. */
+export type SimilarRequirement = {
+  ref: string;
+  title: string;
+  spec: string;
+  status?: string;
+  project?: string;
+  vaultId?: string;
+  anchor?: string;
+  score: number;
 };
 
 /**

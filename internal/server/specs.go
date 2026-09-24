@@ -237,7 +237,14 @@ func (s *Server) handleRequirementCreate(w http.ResponseWriter, r *http.Request)
 	if view, found := field(result, "requirement").(core.RequirementView); found {
 		w.Header().Set("Location", apiPrefix+"/projects/"+key+"/specs/"+spec+"/requirements/"+view.Ref.String())
 	}
-	writeEntity(w, r, http.StatusCreated, requirementWriteBody(result), requirementRevOf(result))
+	// similar[] is advisory and bounded (GIT-US-0111): the write is already
+	// published, and a missing or slow Pando answers an empty list. It is added
+	// to the response copy, never to the result the write event carries.
+	body := requirementWriteBody(result)
+	if space := s.repos.workspace(); space != nil {
+		body = space.WithSimilarRequirements(r.Context(), body)
+	}
+	writeEntity(w, r, http.StatusCreated, body, requirementRevOf(result))
 }
 
 // handleRequirementUpdate serves PATCH /projects/{key}/specs/{spec}/requirements/{req}.

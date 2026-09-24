@@ -1,6 +1,14 @@
+import requirementTemplateSource from '@core-templates/requirement.md?raw';
+import specTemplateSource from '@core-templates/spec.md?raw';
+
 /**
  * Body templates per item type (docs/03-data-model.md §7.2, §8.2, §9.2, §10.2,
  * §21.1). They are conventions, not validator rules, so the user can delete them.
+ *
+ * The spec and requirement templates are the Go core's own files
+ * (internal/core/templates, GIT-US-0111), imported at build time so the editor,
+ * the CLI and the MCP surface start from the same text, which the core's tests
+ * hold lint-clean.
  */
 
 export type EditableItemType = 'epic' | 'story' | 'task' | 'milestone' | 'spec';
@@ -12,9 +20,11 @@ const templates: Record<EditableItemType, string> = {
   story: '## Description\n\n\n\n## Acceptance Criteria\n\n- [ ] \n',
   task: '## Description\n\n\n',
   milestone: '## Description\n\n\n\n## Exit Criteria\n\n- [ ] \n',
-  // A spec starts with an empty `## Requirements` section: requirements are
-  // appended one block at a time by `createRequirement`, which allocates R<n>.
-  spec: '## Purpose\n\n\n\n## Scope\n\n\n\n## Requirements\n\n',
+  // Purpose, scope, glossary and one example requirement block. Its heading
+  // reads `### <SPEC-ID>.R1 — …`: the core writes the allocated spec id in
+  // when it creates the spec. Further requirements are appended one block at a
+  // time by `createRequirement`, which allocates R<n>.
+  spec: specTemplateSource,
 };
 
 /**
@@ -22,11 +32,7 @@ const templates: Record<EditableItemType, string> = {
  * scenario. It is everything below the `### <REF> — <title>` heading, which the
  * core writes itself because it allocates the ref.
  */
-export const requirementTemplate =
-  'WHEN <trigger>, the <system> SHALL <response>.\n\n' +
-  '#### Scenario: <name>\n' +
-  '- **WHEN** <action>\n' +
-  '- **THEN** <observable result>\n';
+export const requirementTemplate = requirementTemplateSource;
 
 export function bodyTemplate(type: EditableItemType): string {
   return templates[type];

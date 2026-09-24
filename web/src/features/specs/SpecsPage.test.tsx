@@ -9,7 +9,7 @@ import {
 } from '@tanstack/react-router';
 import { configure, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { DataProviderProvider } from '@/api/DataProviderProvider';
 import { FakeProvider, sampleItems, type FakeSpecAnalysis } from '@/api/fake-provider';
@@ -238,6 +238,30 @@ describe('SpecsPage', () => {
     });
     const { requirement: created } = await provider.getRequirement('ACME', 'ACME-SP-0002.R2');
     expect(created.title).toBe('Allocate by index scan');
+  });
+
+  it('shows similar requirements after a create as a non-blocking hint', async () => {
+    const user = userEvent.setup();
+    const { provider } = renderSpecs('/p/ACME/specs');
+    const create = provider.createRequirement.bind(provider);
+    vi.spyOn(provider, 'createRequirement').mockImplementation(async (project, draft) => ({
+      ...(await create(project, draft)),
+      similar: [
+        { ref: 'ACME-SP-0002.R1', title: 'IDs are never reused', spec: 'ACME-SP-0002', score: 0.8 },
+      ],
+    }));
+
+    await screen.findByRole('list', { name: 'Requirements of ACME-SP-0002' });
+    await user.click(screen.getByRole('button', { name: 'Add requirement to ACME-SP-0002' }));
+    const dialog = await screen.findByRole('dialog');
+    await user.type(within(dialog).getByLabelText('Title'), 'Never reuse an id');
+    await user.click(within(dialog).getByRole('button', { name: 'Add requirement' }));
+
+    expect(await screen.findByText('Similar requirements exist')).toBeInTheDocument();
+    expect(screen.getByText('ACME-SP-0002.R1 — IDs are never reused')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(refsOf('ACME-SP-0002')).toEqual(['ACME-SP-0002.R1', 'ACME-SP-0002.R2']);
+    });
   });
 
   it('offers no create actions in a read-only workspace', async () => {

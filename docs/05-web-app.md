@@ -371,12 +371,17 @@ once it has rendered. **Browser-only mode:** `listCoverage` answers `unavailable
 reads `unavailable`, a notice carries the provider's hint to run `gintrack serve`, the coverage
 chips are disabled and a coverage filter in the URL is ignored rather than emptying the list — the
 specs, requirements, status filter and create actions work unchanged. **Creating:** the header's
-*New spec* opens the shared editor with `type=spec` (§8.1), whose template is `## Purpose`,
-`## Scope` and an empty `## Requirements`, and which hides milestone, estimate and due (a spec is
-not scheduled work, doc 03 §21.1). Each spec's *Add requirement* opens a dialog with a title and
-the block text prefilled with the EARS template (a `WHEN …, the … SHALL …` statement and one
-`#### Scenario:`) and calls `createRequirement`, so the core allocates `R<n>` and writes the
-heading. Both actions are absent in a read-only workspace. Every query key sits under
+*New spec* opens the shared editor with `type=spec` (§8.1), whose template is the core's spec
+template (`## Purpose`, `## Scope`, `## Glossary` and `## Requirements` with one example block
+headed `### <SPEC-ID>.R1 — …`, which the core fills with the allocated id; doc 03 §21.1), and
+which hides milestone, estimate and due (a spec is not scheduled work). Each spec's *Add
+requirement* opens a dialog with a title and the block text prefilled with the core's
+requirement template (a `WHEN …, the … SHALL …` statement and one `#### Scenario:`) and calls
+`createRequirement`, so the core allocates `R<n>` and writes the heading. Both templates are
+imported from `internal/core/templates/` at build time (`@core-templates/*.md?raw`), so the
+editor and the core cannot drift. When the answer carries a non-empty `similar[]` (GIT-US-0111),
+a second toast, *Similar requirements exist*, lists their refs and titles; it is a hint only —
+the requirement is already written. Both actions are absent in a read-only workspace. Every query key sits under
 `['items', <key>, 'specs', …]`, so the `items` change a requirement write or a spec edit emits
 refetches the page. The header links the coverage matrix and the impact view below.
 

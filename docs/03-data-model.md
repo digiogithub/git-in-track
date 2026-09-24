@@ -2448,6 +2448,19 @@ Body conventions:
 ## Notes          optional
 ```
 
+**Templates (GIT-US-0111).** The binary ships two body templates, the Markdown files of
+`internal/core/templates/` embedded in the core (`core.SpecTemplate`, `core.RequirementTemplate`)
+and imported unchanged by the web editor: a **spec template** — `## Purpose`, `## Scope`,
+`## Glossary` and a `## Requirements` section holding one example block — and a **requirement
+template**, the block text below a heading (an EARS `WHEN <trigger>, the <system> SHALL
+<response>.` statement and one `#### Scenario:` with a `**WHEN**` and a `**THEN**` step). Both are
+held clean by the grammar lint of [§21.9](#219-grammar-lint-and-specslint) with every rule at
+`error`. The spec template's example heading reads `### <SPEC-ID>.R1 — <requirement title>`,
+because a new spec has no id yet: when a **spec** is created, every level-3 heading of its body
+that opens with `<SPEC-ID>.R` has the placeholder replaced by the allocated id; nothing else in
+the body, and nothing in any other item type, is touched. Templates are conventions, never
+validator rules: an author may delete any section.
+
 Complete example:
 
 ```markdown

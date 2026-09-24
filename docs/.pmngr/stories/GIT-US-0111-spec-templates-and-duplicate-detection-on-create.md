@@ -2,7 +2,7 @@
 id: GIT-US-0111
 type: story
 title: Spec templates and duplicate detection on create
-status: backlog
+status: in_review
 priority: low
 parent: GIT-EP-0023
 milestone: GIT-M-0015
@@ -10,7 +10,7 @@ author: claude
 labels: [core, server, agent-ok]
 estimate: 3
 created: 2026-09-24T12:09:37Z
-updated: 2026-09-24T12:09:37Z
+updated: 2026-09-24T22:42:22Z
 links:
   - { kind: blocked_by, target: GIT-US-0107 }
   - { kind: blocked_by, target: GIT-US-0108 }
@@ -22,10 +22,10 @@ As an author, I want a spec and a requirement to start from a template, and to b
 
 ## Acceptance Criteria
 
-- [ ] `gintrack init`/scaffold ships a spec template (purpose, scope, glossary, one example requirement block) and a requirement-block template; both pass the grammar linter.
-- [ ] `CreateRequirement` asks the host-installed semantic searcher (`vault.SemanticSearcher` seam) for similar requirement blocks and returns them as non-blocking `similar[]` with scores; without Pando it returns no suggestions and no error.
-- [ ] No Pando or network code enters `internal/core` or `internal/vault`; `make wasm` passes.
-- [ ] Tests with a fake searcher; docs/03 mentions the templates.
+- [x] `gintrack init`/scaffold ships a spec template (purpose, scope, glossary, one example requirement block) and a requirement-block template; both pass the grammar linter.
+- [x] `CreateRequirement` asks the host-installed semantic searcher (`vault.SemanticSearcher` seam) for similar requirement blocks and returns them as non-blocking `similar[]` with scores; without Pando it returns no suggestions and no error.
+- [x] No Pando or network code enters `internal/core` or `internal/vault`; `make wasm` passes.
+- [x] Tests with a fake searcher; docs/03 mentions the templates.
 
 ## Notes
 

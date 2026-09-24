@@ -1,7 +1,14 @@
 import { fileURLToPath, URL } from 'node:url';
 
 import react from '@vitejs/plugin-react';
+import { searchForWorkspaceRoot } from 'vite';
 import { defineConfig } from 'vitest/config';
+
+/**
+ * The spec body templates ship once, in the Go core (internal/core/templates,
+ * GIT-US-0111); the editor imports the very same files with `?raw`.
+ */
+const coreTemplates = fileURLToPath(new URL('../internal/core/templates', import.meta.url));
 
 /**
  * Vite configuration for the git-in-track web app.
@@ -12,6 +19,8 @@ import { defineConfig } from 'vitest/config';
  * - `server.proxy` forwards `/api` to the companion (`gintrack serve`) during
  *   development, so the dev server behaves like the embedded build.
  * - `worker.format: 'es'` so the WASM core worker can use ES module imports.
+ * - `@core-templates` points at the core's body templates, outside `web/`, so
+ *   the dev server is allowed to read that one folder as well.
  */
 export default defineConfig({
   base: '/',
@@ -19,10 +28,14 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
+      '@core-templates': coreTemplates,
     },
   },
   server: {
     port: 5173,
+    fs: {
+      allow: [searchForWorkspaceRoot(process.cwd()), coreTemplates],
+    },
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:7317',

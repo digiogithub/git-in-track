@@ -50,9 +50,10 @@ describe('NewItemPage', () => {
     renderEditorRoute('/p/ACME/items/new?type=spec', provider);
 
     expect(await screen.findByLabelText('Type')).toHaveValue('spec');
-    expect(screen.getByLabelText<HTMLTextAreaElement>('Item body').value).toBe(
-      '## Purpose\n\n\n\n## Scope\n\n\n\n## Requirements\n\n',
-    );
+    const body = screen.getByLabelText<HTMLTextAreaElement>('Item body').value;
+    expect(body).toContain('## Purpose\n');
+    expect(body).toContain('## Glossary\n');
+    expect(body).toContain('### <SPEC-ID>.R1 — ');
     expect(screen.queryByLabelText('Milestone')).toBeNull();
     expect(screen.queryByLabelText('Estimate')).toBeNull();
     expect(screen.queryByLabelText('Due')).toBeNull();

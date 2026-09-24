@@ -58,6 +58,15 @@ because a commit list cannot express them.
   restored and quoted.
 ### Added
 
+- **Spec templates and duplicate detection on create** (`GIT-US-0111`, docs/03 §21.1,
+  docs/07). The core ships a spec template (`## Purpose`, `## Scope`, `## Glossary` and one
+  example requirement block) and a requirement-block template in `internal/core/templates/`,
+  both lint-clean at every rule's `error` level; the web editor imports the same files, and
+  creating a spec replaces the template's `<SPEC-ID>` heading placeholder with the allocated id.
+  `requirement.create`, `POST …/specs/{spec}/requirements` and MCP `create_requirement` now
+  return `similar[]`: up to three existing requirements the host's semantic searcher ranks near
+  the new one (score ≥ half the best, bounded to 2 s), advisory and empty without Pando. The
+  web *Add requirement* dialog shows them as a hint after the create.
 - **JSON Schemas for every item type and `project.yaml`** (`GIT-US-0142`, docs/03 §18).
   `internal/core/schema/` ships Draft 2020-12 schemas for epics, stories, tasks, milestones,
   specs (including the `requirements:` map: `status`, `trace`, `verified`, `links`), comments

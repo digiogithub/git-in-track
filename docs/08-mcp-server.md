@@ -238,7 +238,7 @@ Common conventions for all tools:
 | `create_milestone` | write | `item.create`           | ~90 tokens          |
 | `update_item`    | write | `item.update`              | ~90 tokens         |
 | `create_spec`    | write | `item.create`             | ~90 tokens          |
-| `create_requirement` | write | `requirement.create`  | ~75 tokens          |
+| `create_requirement` | write | `requirement.create`  | ~75 tokens; +~25 per `similar` entry |
 | `update_requirement` | write | `requirement.update`  | ~75 tokens          |
 | `spec_impact`    | read  | `impact.report`           | ≤ `budget` (default 1500); ~50 tokens/hit as text |
 | `trace_requirement` | read | `trace.requirement`     | ~40 tokens + ~20/edge |
@@ -1040,7 +1040,12 @@ call naming neither `project` nor `spec` goes to the workspace's default reposit
 `text` (the statement and its `#### Scenario` sections; no level 1–3 heading), `status`
 (default: the workflow's initial status), `trace {code[], tests[]}`, `links` (`supersedes`,
 `superseded_by` or `relates_to` only). `R<n>` is allocated by the tool as max + 1 and never
-reused; never propose one. It needs no `rev`.
+reused; never propose one. It needs no `rev`. When a Pando backend is configured the result also
+carries `similar`: up to three existing requirements that read like the new one, compactly as
+`{ref, title, status, score}`, best first (docs/07 `requirement.create` has the threshold and the
+2 s bound). It is advisory — the block is already written; if one is a real duplicate, cancel the
+new requirement with `update_requirement` rather than keep both. Without Pando the key is absent
+and the call does not fail.
 
 **`update_requirement`** is a sparse patch of one requirement: `ref`, `rev` (required), and any of
 `title`, `text`, `status` (validated against the project workflow), `trace`, `links`, and
