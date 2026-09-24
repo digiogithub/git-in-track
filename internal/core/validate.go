@@ -273,12 +273,18 @@ func validateItemLinks(d *diagSet, item *Item, cfg *ProjectConfig) {
 			d.errorf(field, CodeFieldType, "a relation needs a kind")
 		case !l.Kind.Valid():
 			d.errorf(field+".kind", CodeEnum, "unknown relation kind %q", l.Kind)
+		case l.Kind.ComputedOnly():
+			d.errorf(field+".kind", CodeLinkComputedOnly,
+				"%s is computed by the index and cannot be written; record %s on the story or task instead",
+				l.Kind, l.Kind.Inverse())
 		}
 		if l.Target == "" {
 			d.errorf(field, CodeFieldType, "a relation needs a target")
 			continue
 		}
-		if validateLinkTarget(d, cfg, field+".target", l.Target) {
+		// A computed-only kind is already refused; its target type would only
+		// repeat the finding.
+		if validateLinkTarget(d, cfg, field+".target", l.Target) && !l.Kind.ComputedOnly() {
 			validateLinkTargetType(d, item, field+".target", l)
 		}
 	}
@@ -356,15 +362,15 @@ func classifyLinkTarget(target string) linkTargetType {
 }
 
 // validateLinkTargetType applies the per-kind target rules of R-LINK-6 to an
-// item-level link: implements, modifies and their inverses need a spec or a
-// requirement target; supersedes and superseded_by link a spec to a spec, since
+// item-level link: implements and modifies need a spec or a requirement target
+// (their inverses are computed only, R-LINK-8); supersedes and superseded_by link a spec to a spec, since
 // a requirement's supersession lives in requirements.R<n>.links (R-REQ-13).
 // Every other kind MAY target a spec or a requirement. The type is visible in
 // the ref itself, so a mismatch is E-LINK-TARGET-TYPE, not a warning.
 func validateLinkTargetType(d *diagSet, item *Item, field string, l Link) {
 	t := classifyLinkTarget(l.Target)
 	switch l.Kind {
-	case LinkImplements, LinkImplementedBy, LinkModifies, LinkModifiedBy:
+	case LinkImplements, LinkModifies:
 		if t != targetSpec && t != targetRequirement {
 			d.errorf(field, CodeLinkTargetType, "%s must target a spec or a requirement ref, not %q", l.Kind, l.Target)
 		}

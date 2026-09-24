@@ -114,9 +114,11 @@ type Rev string
 // LinkKind is the semantic of a typed relation between two items.
 type LinkKind string
 
-// The relation kinds accepted in the links field. The last six are the spec
-// kinds of ADR-037 section 5 (docs/03 section 12.1): their targets are specs or
-// requirement refs, and using one raises a project to schema 2.
+// The relation kinds of docs/03 section 12.1. The last six are the spec kinds of
+// ADR-037 section 5: their targets are specs or requirement refs, and using one
+// raises a project to schema 2. implemented_by and modified_by are known kinds
+// but computed only: the index derives them from implements and modifies, and a
+// file that writes one is E-LINK-COMPUTED-ONLY (R-LINK-8).
 const (
 	LinkBlocks        LinkKind = "blocks"
 	LinkBlockedBy     LinkKind = "blocked_by"
@@ -131,7 +133,9 @@ const (
 	LinkSupersededBy  LinkKind = "superseded_by"
 )
 
-// Valid reports whether k is one of the known relation kinds.
+// Valid reports whether k is one of the known relation kinds, including the
+// computed-only ones: a graph edge may carry any of them. Whether a file may
+// write k is Writable.
 func (k LinkKind) Valid() bool {
 	switch k {
 	case LinkBlocks, LinkBlockedBy, LinkRelatesTo, LinkDuplicates, LinkDuplicatedBy:
@@ -140,6 +144,17 @@ func (k LinkKind) Valid() bool {
 		return k.Spec()
 	}
 }
+
+// ComputedOnly reports whether k exists only as the index's inverse of a spec
+// link (R-LINK-8): implemented_by and modified_by. Spec links are one-sided and
+// are written on the story or task, never on the spec or requirement.
+func (k LinkKind) ComputedOnly() bool {
+	return k == LinkImplementedBy || k == LinkModifiedBy
+}
+
+// Writable reports whether a file's links, or a write through the vault, may
+// use k: a known kind that is not computed only.
+func (k LinkKind) Writable() bool { return k.Valid() && !k.ComputedOnly() }
 
 // Spec reports whether k is one of the six kinds ADR-037 adds. A link of one of
 // them is a spec construct (R-SCHEMA-2-1).

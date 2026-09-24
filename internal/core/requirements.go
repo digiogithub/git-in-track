@@ -20,6 +20,9 @@ const (
 	CodeReqField       Code = "E-REQ-FIELD"
 	CodeSchemaFeature  Code = "E-SCHEMA-FEATURE"
 	CodeLinkTargetType Code = "E-LINK-TARGET-TYPE"
+	// CodeLinkComputedOnly is a link written with a kind that exists only as a
+	// computed inverse: implemented_by or modified_by (R-LINK-8).
+	CodeLinkComputedOnly Code = "E-LINK-COMPUTED-ONLY"
 
 	CodeWarnReqSeparator   Code = "W-REQ-SEPARATOR"
 	CodeWarnReqHeading     Code = "W-REQ-HEADING"

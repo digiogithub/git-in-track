@@ -70,17 +70,20 @@ because a commit list cannot express them.
   `W-REQ-NO-ENTRY`, `W-REQ-ORPHAN-ENTRY`. `gintrack doctor` reports them. `gintrack item new
   --type spec` creates one; the inbox and the YouTrack import never produce one.
 - **Spec link kinds and requirement-ref link targets** (`GIT-US-0106`, ADR-037 §5, docs/03
-  §12.1). `implements`/`implemented_by`, `modifies`/`modified_by` and
-  `supersedes`/`superseded_by` are valid link kinds, with their inverses computed by the index.
+  §12.1). `implements`, `modifies`, `supersedes` and `superseded_by` are new link kinds. Spec
+  links are **one-sided** (R-LINK-8): `implements`/`modifies` are written on the story or task
+  only, and `implemented_by`/`modified_by` exist only as inverses the index computes; writing
+  one in a file is the new error `E-LINK-COMPUTED-ONLY`.
   A link target may be a requirement ref (`ACME-SP-0003.R2`, optionally `<KEY>/`-qualified).
-  `implements`, `modifies` and their inverses need a spec or requirement target, and an
-  item-level `supersedes` links a spec to a spec; anything else is `E-LINK-TARGET-TYPE`. A ref
+  `implements` and `modifies` need a spec or requirement target, and an item-level
+  `supersedes` links a spec to a spec; anything else is `E-LINK-TARGET-TYPE`. A ref
   to an unknown spec, or to a block its spec does not declare, is `W-REF-DANGLING`, for
   item-level and requirement-level links alike. Requirements are nodes of the link graph, so the
   index answers "which stories implement `ACME-SP-0003.R2`" (`Index.Related`). The first such
   link raises a `schema: 1` project to `schema: 2` in the same write. `gintrack item link`
-  accepts the new kinds and does not mirror `implements`/`modifies` onto the spec; the web
-  editor accepts them, and `duplicated_by`, which it used to reject.
+  accepts the new kinds, never mirrors `implements`/`modifies` onto the spec, and refuses
+  `implemented_by`/`modified_by` with a pointer to the kind to write instead; the web editor
+  offers only the writable kinds, and accepts `duplicated_by`, which it used to reject.
 
 ### Changed
 

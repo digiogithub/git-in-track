@@ -991,13 +991,17 @@ as specified in the data model, so the CLI and the web app never disagree about 
 
 `gintrack item link <id> <relation> <target>` manages typed relations
 (`blocks`, `blocked_by`, `relates_to`, `duplicates`, `duplicated_by`, and the spec kinds
-`implements`, `implemented_by`, `modifies`, `modified_by`, `supersedes`, `superseded_by` of
-data model §12.1), with `--remove` to drop one. The target is an item ID or a requirement ref
-(`ACME-SP-0003.R2`), optionally `<KEY>/`-qualified. The inverse relation is written on the
-counterpart item when both live in the same workspace; `--inverse=false` writes only the side
-that was named. `implements`, `modifies` and their inverses are never mirrored: the index
-computes the spec's side (R-LINK-1), so linking a story does not rewrite the spec. The first
-spec kind or spec target raises the project to `schema: 2` in the same write (§21.10).
+`implements`, `modifies`, `supersedes`, `superseded_by` of data model §12.1), with `--remove`
+to drop one. The target is an item ID or a requirement ref (`ACME-SP-0003.R2`), optionally
+`<KEY>/`-qualified. The inverse relation is written on the counterpart item when both live in
+the same workspace; `--inverse=false` writes only the side that was named. Spec links are
+one-sided (R-LINK-8): `implements` and `modifies` are recorded on the story or task only and
+never mirrored, since the index computes the spec's side, so linking a story does not rewrite
+the spec. `implemented_by` and `modified_by` are refused with a usage error (exit 2) that
+names the command to run instead, e.g. `gintrack item link ACME-US-0044 implements
+ACME-SP-0003.R2`; `--remove` still drops one written by hand, which the validator reports as
+`E-LINK-COMPUTED-ONLY`. The first spec kind or spec target raises the project to `schema: 2`
+in the same write (§21.10).
 
 ### 4.6 `gintrack board …` and `gintrack retro …` — **not implemented**
 

@@ -456,6 +456,34 @@ func TestItemLinkToARequirement(t *testing.T) {
 	}
 }
 
+func TestItemLinkRefusesComputedOnlyKinds(t *testing.T) {
+	tests := []struct {
+		kind, want string
+	}{
+		{kind: "implemented_by", want: "implements"},
+		{kind: "modified_by", want: "modifies"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.kind, func(t *testing.T) {
+			h := newHarness(t)
+			h.register()
+			before := h.readFile("docs/.pmngr/stories/DEMO-US-0002-save-payment-methods.md")
+
+			_, stderr, code := h.run("item", "link", "DEMO-US-0002", tt.kind, "DEMO-SP-0001.R2")
+			if code != exitUsage {
+				t.Errorf("exit = %d, want %d", code, exitUsage)
+			}
+			hint := "item link DEMO-SP-0001.R2 " + tt.want + " DEMO-US-0002"
+			if !strings.Contains(stderr, "computed by the index") || !strings.Contains(stderr, hint) {
+				t.Errorf("stderr does not point at %s:\n%s", tt.want, stderr)
+			}
+			if after := h.readFile("docs/.pmngr/stories/DEMO-US-0002-save-payment-methods.md"); after != before {
+				t.Errorf("a refused link changed the file:\n%s", after)
+			}
+		})
+	}
+}
+
 func TestItemLinkRejectsAnUnknownRelation(t *testing.T) {
 	h := newHarness(t)
 	h.register()

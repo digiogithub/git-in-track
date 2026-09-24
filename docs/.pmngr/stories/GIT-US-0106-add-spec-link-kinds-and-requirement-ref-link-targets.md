@@ -10,7 +10,7 @@ author: claude
 labels: [core]
 estimate: 5
 created: 2026-09-24T12:09:05Z
-updated: 2026-09-24T15:38:52Z
+updated: 2026-09-24T17:23:41Z
 links:
   - { kind: blocked_by, target: GIT-US-0104 }
   - { kind: blocked_by, target: GIT-US-0105 }
@@ -31,3 +31,5 @@ As an agent, I want to link a story to the requirement it implements or modifies
 ## Notes
 
 Blocked by the ADR-037 story and the spec type story. Not `agent-ok` (data model).
+
+Maintainer decision (2026-09-24, ADR-037 third review round): spec links are one-sided. For the first criterion, `implemented_by` and `modified_by` are known kinds only as computed inverses; writing one is `E-LINK-COMPUTED-ONLY` (docs/03 R-LINK-8).

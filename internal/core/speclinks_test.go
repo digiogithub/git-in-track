@@ -12,10 +12,11 @@ func TestLinkKindValidAndInverse(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		kind    LinkKind
-		valid   bool
-		spec    bool
-		inverse LinkKind
+		kind     LinkKind
+		valid    bool
+		spec     bool
+		computed bool
+		inverse  LinkKind
 	}{
 		{kind: LinkBlocks, valid: true, inverse: LinkBlockedBy},
 		{kind: LinkBlockedBy, valid: true, inverse: LinkBlocks},
@@ -23,9 +24,9 @@ func TestLinkKindValidAndInverse(t *testing.T) {
 		{kind: LinkDuplicates, valid: true, inverse: LinkDuplicatedBy},
 		{kind: LinkDuplicatedBy, valid: true, inverse: LinkDuplicates},
 		{kind: "implements", valid: true, spec: true, inverse: "implemented_by"},
-		{kind: "implemented_by", valid: true, spec: true, inverse: "implements"},
+		{kind: "implemented_by", valid: true, spec: true, computed: true, inverse: "implements"},
 		{kind: "modifies", valid: true, spec: true, inverse: "modified_by"},
-		{kind: "modified_by", valid: true, spec: true, inverse: "modifies"},
+		{kind: "modified_by", valid: true, spec: true, computed: true, inverse: "modifies"},
 		{kind: "supersedes", valid: true, spec: true, inverse: "superseded_by"},
 		{kind: "superseded_by", valid: true, spec: true, inverse: "supersedes"},
 		{kind: "replaces", inverse: "replaces"},
@@ -40,6 +41,12 @@ func TestLinkKindValidAndInverse(t *testing.T) {
 			}
 			if got := tt.kind.Spec(); got != tt.spec {
 				t.Errorf("Spec() = %v, want %v", got, tt.spec)
+			}
+			if got := tt.kind.ComputedOnly(); got != tt.computed {
+				t.Errorf("ComputedOnly() = %v, want %v", got, tt.computed)
+			}
+			if got, want := tt.kind.Writable(), tt.valid && !tt.computed; got != want {
+				t.Errorf("Writable() = %v, want %v", got, want)
 			}
 			if got := tt.kind.Inverse(); got != tt.inverse {
 				t.Errorf("Inverse() = %q, want %q", got, tt.inverse)
@@ -62,16 +69,22 @@ func TestValidateSpecLinkTargets(t *testing.T) {
 		target string
 		want   []Code
 	}{
-		// implements / modifies and their inverses: spec or requirement only.
+		// implements / modifies: spec or requirement only.
 		{name: "story implements a requirement", source: TypeStory, kind: LinkImplements, target: "TEST-SP-0003.R2"},
 		{name: "story implements a whole spec", source: TypeStory, kind: LinkImplements, target: "TEST-SP-0003"},
 		{name: "task modifies a requirement", source: TypeTask, kind: LinkModifies, target: "TEST-SP-0003.R12"},
 		{name: "qualified requirement in another project", source: TypeStory, kind: LinkImplements, target: "WEB/WEB-SP-0001.R4"},
-		{name: "implemented_by a requirement", source: TypeStory, kind: LinkImplementedBy, target: "TEST-SP-0003.R2"},
 		{name: "implements a story", source: TypeStory, kind: LinkImplements, target: "TEST-US-0002", want: []Code{CodeLinkTargetType}},
 		{name: "modifies a task", source: TypeTask, kind: LinkModifies, target: "TEST-T-0002", want: []Code{CodeLinkTargetType}},
-		{name: "modified_by an epic", source: TypeStory, kind: LinkModifiedBy, target: "TEST-EP-0002", want: []Code{CodeLinkTargetType}},
-		{name: "implemented_by a story", source: TypeStory, kind: LinkImplementedBy, target: "TEST-US-0002", want: []Code{CodeLinkTargetType}},
+
+		// implemented_by / modified_by are computed only (R-LINK-8): refused
+		// whatever the source and the target, and the target type is not
+		// reported on top.
+		{name: "story implemented_by a requirement", source: TypeStory, kind: LinkImplementedBy, target: "TEST-SP-0003.R2", want: []Code{CodeLinkComputedOnly}},
+		{name: "spec implemented_by a story", source: TypeSpec, kind: LinkImplementedBy, target: "TEST-US-0002", want: []Code{CodeLinkComputedOnly}},
+		{name: "spec modified_by a task", source: TypeSpec, kind: LinkModifiedBy, target: "TEST-T-0002", want: []Code{CodeLinkComputedOnly}},
+		{name: "story modified_by an epic", source: TypeStory, kind: LinkModifiedBy, target: "TEST-EP-0002", want: []Code{CodeLinkComputedOnly}},
+		{name: "implemented_by a malformed target", source: TypeStory, kind: LinkImplementedBy, target: "TEST-SP-0003.R02", want: []Code{CodeIDGrammar, CodeLinkComputedOnly}},
 
 		// supersedes / superseded_by: spec to spec at the item level.
 		{name: "spec supersedes a spec", source: TypeSpec, kind: LinkSupersedes, target: "TEST-SP-0002"},
@@ -177,6 +190,31 @@ func TestStoreUpgradesSchemaOnFirstImplementsLink(t *testing.T) {
 	// A wrong target type is refused, and refused before anything is written.
 	if _, err := store.Update(ctx, story.ID, ItemPatch{AddLinks: []Link{{Kind: LinkImplements, Target: "ACME-US-0001"}}}, ""); err == nil {
 		t.Error("Update() accepted implements with a story target")
+	}
+}
+
+func TestStoreRefusesComputedOnlyLinks(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	for _, kind := range []LinkKind{LinkImplementedBy, LinkModifiedBy} {
+		t.Run(string(kind), func(t *testing.T) {
+			t.Parallel()
+			store, fsys := specStore(t, "1")
+			story, err := store.Create(ctx, ItemDraft{Type: TypeStory, Title: "Plain"})
+			if err != nil {
+				t.Fatalf("Create(): %v", err)
+			}
+			_, err = store.Update(ctx, story.ID, ItemPatch{AddLinks: []Link{{Kind: kind, Target: "ACME-SP-0004.R2"}}}, story.Rev)
+			if err == nil || !strings.Contains(err.Error(), string(CodeLinkComputedOnly)) {
+				t.Fatalf("Update() = %v, want %s", err, CodeLinkComputedOnly)
+			}
+			// A refused write does not raise the schema either.
+			data, _ := fsys.ReadFile("docs/.pmngr/project.yaml")
+			if strings.HasPrefix(string(data), "schema: 2") || store.Schema() != 1 {
+				t.Errorf("project.yaml = %q, store schema %d", data, store.Schema())
+			}
+		})
 	}
 }
 

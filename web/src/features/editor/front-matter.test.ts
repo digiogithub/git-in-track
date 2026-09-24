@@ -5,6 +5,7 @@ import type { Item, ProjectSummary } from '@/api/provider';
 import {
   buildPatch,
   hasErrors,
+  linkKinds,
   isEmptyPatch,
   serializeItem,
   validateValues,
@@ -95,6 +96,27 @@ describe('raw YAML round trip', () => {
         { kind: 'duplicated_by', target: 'ACME-US-0050' },
       ]);
     }
+  });
+
+  it('refuses the computed-only link kinds and names the kind to write', () => {
+    for (const [kind, instead] of [
+      ['implemented_by', 'implements'],
+      ['modified_by', 'modifies'],
+    ] as const) {
+      const parsed = valuesFromYaml(`title: A\nlinks:\n  - { kind: ${kind}, target: ACME-US-0044 }\n`);
+      expect(parsed.ok).toBe(false);
+      if (!parsed.ok) {
+        expect(parsed.issues[0]?.code).toBe('E-LINK-COMPUTED-ONLY');
+        expect(parsed.issues[0]?.message).toContain(instead);
+      }
+    }
+  });
+
+  it('offers only the writable link kinds', () => {
+    expect(linkKinds).toContain('implements');
+    expect(linkKinds).toContain('modifies');
+    expect(linkKinds).not.toContain('implemented_by');
+    expect(linkKinds).not.toContain('modified_by');
   });
 
   it('rejects an unknown priority', () => {
