@@ -109,6 +109,7 @@ func ValidateItem(item *Item, cfg *ProjectConfig) []Diagnostic {
 	validateExternal(d, "external", item.External)
 	validateInbox(d, item, cfg)
 	validateSpec(d, item, cfg)
+	validateSpecDelta(d, item, cfg)
 	validateSchemaFeature(d, item, cfg)
 	orderDiagnostics(d.out)
 	return d.out

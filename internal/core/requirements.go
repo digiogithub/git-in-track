@@ -11,8 +11,8 @@ import (
 )
 
 // The diagnostic codes of the spec layer (ADR-037, docs/03 section 16). The
-// grammar-lint LINT-REQ-* codes live in speclint.go; the Spec Delta codes and
-// the marker codes are emitted by the stories that implement those parts.
+// grammar-lint LINT-REQ-* codes live in speclint.go and the Spec Delta codes in
+// specdelta.go; the marker codes are emitted by the native trace engine.
 const (
 	CodeReqForeign     Code = "E-REQ-FOREIGN"
 	CodeReqDuplicate   Code = "E-REQ-DUPLICATE"

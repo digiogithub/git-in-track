@@ -21,8 +21,76 @@ func (ix *Index) checkSpecs() {
 		if it.Type == TypeSpec {
 			ix.derivedDiags = append(ix.derivedDiags, RequirementDiagnostics(it, cfg)...)
 		}
+		if delta, ok := ix.deltas[id]; ok {
+			ix.derivedDiags = append(ix.derivedDiags, specDeltaDiagnostics(it, delta, cfg)...)
+		}
 		if d, ok := SchemaFeatureDiagnostic(it, cfg); ok {
 			ix.derivedDiags = append(ix.derivedDiags, d)
+		}
+	}
+	ix.checkDeltaTargets()
+}
+
+// addSpecDelta parses the Spec Delta of a story or task and, while it is
+// unapplied, records each MODIFIED and REMOVED target as a pending modifies
+// relation of the item, so impact and coverage see changes under review
+// (R-DELTA-4). A delta counts as applied once the item reaches a done-category
+// status; a cancelled item's delta is never applied, so it proposes nothing.
+func (ix *Index) addSpecDelta(g *Graph, it *Item) {
+	if !carriesSpecDelta(it.Type) || !mayHaveSpecDelta(it.Body) {
+		return
+	}
+	delta := ParseSpecDelta(it.Body)
+	if len(delta.Operations) == 0 && len(delta.Findings) == 0 {
+		return
+	}
+	ix.deltas[it.ID] = delta
+	if cfg := ix.configOf(it); cfg != nil {
+		switch cfg.CategoryOf(it.Status) {
+		case CategoryDone, CategoryCancelled:
+			return
+		}
+	}
+	for _, op := range delta.Operations {
+		if op.Ref != nil && (op.Op == DeltaModified || op.Op == DeltaRemoved) {
+			g.addPendingLink(it.ID, Link{Kind: LinkModifies, Target: op.Ref.String()})
+		}
+	}
+}
+
+// checkDeltaTargets reports every Spec Delta target the index does not hold as
+// W-DELTA-DANGLING: an unknown spec, a MODIFIED or REMOVED ref whose block its
+// spec does not declare, and a Supersedes: ref likewise. A warning, because
+// the spec or the block may arrive in a later merge (R-DELTA-5).
+func (ix *Index) checkDeltaTargets() {
+	blocks := map[ItemID]map[int]bool{}
+	for _, id := range sortedIDs(ix.byID) {
+		delta, ok := ix.deltas[id]
+		if !ok {
+			continue
+		}
+		it := ix.byID[id]
+		report := func(field string, line int, format string, args ...any) {
+			ix.derivedDiags = append(ix.derivedDiags, Diagnostic{
+				Code: CodeWarnDeltaDangling, Severity: SeverityWarning, Path: it.Path, Field: field,
+				Message: fmt.Sprintf("line %d of the body: ", line) + fmt.Sprintf(format, args...),
+			})
+		}
+		check := func(field string, line int, what string, spec ItemID, ref *RequirementRef) {
+			s, ok := ix.byID[spec]
+			switch {
+			case !ok || s.Type != TypeSpec:
+				report(field, line, "%s names unknown spec %s", what, spec)
+			case ref != nil && !ix.hasRequirementBlock(blocks, s, ref.Number):
+				report(field, line, "%s names unknown requirement %s", what, ref)
+			}
+		}
+		for _, op := range delta.Operations {
+			field := "body." + op.Target()
+			check(field, op.Line, string(op.Op), op.Spec, op.Ref)
+			if op.Supersedes != nil {
+				check(field, op.Line, "Supersedes: of "+string(op.Op)+" "+op.Target(), op.Supersedes.Spec, op.Supersedes)
+			}
 		}
 	}
 }
@@ -43,9 +111,10 @@ func (ix *Index) configOf(it *Item) *ProjectConfig {
 }
 
 // RequirementRefsTo returns every requirement ref to a spec that some item of
-// the index holds in a link target, item-level or requirement-level, sorted by
-// number. They keep a number reserved after its block was deleted by hand
-// (R-REQ-5). Spec Delta headings are added by the Spec Delta parser.
+// the index holds in a link target, item-level or requirement-level, or in a
+// Spec Delta (a MODIFIED or REMOVED target, an applied ADDED, a Supersedes:
+// line), sorted by number. They keep a number reserved after its block was
+// deleted by hand (R-REQ-5).
 func (ix *Index) RequirementRefsTo(spec ItemID) []RequirementRef {
 	ix.mu.RLock()
 	defer ix.mu.RUnlock()
@@ -71,6 +140,11 @@ func (ix *Index) requirementRefsTo(spec ItemID) []RequirementRef {
 		for _, key := range it.Requirements.Keys() {
 			if e := it.Requirements[key]; e != nil {
 				add(e.Links)
+			}
+		}
+		if delta, ok := ix.deltas[id]; ok {
+			for _, ref := range delta.Refs() {
+				add([]Link{{Target: ref.String()}})
 			}
 		}
 	}
