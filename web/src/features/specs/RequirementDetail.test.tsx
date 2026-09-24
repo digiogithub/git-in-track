@@ -19,7 +19,7 @@ import {
   type FakeSpecAnalysis,
 } from '@/api/fake-provider';
 import type { Item, Requirement } from '@/api/provider';
-import { BROWSER_SPEC_ANALYSIS_REASON } from '@/api/provider';
+import { BROWSER_SPEC_ANALYSIS_REASON, ProviderError } from '@/api/provider';
 import { ToastProvider } from '@/components/ui/toast';
 import { RequirementDetail } from '@/features/specs/RequirementDetail';
 
@@ -302,6 +302,52 @@ describe('RequirementDetail', () => {
     await screen.findByRole('heading', { level: 1, name: 'Keep the basket' });
     expect(screen.queryByRole('alert')).toBeNull();
     expect(screen.queryByRole('form', { name: 'Edit requirement' })).toBeNull();
+  });
+
+  it('treats a stale save whose change is already on disk as saved, not as a conflict', async () => {
+    const user = userEvent.setup();
+    const { provider } = renderDetail();
+
+    const form = await openEditor(user);
+    // Someone else made the very same rename while the edit was open.
+    await provider.updateRequirement(
+      'ACME',
+      'ACME-SP-0001.R2',
+      { title: 'Keep the basket' },
+      'sha256:req-rev',
+    );
+    const title = within(form).getByLabelText('Title');
+    await user.clear(title);
+    await user.type(title, 'Keep the basket');
+    const update = vi.spyOn(provider, 'updateRequirement');
+    await user.click(within(form).getByRole('button', { name: 'Save block' }));
+
+    expect(await screen.findByText('Already saved')).toBeInTheDocument();
+    await screen.findByRole('heading', { level: 1, name: 'Keep the basket' });
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByRole('form', { name: 'Edit requirement' })).toBeNull();
+    expect(screen.queryByText('The requirement could not be saved')).toBeNull();
+    // The empty conflict list is the answer: nothing is written again.
+    expect(update).toHaveBeenCalledTimes(1);
+  });
+
+  it('treats a stale status move that already happened as saved', async () => {
+    const user = userEvent.setup();
+    const { provider } = renderDetail();
+    const update = vi
+      .spyOn(provider, 'updateRequirement')
+      .mockRejectedValueOnce(
+        new ProviderError('stale_revision', 'changed on disk', spec.path, {
+          currentRev: 'sha256:theirs',
+        }),
+      );
+
+    const select = await screen.findByLabelText<HTMLSelectElement>('Status');
+    await user.selectOptions(select, 'in_review');
+
+    expect(await screen.findByText('Already saved')).toBeInTheDocument();
+    expect(screen.queryByText('Changed on disk')).toBeNull();
+    expect(update).toHaveBeenCalledTimes(1);
   });
 
   it('retries a conflicted save quoting the rev now on disk', async () => {

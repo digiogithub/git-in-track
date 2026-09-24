@@ -277,6 +277,24 @@ func TestRequirementRevProtocol(t *testing.T) {
 		}
 	})
 
+	t.Run("a partial overlap names only the field still in conflict", func(t *testing.T) {
+		h := newHarness(t, true)
+		spec := specFixture(t, h)
+		before := read(t, h, spec+".R3")
+		call[RequirementWriteResult](t, h, "update_requirement", map[string]any{
+			"ref": before.Ref, "rev": before.Rev, "title": "Trim every field", "status": "todo",
+		})
+		got := callFails(t, h, "update_requirement", map[string]any{
+			"ref": before.Ref, "rev": before.Rev, "title": "Trim every field", "status": "in_progress",
+		})
+		if got.Code != "stale_revision" || got.Retry == "" {
+			t.Fatalf("overlapping write = %+v", got)
+		}
+		if len(got.Conflicts) != 1 || got.Conflicts[0].Field != "status" {
+			t.Errorf("conflicts = %+v, want status only", got.Conflicts)
+		}
+	})
+
 	t.Run("the block rev is not a write token", func(t *testing.T) {
 		h := newHarness(t, true)
 		spec := specFixture(t, h)

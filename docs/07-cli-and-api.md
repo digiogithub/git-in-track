@@ -5184,7 +5184,9 @@ changes except `updated`, so no other requirement's `rev` moves. The rules:
 - A `rev` that is no longer the requirement's current rev fails with `stale_revision`, carrying
   `currentRev` (the requirement rev now) and `conflicts[]` over `text` (named, never quoted),
   `title`, `status`, `trace`, `verified` and `links`, judged against the file as it is now
-  (R-REV-3a). An empty `conflicts[]` means the change had already been made. A concurrent write to
+  (R-REV-3a). An empty (absent) `conflicts[]` means every proposed field already holds its value:
+the change had already been made. A patch that cannot be judged against the current content
+names every field it carries instead, so it never reads as already made. A concurrent write to
   **another** requirement of the same spec, or to the spec's own front matter, does not make the
   rev stale.
 - A status change follows the project workflow exactly like `item.move`

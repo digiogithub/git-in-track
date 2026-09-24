@@ -205,6 +205,33 @@ func TestRequirementUpdateConflictMatrix(t *testing.T) {
 			wantCode:      "stale_revision",
 			wantConflicts: nil,
 		},
+		{
+			name:          "stale rev whose every field already happened",
+			first:         map[string]any{"ref": "DEMO-SP-0001.R1", "patch": map[string]any{"title": "Trim everything", "status": "todo", "trace": map[string]any{"code": []string{"internal/checkout/address.go"}}}},
+			ref:           "DEMO-SP-0001.R1",
+			second:        map[string]any{"title": "Trim everything", "status": "todo", "trace": map[string]any{"code": []string{"internal/checkout/address.go"}}},
+			wantCode:      "stale_revision",
+			wantConflicts: nil,
+		},
+		{
+			name:          "stale rev with a partial overlap names only what still differs",
+			first:         map[string]any{"ref": "DEMO-SP-0001.R1", "patch": map[string]any{"title": "Trim everything", "status": "todo"}},
+			ref:           "DEMO-SP-0001.R1",
+			second:        map[string]any{"title": "Trim everything", "status": "in_progress"},
+			wantCode:      "stale_revision",
+			wantConflicts: []string{"status"},
+		},
+		{
+			// A patch the store would refuse cannot be judged field by field,
+			// and an empty list would tell the caller its change is already
+			// there. It names the fields it carries instead.
+			name:          "stale rev with a patch the store would refuse is never already applied",
+			first:         map[string]any{"ref": "DEMO-SP-0001.R1", "patch": map[string]any{"status": "todo"}},
+			ref:           "DEMO-SP-0001.R1",
+			second:        map[string]any{"title": "  ", "text": "The checkout SHALL trim.\n\n## Oops\n"},
+			wantCode:      "stale_revision",
+			wantConflicts: []string{"text", "title"},
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

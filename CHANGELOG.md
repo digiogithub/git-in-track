@@ -422,6 +422,14 @@ because a commit list cannot express them.
   `HEAD` only while the tree differs from it in `.pmngr/` backlog files at most. Coverage rows
   (`coverage.list`, `gintrack spec coverage --json`) gain `commit`, the commit a passing row's
   evidence verified the current text at. The known limitation in docs/09 is gone.
+- **An empty `conflicts[]` on a requirement write now reliably means "already saved"**
+  (`GIT-US-0151`, docs/08 §4.5). `requirement.update` — vault, MCP `update_requirement` and
+  `PATCH …/requirements/{req}` — already omitted `conflicts` when every proposed field held its
+  value, but it also omitted them when a stale patch could not be applied to the current
+  content (an invalid title or text), so the caller was told its change was already there. Such
+  a patch now names every field it carries. The web requirement detail treats a
+  `stale_revision` with no conflicts as saved: it closes the editor, reloads and says *Already
+  saved* instead of showing the conflict alert or an error, for block edits and status moves.
 - **`search_semantic` works over stdio `gintrack mcp`** (GIT-US-0121). Only `gintrack serve`
   installed the semantic searcher, so an agent spawning `gintrack mcp` always got
   `unavailable` even with `search.pando.mcpUrl` configured. The stdio server now installs the
