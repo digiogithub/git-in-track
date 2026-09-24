@@ -288,6 +288,15 @@ because a commit list cannot express them.
   no `schema`, or one newer than the build supports, is refused with `read_only`; the project
   stays readable. Binaries up to and including 2.0.1 do not have this gate.
 
+### Fixed
+
+- **`search_semantic` works over stdio `gintrack mcp`** (GIT-US-0121). Only `gintrack serve`
+  installed the semantic searcher, so an agent spawning `gintrack mcp` always got
+  `unavailable` even with `search.pando.mcpUrl` configured. The stdio server now installs the
+  same Pando-backed searcher through the constructor the companion uses. Without Pando
+  configured the tool still answers `unavailable` naming `search_items`. The stdio server does
+  not register the repository as a Pando code project; `gintrack serve` still does that.
+
 ### Upgrade note
 
 Before a project's first spec is created, upgrade **every** binary, web app build and CI job

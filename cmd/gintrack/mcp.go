@@ -163,6 +163,12 @@ func runMCP(cmd *cobra.Command, build buildInfo, flags *globalFlags, local *mcpF
 		"gintrack mcp %s: workspace %s, %d repositories, %d tools (%s)\n",
 		build.Version, res.Workspace, len(repos), len(srv.Tools()), writeMode(allowWrite))
 
+	// Semantic search goes through the same constructor `gintrack serve` uses,
+	// so search_semantic reaches Pando over stdio too; with no Pando configured
+	// it keeps answering `unavailable` (GIT-US-0121).
+	closeSemantic := installMCPSemantic(res.Config, space, mounts, logger)
+	defer func() { _ = closeSemantic() }()
+
 	ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	stopWatch := fresh.start(ctx)
@@ -193,6 +199,20 @@ func installMCPTraceSeams(mounts []mcpMount, backend config.Backend, cacheDir st
 		}
 		server.InstallTraceSeams(m.vlt, seams)
 	}
+}
+
+// installMCPSemantic installs the Pando-backed semantic searcher on the
+// workspace from the `search.pando` section, with its tokens resolved the same
+// way `gintrack serve` resolves them. It returns the function that closes the
+// Pando session.
+func installMCPSemantic(cfg *config.Config, space *corevault.Workspace, mounts []mcpMount, log *slog.Logger) func() error {
+	repos := make([]server.SemanticRepo, 0, len(mounts))
+	for _, m := range mounts {
+		repos = append(repos, server.SemanticRepo{
+			ID: m.id, Path: m.root, Role: m.role, DocsFolders: m.docs, Vault: m.vlt,
+		})
+	}
+	return server.InstallSemanticSearch(searchSettings(cfg).Pando, space, repos, log)
 }
 
 // writeMode renders the posture on the startup line.
@@ -277,7 +297,7 @@ func mountWorkspaceOver(
 		if _, err := space.Attach(repo.ID, role, v); err != nil {
 			return nil, nil, fmt.Errorf("attach %s: %w", repo.ID, err)
 		}
-		mounts = append(mounts, mcpMount{id: repo.ID, root: fsys.Root(), docs: docs, vlt: v})
+		mounts = append(mounts, mcpMount{id: repo.ID, root: fsys.Root(), role: role, docs: docs, vlt: v})
 	}
 	return space, mounts, nil
 }

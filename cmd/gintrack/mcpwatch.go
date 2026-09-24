@@ -20,6 +20,7 @@ const mcpRescanInterval = time.Second
 type mcpMount struct {
 	id   string
 	root string
+	role string
 	docs []string
 	vlt  *corevault.Vault
 }

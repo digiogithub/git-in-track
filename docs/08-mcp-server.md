@@ -902,8 +902,13 @@ Ranked-by-meaning search over backlog items **and** knowledge-base pages. It ans
 stories or pages are *about* X" — the question a substring index answers with nothing at all
 when the wording of the question is not the wording of the item.
 
-The ranking is not gintrack's: it comes from the Pando backend the companion installs behind
-the core method `search.semantic` (`internal/vault/semantic.go`). Pando indexes the
+The ranking is not gintrack's: it comes from the Pando backend configured under
+`search.pando`, installed behind the core method `search.semantic`
+(`internal/vault/semantic.go`). Both hosts install it through the same constructor
+(`server.InstallSemanticSearch`, GIT-US-0121): `gintrack serve` for `POST /mcp` and stdio
+`gintrack mcp` alike, so the tool answers the same over either transport. The stdio server only
+*searches*; registering the repository as a Pando code project stays with `gintrack serve`
+(docs/21 §0). Pando indexes the
 repository's own files (docs/21, ADR-036) and returns *candidates only* — every field below is
 re-read from gintrack's own index before the answer leaves, and a candidate whose path is gone
 from disk is dropped, so nothing Pando holds can reach an agent as if it were backlog state.
@@ -943,7 +948,7 @@ from disk is dropped, so nothing Pando holds can reach an agent as if it were ba
 - `engine` names the backend that ranked the hits; `degraded: true` marks an answer computed
   from an incomplete index, where a *miss* proves nothing.
 
-**Without a Pando backend the tool fails, it does not fall back.** The refusal is
+**Without a Pando backend the tool fails, it does not fall back** — on stdio as over HTTP. The refusal is
 `{"error":{"code":"unavailable","message":…,"retry":"…use search_items…"}}`. The tool is still
 advertised in `tools/list`, because whether a backend answers is a property of the session,
 not of the surface; an empty list would let an agent conclude that nothing in the backlog
