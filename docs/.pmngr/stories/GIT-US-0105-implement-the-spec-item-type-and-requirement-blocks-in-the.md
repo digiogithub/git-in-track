@@ -28,7 +28,7 @@ Code implementation of the approved ADR-037, in its own PR, under human supervis
 - [x] `specs/` is known to `allocator.go`, `index.go`, `teamdiscover.go` and `scaffold.go`.
 - [x] A requirement-block parser extracts each `### <ref> — <title>` block (statement, scenarios, byte range) and computes the block `rev`; editing one block leaves every other block's `rev` unchanged.
 - [x] Validation: duplicate or malformed requirement IDs, map keys without a block and blocks without a map entry are reported; requirement statuses are validated against the project workflow.
-- [ ] The JSON Schema for items includes `spec` and the `requirements:` map.
+- [x] The JSON Schema for items includes `spec` and the `requirements:` map. (delivered by GIT-US-0142)
 - [x] Golden tests under `internal/core/testdata/` cover parsing and block `rev`; `make test`, `make lint` and `make wasm` pass.
 
 ## Notes

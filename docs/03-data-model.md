@@ -2047,21 +2047,49 @@ Full JSON Schemas (Draft 2020-12) are **not** inlined here. They live in the rep
 
 ```
 internal/core/schema/
-  project.schema.json
+  project.schema.json        # .pmngr/project.yaml (section 6)
   epic.schema.json
   story.schema.json
   task.schema.json
   milestone.schema.json
-  spec.schema.json           # ADR-037
+  spec.schema.json           # ADR-037, with the requirements: map (section 21.4)
   comment.schema.json
-  index.schema.json          # the local derived index (§15)
-  common.defs.json           # shared $defs: id, handle, timestamp, date, link, label
+  common.defs.json           # shared $defs: id, handle, timestamp, date, link, label, requirement…
 ```
 
-They are embedded via `go:embed` and are the single source of truth for validation in the CLI, in
-WASM, and for the JSON Schema published for editor autocompletion (`$schema` comment in
-`project.yaml`, YAML Language Server directive). Generation of the TypeScript types for the web app
-is driven from the same files.
+Every file declares `"$schema": "https://json-schema.org/draft/2020-12/schema"` and an `$id` of
+`https://git-in-track.dev/schema/<file name>`; item schemas reference the shared definitions as
+`common.defs.json#/$defs/<name>`, which resolves against that base. They are embedded with
+`go:embed` (`core.JSONSchemaNames`, `core.JSONSchema`, `core.JSONSchemaFor`), so the CLI and the
+WASM build ship the same bytes, and they are meant for editor autocompletion and for tools built by
+others (a `# yaml-language-server: $schema=…` directive in `project.yaml`, a front-matter linter).
+
+**The Go parser and validator stay the authority.** A schema describes the shape of one file; it
+cannot see `project.yaml` (statuses, labels, custom-field types), the rest of the vault (dangling
+references, parent types across files) or the target type of a link, so the CLI, the vault and WASM
+validate with the Go code, not with these files. What keeps the two from drifting is
+`internal/core/jsonschema_test.go`, which fails when:
+
+- an item schema's properties differ from the keys the parser knows (`canonicalKeyOrder`), filtered
+  by the per-type rules the validator applies: `parent` and its deprecated alias `epic` only where
+  the type has a parent (story, task), `start` and `owner` only on milestones, `requirements` only
+  on specs, and none of the planning fields on a spec;
+- a nested block (`link`, `external`, `inbox`, a requirement entry and its `trace` and `verified`,
+  every level of `project.yaml`) lists other keys than the Go struct tags or known-key sets;
+- an enumeration differs from the Go constants: writable link kinds, priorities, inbox statuses,
+  comment kinds, status categories, lint rules and levels, item types;
+- a pattern (ID, requirement ref and key, handle, commit, trace ref, project key, per-type `id` and
+  `parent`) accepts a sample the Go grammar refuses, or the reverse;
+- the schemas refuse what `SerializeItem`, `SerializeComment` or the `project.yaml` writer emit, or
+  the golden fixtures under `internal/core/testdata/`;
+- `project.schema.json`'s `schema` range is not `[InitialSchema, SupportedSchema]`.
+
+The test evaluates the schemas with a small evaluator of its own that knows exactly the keywords
+the files use, and refuses a schema that uses any other one, so no JSON Schema library is a
+dependency. No TypeScript types are generated from these files yet; the web app's types are
+written by hand against the wire format (docs/07).
+
+The derived index (§15) has no schema: it is a cache, never a file anybody writes by hand.
 
 Outline of the shared definitions:
 
@@ -2075,12 +2103,12 @@ Outline of the shared definitions:
     "reqRef":    { "type": "string", "pattern": "^([A-Z][A-Z0-9]{1,9}/)?[A-Z][A-Z0-9]{1,9}-SP-[0-9]{4,}\\.R[1-9][0-9]*$" },
     "linkTarget": { "anyOf": [ { "$ref": "#/$defs/qualifiedId" }, { "$ref": "#/$defs/reqRef" } ] },
     "rev":       { "type": "string", "pattern": "^sha256:[0-9a-f]{16}$" },
-    "traceRef":  { "type": "string", "pattern": "^(?!/)(?!.*(^|/)\\.\\.(/|$))[^#]+(#.+)?$" },
+    "traceRef":  { "type": "string", "pattern": "^<segment>(?:/<segment>?)*(?:#.+)?$" },  // abbreviated
     "handle":    { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,31}$" },
     "statusId":  { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,31}$" },
     "label":     { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,31}$" },
     "timestamp": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$" },
-    "date":      { "type": "string", "format": "date" },
+    "date":      { "type": "string", "format": "date", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
     "priority":  { "enum": ["critical", "high", "medium", "low"] },
     "link": {
       "type": "object",
@@ -2153,13 +2181,19 @@ entry are preserved (R-FMT-6). Which link kinds may sit in a requirement's `link
 type each kind accepts, depend on the source and cannot be expressed here; the Go validator reports
 them as `E-LINK-TARGET-TYPE`.
 
+`traceRef` is R-REQ-8 written without look-ahead, so that the same pattern means the same thing to
+an ECMAScript validator and to Go's RE2: `<segment>` is any run of characters other than `/`, `#`
+and `\` that is not `..` (`[^/#\\.][^/#\\]*`, `\.[^/#\\.][^/#\\]*`, `\.\.[^/#\\]+` or `\.`), and the
+first segment is not empty, which rules out a leading `/`.
+
 `external` and `inbox` are the only two `$defs` whose value objects are not closed the same way:
 `external` is `additionalProperties: false` because the shape is fixed, while `inbox` is open
 because unknown keys inside the block are preserved on rewrite exactly as unknown top-level keys
 are (R-FMT-6, R-EVO-5).
 
 Outline of `story.schema.json` (the other item schemas differ only in `type`, allowed parent, and a
-couple of fields):
+couple of fields: an epic and a milestone have no `parent` or `epic`, a task's `parent` is a story
+or an epic, a milestone adds `start` and `owner`):
 
 ```jsonc
 {
@@ -2173,6 +2207,7 @@ couple of fields):
     "status":    { "$ref": "common.defs.json#/$defs/statusId" },
     "priority":  { "$ref": "common.defs.json#/$defs/priority" },
     "parent":    { "pattern": "^[A-Z][A-Z0-9]{1,9}-EP-[0-9]{4,}$" },
+    "epic":      { "pattern": "^[A-Z][A-Z0-9]{1,9}-EP-[0-9]{4,}$", "deprecated": true },
     "milestone": { "pattern": "^[A-Z][A-Z0-9]{1,9}-M-[0-9]{4,}$" },
     "sprint":    { "type": "string" },
     "assignees": { "type": "array", "items": { "$ref": "common.defs.json#/$defs/handle" } },
@@ -2187,6 +2222,8 @@ couple of fields):
     "closed":    { "$ref": "common.defs.json#/$defs/timestamp" },
     "due":       { "$ref": "common.defs.json#/$defs/date" },
     "links":     { "type": "array", "items": { "$ref": "common.defs.json#/$defs/link" } },
+    "blocks":    { "type": "array", "items": { "$ref": "common.defs.json#/$defs/linkTarget" } },
+    "depends_on": { "type": "array", "items": { "$ref": "common.defs.json#/$defs/linkTarget" } },
     "external":  { "type": "array", "items": { "$ref": "common.defs.json#/$defs/external" } },
     "attachments": { "type": "array", "items": { "type": "string" } },
     "custom":    { "type": "object" },
@@ -2253,6 +2290,8 @@ description, not scheduled work — and it is the only schema with `requirements
     "started":   { "$ref": "common.defs.json#/$defs/timestamp" },
     "closed":    { "$ref": "common.defs.json#/$defs/timestamp" },
     "links":     { "type": "array", "items": { "$ref": "common.defs.json#/$defs/link" } },
+    "blocks":    { "type": "array", "items": { "$ref": "common.defs.json#/$defs/linkTarget" } },
+    "depends_on": { "type": "array", "items": { "$ref": "common.defs.json#/$defs/linkTarget" } },
     "external":  { "type": "array", "items": { "$ref": "common.defs.json#/$defs/external" } },
     "attachments": { "type": "array", "items": { "type": "string" } },
     "custom":    { "type": "object" },
@@ -2268,9 +2307,19 @@ description, not scheduled work — and it is the only schema with `requirements
 }
 ```
 
+`project.schema.json` closes every level whose Go struct is fixed (`docs`, `workflow` and its
+statuses, `id_allocation`, `labels`, `estimation`, `defaults`, `custom_fields`, `people`, `team`,
+`links`, `specs`), accepts `schema` from 1 up to the version this build writes (R-EVO-2), and leaves
+`integrations.<system>` open: those blocks are read by the companion, which reports
+`E-PROJ-INTEGRATION` itself ([§6.5](#65-integrations)). Top-level `x-` keys are allowed in
+`project.yaml` as in item files.
+
 Note that `status` values, label membership, and custom-field types cannot be expressed in a static
-schema (they depend on `project.yaml`); those checks are performed by the Go validator after schema
-validation, and produce the `E-STATUS-UNKNOWN`, `W-LABEL-UNDECLARED`, and `E-CF-TYPE` diagnostics.
+schema (they depend on `project.yaml`); the Go validator checks them and produces the
+`E-STATUS-UNKNOWN`, `W-LABEL-UNDECLARED`, and `E-CF-TYPE` diagnostics. A schema is also stricter
+than the parser in one respect: an item schema is closed, so an unknown top-level key without the
+`x-` prefix is a schema error, while the parser preserves it (R-EVO-5) — a file from a newer build
+still round-trips, and an editor still points at the key nobody here knows.
 
 ---
 

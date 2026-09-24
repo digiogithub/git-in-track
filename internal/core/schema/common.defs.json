@@ -1,0 +1,214 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://git-in-track.dev/schema/common.defs.json",
+  "title": "git-in-track shared definitions",
+  "description": "Shared $defs of the git-in-track item and project schemas (docs/03-data-model.md section 18).",
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9]{1,9}-(EP|US|T|M|SP)-[0-9]{4,}$"
+    },
+    "qualifiedId": {
+      "type": "string",
+      "pattern": "^([A-Z][A-Z0-9]{1,9}/)?[A-Z][A-Z0-9]{1,9}-(EP|US|T|M|SP)-[0-9]{4,}$"
+    },
+    "reqRef": {
+      "type": "string",
+      "pattern": "^([A-Z][A-Z0-9]{1,9}/)?[A-Z][A-Z0-9]{1,9}-SP-[0-9]{4,}\\.R[1-9][0-9]*$"
+    },
+    "linkTarget": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/qualifiedId"
+        },
+        {
+          "$ref": "#/$defs/reqRef"
+        }
+      ]
+    },
+    "rev": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{16}$"
+    },
+    "traceRef": {
+      "type": "string",
+      "pattern": "^(?:[^/#\\\\.][^/#\\\\]*|\\.[^/#\\\\.][^/#\\\\]*|\\.\\.[^/#\\\\]+|\\.)(?:/(?:[^/#\\\\.][^/#\\\\]*|\\.[^/#\\\\.][^/#\\\\]*|\\.\\.[^/#\\\\]+|\\.)?)*(?:#.+)?$"
+    },
+    "handle": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,31}$"
+    },
+    "statusId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,31}$"
+    },
+    "label": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,31}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+    },
+    "date": {
+      "type": "string",
+      "format": "date",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+    },
+    "priority": {
+      "enum": [
+        "critical",
+        "high",
+        "medium",
+        "low"
+      ]
+    },
+    "link": {
+      "type": "object",
+      "required": [
+        "kind",
+        "target"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "description": "implemented_by and modified_by are computed only and never written (R-LINK-8).",
+          "enum": [
+            "blocks",
+            "blocked_by",
+            "relates_to",
+            "duplicates",
+            "duplicated_by",
+            "implements",
+            "modifies",
+            "supersedes",
+            "superseded_by"
+          ]
+        },
+        "target": {
+          "$ref": "#/$defs/linkTarget"
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 200
+        }
+      }
+    },
+    "external": {
+      "type": "object",
+      "required": [
+        "system",
+        "id"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "system": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,31}$"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "url": {
+          "type": "string",
+          "pattern": "^https?://"
+        },
+        "key": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "synced_at": {
+          "$ref": "#/$defs/timestamp"
+        }
+      }
+    },
+    "inbox": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "status": {
+          "enum": [
+            "pending",
+            "accepted",
+            "rejected",
+            "snoozed",
+            "duplicate"
+          ]
+        },
+        "snoozed_until": {
+          "$ref": "#/$defs/date"
+        },
+        "duplicate_of": {
+          "$ref": "#/$defs/id"
+        },
+        "source": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "received": {
+          "$ref": "#/$defs/timestamp"
+        }
+      }
+    },
+    "requirement": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/statusId"
+        },
+        "trace": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "code": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/traceRef"
+              }
+            },
+            "tests": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/traceRef"
+              }
+            }
+          }
+        },
+        "verified": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": [
+            "rev",
+            "commit",
+            "at",
+            "by"
+          ],
+          "properties": {
+            "rev": {
+              "$ref": "#/$defs/rev"
+            },
+            "commit": {
+              "type": "string",
+              "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+            },
+            "at": {
+              "$ref": "#/$defs/timestamp"
+            },
+            "by": {
+              "$ref": "#/$defs/handle"
+            }
+          }
+        },
+        "links": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/link"
+          }
+        }
+      }
+    }
+  }
+}

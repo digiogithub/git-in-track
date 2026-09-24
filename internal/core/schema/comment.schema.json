@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://git-in-track.dev/schema/comment.schema.json",
+  "title": "git-in-track comment",
+  "description": "Front matter of a comment (docs/03-data-model.md section 11).",
+  "type": "object",
+  "required": [
+    "type",
+    "item",
+    "author",
+    "created"
+  ],
+  "properties": {
+    "type": {
+      "const": "comment"
+    },
+    "item": {
+      "$ref": "common.defs.json#/$defs/id"
+    },
+    "author": {
+      "$ref": "common.defs.json#/$defs/handle"
+    },
+    "author_name": {
+      "type": "string"
+    },
+    "author_email": {
+      "type": "string"
+    },
+    "created": {
+      "$ref": "common.defs.json#/$defs/timestamp"
+    },
+    "updated": {
+      "$ref": "common.defs.json#/$defs/timestamp"
+    },
+    "in_reply_to": {
+      "type": "string"
+    },
+    "kind": {
+      "enum": [
+        "comment",
+        "status_change",
+        "system"
+      ]
+    },
+    "reactions": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "$ref": "common.defs.json#/$defs/handle"
+        }
+      }
+    },
+    "external": {
+      "type": "array",
+      "items": {
+        "$ref": "common.defs.json#/$defs/external"
+      }
+    },
+    "attachments": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "patternProperties": {
+    "^x-": true
+  },
+  "additionalProperties": false
+}
