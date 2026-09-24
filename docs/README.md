@@ -28,6 +28,7 @@ model described in [03-data-model.md](./03-data-model.md).
 | 11 | [Roadmap](./11-roadmap.md) | Phases, milestones, epics, stories, estimates, risks |
 | 12 | [1.0 release readiness](./12-release-readiness-1-0.md) | Evidence for every milestone exit criterion and vision goal; the known gaps shipped in 1.0; what the maintainer must still do |
 | 13 | [Design system](./13-design-system.md) | Tokens, themes, the component rules the UI is built from, and the contrast checks that keep them honest |
+| 14 | [Upgrading to specs](./14-upgrading-to-specs.md) | Which projects need `schema: 2`, what older binaries do, and the order to upgrade binaries, web builds and CI before the first spec; `gintrack migrate --to 2` |
 | 20 | [Agent interface](./20-agent-interface.md) | The agent panel over Pando's AG-UI: architecture, `gintrack agent init`, configuration on both sides, the security posture, troubleshooting |
 | 21 | [Semantic search](./21-semantic-search.md) | Pando's two indexations over the repository's own files: configuration, how a hit resolves, reindexing, and the corpus that was retired |
 | — | [ADRs](./adr/README.md) | Architecture decision records |

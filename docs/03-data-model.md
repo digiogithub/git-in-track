@@ -2335,8 +2335,9 @@ still round-trips, and an editor still points at the key nobody here knows.
   changes that a previous version's validator rejects** (a new value in a closed enum such as the
   link kinds, a wider ID or link-target grammar) do: the older client must see one unknown schema
   and fall back read-only (R-EVO-2) rather than fail file by file.
-- **R-EVO-4** `gintrack migrate` performs a version bump in one commit, with a dry-run mode and a
-  printed diff summary.
+- **R-EVO-4** `gintrack migrate --to <n>` performs a version bump as one reviewable write of
+  `project.yaml`, with a dry-run mode and a printed diff summary; it is idempotent and refuses a
+  downgrade (docs/07 §4.22, [doc 14](./14-upgrading-to-specs.md)). The user commits it.
 - **R-EVO-5** Unknown keys are always preserved on rewrite, which makes forward-compatible round
   trips safe for tools built by others.
 - **R-EVO-6** *(ADR-037.)* The spec layer of
@@ -2951,8 +2952,9 @@ What each rule reports, precisely (inline code spans are never read as prose by 
   `project.yaml` to `schema: 2` in the same write (committed together under commit-on-save), quoting
   the file `rev` of `project.yaml` as usual, and reports `schemaUpgraded: 2` in its result. Nothing
   is upgraded on open, on read, or on a write without a spec construct. `gintrack doctor --fix`
-  performs the same one-line edit for constructs written by hand. No other file changes, so no
-  `gintrack migrate` step is needed (R-EVO-4), and no `gintrack spec init` step is required;
+  performs the same one-line edit for constructs written by hand, and `gintrack migrate --to 2`
+  performs it explicitly ahead of the first spec (R-EVO-4). No other file changes, so neither a
+  `gintrack migrate` step nor a `gintrack spec init` step is required;
   there is no downgrade. A reviewer who sees the one-line `schema` change in a spec PR traces it
   to the `schemaUpgraded: 2` the author's tool reported.
 - **R-SCHEMA-2-4 Older binaries.** A binary whose supported schema is `1` reports `E-PROJ-SCHEMA`

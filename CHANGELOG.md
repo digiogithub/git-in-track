@@ -406,6 +406,18 @@ because a commit list cannot express them.
   modes run the same code and no rule exists in TypeScript. The core gains `LintSpecDelta` and
   `DeltaOperation.ProposedText`.
 
+- **`gintrack migrate --to <schema>`** (`GIT-US-0143`, docs/07 §4.22, docs/03 R-EVO-4). Raises
+  `project.yaml` to `schema: 2` explicitly, as its own reviewable change, before the first spec
+  construct would raise it implicitly. It rewrites only the `schema:` line (comments and
+  formatting kept, the same edit as the implicit upgrade and `doctor --fix`), prints the diff
+  summary, supports `--dry-run` and `--json`, and is idempotent. A downgrade, a newer schema or a
+  missing one is refused (exit 3) and a target this build cannot write is a usage error (exit 2).
+  It migrates the only project of the workspace, one named with `--project`, or all of them with
+  `--all`; nothing is written unless every selected project can be migrated, and nothing is
+  committed. The new upgrade guide, [docs/14-upgrading-to-specs.md](docs/14-upgrading-to-specs.md),
+  says which projects need schema 2, what older binaries do with one, and the order to upgrade
+  binaries, web builds and CI before the first spec.
+
 ### Changed
 
 - **Project schema 2** (ADR-037 §11). This build reads and writes `schema: 1` and
@@ -461,7 +473,10 @@ because a commit list cannot express them.
 Before a project's first spec is created, upgrade **every** binary, web app build and CI job
 that writes to it. Binaries up to and including 2.0.1 report `E-PROJ-SCHEMA` on a
 `schema: 2` project but do not refuse to write, and may rewrite files whose spec constructs
-they do not understand. A repository without spec constructs is unaffected.
+they do not understand. A repository without spec constructs is unaffected. The full sequence —
+binaries, browser-only web builds, CI and the `make spec-check` gate, ignoring `verify.json`, the
+optional pre-push hook, then `gintrack migrate --to 2` as its own commit — is
+[docs/14-upgrading-to-specs.md](docs/14-upgrading-to-specs.md).
 
 `gintrack spec ingest` now writes `<docs>/.pmngr/verify.json` inside the repository. Backlogs
 created by `gintrack init` from this build ignore it; an existing backlog should add
@@ -1416,7 +1431,8 @@ item produce one success and one structured conflict, never a lost update.
 **Upgrading.** There is nothing to upgrade from: no 0.x release was ever published, and
 1.0 is the first `schema: 1` in the field. `gintrack migrate` is specified
 ([docs/03-data-model.md](docs/03-data-model.md) §19, R-EVO-4) but **not implemented**; it
-must exist before any `schema: 2` ships.
+must exist before any `schema: 2` ships. *(Implemented since by `GIT-US-0143`, in the release
+that introduces schema 2: see [Unreleased] and docs/14.)*
 
 ### Known limitations
 

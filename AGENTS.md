@@ -22,7 +22,7 @@ GHCR distribution channels. Phases 3–6 are in review, and the `v1.0.0` tag has
 not been pushed — no tag exists at all. Before you assume a capability, check
 `CHANGELOG.md` "Known limitations" and `docs/12-release-readiness-1-0.md` §5:
 several documented behaviours (browser commit-on-save, `git.dirtyPolicy`, branch
-policy, `gintrack migrate`, the planned MCP tools) are **not** implemented.
+policy, the planned MCP tools) are **not** implemented.
 `docs/.pmngr/` is the live truth — read it rather than trusting this paragraph.
 
 ## Read the docs in this order
