@@ -2327,9 +2327,14 @@ validation, and produce the `E-STATUS-UNKNOWN`, `W-LABEL-UNDECLARED`, and `E-CF-
 > cache outside the repository, and each requirement's linked tests are aggregated into raw
 > evidence (`pass`, `fail`, `partial`, `untested`) — never written into a spec.
 > `GIT-US-0110` applies a Spec Delta when the story or task reaches a `done`-category
-> status (R-DELTA-12 to R-DELTA-16).
-> Not implemented yet: the verification cache `verify.json`, the `verified` stamp (including the
-> one written on done, R-REQ-11a, `GIT-US-0116`) and the coverage state of §21.6. This
+> status (R-DELTA-12 to R-DELTA-16). `GIT-US-0116`
+> computes the coverage state of §21.6 (R-REQ-12, the vault method `coverage.list`) and writes
+> the `verified` stamp (R-REQ-11a) through the requirement write path, on request
+> (`requirement.stamp`) and as a function the done transition can call; until `GIT-US-0141` adds
+> `verify.json`, the evidence is the test-result cache of `GIT-US-0115` (R-REQ-12a).
+> Not implemented yet: calling the stamp from the done transition (`GIT-US-0141`), the
+> verification cache `verify.json` (`GIT-US-0141`) and the `gintrack spec verify --commit`
+> command (`GIT-US-0125`). This
 > section is the normative format; the ADR records the reasoning,
 > the consequences and the alternatives rejected. Using specs raises the project to `schema: 2`
 > ([§21.10](#2110-schema-version-2)).
@@ -2533,6 +2538,44 @@ Two hashes per requirement, both `"sha256:" + lowercase_hex(sha256(x))[0:16]` li
   no newer matching entry → `suspect`; neither → `untested`. **An empty cache falls back to the
   stamp**, so each requirement shows its last durable state. No file carries a `suspect`,
   `coverage` or test-result key; the marker scan is a derived cache too.
+- **R-REQ-12a Coverage as implemented (`GIT-US-0116`).** One compact row per requirement,
+  `{ref, status, reasons[], tests[{test, result}]}`, computed natively and reached through a host
+  seam (`coverage.list`, docs/07 §6.7); a browser-only session answers `unavailable`. The rules,
+  applied in this order:
+  1. **Evidence.** A run — the linked tests' aggregate `pass` or `fail` — counts when it is later
+     than `verified.at` and, if its source records the tested block rev, that rev is the current
+     one; otherwise the stamp is the evidence.
+  2. A counting `fail` run → `failing` (reasons `failed`, `results`).
+  3. A stamp whose `rev` is not the current block rev, with no counting run *of the current
+     text* → `suspect` (`text`, `stamp`).
+  4. Passing evidence (a counting `pass` run, else the stamp) → `passing`, or `suspect` when a
+     traced code or test edge of the requirement is touched (§21.7, the reverse query) by the
+     changes between the evidence's commit — each commit, when the results come from several — and
+     the **working tree** (`code:<trace ref>`, `test:<trace ref>`, at most three then `+<n>`), or
+     when that commit is not in the history (`commit-unknown`). The working tree rather than
+     `HEAD`: the trace graph is scanned from it, so changed lines map to the right symbols, and
+     an uncommitted edit of a traced symbol no longer holds what was verified either; on a clean
+     tree the two are the same. Without history, or with no commit recorded, drift is left
+     `unchecked` and the row is `passing`.
+  5. Otherwise `untested`: `no-tests` (no `Verifies:` marker or `trace.tests` entry), `partial`,
+     or `no-results`.
+  A **`partial`** aggregate (some linked tests passed, none failed, some have no result) is never
+  a pass: it is not evidence, and it adds `partial` to whatever the stamp decides. The last
+  reason names the evidence that decided, `results` or `stamp`. Each linked test's `result` is its
+  latest local result, `missing` when there is none — so a row decided by the stamp on a fresh
+  clone lists its tests as `missing`.
+  **Evidence source.** Until `verify.json` exists (`GIT-US-0141`), the evidence is the per-test
+  result cache of `gintrack spec ingest` (docs/07 §4.19), which does not record the tested block
+  rev: its runs count per rule 1, but they can never clear a `text` suspect — only a new stamp
+  does. Its `at` is the ingest time of the newest matched result.
+  **Stamp.** A stamp is offered only when every linked test passed (`pass`, not `partial`), all
+  at one full hex commit; it copies that commit, the current block rev, the newest result's `at`
+  and the evidence's `by`, or the caller's handle when the evidence has none. It is written with
+  one `UpdateRequirement` per requirement quoting the requirement rev read from disk just before;
+  a requirement changed meanwhile is left `stale`. A requirement is left unstamped — never
+  refused — with a reason: `failed`, `partial`, `no-results`, `no-tests`, `no-commit`,
+  `mixed-commits`, `text`, `unchanged` (same `rev` and `commit` already), `stamp-newer` (the
+  existing stamp records a later run) or `unavailable` (no coverage host).
 
 ### 21.7 In-code markers
 

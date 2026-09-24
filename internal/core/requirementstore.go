@@ -457,6 +457,23 @@ func withBlankLineEnd(s string) string {
 	return s
 }
 
+// GetRequirement reads one requirement from its spec file as it is on disk
+// now rather than as the index last saw it. A write that follows another one
+// in the same transaction — the verification stamp written after a Spec Delta
+// was applied (ADR-037 section 7) — quotes the rev this returns.
+func (s *FileStore) GetRequirement(ctx context.Context, ref RequirementRef) (RequirementView, error) {
+	if err := ctx.Err(); err != nil {
+		return RequirementView{}, wrapContext("get requirement", err)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	it, err := s.readSpec(ref.Spec)
+	if err != nil {
+		return RequirementView{}, err
+	}
+	return FindRequirement(it, ref.Number, s.cfg)
+}
+
 // readSpec locates and parses a spec for a requirement write. It is the part of
 // readChecked a requirement write shares: the lock is checked afterwards,
 // against the requirement rev rather than the file rev.

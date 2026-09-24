@@ -577,6 +577,27 @@ export type TraceHit = TraceEdge & {
   changed?: string;
 };
 
+/**
+ * The computed coverage of one requirement (doc 03 §21.6); derived, never
+ * stored. `reasons` are short codes: `no-tests`, `no-results`, `partial`,
+ * `failed`, `text`, `code:<ref>`, `test:<ref>`, `+<n>`, `commit-unknown`,
+ * `unchecked`, and the evidence that decided, `results` or `stamp`.
+ */
+export type CoverageRow = {
+  ref: string;
+  status: 'untested' | 'passing' | 'failing' | 'suspect';
+  reasons?: string[];
+  /** Linked tests with their latest local result (`missing`: none). */
+  tests?: { test: string; result: 'pass' | 'fail' | 'skip' | 'missing' }[];
+};
+
+/** What a stamp run wrote, and what it left alone and why. */
+export type StampReport = {
+  stamped: { ref: string; verified: { rev: string; commit: string; at: string; by: string } }[];
+  unstamped: { ref: string; reason: string }[];
+  writes: WriteSet;
+};
+
 /** One member of `team.yaml` (docs/04-team-repository.md §3.2). */
 export type TeamMember = {
   handle: string;
@@ -2027,6 +2048,13 @@ export type CoreApi = {
   'trace.requirement': { params: { ref: string }; result: { trace: TracedRequirement } };
   /** The trace edges a set of changed paths and line spans touches; `unavailable` in the browser. */
   'trace.touching': { params: { vaultId?: string; changes: TraceChange[] }; result: { hits: TraceHit[] } };
+  /** Coverage rows of requirements (doc 03 §21.6); `unavailable` in the browser. */
+  'coverage.list': {
+    params: { project?: string; spec?: string; refs?: string[]; status?: CoverageRow['status'][] };
+    result: { coverage: CoverageRow[]; total: number };
+  };
+  /** Writes `verified` stamps from passing evidence (`spec verify --commit`); `unavailable` in the browser. */
+  'requirement.stamp': { params: { refs?: string[]; spec?: string; by: string }; result: StampReport };
   'inbox.list': { params: InboxFilter | undefined; result: InboxPage };
   /**
    * One triage decision. Accepting clears triage and moves the item into the

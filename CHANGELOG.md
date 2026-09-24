@@ -199,6 +199,18 @@ because a commit list cannot express them.
   `schemaUpgraded` too. A numbered `### ADDED <REQREF>` heading is now also valid on a reopened
   item that declares `implements` for it. `FileStore.DoneHook` is the seam the verification
   stamp (`GIT-US-0116`) will use; no stamp is written yet.
+- **Requirement coverage and the verification stamp** (GIT-US-0116). The companion computes
+  each requirement's coverage — `untested`, `failing`, `suspect` or `passing` — from the
+  test-result cache of `gintrack spec ingest` and the `verified` stamp: `suspect` when the
+  requirement's text changed since the stamp, or when a traced file or symbol changed between
+  the evidence's commit and the working tree. The new CoreApi method `coverage.list` returns
+  one compact row per requirement (`{ref, status, reasons, tests}`), and `requirement.stamp`
+  writes `requirements.R<n>.verified: {rev, commit, at, by}` — through the requirement write
+  path, under the requirement rev — only for requirements whose linked tests all passed at one
+  commit; the others are listed with a reason, never refused. Browser-only mode answers
+  `unavailable`. The coverage state is never stored. See
+  [docs/03-data-model.md](docs/03-data-model.md) §21.6 and
+  [docs/07-cli-and-api.md](docs/07-cli-and-api.md) §6.7.
 
 ### Changed
 
