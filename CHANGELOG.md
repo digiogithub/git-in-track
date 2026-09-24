@@ -259,6 +259,21 @@ because a commit list cannot express them.
   of `coverage.list` — status, reasons, linked tests — with counts per state, and answers
   `unavailable` when the host installed no coverage backend. `gintrack mcp --list-tools` now
   prints thirteen read-only tools and thirty-two with `--allow-write`.
+- **`gintrack spec lint|impact|coverage|verify|trace`** (`GIT-US-0125`, docs/07 §4.20). The
+  scriptable face of the MCP spec tools, each with `--json`, running over the same workspace
+  and the same trace, coverage and impact backends `gintrack mcp` installs. `spec lint [spec...]`
+  validates specs as every write does, `LINT-REQ-*` rules at their `specs.lint` severity, and
+  exits 3 only for an `error` finding. `spec impact --since <ref> [--head] [--story]
+  [--project] [--budget] [--tiers] [--format text|json] [--fail-on <states>]` prints the terse
+  token-budgeted impact report; `--fail-on failing,suspect` exits with the new dedicated code
+  **7** when any hit of the whole result (not only the page shown) is in a listed state,
+  listing the offenders on stderr — `suspect` also matches a passing requirement whose traced
+  code the diff changes, and tier-3 candidates never trip it. `spec coverage [--spec]
+  [--project] [--status]` prints one coverage row per requirement. `spec verify <ref|spec>...`
+  reports what would be stamped and why not, writing nothing; with `--commit` (meant for CI on
+  main) it writes the `verified` stamps through `requirement.stamp`. `spec trace <ref>` prints
+  the code, tests and work traced to one requirement. Without Pando the impact tiers 2 and 3
+  report unavailable, as over stdio MCP.
 
 ### Changed
 

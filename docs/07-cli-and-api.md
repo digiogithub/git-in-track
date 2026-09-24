@@ -441,6 +441,7 @@ All commands accept the global flags above. Exit codes:
 | 4    | not found (item, repo, workspace)                              |
 | 5    | conflict (stale `rev`, git conflict)                           |
 | 6    | git error (auth, network, dirty tree)                          |
+| 7    | gate tripped: `gintrack spec impact --fail-on` found a hit in a listed state (§4.20) |
 
 With `--json`, machine-readable output goes to stdout and human logs to stderr, so
 `gintrack item list --json | jq` is always safe.
@@ -1784,7 +1785,7 @@ agui-serve --cwd <repo> --port <n> --no-tls --token-file <f>` and `gintrack serv
 ### 4.19 `gintrack spec ingest <report>...`
 
 > **Implemented** by `GIT-US-0115`. It is the first command of the `gintrack spec` family;
-> `lint`, `impact`, `coverage`, `verify` and `trace` come with `GIT-US-0125`. Stamping
+> `lint`, `impact`, `coverage`, `verify` and `trace` are §4.20 (`GIT-US-0125`). Stamping
 > `verified:` and the coverage state are `GIT-US-0116`; the per-requirement `verify.json` cache of
 > doc 03 R-REQ-11 is `GIT-US-0141`. Native only: browser-only mode cannot run or ingest tests.
 
@@ -1860,6 +1861,127 @@ new result replaces the cached one with the same `path#symbol` (so a JUnit run r
 `go test` run of the same test), or with the same format and `id` when unmapped. The file is
 versioned; a missing, corrupt or other-version file reads as empty and is rebuilt by the next
 ingest — never an error. Deleting it loses only evidence; ingesting the reports again rebuilds it.
+
+### 4.20 `gintrack spec lint|impact|coverage|verify|trace`
+
+> **Implemented** by `GIT-US-0125`. Native only. These are the scriptable face of the MCP spec
+> tools (docs/08 §4.20–§4.22): every command mounts the workspace exactly as `gintrack mcp` does,
+> installs the same requirement trace, coverage and impact backends
+> (`server.InstallTraceSeams`), and calls the vault methods of §6.7 — `item.validate`,
+> `impact.query`, `coverage.list`, `requirement.stamp`, `trace.requirement`. No spec logic lives
+> in `cmd/`. Pando is not wired on the command line, as over stdio MCP: impact tiers 2 and 3
+> report `unavailable` and tier 1 still answers. The CI gate (`GIT-US-0133`) and the pre-push
+> hook (`GIT-US-0134`) build on `spec impact --fail-on`.
+
+Every command takes `--json`: the payload goes to stdout, human notes to stderr.
+
+```bash
+gintrack spec lint                                  # every spec of the workspace
+gintrack spec impact --since origin/main --fail-on failing,suspect
+gintrack spec coverage --status failing,suspect
+gintrack spec verify ACME-SP-0003.R2 ACME-SP-0004    # dry: what would be stamped, and why not
+gintrack spec verify --commit --by ci ACME-SP-0004   # CI on main: write the stamps
+gintrack spec trace ACME-SP-0003.R2
+```
+
+#### `spec lint [spec...]`
+
+Validates specs the way every write does (doc 03 §21.2–§21.4 and §21.9): the requirement
+blocks, the `requirements:` map, and the `LINT-REQ-*` grammar rules at the severity
+`specs.lint` in `project.yaml` gives each one. Without arguments every spec of every project
+repository is checked. One line per finding, `<severity> <spec>  <code> <path> [field] <message>`,
+then a summary. `--json` prints `{specs: [{id, path, diagnostics[]}], errors, warnings}`.
+
+**Exit codes**: `0` when no finding has the `error` severity — warnings never fail the run, so a
+project raises a rule to `error` in `specs.lint` to make CI fail on it; `3` when at least one
+does; `2` for an argument that is not a spec id; `4` for a spec that does not exist.
+
+#### `spec impact --since <ref>`
+
+Resolves the requirements a diff affects (doc 03 §21.11) and prints the compact, ranked,
+token-budgeted report of `GIT-US-0120` — the same renderer `spec_impact` and the HTTP API use.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--since <ref>` | required | revision the diff starts from: a branch, a SHA or `HEAD` |
+| `--head <ref>` | working tree | revision the diff ends at; `worktree` is the working tree |
+| `--story <id>` | | story or task the diff is for: its Spec Delta and `implements`/`modifies` links are direct hits; it also picks the repository |
+| `--project <KEY>` | | repository that holds the diff; required when the workspace holds more than one project and no `--story` is given |
+| `--title <text>` | | extra text for the semantic tier |
+| `--tiers 1,2,3` | all | tiers to run |
+| `--budget <n>` | 1500 | token budget of the page, 1 to 20000 |
+| `--cursor <token>` | | `nextCursor` of the previous page, with the query unchanged |
+| `--format text\|json` | `text` | report form; `json` (or `--json`) prints `{report, failOn?, offending?}` with the report's tiers and ranked hits |
+| `--fail-on <states>` | | comma-separated coverage states — `untested`, `passing`, `failing`, `suspect` — that fail the run |
+
+The text form is one header line, one tiers line and one line per requirement:
+
+```
+$ gintrack spec impact --since origin/main --fail-on failing,suspect
+impact origin/main..worktree: 1 files, 2 symbols, 2 hits
+tiers: 1 ok 2; 2 unavailable (no Pando code graph is configured); 3 unavailable (no Pando semantic search is configured)
+ACME-SP-0001.R1 t1 failing "Allocate by scan" symbol:src/alloc.go#NextID
+ACME-SP-0002.R1 t1 untested "Bump" symbol:src/alloc.go#Counter.Bump
+ACME-SP-0001.R1  failing  Allocate by scan
+gintrack: 1 requirement is in a --fail-on state (failing,suspect)
+$ echo $?
+7
+```
+
+**`--fail-on`** is evaluated over **every** hit of the result, not only the page the budget let
+through, so a small `--budget` never hides an offender. `suspect` matches the `suspect`
+coverage state and also the `suspect` flag the impact query raises on a passing requirement
+whose traced code the diff changes directly or transitively. Tier-3 semantic candidates never
+trip the gate: they are neighbors, not traces. The report is always printed first, on stdout;
+the offenders follow on stderr, one per line (`<ref>  <state>  <title>`), then the error line.
+
+**Exit codes**: `0` when the report was produced and nothing tripped `--fail-on`; **`7`** when a
+hit is in a listed state; `2` for a bad flag (unknown state, tier, format, a budget out of
+range, a missing `--since`, `--project` needed); `3` for a revision git does not know or a bad
+cursor; `4` for an unknown `--story`; `1` when the query cannot run at all — a repository without
+readable git history answers `unavailable`. A CI step can therefore tell "the gate failed" (`7`)
+from "the gate could not run" (anything else non-zero).
+
+#### `spec coverage`
+
+One row per requirement: its coverage state (doc 03 §21.6) — `untested`, `passing`, `failing`
+or `suspect` — the passed/linked test count from the results `spec ingest` recorded, and the
+reason codes. `--spec <id>` and `--project <KEY>` narrow it to one spec or one project;
+`--status <states>` keeps the rows in those states. `--json` prints `{coverage[], total}` with
+the rows of `coverage.list`. Nothing is written. Exit `0`, `2` for an unknown state or a
+`--spec` that is not a spec id, `4` for an unknown spec.
+
+#### `spec verify <ref>...`
+
+The explicit stamp request of ADR-037 §7. Each argument is a requirement ref
+(`ACME-SP-0003.R2`, optionally `KEY/`-qualified) or a spec id for every requirement of that
+spec. A requirement is stamped only when every linked test passed, at one commit, on the text
+it holds now, in the results `spec ingest` recorded; the command runs no tests.
+
+- **Without `--commit`** nothing is written. The vault runs over an in-memory overlay, so the
+  dry run takes exactly the decisions a real run takes and prints `would stamp <ref>  commit
+  <sha> by <handle>` or `unstamped <ref>  <reason>` — `failed`, `partial`, `no-results`,
+  `no-tests`, `text` (the tested text is not the current one), `mixed-commits`, `no-commit`,
+  `unchanged` (the stamp already says this) or `stamp-newer`.
+- **With `--commit`** the stamps are written into the specs through `requirement.stamp`, under
+  each requirement's rev. This is meant for CI on the main branch, after the tests ran and
+  their reports were ingested; it is the second stamp moment of ADR-037 §7, next to a story
+  moving to done and the MCP `verify_requirement`.
+
+The stamp records the handle the results carry, else `--by`, else `git.authorName` from the
+configuration; `--commit` with none of them is a usage error. `--json` prints `{commit,
+stamped[], unstamped[], written[]}`, `written` listing the files written (or that would be).
+A requirement left unstamped is not an error: exit `0`; `2` for an argument that is neither a
+ref nor a spec id, `4` for an unknown spec or requirement.
+
+#### `spec trace <ref>`
+
+The trace of one requirement (doc 03 §21.7): the code that realizes it and the tests that
+verify it as `path#symbol`, each with its origin — `marker` (an `Implements:`/`Verifies:`
+comment) or `trace` (a `trace:` entry of the spec), or both — and the marker lines; the stories
+and tasks that implement or modify it; and the `trace:` entries that no longer resolve.
+`--json` prints the `trace.requirement` answer. Exit `0`, `2` for a malformed ref, `4` for an
+unknown requirement.
 
 ---
 
@@ -4387,6 +4509,7 @@ cmd/gintrack/
   serve.go add.go ls.go rm.go index.go doctor.go config.go version.go completion.go
   item.go item_list.go item_get.go item_new.go item_edit.go item_move.go
   item_comment.go item_link.go
+  spec.go spec_lint.go spec_impact.go spec_trace.go spec_verify.go spec_space.go
   output/          // table + json renderers shared by all commands
 ```
 
