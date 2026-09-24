@@ -2402,9 +2402,9 @@ still round-trips, and an editor still points at the key nobody here knows.
 > from, and stamps the requirements of a story or task when it moves to done (R-REQ-11a (a)).
 > `GIT-US-0119` resolves the requirement impact of a diff in three tiers (§21.11, the vault
 > method `impact.query`): direct trace, transitive calls through Pando and semantic candidates.
-> `GIT-US-0125` adds the `gintrack spec verify --commit` command. The browser half of the
-> verification cache (an IndexedDB record, R-REQ-11) is a core store the web app does not persist
-> yet; browser-only mode has no coverage host, so its cache would stay empty anyway. This
+> `GIT-US-0125` adds the `gintrack spec verify --commit` command. `GIT-US-0150` adds the
+> IndexedDB store for the browser half of the verification cache (R-REQ-11b); browser-only mode
+> has no ingest and no coverage host yet, so nothing records into it or reads from it. This
 > section is the normative format; the ADR records the reasoning,
 > the consequences and the alternatives rejected. Using specs raises the project to `schema: 2`
 > ([§21.10](#2110-schema-version-2)).
@@ -2646,6 +2646,13 @@ Two hashes per requirement, both `"sha256:" + lowercase_hex(sha256(x))[0:16]` li
   Behind the core interface `core.VerifyCache` the native store is the file
   (`core.FileVerifyCache`, over the vault's FS abstraction) and the browser store holds the same
   document in memory (`core.MemVerifyCache`) for the host to keep as one IndexedDB record.
+  That record (`GIT-US-0150`, docs/05 §6) lives in the `verify-caches` store of the
+  `gintrack-cache` database that also holds the index snapshots, one per project of a mounted
+  repository, keyed `<vaultId>\u0000<projectKey>`, holding `Export()`'s document as opaque text
+  (`{key, vaultId, project, document, savedAt}`). The web app never parses it; an empty export
+  deletes the record, and a blocked, missing or failing IndexedDB reads as an empty cache.
+  Browser-only mode has no ingest and no coverage host yet, so the store is groundwork: it is
+  what lets evidence recorded in a tab survive a reload once one exists.
 - **R-REQ-11c Stamp on done as implemented (`GIT-US-0141`).** The vault installs
   `FileStore.DoneHook` on every project store. When a story or task enters a `done`-category
   status, after its Spec Delta was applied in memory, the hook reads each requirement it

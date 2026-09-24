@@ -18,9 +18,9 @@
 import type { IndexStats, SnapshotBlob, VaultFile } from '@/core-bridge/api';
 import type { CoreClient } from '@/core-bridge/client';
 
-export const CACHE_DB_NAME = 'gintrack-cache';
-export const CACHE_DB_VERSION = 1;
-export const CACHE_STORE_NAME = 'index-snapshots';
+import { CACHE_STORE_NAME, isCacheAvailable, request, withStore } from './cache-db';
+
+export { CACHE_DB_NAME, CACHE_DB_VERSION, CACHE_STORE_NAME, isCacheAvailable } from './cache-db';
 
 /** One cached index snapshot. */
 export type CachedSnapshot = {
@@ -37,72 +37,6 @@ export type CachedSnapshot = {
 /** The part of the core client this module needs, so tests can pass a stub. */
 export type SnapshotClient = Pick<CoreClient, 'loadVault' | 'loadSnapshot' | 'exportSnapshot'>;
 
-/** Reports whether this browser exposes IndexedDB at all. */
-export function isCacheAvailable(): boolean {
-  return typeof indexedDB !== 'undefined' && indexedDB !== null;
-}
-
-/** Wraps one IDBRequest in a promise. */
-function request<T>(req: IDBRequest<T>): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    req.onsuccess = () => {
-      resolve(req.result);
-    };
-    req.onerror = () => {
-      reject(req.error ?? new Error('IndexedDB request failed'));
-    };
-  });
-}
-
-/** Opens (and, on a version bump, upgrades) the cache database. */
-function openDatabase(): Promise<IDBDatabase> {
-  return new Promise<IDBDatabase>((resolve, reject) => {
-    const open = indexedDB.open(CACHE_DB_NAME, CACHE_DB_VERSION);
-    open.onupgradeneeded = () => {
-      const db = open.result;
-      if (!db.objectStoreNames.contains(CACHE_STORE_NAME)) {
-        db.createObjectStore(CACHE_STORE_NAME, { keyPath: 'vaultId' });
-      }
-    };
-    open.onsuccess = () => {
-      resolve(open.result);
-    };
-    open.onerror = () => {
-      reject(open.error ?? new Error('cannot open the index cache'));
-    };
-    open.onblocked = () => {
-      reject(new Error('the index cache is blocked by another tab'));
-    };
-  });
-}
-
-/** Runs one transaction against the snapshot store and closes the connection. */
-async function withStore<T>(
-  mode: IDBTransactionMode,
-  run: (store: IDBObjectStore) => Promise<T>,
-): Promise<T> {
-  const db = await openDatabase();
-  try {
-    const tx = db.transaction(CACHE_STORE_NAME, mode);
-    const done = new Promise<void>((resolve, reject) => {
-      tx.oncomplete = () => {
-        resolve();
-      };
-      tx.onerror = () => {
-        reject(tx.error ?? new Error('index cache transaction failed'));
-      };
-      tx.onabort = () => {
-        reject(tx.error ?? new Error('index cache transaction aborted'));
-      };
-    });
-    const value = await run(tx.objectStore(CACHE_STORE_NAME));
-    await done;
-    return value;
-  } finally {
-    db.close();
-  }
-}
-
 /** Stores the snapshot of a vault, replacing any previous one. */
 export async function saveSnapshot(
   vaultId: string,
@@ -116,7 +50,7 @@ export async function saveSnapshot(
     snapshotJson: blob.json,
     savedAt: now(),
   };
-  await withStore('readwrite', async (store) => {
+  await withStore(CACHE_STORE_NAME, 'readwrite', async (store) => {
     await request(store.put(record));
   });
   return record;
@@ -125,7 +59,7 @@ export async function saveSnapshot(
 /** Returns the cached snapshot of a vault, or null when there is none. */
 export async function loadSnapshot(vaultId: string): Promise<CachedSnapshot | null> {
   if (!isCacheAvailable()) return null;
-  const found = await withStore('readonly', (store) => {
+  const found = await withStore(CACHE_STORE_NAME, 'readonly', (store) => {
     const req = store.get(vaultId) as IDBRequest<CachedSnapshot | undefined>;
     return request(req);
   });
@@ -135,7 +69,7 @@ export async function loadSnapshot(vaultId: string): Promise<CachedSnapshot | nu
 /** Drops the cached snapshot of a vault, or the whole cache when no id is given. */
 export async function clear(vaultId?: string): Promise<void> {
   if (!isCacheAvailable()) return;
-  await withStore('readwrite', async (store) => {
+  await withStore(CACHE_STORE_NAME, 'readwrite', async (store) => {
     await request(vaultId === undefined ? store.clear() : store.delete(vaultId));
   });
 }
