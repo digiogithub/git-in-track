@@ -536,6 +536,47 @@ export type RequirementWrite = {
   schemaUpgraded?: number;
 };
 
+/**
+ * One edge of the requirement trace graph (doc 03 §21.7): a requirement tied to
+ * code (`role: 'code'`) or tests (`role: 'tests'`) by markers, `trace:`
+ * entries or both. `symbol` is absent for the whole file.
+ */
+export type TraceEdge = {
+  ref: string;
+  role: 'code' | 'tests';
+  path: string;
+  symbol?: string;
+  sources: ('marker' | 'trace')[];
+  /** Lines of the markers behind the edge. */
+  lines?: number[];
+};
+
+/** The computed trace of one requirement; derived, never stored. */
+export type TracedRequirement = {
+  ref: string;
+  project?: string;
+  code: TraceEdge[];
+  tests: TraceEdge[];
+  /** Stories and tasks that implement or modify it (`wholeSpec` when they link the spec). */
+  work: { id: string; kind: 'implements' | 'modifies'; wholeSpec?: boolean }[];
+  /** `trace:` entries whose path or symbol no longer exists (`W-TRACE-BROKEN`). */
+  broken?: { ref: string; field: string; entry: string; code: string; severity: string; message: string }[];
+};
+
+/** One changed path for `trace.touching`: the shape of a diff entry. */
+export type TraceChange = {
+  path: string;
+  oldPath?: string;
+  lines?: { start: number; count: number }[];
+  symbols?: string[];
+};
+
+/** A trace edge a change touches, and why. */
+export type TraceHit = TraceEdge & {
+  reason: 'file' | 'symbol' | 'marker' | 'renamed' | 'removed';
+  changed?: string;
+};
+
 /** One member of `team.yaml` (docs/04-team-repository.md §3.2). */
 export type TeamMember = {
   handle: string;
@@ -1979,6 +2020,13 @@ export type CoreApi = {
     params: { ref: string; patch: RequirementPatch; rev: string };
     result: RequirementWrite;
   };
+  /**
+   * The trace of one requirement (doc 03 §21.7). Needs the native marker
+   * scanner: browser-only mode answers `unavailable`.
+   */
+  'trace.requirement': { params: { ref: string }; result: { trace: TracedRequirement } };
+  /** The trace edges a set of changed paths and line spans touches; `unavailable` in the browser. */
+  'trace.touching': { params: { vaultId?: string; changes: TraceChange[] }; result: { hits: TraceHit[] } };
   'inbox.list': { params: InboxFilter | undefined; result: InboxPage };
   /**
    * One triage decision. Accepting clears triage and moves the item into the

@@ -1,0 +1,3 @@
+# Implements: ACME-SP-0009.R1
+def f():
+    pass

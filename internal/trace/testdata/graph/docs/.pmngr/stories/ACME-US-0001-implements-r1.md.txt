@@ -1,0 +1,10 @@
+---
+id: ACME-US-0001
+type: story
+title: Story ACME-US-0001
+status: todo
+created: 2026-01-01T00:00:00Z
+updated: 2026-01-01T00:00:00Z
+links:
+  - { kind: implements, target: ACME-SP-0001.R1 }
+---

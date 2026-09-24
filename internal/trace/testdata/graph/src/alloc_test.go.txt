@@ -1,0 +1,13 @@
+package alloc
+
+import "testing"
+
+func TestNextID(t *testing.T) {
+	t.Run("stale counter", func(t *testing.T) {
+		// Verifies: ACME-SP-0001.R1
+		if NextID() != 1 {
+			t.Fatal("bad")
+		}
+	})
+	t.Run("fresh", func(t *testing.T) {})
+}

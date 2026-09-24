@@ -1,0 +1,17 @@
+---
+id: ACME-SP-0002
+type: spec
+title: Counters
+status: todo
+created: 2026-01-01T00:00:00Z
+updated: 2026-01-01T00:00:00Z
+requirements:
+  R1:
+    status: todo
+---
+
+## Requirements
+
+### ACME-SP-0002.R1 — Bump
+
+The counter SHALL bump.

@@ -4829,6 +4829,24 @@ is off by default so a client that only opens items and pages never receives one
 `search` params and `SearchHit` type do not declare it yet; the requirement screens (epic
 `GIT-EP-0027`) add it together with a way to open such a hit.
 
+**The requirement trace (`GIT-US-0114`).** Two more methods answer from the requirement trace
+graph of doc 03 §21.7. The graph needs the native marker scanner, so the vault reaches it through
+a host seam, `Vault.SetRequirementTracer` (`vault.RequirementTracer`, implemented by
+`internal/trace`'s `Engine`); the companion installs one per repository, and a browser-only
+session installs none, where both methods fail with `unavailable` — never an empty trace.
+
+| Method | Params | Result |
+|---|---|---|
+| `trace.requirement` | `{ref}` | `{trace: {ref, project, code: TraceEdge[], tests: TraceEdge[], work: {id, kind, wholeSpec?}[], broken?: TraceBroken[]}}` |
+| `trace.touching` | `{vaultId?, changes: {path, oldPath?, lines?: {start, count}[], symbols?}[]}` | `{hits: (TraceEdge & {reason, changed?})[]}` |
+
+A `TraceEdge` is `{ref, role: "code" \| "tests", path, symbol?, sources: ("marker" \| "trace")[],
+lines?}`; `broken` lists the `W-TRACE-BROKEN` warnings of the requirement's `trace:` entries.
+`trace.touching` rescans the changed paths first and reports each hit's `reason` (`file`,
+`symbol`, `marker`, `renamed`, `removed`). Without a code watcher the companion's engine also
+rescans the whole working tree on the first call after 30 s. Both answers are sorted and derived:
+nothing is written.
+
 ---
 
 ## 7. Cross-platform concerns

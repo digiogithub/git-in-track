@@ -131,6 +131,16 @@ because a commit list cannot express them.
   finding blocks writes to the spec and fails `gintrack doctor`. An invalid `specs.lint` is
   `E-PROJ-SPECS`. The linter lives in `internal/core` (`LintSpec`, `LintRequirement`), so it
   compiles to WebAssembly for the web editor.
+- **Requirement trace graph** (`GIT-US-0114`, ADR-037 §4, §5, §8, docs/03 §21.7).
+  `internal/trace` merges the marker scan with every requirement's `trace.code` /
+  `trace.tests` entries (unioned, duplicates collapse, each edge naming its sources) and the
+  `implements`/`modifies` stories and tasks into a derived, in-memory graph queryable both ways:
+  requirement → code, tests and work, and changed path / line range / symbol → requirements
+  (impact tier 1, mapped with the scanner's own symbol spans). `trace:` entries whose path or
+  symbol no longer exists are `W-TRACE-BROKEN` warnings. Output is stable-sorted. The companion
+  installs it into each vault through the new `vault.RequirementTracer` seam, served as the
+  CoreApi methods `trace.requirement` and `trace.touching`; browser-only mode answers
+  `unavailable`. Nothing is written to any file.
 
 ### Changed
 

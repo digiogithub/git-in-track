@@ -1,0 +1,16 @@
+package alloc
+
+// Implements: ACME-SP-0001.R1
+func NextID() int {
+	return 1
+}
+
+func helper() int {
+	// Implements: ACME-SP-0001.R2
+	return 2
+}
+
+type Counter struct{}
+
+// Implements: ACME-SP-0002.R1
+func (c *Counter) Bump() {}
