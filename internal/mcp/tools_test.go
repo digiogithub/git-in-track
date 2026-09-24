@@ -198,6 +198,79 @@ func TestListItems(t *testing.T) {
 	})
 }
 
+// TestListItemsCursorIsBoundToTheFilter pins GIT-US-0155: a list_items cursor
+// belongs to every filter and to the sort that produced it, so a walk whose
+// query changed mid-way is refused instead of silently paging another result
+// set. The page size and the projection are not part of the query.
+func TestListItemsCursorIsBoundToTheFilter(t *testing.T) {
+	h := newHarness(t, false)
+	base := map[string]any{"project": "DEMO", "limit": 1}
+	first := call[ItemPage](t, h, "list_items", base)
+	if first.NextCursor == "" {
+		t.Fatal("the fixture does not produce a second page")
+	}
+	with := func(extra map[string]any) map[string]any {
+		args := map[string]any{"cursor": first.NextCursor}
+		for k, v := range base {
+			args[k] = v
+		}
+		for k, v := range extra {
+			args[k] = v
+		}
+		return args
+	}
+
+	refused := []struct {
+		name  string
+		extra map[string]any
+	}{
+		{name: "project", extra: map[string]any{"project": "OTHER"}},
+		{name: "type", extra: map[string]any{"type": []string{"story"}}},
+		{name: "status", extra: map[string]any{"status": []string{"todo"}}},
+		{name: "category", extra: map[string]any{"category": []string{"done"}}},
+		{name: "priority", extra: map[string]any{"priority": []string{"high"}}},
+		{name: "assignee", extra: map[string]any{"assignee": "alice"}},
+		{name: "label", extra: map[string]any{"label": []string{"agent-ok"}}},
+		{name: "parent", extra: map[string]any{"parent": "DEMO-EP-0001"}},
+		{name: "milestone", extra: map[string]any{"milestone": "DEMO-M-0001"}},
+		{name: "text", extra: map[string]any{"text": "checkout"}},
+		{name: "updatedSince", extra: map[string]any{"updatedSince": "7d"}},
+		{name: "sort", extra: map[string]any{"sort": "created"}},
+		{name: "order", extra: map[string]any{"order": "asc"}},
+	}
+	for _, tt := range refused {
+		t.Run("refuses a changed "+tt.name, func(t *testing.T) {
+			got := callFails(t, h, "list_items", with(tt.extra))
+			if got.Code != codeInvalidCursor {
+				t.Errorf("code = %q, want %q", got.Code, codeInvalidCursor)
+			}
+		})
+	}
+
+	t.Run("accepts a changed page size and projection", func(t *testing.T) {
+		next := call[ItemPage](t, h, "list_items", with(map[string]any{
+			"limit": 2, "fields": []string{"title"},
+		}))
+		if len(next.Items) == 0 {
+			t.Fatal("the second page is empty")
+		}
+		if next.Items[0].ID == first.Items[0].ID {
+			t.Errorf("the walk restarted: %s is on both pages", next.Items[0].ID)
+		}
+	})
+
+	t.Run("refuses a cursor from another tool", func(t *testing.T) {
+		search := call[HitPage](t, h, "search_items", map[string]any{"query": "DEMO", "limit": 1})
+		if search.NextCursor == "" {
+			t.Skip("the fixture does not produce a second search page")
+		}
+		got := callFails(t, h, "list_items", with(map[string]any{"cursor": search.NextCursor}))
+		if got.Code != codeInvalidCursor {
+			t.Errorf("code = %q, want %q", got.Code, codeInvalidCursor)
+		}
+	})
+}
+
 func TestGetItem(t *testing.T) {
 	h := newHarness(t, false)
 

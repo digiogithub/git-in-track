@@ -171,9 +171,16 @@ func createInboxItem(ctx context.Context, s *Server, in CreateInboxItemInput) (W
 	return out, nil
 }
 
-// listInbox answers the triage queue. The core owns the cursor and the clock:
-// this handler never decides what "still snoozed" means.
+// listInbox answers the triage queue. The core owns the position of the walk
+// and the clock: this handler never decides what "still snoozed" means. It does
+// bind the core cursor to every filter and to the sort, as listItems does.
 func listInbox(ctx context.Context, s *Server, in ListInboxInput) (InboxPage, error) {
+	filter := fingerprint("list_inbox", in.Project, in.Status, in.Type, in.Label,
+		in.Assignee, in.Text, sortField(in.Sort), sortOrder(in.Order))
+	inner, err := unwrapCursor(in.Cursor, filter)
+	if err != nil {
+		return InboxPage{}, err
+	}
 	params := map[string]any{
 		"project":  in.Project,
 		"status":   in.Status,
@@ -184,7 +191,7 @@ func listInbox(ctx context.Context, s *Server, in ListInboxInput) (InboxPage, er
 		"sort":     sortField(in.Sort),
 		"order":    sortOrder(in.Order),
 		"limit":    boundedLimit(in.Limit),
-		"cursor":   in.Cursor,
+		"cursor":   inner,
 	}
 	page, err := dispatch[struct {
 		Items      []core.Item    `json:"items"`
@@ -198,7 +205,7 @@ func listInbox(ctx context.Context, s *Server, in ListInboxInput) (InboxPage, er
 	}
 	out := InboxPage{
 		Items: make([]Item, 0, len(page.Items)), Total: page.Total,
-		NextCursor: page.NextCursor, Pending: page.Pending, Counts: page.Counts,
+		NextCursor: wrapCursor(page.NextCursor, filter), Pending: page.Pending, Counts: page.Counts,
 	}
 	for _, it := range page.Items {
 		brief := itemOf(it)
