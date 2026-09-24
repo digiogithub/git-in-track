@@ -23,6 +23,13 @@ because a commit list cannot express them.
   a retry or an enqueue could be announced `started`, or even `done`, before `queued`, when
   a worker picked it up at once, leaving a client showing the job as queued. The sync
   engine now announces state changes in the order they happened.
+- **Linking a YouTrack project no longer rewrites `project.yaml`** (`GIT-US-0154`). Saving the
+  `integrations.youtrack` block re-encoded the whole file through yaml.v3, with the same damage
+  `GIT-US-0153` fixed for id counters: alignment, blank lines and quoting went, and a flow-style
+  label with unquoted commas grew visible extra keys. The save now renders only the block's own
+  lines and splices them into the file, guarded by a decode- and comment-equivalence check, and
+  re-encodes the node tree only for a shape it cannot splice.
+
 - **A refused item patch is never reported as already applied** (`GIT-US-0152`). A stale
   `item.update` — MCP `update_item`, `PATCH /api/v1/items/{id}`, the browser vault — whose
   patch the store would refuse anyway (a blank title, an unknown field to unset) came back

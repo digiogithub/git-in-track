@@ -11,6 +11,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/digiogithub/git-in-track/internal/core"
 )
 
 // The `integrations.youtrack` block of project.yaml, documented in
@@ -23,8 +25,9 @@ import (
 //
 // It is read and written here rather than in internal/core on purpose. The core
 // struct models no unknown keys, and project.yaml carries hand-written comments
-// and sections this build does not know about, so the block is edited in place,
-// node by node, exactly the way the id allocator rewrites its counters.
+// and sections this build does not know about, so the block is edited in place:
+// its node is edited key by key, and only its lines are spliced back into the
+// file bytes, the way the id allocator rewrites its counters.
 const (
 	// integrationsKey is the top-level key of project.yaml the block sits under.
 	integrationsKey = "integrations"
@@ -299,9 +302,9 @@ func ParseYouTrackLink(data []byte, path string) (*YouTrackLink, error) {
 	return &link, nil
 }
 
-// SaveYouTrackLink writes the block into project.yaml in place, editing the
-// YAML node tree so that comments, key order and every section this build does
-// not model survive untouched. It reports whether the file changed.
+// SaveYouTrackLink writes the block into project.yaml in place, rewriting only
+// the block's own lines so that comments, key order, quoting and every section
+// this build does not model survive byte for byte. It reports whether the file changed.
 //
 // The bytes go to a temporary file in the same directory and are renamed over
 // the original, so a reader never sees a half-written project.yaml.
@@ -364,6 +367,14 @@ func setYouTrackLink(data []byte, link YouTrackLink) ([]byte, error) {
 	changed = setFieldMap(block, link.FieldMap) || changed
 	if !changed {
 		return nil, nil
+	}
+	// Only the block's own lines are rendered again; every other byte of the
+	// file stays as written (GIT-US-0154). Re-encoding the whole node tree is
+	// the fallback for a shape the splice refuses, because yaml.v3 re-emits
+	// what it parsed: alignment, blank lines and quoting go, and a flow mapping
+	// with unquoted commas grows visible extra keys.
+	if out, ok := core.SpliceYAMLBlock(data, []string{integrationsKey, youtrackKey}, block); ok {
+		return out, nil
 	}
 	return encodeDocument(&doc)
 }

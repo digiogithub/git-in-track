@@ -121,3 +121,69 @@ func TestSetYAMLPathUnchangedValue(t *testing.T) {
 		t.Errorf("setYAMLPath = %q, %v; want nil, nil", got, err)
 	}
 }
+
+func TestSpliceYAMLBlock(t *testing.T) {
+	t.Parallel()
+
+	const rest = "labels:\n" +
+		"  - { name: core,     description: Shared Go core (model, parser, index) }\n"
+	const block = "url: https://yt.example.com\nproject: ACME # short name\n"
+	cases := []struct {
+		name string
+		in   string
+		want string // empty: the splice must refuse
+	}{
+		{
+			name: "replaces an existing block and its indented comments only",
+			in: rest + "integrations:\n  # the tracker\n  youtrack:   # linked\n    url: old\n    # stale\n" +
+				"  other:  { on: yes }\n\n# next\nkey: ACME\n",
+			want: rest + "integrations:\n  # the tracker\n  youtrack: # linked\n    url: https://yt.example.com\n" +
+				"    project: ACME # short name\n  other:  { on: yes }\n\n# next\nkey: ACME\n",
+		},
+		{
+			name: "adds a missing block after the last entry of its parent",
+			in:   "integrations:\n  other:  1\n" + rest,
+			want: "integrations:\n  other:  1\n  youtrack:\n    url: https://yt.example.com\n    project: ACME # short name\n" + rest,
+		},
+		{
+			name: "appends a missing top-level section at the end",
+			in:   "key: ACME\n" + rest,
+			want: "key: ACME\n" + rest + "integrations:\n  youtrack:\n    url: https://yt.example.com\n    project: ACME # short name\n",
+		},
+		{
+			name: "keeps CRLF line endings",
+			in:   "key: ACME\r\nintegrations:\r\n  youtrack:\r\n    url: old\r\n",
+			want: "key: ACME\r\nintegrations:\r\n  youtrack:\r\n    url: https://yt.example.com\r\n    project: ACME # short name\r\n",
+		},
+		{
+			name: "refuses a flow-style parent",
+			in:   "key: ACME\nintegrations: { other: 1 }\n",
+		},
+		{
+			name: "refuses a parent that is not a mapping",
+			in:   "key: ACME\nintegrations: none\n",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var value yaml.Node
+			if err := yaml.Unmarshal([]byte(block), &value); err != nil {
+				t.Fatalf("parse the value: %v", err)
+			}
+			got, ok := SpliceYAMLBlock([]byte(tc.in), []string{"integrations", "youtrack"}, value.Content[0])
+			if tc.want == "" {
+				if ok {
+					t.Fatalf("the splice accepted a shape it must refuse:\n%s", got)
+				}
+				return
+			}
+			if !ok {
+				t.Fatal("the splice refused")
+			}
+			if string(got) != tc.want {
+				t.Errorf("got:\n%s\nwant:\n%s", got, tc.want)
+			}
+		})
+	}
+}
