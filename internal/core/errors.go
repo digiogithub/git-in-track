@@ -139,6 +139,7 @@ const (
 
 	CodeWarnNoDone       Code = "W-PROJ-NO-DONE"
 	CodeWarnLabelDup     Code = "W-PROJ-LABEL-DUP"
+	CodeWarnLabelKeys    Code = "W-PROJ-LABEL-KEYS"
 	CodeWarnCounterStale Code = "W-PROJ-COUNTER-STALE"
 	CodeWarnSlugStale    Code = "W-SLUG-STALE"
 )

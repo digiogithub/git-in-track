@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -37,6 +38,13 @@ func TestLoadProjectConfigDogfood(t *testing.T) {
 	}
 	if !cfg.HasLabel("Core") {
 		t.Error("HasLabel must compare case-insensitively")
+	}
+	// GIT-US-0153: a label description with unquoted commas splits into
+	// extra keys; this repository's own catalog must stay clean.
+	for _, d := range cfg.Validate() {
+		if d.Code == CodeWarnLabelKeys {
+			t.Errorf("dogfood project.yaml: %s", d.Message)
+		}
 	}
 	// The counter is a hint that grows with the live backlog of this repository
 	// (docs/03 section 4.1), so the test pins that it decodes, not its value.
@@ -250,4 +258,37 @@ func hasDiagnostic(diags []Diagnostic, code Code) bool {
 		}
 	}
 	return false
+}
+
+func TestProjectConfigLabelWithUnexpectedKeys(t *testing.T) {
+	t.Parallel()
+
+	const in = `schema: 1
+key: ACME
+workflow:
+  statuses:
+    - { id: done, name: Done, category: done }
+labels:
+  - { name: core, description: Shared Go core (model, parser, index) }
+  - { name: web, description: "React app, embedded" }
+`
+	cfg, err := LoadProjectConfig([]byte(in))
+	if err != nil {
+		t.Fatalf("LoadProjectConfig(): %v", err)
+	}
+	if got := strings.Join(cfg.Labels[0].Unexpected, ","); got != "parser,index)" {
+		t.Errorf("unexpected keys = %q, want parser,index)", got)
+	}
+	if len(cfg.Labels[1].Unexpected) != 0 {
+		t.Errorf("a quoted description must not report keys: %v", cfg.Labels[1].Unexpected)
+	}
+	var found []Diagnostic
+	for _, d := range cfg.Validate() {
+		if d.Code == CodeWarnLabelKeys {
+			found = append(found, d)
+		}
+	}
+	if len(found) != 1 || found[0].Severity != SeverityWarning || !strings.Contains(found[0].Message, `"core"`) {
+		t.Errorf("diagnostics = %v, want one %s warning for core", found, CodeWarnLabelKeys)
+	}
 }

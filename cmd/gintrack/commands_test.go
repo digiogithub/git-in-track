@@ -291,6 +291,30 @@ func TestDoctorOnAHealthyWorkspace(t *testing.T) {
 	}
 }
 
+func TestDoctorWarnsAboutLabelsWithUnexpectedKeys(t *testing.T) {
+	h := newHarness(t)
+	h.register()
+
+	const rel = "docs/.pmngr/project.yaml"
+	original := h.readFile(rel)
+	broken := strings.Replace(original, "labels:\n",
+		"labels:\n  - { name: core, description: Shared Go core (model, parser, index) }\n", 1)
+	if broken == original {
+		t.Fatal("the fixture has no labels block")
+	}
+	if err := os.WriteFile(filepath.Join(h.Repo, filepath.FromSlash(rel)), []byte(broken), 0o644); err != nil {
+		t.Fatalf("write project.yaml: %v", err)
+	}
+
+	stdout := h.mustRun("doctor")
+	if !strings.Contains(stdout, `label "core" has unexpected keys "parser", "index)"`) {
+		t.Errorf("doctor did not warn about the split description:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "0 errors") {
+		t.Errorf("the finding must be a warning, not an error:\n%s", stdout)
+	}
+}
+
 func TestDoctorReportsDuplicateIDs(t *testing.T) {
 	h := newHarness(t)
 	h.register()
