@@ -537,9 +537,14 @@ func numbersByCode(items []scannedItem, key ProjectKey) map[TypeCode][]int {
 }
 
 // setYAMLPath sets a scalar at a nested key path of a YAML document, creating
-// the intermediate mappings when they are absent, and re-encodes the document.
-// Editing the node tree rather than a decoded struct is what keeps the comments,
-// the key order and the hand-written formatting of project.yaml intact.
+// the intermediate mappings when they are absent.
+//
+// It edits the original bytes whenever it can (spliceYAMLPath), so everything
+// but the one value stays byte-for-byte as written. Only a shape the splice does
+// not handle - a flow-style or empty parent, a block scalar at the insertion
+// point, a quoted leaf - falls back to
+// editing the node tree and re-encoding the document, which keeps comments and
+// key order but normalizes spacing (GIT-US-0153).
 //
 // It returns nil when the document already holds that value.
 func setYAMLPath(data []byte, keys []string, value string) ([]byte, error) {
@@ -553,6 +558,12 @@ func setYAMLPath(data []byte, keys []string, value string) ([]byte, error) {
 	root := documentMapping(&doc)
 	if root == nil {
 		return nil, fmt.Errorf("parse %s: not a mapping", ProjectFileName)
+	}
+	if existing, ok := lookupYAMLPath(root, keys); ok && existing.Kind == yaml.ScalarNode && existing.Value == value {
+		return nil, nil
+	}
+	if out, ok := spliceYAMLPath(data, &doc, keys, value); ok {
+		return out, nil
 	}
 	parent := root
 	for _, k := range keys[:len(keys)-1] {
@@ -576,6 +587,23 @@ func setYAMLPath(data []byte, keys []string, value string) ([]byte, error) {
 		yamlMapSet(parent, leaf, yamlScalar(value))
 	}
 	return encodeYAMLNode(&doc)
+}
+
+// lookupYAMLPath returns the node at a key path of a mapping, if every key on
+// the way exists.
+func lookupYAMLPath(m *yaml.Node, keys []string) (*yaml.Node, bool) {
+	n := m
+	for _, k := range keys {
+		if n.Kind != yaml.MappingNode {
+			return nil, false
+		}
+		next, ok := yamlMapGet(n, k)
+		if !ok {
+			return nil, false
+		}
+		n = next
+	}
+	return n, true
 }
 
 // documentMapping returns the mapping node of a parsed YAML document, creating

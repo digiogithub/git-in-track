@@ -3,6 +3,7 @@ package core
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -118,6 +119,41 @@ type Label struct {
 	Name        string `yaml:"name"`
 	Color       string `yaml:"color,omitempty"`
 	Description string `yaml:"description,omitempty"`
+	// Unexpected lists the keys of the entry that are none of the above, in
+	// file order. It is never written back; Validate reports it as
+	// W-PROJ-LABEL-KEYS, the sign of a flow-style entry whose unquoted commas
+	// split a description into extra keys (GIT-US-0153).
+	Unexpected []string `yaml:"-" json:"-"`
+}
+
+// quoteAll renders keys as a comma-separated list of quoted strings, so a key
+// that itself holds a comma stays readable.
+func quoteAll(keys []string) string {
+	quoted := make([]string, len(keys))
+	for i, k := range keys {
+		quoted[i] = strconv.Quote(k)
+	}
+	return strings.Join(quoted, ", ")
+}
+
+// UnmarshalYAML decodes a label entry and records its unexpected keys.
+func (l *Label) UnmarshalYAML(node *yaml.Node) error {
+	type plain Label
+	var out plain
+	if err := node.Decode(&out); err != nil {
+		return fmt.Errorf("label: %w", err)
+	}
+	if node.Kind == yaml.MappingNode {
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			switch k := node.Content[i].Value; k {
+			case "name", "color", "description":
+			default:
+				out.Unexpected = append(out.Unexpected, k)
+			}
+		}
+	}
+	*l = Label(out)
+	return nil
 }
 
 // Estimation configures story points and hour tracking.
@@ -285,6 +321,11 @@ func (p *ProjectConfig) Validate() []Diagnostic {
 
 	labels := make(map[string]bool, len(p.Labels))
 	for _, l := range p.Labels {
+		if len(l.Unexpected) > 0 {
+			add(CodeWarnLabelKeys, SeverityWarning, "labels",
+				fmt.Sprintf("label %q has unexpected keys %s; quote a description that contains commas or colons",
+					l.Name, quoteAll(l.Unexpected)))
+		}
 		name := strings.ToLower(l.Name)
 		if labels[name] {
 			add(CodeWarnLabelDup, SeverityWarning, "labels", fmt.Sprintf("duplicate label %q", l.Name))

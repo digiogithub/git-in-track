@@ -334,6 +334,9 @@ Allocation of a new ID for type `T`:
 4. `next = max(max_seen, hint) + 1`.
 5. Write the new file. In the *same* commit, optionally bump
    `id_allocation.counters[T] = next` (enabled by `id_allocation.write_counters`, default `true`).
+   The bump edits that one value in place and leaves every other byte of `project.yaml` as
+   written; only a shape it cannot splice (a flow-style `id_allocation`, say) falls back to
+   re-encoding the YAML node tree, which keeps comments and key order but not spacing.
 
 Consequences:
 
@@ -665,6 +668,10 @@ integrations:
 - `E-PROJ-TRANSITION-TARGET` — a transition names an unknown status.
 - `W-PROJ-NO-DONE` — no status has category `done`; metrics will be meaningless.
 - `W-PROJ-LABEL-DUP` — duplicate label name (case-insensitive).
+- `W-PROJ-LABEL-KEYS` — a label entry has keys other than `name`, `color` and `description`.
+  The usual cause is a flow-style entry such as `{ name: core, description: Parser, index }`:
+  unquoted commas end a plain scalar inside `{ }`, so the description is cut short and the rest
+  becomes extra keys. Quote the description.
 - `W-PROJ-COUNTER-STALE` — a counter is lower than the maximum scanned ID (informational; the scan
   wins and the counter is rewritten on the next allocation).
 - `E-PROJ-INTEGRATION` — an `integrations.<system>` block is present but unusable: a `url` that is

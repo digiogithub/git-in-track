@@ -23,6 +23,15 @@ because a commit list cannot express them.
   a retry or an enqueue could be announced `started`, or even `done`, before `queued`, when
   a worker picked it up at once, leaving a client showing the job as queued. The sync
   engine now announces state changes in the order they happened.
+- **Allocating an id no longer rewrites `project.yaml`** (`GIT-US-0153`). The counter bump
+  re-encoded the whole file through yaml.v3, which stripped alignment and blank lines and
+  re-emitted a flow-style label such as `{ name: core, description: Shared Go core (model,
+  parser, index) }` — whose unquoted commas YAML had already split into extra keys — as
+  `description: Shared Go core (model, parser: '', index): ''`. The write now edits the one
+  counter (or redirect) in place, byte for byte, and falls back to the node tree only for a
+  shape it cannot splice. `gintrack doctor` warns about such entries with
+  `W-PROJ-LABEL-KEYS`, and this repository's `core` and `good-first-issue` descriptions are
+  restored and quoted.
 
 ## [2.0.1] — 2026-09-18
 
