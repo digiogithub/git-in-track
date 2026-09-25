@@ -74,6 +74,9 @@ project's knowledge base (KB). The backlog lives in a `.pmngr/` subfolder of it.
         ACME-US-0042/
           sso-sequence.png
           vendor-quote.pdf
+      templates/                     # OPTIONAL spec template overrides (section 21.1, ADR-038)
+        spec.md
+        requirement.md
       index.json                     # OPTIONAL derived cache, git-ignored by default
       verify.json                    # OPTIONAL derived verification cache (section 21.6), git-ignored
 ```
@@ -102,6 +105,12 @@ Rules:
   `.pmngr/index/` ARE committed — that is the one deliberate exception, specified in doc 04.)
 - **R-LOC-6** Any file under `.pmngr/` that is not `project.yaml`, not under `attachments/`, and
   does not end in `.md` is ignored with warning `W-LAYOUT-STRAY`.
+- **R-LOC-7** `templates/` ([ADR-038](./adr/ADR-038-customisable-spec-templates.md)) is not an
+  item folder: it holds at most `spec.md` and `requirement.md`, the spec template overrides of
+  [§21.1](#211-front-matter-and-body). They are never indexed as items, comments or pages and never
+  allocate or reserve an id. Any other file or folder inside `templates/` is ignored with warning
+  `W-LAYOUT-STRAY`. The folder is created lazily (by `gintrack spec templates export` or by hand),
+  never by §2.2, and it is committed: unlike `index.json` it is not git-ignored.
 
 ### 2.1 Where a project is looked for
 
@@ -1914,6 +1923,7 @@ Severity: **E** = error (blocks writes to the affected item; `doctor` exits non-
 | `W-EXT-DUP` | W | The same `(system, id)` pair appears twice, in one file or across two |
 | `W-INBOX-CATEGORY` | W | An `inbox` block on an item whose status is not in the `triage` category |
 | `W-INBOX-DUP-DEAD` | W | `inbox.duplicate_of` points at an unknown item |
+| `W-TEMPLATE-INVALID` | W | A spec template override under `.pmngr/templates/` is unreadable, blank or structurally invalid; the embedded template is used instead ([§21.1](#211-front-matter-and-body), ADR-038) |
 
 Added by [ADR-037](./adr/ADR-037-specs-with-requirement-blocks.md)
 ([§21](#21-specs-and-requirement-blocks)). Emitted since `GIT-US-0105`, by the validator before
@@ -2460,6 +2470,27 @@ because a new spec has no id yet: when a **spec** is created, every level-3 head
 that opens with `<SPEC-ID>.R` has the placeholder replaced by the allocated id; nothing else in
 the body, and nothing in any other item type, is touched. Templates are conventions, never
 validator rules: an author may delete any section.
+
+**Template overrides (ADR-038).** A backlog may override either template with a file of the same
+name under `.pmngr/templates/` (R-LOC-7): `templates/spec.md` for the spec template and
+`templates/requirement.md` for the requirement template. The format is that of the embedded file —
+plain Markdown, no front matter, `<SPEC-ID>` in the spec template's requirement headings.
+
+- **R-TPL-1** Each template is resolved on its own: a **valid** file wins over the embedded copy;
+  a missing file means the embedded copy. Nothing in `project.yaml` switches overrides on or off.
+- **R-TPL-2** An override is **invalid** when it cannot be read, is not valid UTF-8, or is blank;
+  `requirement.md` also when it holds a level-1 to level-3 heading outside a code fence or leaves a
+  fence open; `spec.md` also when parsing it with `<SPEC-ID>` filled in yields an error-severity
+  finding (`E-REQ-FOREIGN`, `E-REQ-DUPLICATE`, `E-ID-GRAMMAR`). An invalid file is reported
+  `W-TEMPLATE-INVALID` on its path and the embedded template is used in its place.
+- **R-TPL-3** A valid override is linted with the project's `specs.lint` (§21.9); each
+  `LINT-REQ-*` finding is reported on the template file at `warning` at most, whatever severity the
+  rule has, and never makes the override invalid. A rule at `off` reports nothing.
+- **R-TPL-4** The core resolves both templates through the file system it is given
+  (`core.LoadSpecTemplates`), so the CLI, the companion and browser-only mode see the same text;
+  the index reports R-TPL-2 and R-TPL-3 findings, so `gintrack doctor` does.
+- **R-TPL-5** A template is not a spec construct: it neither needs nor raises `schema: 2`
+  (§21.10).
 
 Complete example:
 
