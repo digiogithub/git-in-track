@@ -28,12 +28,12 @@ will hold specs; the others keep working with every binary.
 
 | Binary | On a `schema: 2` project |
 |---|---|
-| This release and newer (supported schema 2) | Reads and writes it normally. |
+| 2.1.0 and newer (supported schema 2) | Reads and writes it normally. |
 | A future release built for a higher schema | Reads and writes it (schema 2 is below its supported version). |
 | **Up to and including 2.0.1** (supported schema 1) | Reports `E-PROJ-SCHEMA` and **still writes**. It does not understand the spec link kinds or requirement-ref targets, reports them `E-ENUM` / `E-ID-GRAMMAR`, and may rewrite files that hold them. |
 
 The write gate — every write refused while `project.yaml` declares no schema or one newer than
-the build supports (R-EVO-2) — ships in the release that introduces specs, not in 2.0.1, and
+the build supports (R-EVO-2) — ships in 2.1.0, the release that introduces specs, not in 2.0.1, and
 there is no backport (R-SCHEMA-2-4). So from the first spec on, **a single old binary, web
 build or CI job that writes to the repository can damage spec links**. That is why the order
 below matters.

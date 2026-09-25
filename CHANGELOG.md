@@ -12,50 +12,14 @@ because a commit list cannot express them.
 
 ## [Unreleased]
 
-### Fixed
+Nothing yet.
 
-- **Concurrent requests no longer drive one go-git repository at once**
-  (`GIT-US-0146`). The companion shares one git backend per repository among its HTTP
-  handlers, the sync pipeline and commit-on-save, and go-git is not safe for concurrent
-  use: a status read could walk the object storage while a commit rewrote it. Every call
-  to a go-git backend now runs under one per-repository lock (docs/06 §3.3).
-- **`sync.job.*` events of one job arrive in order** (`GIT-US-0146`). A job re-queued by
-  a retry or an enqueue could be announced `started`, or even `done`, before `queued`, when
-  a worker picked it up at once, leaving a client showing the job as queued. The sync
-  engine now announces state changes in the order they happened.
-- **A `list_items` cursor is bound to its filters, not only to the sort** (`GIT-US-0155`).
-  The MCP `list_items` and `list_inbox` tools passed the core cursor through untouched, and
-  the core binds it to the sort alone, so a walk whose `status`, `type`, `label`,
-  `milestone` or any other filter changed mid-way was accepted and silently paged a
-  different result set. Both tools now wrap the core cursor with a fingerprint of every
-  filter plus the sort, and refuse a mismatch with `invalid_cursor`, as the search and
-  knowledge-base tools already did. `limit` and `fields` may still change mid-walk
-  (docs/08 §3, principle 4).
-- **Linking a YouTrack project no longer rewrites `project.yaml`** (`GIT-US-0154`). Saving the
-  `integrations.youtrack` block re-encoded the whole file through yaml.v3, with the same damage
-  `GIT-US-0153` fixed for id counters: alignment, blank lines and quoting went, and a flow-style
-  label with unquoted commas grew visible extra keys. The save now renders only the block's own
-  lines and splices them into the file, guarded by a decode- and comment-equivalence check, and
-  re-encodes the node tree only for a shape it cannot splice.
+## [2.1.0] — 2026-09-25
 
-- **A refused item patch is never reported as already applied** (`GIT-US-0152`). A stale
-  `item.update` — MCP `update_item`, `PATCH /api/v1/items/{id}`, the browser vault — whose
-  patch the store would refuse anyway (a blank title, an unknown field to unset) came back
-  with an empty `conflicts[]`, which the rev protocol reads as "already applied — stop", so a
-  refused change looked saved. Such a patch now names every field it carries. A stale write
-  to `custom`, `external` or `inbox` alone came back empty the same way; those fields are
-  now compared and named (never quoted). `conflicts[]` is empty only when every proposed
-  field is already on disk (docs/08 §4.5).
+A minor release: spec-driven development (Phase 11, ADR-037). Specs are opt-in — a project
+without spec constructs stays at `schema: 1` and is unaffected — so nothing breaks for an
+existing backlog. Read the *Upgrade note* before the first spec is created in a repository.
 
-- **Allocating an id no longer rewrites `project.yaml`** (`GIT-US-0153`). The counter bump
-  re-encoded the whole file through yaml.v3, which stripped alignment and blank lines and
-  re-emitted a flow-style label such as `{ name: core, description: Shared Go core (model,
-  parser, index) }` — whose unquoted commas YAML had already split into extra keys — as
-  `description: Shared Go core (model, parser: '', index): ''`. The write now edits the one
-  counter (or redirect) in place, byte for byte, and falls back to the node tree only for a
-  shape it cannot splice. `gintrack doctor` warns about such entries with
-  `W-PROJ-LABEL-KEYS`, and this repository's `core` and `good-first-issue` descriptions are
-  restored and quoted.
 ### Added
 
 - **IndexedDB store for the browser verification cache** (`GIT-US-0150`, ADR-037 §7,
@@ -455,6 +419,49 @@ because a commit list cannot express them.
   stays readable. Binaries up to and including 2.0.1 do not have this gate.
 
 ### Fixed
+
+- **Concurrent requests no longer drive one go-git repository at once**
+  (`GIT-US-0146`). The companion shares one git backend per repository among its HTTP
+  handlers, the sync pipeline and commit-on-save, and go-git is not safe for concurrent
+  use: a status read could walk the object storage while a commit rewrote it. Every call
+  to a go-git backend now runs under one per-repository lock (docs/06 §3.3).
+- **`sync.job.*` events of one job arrive in order** (`GIT-US-0146`). A job re-queued by
+  a retry or an enqueue could be announced `started`, or even `done`, before `queued`, when
+  a worker picked it up at once, leaving a client showing the job as queued. The sync
+  engine now announces state changes in the order they happened.
+- **A `list_items` cursor is bound to its filters, not only to the sort** (`GIT-US-0155`).
+  The MCP `list_items` and `list_inbox` tools passed the core cursor through untouched, and
+  the core binds it to the sort alone, so a walk whose `status`, `type`, `label`,
+  `milestone` or any other filter changed mid-way was accepted and silently paged a
+  different result set. Both tools now wrap the core cursor with a fingerprint of every
+  filter plus the sort, and refuse a mismatch with `invalid_cursor`, as the search and
+  knowledge-base tools already did. `limit` and `fields` may still change mid-walk
+  (docs/08 §3, principle 4).
+- **Linking a YouTrack project no longer rewrites `project.yaml`** (`GIT-US-0154`). Saving the
+  `integrations.youtrack` block re-encoded the whole file through yaml.v3, with the same damage
+  `GIT-US-0153` fixed for id counters: alignment, blank lines and quoting went, and a flow-style
+  label with unquoted commas grew visible extra keys. The save now renders only the block's own
+  lines and splices them into the file, guarded by a decode- and comment-equivalence check, and
+  re-encodes the node tree only for a shape it cannot splice.
+
+- **A refused item patch is never reported as already applied** (`GIT-US-0152`). A stale
+  `item.update` — MCP `update_item`, `PATCH /api/v1/items/{id}`, the browser vault — whose
+  patch the store would refuse anyway (a blank title, an unknown field to unset) came back
+  with an empty `conflicts[]`, which the rev protocol reads as "already applied — stop", so a
+  refused change looked saved. Such a patch now names every field it carries. A stale write
+  to `custom`, `external` or `inbox` alone came back empty the same way; those fields are
+  now compared and named (never quoted). `conflicts[]` is empty only when every proposed
+  field is already on disk (docs/08 §4.5).
+
+- **Allocating an id no longer rewrites `project.yaml`** (`GIT-US-0153`). The counter bump
+  re-encoded the whole file through yaml.v3, which stripped alignment and blank lines and
+  re-emitted a flow-style label such as `{ name: core, description: Shared Go core (model,
+  parser, index) }` — whose unquoted commas YAML had already split into extra keys — as
+  `description: Shared Go core (model, parser: '', index): ''`. The write now edits the one
+  counter (or redirect) in place, byte for byte, and falls back to the node tree only for a
+  shape it cannot splice. `gintrack doctor` warns about such entries with
+  `W-PROJ-LABEL-KEYS`, and this repository's `core` and `good-first-issue` descriptions are
+  restored and quoted.
 
 - **Requirement diagnostics point at the line of the file** (`GIT-US-0144`, docs/03 §16).
   `E-REQ-*`, `W-REQ-*`, `LINT-REQ-*`, the Spec Delta findings (`E-DELTA-*`,
@@ -1574,7 +1581,8 @@ each, `Contents: read and write`. GHCR needs no secret. The release workflow ver
 tokens before it builds anything and fails with the fix in the message when either is
 missing. Full procedure: [docs/09](docs/09-ci-cd-and-releases.md) §9 and §10.
 
-[Unreleased]: https://github.com/digiogithub/git-in-track/compare/v2.0.1...HEAD
+[Unreleased]: https://github.com/digiogithub/git-in-track/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/digiogithub/git-in-track/compare/v2.0.1...v2.1.0
 [2.0.1]: https://github.com/digiogithub/git-in-track/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/digiogithub/git-in-track/compare/v1.6.0...v2.0.0
 [1.6.0]: https://github.com/digiogithub/git-in-track/compare/v1.5.0...v1.6.0
