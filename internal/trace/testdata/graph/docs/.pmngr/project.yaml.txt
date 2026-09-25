@@ -1,0 +1,7 @@
+schema: 2
+key: ACME
+name: Acme
+workflow:
+  statuses:
+    - {id: todo, category: todo}
+    - {id: done, category: done}

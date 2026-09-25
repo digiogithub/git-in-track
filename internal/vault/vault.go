@@ -66,7 +66,7 @@ type Vault struct {
 	// onRefresh hears what a read-time refresh changed. Nil when nobody asked.
 	onRefresh func(core.IndexDelta)
 
-	// seams guards the two host-installed hooks below. They are deliberately
+	// seams guards the host-installed hooks below. They are deliberately
 	// not under mu: a call that already holds the vault lock has to be able to
 	// ask whether a host installed them.
 	seams sync.Mutex
@@ -77,6 +77,9 @@ type Vault struct {
 	// enqueue hands a background job to the host's engine. Nil where no host
 	// installed one (see SetYouTrackEnqueuer).
 	enqueue YouTrackEnqueuer
+	// tracer answers the requirement trace graph. Nil where no host installed
+	// one, which is every browser-only session (see SetRequirementTracer).
+	tracer RequirementTracer
 }
 
 // Options configures a Vault.
@@ -423,6 +426,10 @@ func (v *Vault) Dispatch(ctx context.Context, method string, raw []byte) (any, e
 		return v.requirementCreate(ctx, raw)
 	case "requirement.update":
 		return v.requirementUpdate(ctx, raw)
+	case "trace.requirement":
+		return v.traceRequirement(ctx, raw)
+	case "trace.touching":
+		return v.traceTouching(ctx, raw)
 	case "inbox.list":
 		return v.inboxList(ctx, raw)
 	case "inbox.triage":

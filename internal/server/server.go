@@ -291,6 +291,7 @@ func New(opts Options) (*Server, error) {
 		return nil, err
 	}
 	s.installYouTrackSeams()
+	s.installTraceSeams(now)
 	s.agent = newAgentState(opts)
 	// The search accelerator is built here so that the semantic backend is
 	// installed on the workspace before the first request rather than when the

@@ -1,0 +1,8 @@
+import { alloc } from './alloc';
+
+describe('alloc', () => {
+  // Verifies: ACME-SP-0001.R3
+  it('allocates', () => {
+    expect(alloc()).toBe(1);
+  });
+});

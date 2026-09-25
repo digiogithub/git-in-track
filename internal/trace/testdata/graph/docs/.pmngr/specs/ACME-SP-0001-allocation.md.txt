@@ -1,0 +1,34 @@
+---
+id: ACME-SP-0001
+type: spec
+title: Allocation
+status: todo
+created: 2026-01-01T00:00:00Z
+updated: 2026-01-01T00:00:00Z
+requirements:
+  R1:
+    status: todo
+    trace:
+      code: [src/alloc.go#NextID, config/alloc.yaml]
+      tests: [src/alloc_test.go#TestNextID/stale_counter]
+  R2:
+    status: todo
+    trace:
+      code: [src/gone.go, src/alloc.go#Missing, config/alloc.yaml#anything]
+  R3:
+    status: todo
+---
+
+## Requirements
+
+### ACME-SP-0001.R1 — Allocate by scan
+
+The allocator SHALL allocate max + 1.
+
+### ACME-SP-0001.R2 — Help
+
+The allocator SHALL help.
+
+### ACME-SP-0001.R3 — Report
+
+The allocator SHALL report.

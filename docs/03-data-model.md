@@ -2318,7 +2318,10 @@ validation, and produce the `E-STATUS-UNKNOWN`, `W-LABEL-UNDECLARED`, and `E-CF-
 > the requirement rev of §21.5. `GIT-US-0122` exposes them over MCP (`list_requirements`,
 > `create_spec`, `create_requirement`, `update_requirement`, and `get_item` on a requirement
 > ref; docs/08 §4.20). `GIT-US-0113` implements the marker scan of §21.7 as the native package
-> `internal/trace` (no CLI or MCP surface yet). `GIT-US-0108` implements the grammar lint of
+> `internal/trace` (no CLI or MCP surface yet). `GIT-US-0114` builds the requirement trace graph
+> from those markers, the `trace:` entries and the `implements`/`modifies` links (§21.7, derived
+> and never stored; the vault methods `trace.requirement` and `trace.touching`, `unavailable` in
+> browser-only mode). `GIT-US-0108` implements the grammar lint of
 > §21.9 and the `specs.lint` key in the core (the web editor's live lint consumes it in a later
 > story).
 > Not implemented yet: `## Spec Delta` (§21.8), and verification and coverage (§21.6). This
@@ -2574,6 +2577,34 @@ Two hashes per requirement, both `"sha256:" + lowercase_hex(sha256(x))[0:16]` li
   changed `.gitignore` forces a full rebuild), and is never written to any file. A closer (`*/`,
   `-->`) is accepted only on a line of the matching block comment, so `// Implements: … */` is
   `W-MARKER-SYNTAX`.
+- **The trace graph (`GIT-US-0114`).** `internal/trace` merges the marker scan with every
+  requirement's `trace.code[]` / `trace.tests[]` and with the `implements`/`modifies` links into
+  one graph per repository. **Precedence: there is none — markers and `trace:` entries are
+  unioned (R-MARK-3).** An `Implements:` marker and a `trace.code` entry naming the same
+  `<path>[#<symbol>]` collapse into one edge that lists both sources (`marker`, `trace`); a
+  `Verifies:` marker and a `trace.tests` entry likewise. Neither can remove or hide the other,
+  and removing one source leaves the edge standing on the other. A marker whose ref is not in
+  the index is dangling (`W-MARKER-DANGLING`) and is left out of the graph. Work is the live
+  stories and tasks whose `implements`/`modifies` link targets the requirement, or its whole spec
+  (flagged `wholeSpec`); soft-deleted items are left out.
+  - A `trace:` entry whose path does not exist in the working tree, or whose `#symbol` the file
+    does not declare, is **`W-TRACE-BROKEN`** (a warning). Symbols are checked only where the
+    scanner knows the file's declarations (Go that parses, TS/JS, Python); in any other file a
+    `#symbol` is never reported broken.
+  - The graph answers both ways: requirement → code, tests and work; and path or symbol →
+    requirements. The reverse query takes diff entries `{path, oldPath?, lines?[{start, count}],
+    symbols?}`: changed lines are mapped to the enclosing symbols with the scanner's own spans
+    (R-MARK-2), and an edge is hit when it is a whole-file edge (`file`), when a changed symbol
+    equals, encloses or is enclosed by its symbol (`symbol`: `TestX` ↔ `TestX/sub`, `Type` ↔
+    `Type.Method`, `describe` ↔ `describe > it`), when a changed line is one of its marker lines
+    (`marker`), when its path is the old side of a rename (`renamed`), or when the change removed
+    the marker or file behind it (`removed`). A change without lines, or to a file that no longer
+    exists, touches every edge of its path.
+  - Every list is sorted (requirements by spec and number; edges by path, symbol, ref and role),
+    so the same repository state gives byte-identical answers. The graph lives in memory, is
+    rebuilt when the index or the scan changes, and is never written to any file. The companion
+    installs it into each vault through a host seam (`vault.RequirementTracer`, docs/07 §6.7);
+    browser-only mode has no scanner and answers `unavailable`.
 
 ### 21.8 `## Spec Delta`
 
