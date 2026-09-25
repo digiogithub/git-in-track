@@ -169,6 +169,74 @@ type SpecFinding struct {
 	Message string `json:"message"`
 }
 
+// fileLines turns what the spec and Spec Delta parsers report — 1-based lines
+// of the body (SpecFinding, LintFinding, RequirementBlock and DeltaOperation
+// lines) — and the requirements: fields of the front matter into the 1-based
+// lines of the item's file that a Diagnostic carries, so that doctor, the CLI
+// and the API point at the line an editor of the file shows (GIT-US-0144). An
+// item read from a file knows its layout (Item.BodyLine); for one built in
+// memory it is the file SerializeItem would write. The layout is worked out
+// once, on the first line asked for.
+type fileLines struct {
+	item   *Item
+	known  bool
+	offset int            // file line minus body line
+	fields map[string]int // requirementLines
+}
+
+// load works the layout out.
+func (l *fileLines) load() {
+	if l.known {
+		return
+	}
+	l.known = true
+	it := l.item
+	if it.BodyLine > 0 {
+		l.offset, l.fields = it.BodyLine-1, it.reqLines
+		return
+	}
+	data, err := SerializeItem(it)
+	if err != nil {
+		return
+	}
+	var canonical Item
+	canonical.Requirements = it.Requirements
+	canonical.setLayout(data)
+	if canonical.BodyLine == 0 {
+		return
+	}
+	// SerializeItem drops the blank lines the body opens with; the parsers
+	// count them.
+	leading := len(it.Body) - len(strings.TrimLeft(it.Body, "\n"))
+	l.offset, l.fields = canonical.BodyLine-1-leading, canonical.reqLines
+}
+
+// body returns the file line of a body line; 0 (unknown) stays 0.
+func (l *fileLines) body(line int) int {
+	if line <= 0 {
+		return 0
+	}
+	l.load()
+	return line + l.offset
+}
+
+// field returns the file line of a requirements: field path, falling back to
+// the closest enclosing node the file holds, or 0.
+func (l *fileLines) field(path string) int {
+	l.load()
+	for path != "" {
+		if n, ok := l.fields[path]; ok {
+			return n
+		}
+		i := strings.LastIndexAny(path, ".[")
+		if i < 0 {
+			break
+		}
+		path = path[:i]
+	}
+	return 0
+}
+
 // SpecBody is the result of parsing the body of a spec.
 type SpecBody struct {
 	Blocks   []RequirementBlock `json:"blocks"`

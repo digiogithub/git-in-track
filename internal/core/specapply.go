@@ -236,7 +236,7 @@ func (s *FileStore) planDone(ctx context.Context, it *Item) (*deltaPlan, error) 
 	}
 	for _, f := range delta.Findings {
 		if f.Severity == SeverityError {
-			return nil, p.conflict(f.Ref, "line %d of the body: %s (%s)", f.Line, f.Message, f.Code)
+			return nil, p.conflict(f.Ref, "line %d: %s (%s)", (&fileLines{item: it}).body(f.Line), f.Message, f.Code)
 		}
 	}
 	if err := p.checkTargets(delta); err != nil {
@@ -584,8 +584,10 @@ func (s *FileStore) writeDone(it *Item, oldPath string, had bool, p *deltaPlan) 
 		return err
 	}
 	it.Rev = ComputeRev(data)
+	it.setLayout(data)
 	for i, spec := range specs {
 		spec.Rev = ComputeRev(specData[i])
+		spec.setLayout(specData[i])
 	}
 	if upgrade {
 		s.cfg.Schema = SpecSchema

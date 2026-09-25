@@ -50,20 +50,39 @@ var knownKeys = func() map[string]bool {
 // It returns an error wrapping ErrInvalidFrontMatter when the file does not start
 // with a fence or the fence is never closed.
 func SplitFrontMatter(data []byte) (frontMatter []byte, body string, err error) {
+	frontMatter, body, _, err = splitFrontMatter(data)
+	return frontMatter, body, err
+}
+
+// BodyStartLine returns the 1-based line of the file that the first line of
+// its body — Item.Body[0] — sits on: the front matter, both fences and the
+// blank lines before the body are counted. It returns 0 when the file has no
+// closed front matter or no body.
+func BodyStartLine(data []byte) int {
+	_, body, line, err := splitFrontMatter(data)
+	if err != nil || body == "" {
+		return 0
+	}
+	return line
+}
+
+// splitFrontMatter is SplitFrontMatter that also reports the file line the
+// body starts on.
+func splitFrontMatter(data []byte) (frontMatter []byte, body string, bodyLine int, err error) {
 	clean := bytes.TrimPrefix(data, bom)
 	clean = bytes.ReplaceAll(clean, []byte("\r\n"), []byte("\n"))
 
 	rest, ok := bytes.CutPrefix(clean, []byte(delimiter+"\n"))
 	if !ok {
 		if bytes.Equal(bytes.TrimRight(clean, "\n"), []byte(delimiter)) {
-			return nil, "", fmt.Errorf("%w: front matter is not closed", ErrInvalidFrontMatter)
+			return nil, "", 0, fmt.Errorf("%w: front matter is not closed", ErrInvalidFrontMatter)
 		}
-		return nil, "", fmt.Errorf("%w: file does not start with %q", ErrInvalidFrontMatter, delimiter)
+		return nil, "", 0, fmt.Errorf("%w: file does not start with %q", ErrInvalidFrontMatter, delimiter)
 	}
 
 	end := indexClosingFence(rest)
 	if end < 0 {
-		return nil, "", fmt.Errorf("%w: front matter is not closed", ErrInvalidFrontMatter)
+		return nil, "", 0, fmt.Errorf("%w: front matter is not closed", ErrInvalidFrontMatter)
 	}
 	block := rest[:end]
 	after := rest[end:]
@@ -73,7 +92,11 @@ func SplitFrontMatter(data []byte) (frontMatter []byte, body string, err error) 
 	} else {
 		after = nil
 	}
-	return block, strings.Trim(string(after), "\n"), nil
+	// The opening fence, every line of the block (each ends in "\n"), the
+	// closing fence and the blank lines the body is trimmed of come first.
+	leading := len(after) - len(bytes.TrimLeft(after, "\n"))
+	bodyLine = fmFirstLine + bytes.Count(block, []byte("\n")) + 1 + leading + 1
+	return block, strings.Trim(string(after), "\n"), bodyLine, nil
 }
 
 // indexClosingFence returns the offset of the closing fence line, or -1.
@@ -167,6 +190,57 @@ func rejectAnchors(n *yaml.Node) error {
 	return nil
 }
 
+// requirementLines maps every node under the requirements: key of a
+// front-matter mapping to its file line, keyed by the field path diagnostics
+// use: "requirements.R3", "requirements.R3.status",
+// "requirements.R3.links[0].target". It returns nil when there is no such key.
+func requirementLines(root *yaml.Node) map[string]int {
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if root.Content[i].Value == "requirements" {
+			out := map[string]int{"requirements": root.Content[i].Line + fmFirstLine}
+			walkNodeLines("requirements", root.Content[i+1], out)
+			return out
+		}
+	}
+	return nil
+}
+
+// walkNodeLines records the file line of every key and sequence entry below n.
+func walkNodeLines(prefix string, n *yaml.Node, out map[string]int) {
+	switch n.Kind {
+	case yaml.MappingNode:
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			p := prefix + "." + n.Content[i].Value
+			out[p] = n.Content[i].Line + fmFirstLine
+			walkNodeLines(p, n.Content[i+1], out)
+		}
+	case yaml.SequenceNode:
+		for i, c := range n.Content {
+			p := fmt.Sprintf("%s[%d]", prefix, i)
+			out[p] = c.Line + fmFirstLine
+			walkNodeLines(p, c, out)
+		}
+	}
+}
+
+// setLayout records where things sit in the bytes the item was written as or
+// read from: the line its body starts on and the lines of its requirements:
+// entries, which the requirement diagnostics point at (fileLines).
+func (it *Item) setLayout(data []byte) {
+	block, _, bodyLine, err := splitFrontMatter(data)
+	if err != nil {
+		it.BodyLine, it.reqLines = 0, nil
+		return
+	}
+	it.BodyLine, it.reqLines = bodyLine, nil
+	if len(it.Requirements) == 0 {
+		return
+	}
+	if node, err := decodeMappingNode(block); err == nil {
+		it.reqLines = requirementLines(node)
+	}
+}
+
 // keyLines maps every top-level front-matter key to the file line of its value,
 // so that parse errors can point at the offending line.
 func keyLines(node *yaml.Node) map[string]int {
@@ -187,7 +261,7 @@ func keyLines(node *yaml.Node) map[string]int {
 // that needs the project configuration or the rest of the vault — unknown
 // statuses, dangling references, workflow transitions — is left to the validator.
 func ParseItem(path string, data []byte) (*Item, error) {
-	block, body, err := SplitFrontMatter(data)
+	block, body, bodyLine, err := splitFrontMatter(data)
 	if err != nil {
 		return nil, newParseError(path, 1, "", CodeFMMissing, strings.TrimPrefix(err.Error(), ErrInvalidFrontMatter.Error()+": "), nil)
 	}
@@ -204,9 +278,11 @@ func ParseItem(path string, data []byte) (*Item, error) {
 
 	p := &fieldReader{path: path, fm: fm, lines: keyLines(node)}
 	it := &Item{
-		Path: path,
-		Body: body,
-		Rev:  ComputeRev(data),
+		Path:     path,
+		Body:     body,
+		Rev:      ComputeRev(data),
+		BodyLine: bodyLine,
+		reqLines: requirementLines(node),
 	}
 
 	it.Type = ItemType(p.str("type"))

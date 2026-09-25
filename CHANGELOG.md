@@ -411,6 +411,15 @@ because a commit list cannot express them.
 
 ### Fixed
 
+- **Requirement diagnostics point at the line of the file** (`GIT-US-0144`, docs/03 §16).
+  `E-REQ-*`, `W-REQ-*`, `LINT-REQ-*`, the Spec Delta findings (`E-DELTA-*`,
+  `W-DELTA-DANGLING`) and the findings about a `requirements.R<n>` entry counted lines of the
+  body in their message (`line 13 of the body: …`), so `gintrack doctor`, `gintrack spec lint`
+  and `item.validate` pointed at the wrong line of any spec with front matter. They now carry the
+  file line in the diagnostic's `line` (printed as `<path>:<line>`), and the message drops the
+  body line. An entry finding points at its node in the front matter; an item not yet written is
+  numbered as the canonical file it would be written as. The web editor's live lint
+  (`spec.lint`) still numbers the body it holds.
 - **`suspect` clears once a changed requirement is re-verified at head** (`GIT-US-0148`,
   docs/03 R-REQ-12a rule 6, R-IMP-5). The impact query flagged every passing requirement whose
   traced code the diff touched as `suspect`, so with `--fail-on suspect` every pull request that

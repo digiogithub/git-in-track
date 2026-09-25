@@ -16,6 +16,11 @@ export function lintsSpecText(type: ItemType): boolean {
  * rule at `off` never runs, so it never reaches the editor. No grammar rule is
  * evaluated here: the rules live in `internal/core` alone.
  *
+ * The editor holds the body alone, so `spec.lint` answers on lines of that
+ * body and they map onto the document unchanged. The save-time diagnostics
+ * (`item.validate`, doctor) number lines of the file, front matter included,
+ * and are never mapped onto this document (GIT-US-0144).
+ *
  * A lint that fails — a companion that predates the method, a worker still
  * loading — underlines nothing rather than breaking the editor; the save-time
  * validation still reports the same findings.

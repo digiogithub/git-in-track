@@ -65,7 +65,7 @@ func TestSpecDeltaDiagnosticsGolden(t *testing.T) {
 	var b strings.Builder
 	b.WriteString("# SpecDeltaDiagnostics(spec-delta-story.md) at status in_progress, default lint\n")
 	for _, d := range SpecDeltaDiagnostics(it, deltaConfig()) {
-		fmt.Fprintf(&b, "%s %s %s: %s\n", d.Field, d.Severity, d.Code, d.Message)
+		fmt.Fprintf(&b, "%s:%d %s %s %s: %s\n", filepath.Base(d.Path), d.Line, d.Field, d.Severity, d.Code, d.Message)
 	}
 	compareGolden(t, "spec-delta-diagnostics.txt", []byte(b.String()))
 }

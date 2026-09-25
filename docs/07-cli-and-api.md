@@ -5354,7 +5354,9 @@ modes — through `gintrackCore.call` in the browser and through `POST …/specs
 `W-REQ-SEPARATOR`) and a story or task body through its `## Spec Delta`: the parse findings
 (`E-DELTA-*`), the grammar lint of every ADDED and MODIFIED block (`LintSpecDelta`) and
 `W-DELTA-DANGLING` for a target this repository does not hold; any other type yields no findings,
-and a missing `type` is `invalid_request`. `line` is 1-based in the body sent. Each `LINT-REQ-*`
+and a missing `type` is `invalid_request`. `line` is 1-based in the body sent — the text the
+editor holds, without front matter — whereas `item.validate`, `gintrack doctor` and
+`gintrack spec lint` report the same findings on lines of the file (`GIT-US-0144`). Each `LINT-REQ-*`
 finding carries the severity `specs.lint` of the project (`project`, else the key of `id`, else
 the repository's only project) gives its rule; a rule at `off` does not run. `spec.delta.preview`
 returns every operation with the block it proposes (`proposed`, below the heading and without the

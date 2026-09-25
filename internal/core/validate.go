@@ -682,17 +682,23 @@ func (d *diagSet) warnf(field string, code Code, format string, args ...any) {
 }
 
 func (d *diagSet) add(code Code, severity Severity, field, message string) {
+	d.addAt(code, severity, field, 0, message)
+}
+
+// addAt adds a diagnostic on a 1-based line of the file; 0 means none.
+func (d *diagSet) addAt(code Code, severity Severity, field string, line int, message string) {
 	d.out = append(d.out, Diagnostic{
 		Code:     code,
 		Severity: severity,
 		Path:     d.path,
 		Field:    field,
+		Line:     line,
 		Message:  message,
 	})
 }
 
 // orderDiagnostics sorts findings by severity, then code, then field, then
-// message, then path, so that a report is byte-identical between two runs and
+// line, then message, then path, so that a report is byte-identical between two runs and
 // between the native and the WASM build.
 func orderDiagnostics(diags []Diagnostic) {
 	sort.SliceStable(diags, func(i, j int) bool {
@@ -705,6 +711,9 @@ func orderDiagnostics(diags []Diagnostic) {
 		}
 		if a.Field != b.Field {
 			return a.Field < b.Field
+		}
+		if a.Line != b.Line {
+			return a.Line < b.Line
 		}
 		if a.Message != b.Message {
 			return a.Message < b.Message

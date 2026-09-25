@@ -175,6 +175,8 @@ func (d Diagnostic) String() string {
 			fmt.Fprintf(&b, ":%d", d.Line)
 		}
 		b.WriteString(" ")
+	} else if d.Line > 0 {
+		fmt.Fprintf(&b, "line %d ", d.Line)
 	}
 	if d.Field != "" {
 		fmt.Fprintf(&b, "field %q: ", d.Field)
