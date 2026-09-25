@@ -87,15 +87,28 @@ type Committer struct {
 	inflight int
 	// idle is broadcast when inflight falls back to zero.
 	idle sync.Cond
+	// repoLocks serializes the commits of one repository. Every batch has its
+	// own debounce timer firing on its own goroutine, and a Flush commits on
+	// the caller's, so without it two items edited together are committed at
+	// the same time through the same Backend — which the go-git backend cannot
+	// take: a go-git Repository and its object storage are not safe for
+	// concurrent use (GIT-US-0145), and two `git commit` processes contend for
+	// one index.lock. Guarded by mu; a lock is never removed once created.
+	repoLocks map[string]*sync.Mutex
 }
 
 // batch is the accumulated state of one coalescing key.
 type batch struct {
-	repo     string
-	paths    map[string]bool
-	fields   Fields
-	items    map[string]bool
-	timer    *time.Timer
+	repo   string
+	paths  map[string]bool
+	fields Fields
+	items  map[string]bool
+	timer  *time.Timer
+	// armed counts the timers started for this batch. A callback only fires
+	// the batch while its own count is still the current one: a timer whose
+	// Stop lost the race against its expiry must not commit a batch that a
+	// later edit has re-armed, nor a newer batch registered under the same key.
+	armed    uint64
 	deadline time.Time
 }
 
@@ -111,7 +124,7 @@ func NewCommitter(opts CommitterOptions) *Committer {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
-	c := &Committer{opts: opts, pending: map[string]*batch{}}
+	c := &Committer{opts: opts, pending: map[string]*batch{}, repoLocks: map[string]*sync.Mutex{}}
 	c.idle.L = &c.mu
 	return c
 }
@@ -142,10 +155,25 @@ func (c *Committer) waitIdle() {
 }
 
 // commitTracked commits one batch and clears its in-flight mark, which the
-// caller must have set.
+// caller must have set. Commits to the same repository run one at a time.
 func (c *Committer) commitTracked(ctx context.Context, b *batch) Outcome {
 	defer c.finishCommit()
+	lock := c.repoLock(b.repo)
+	lock.Lock()
+	defer lock.Unlock()
 	return c.commit(ctx, b)
+}
+
+// repoLock returns the lock that serializes the commits of one repository.
+func (c *Committer) repoLock(repo string) *sync.Mutex {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	lock, ok := c.repoLocks[repo]
+	if !ok {
+		lock = &sync.Mutex{}
+		c.repoLocks[repo] = lock
+	}
+	return lock
 }
 
 // Enqueue records a write. It returns immediately; the commit happens once the
@@ -202,16 +230,20 @@ func (c *Committer) arm(ctx context.Context, key string, b *batch) {
 		c.wg.Done()
 	}
 	c.wg.Add(1)
+	b.armed++
+	armed := b.armed
 	b.timer = time.AfterFunc(wait, func() {
 		defer c.wg.Done()
-		c.fire(ctx, key)
+		c.fire(ctx, key, b, armed)
 	})
 }
 
-// fire commits the batch registered under key, if it is still there.
-func (c *Committer) fire(ctx context.Context, key string) {
+// fire commits the batch registered under key, if it is still there and this
+// is still its current timer.
+func (c *Committer) fire(ctx context.Context, key string, want *batch, armed uint64) {
 	c.mu.Lock()
 	b, ok := c.pending[key]
+	ok = ok && b == want && b.armed == armed
 	if ok {
 		delete(c.pending, key)
 		c.startCommit()

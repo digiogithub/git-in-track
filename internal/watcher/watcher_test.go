@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -79,6 +80,22 @@ func assertQuiet(t *testing.T, w *Watcher, d time.Duration, pred func(Event) boo
 			}
 		case <-deadline:
 			return
+		}
+	}
+}
+
+// assertNoneBefore proves that no event matching pred is still on its way,
+// without sleeping for a guessed duration: it writes a sentinel file and waits
+// for the sentinel's own event. The watcher delivers in order, so anything the
+// earlier changes still had to report is flushed no later than the batch that
+// carries the sentinel.
+func assertNoneBefore(t *testing.T, w *Watcher, root, sentinel string, pred func(Event) bool) {
+	t.Helper()
+	writeFile(t, filepath.Join(root, sentinel), "sentinel")
+	_, seen := waitForBatch(t, w, "the sentinel "+sentinel, pathIs(sentinel))
+	for _, ev := range seen {
+		if pred(ev) {
+			t.Fatalf("unexpected extra event %+v", ev)
 		}
 	}
 }
@@ -197,31 +214,50 @@ func TestWatcherCoalescesAtomicSave(t *testing.T) {
 	if op := batch[0].Op; op != Create && op != Write {
 		t.Errorf("Op = %q, want create or write", op)
 	}
-	assertQuiet(t, w, 3*testDebounce, pathIs("x.md"))
+	assertNoneBefore(t, w, root, "sentinel.md", pathIs("x.md"))
 }
 
 func TestWatcherCoalescesRapidWrites(t *testing.T) {
 	if testing.Short() {
 		t.Skip("timing sensitive")
 	}
+	const debounce = 200 * time.Millisecond
 	root := t.TempDir()
-	w := newTestWatcher(t, Options{Debounce: 200 * time.Millisecond})
+	w := newTestWatcher(t, Options{Debounce: debounce})
 	if err := w.AddRepo("proj", root); err != nil {
 		t.Fatalf("AddRepo: %v", err)
 	}
 
-	file := filepath.Join(root, "story.md")
-	writeFile(t, file, "one")
-	waitForBatch(t, w, "the create of story.md", pathAndOp("story.md", Create))
+	// Coalescing is only promised for writes that land inside one window. A
+	// machine loaded by parallel race-enabled test binaries can stall the
+	// writer between the two writes for longer than that, and then two
+	// batches are the correct result. Such a round proves nothing either
+	// way, so it is repeated with a fresh file rather than failed.
+	for round := range 5 {
+		name := "story-" + strconv.Itoa(round) + ".md"
+		file := filepath.Join(root, name)
+		writeFile(t, file, "one")
+		waitForBatch(t, w, "the create of "+name, pathAndOp(name, Create))
 
-	writeFile(t, file, "two")
-	writeFile(t, file, "three")
+		started := time.Now()
+		writeFile(t, file, "two")
+		writeFile(t, file, "three")
+		elapsed := time.Since(started)
 
-	batch, _ := waitForBatch(t, w, "the coalesced write", pathAndOp("story.md", Write))
-	if n := countPath(batch, "story.md"); n != 1 {
-		t.Errorf("got %d events for story.md, want 1: %+v", n, batch)
+		batch, _ := waitForBatch(t, w, "the coalesced write", pathAndOp(name, Write))
+		if elapsed > debounce/4 {
+			t.Logf("round %d: the two writes took %s, too long to prove coalescing; retrying", round, elapsed)
+			// Drain whatever the split writes still owe before the next round.
+			assertNoneBefore(t, w, root, "sentinel-"+strconv.Itoa(round)+".md", func(Event) bool { return false })
+			continue
+		}
+		if n := countPath(batch, name); n != 1 {
+			t.Errorf("got %d events for %s, want 1: %+v", n, name, batch)
+		}
+		assertNoneBefore(t, w, root, "sentinel-"+strconv.Itoa(round)+".md", pathIs(name))
+		return
 	}
-	assertQuiet(t, w, 600*time.Millisecond, pathIs("story.md"))
+	t.Fatal("every round was stalled between its two writes; the machine is too loaded to test coalescing")
 }
 
 func TestWatcherWatchesNewDirectories(t *testing.T) {
