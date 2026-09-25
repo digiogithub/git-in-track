@@ -72,4 +72,11 @@ describe('linkKindInverse', () => {
     expect(linkKindInverse('duplicates')).toBe('Duplicated by');
     expect(linkKindInverse('relates_to')).toBe('Relates to');
   });
+
+  it('names the inverse of the spec link kinds', () => {
+    expect(linkKindInverse('duplicated_by')).toBe('Duplicates');
+    expect(linkKindInverse('implements')).toBe('Implemented by');
+    expect(linkKindInverse('modified_by')).toBe('Modifies');
+    expect(linkKindInverse('supersedes')).toBe('Superseded by');
+  });
 });

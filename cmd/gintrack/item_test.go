@@ -432,6 +432,58 @@ func TestItemLinkJSON(t *testing.T) {
 	}
 }
 
+func TestItemLinkToARequirement(t *testing.T) {
+	h := newHarness(t)
+	h.register()
+
+	payload := decode[linkPayload](t, h.mustRun("item", "link", "DEMO-US-0002", "implements", "DEMO-SP-0001.R2", "--json"))
+	if payload.Kind != "implements" || payload.Target != "DEMO-SP-0001.R2" {
+		t.Fatalf("payload = %+v", payload)
+	}
+	if payload.Inverse != nil {
+		t.Errorf("implements must not be mirrored onto the spec: inverse = %+v", payload.Inverse)
+	}
+	story := h.readFile("docs/.pmngr/stories/DEMO-US-0002-save-payment-methods.md")
+	if !strings.Contains(story, "{ kind: implements, target: DEMO-SP-0001.R2 }") {
+		t.Errorf("the relation is missing:\n%s", story)
+	}
+	if project := h.readFile("docs/.pmngr/project.yaml"); !strings.Contains(project, "schema: 2") {
+		t.Errorf("the first spec link did not raise the schema:\n%s", project)
+	}
+
+	if _, _, code := h.run("item", "link", "DEMO-US-0002", "implements", "DEMO-T-0001"); code == 0 {
+		t.Error("implements accepted a task as its target")
+	}
+}
+
+func TestItemLinkRefusesComputedOnlyKinds(t *testing.T) {
+	tests := []struct {
+		kind, want string
+	}{
+		{kind: "implemented_by", want: "implements"},
+		{kind: "modified_by", want: "modifies"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.kind, func(t *testing.T) {
+			h := newHarness(t)
+			h.register()
+			before := h.readFile("docs/.pmngr/stories/DEMO-US-0002-save-payment-methods.md")
+
+			_, stderr, code := h.run("item", "link", "DEMO-US-0002", tt.kind, "DEMO-SP-0001.R2")
+			if code != exitUsage {
+				t.Errorf("exit = %d, want %d", code, exitUsage)
+			}
+			hint := "item link DEMO-SP-0001.R2 " + tt.want + " DEMO-US-0002"
+			if !strings.Contains(stderr, "computed by the index") || !strings.Contains(stderr, hint) {
+				t.Errorf("stderr does not point at %s:\n%s", tt.want, stderr)
+			}
+			if after := h.readFile("docs/.pmngr/stories/DEMO-US-0002-save-payment-methods.md"); after != before {
+				t.Errorf("a refused link changed the file:\n%s", after)
+			}
+		})
+	}
+}
+
 func TestItemLinkRejectsAnUnknownRelation(t *testing.T) {
 	h := newHarness(t)
 	h.register()

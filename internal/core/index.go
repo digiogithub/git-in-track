@@ -425,6 +425,17 @@ func (ix *Index) Warnings() []Warning {
 	return append([]Warning(nil), ix.diagnostics...)
 }
 
+// Related returns the item ids and requirement refs that stand in relation kind
+// to target, an item id or a requirement ref, whichever side declared it (the
+// inverse is computed, R-LINK-1). Related("ACME-SP-0003.R2", LinkImplementedBy)
+// lists the stories and tasks that implement the requirement, sorted. A
+// "<KEY>/" qualifier on target is ignored.
+func (ix *Index) Related(target string, kind LinkKind) []ItemID {
+	ix.mu.RLock()
+	defer ix.mu.RUnlock()
+	return ix.graph.Related(ItemID(bareTarget(target)), kind)
+}
+
 // LinkGraph returns the current link graph.
 func (ix *Index) LinkGraph() *Graph {
 	ix.mu.RLock()
@@ -1154,6 +1165,7 @@ func (ix *Index) rebuild() {
 		for _, l := range it.Links {
 			graph.addLink(it.ID, l)
 		}
+		addRequirementLinks(graph, it)
 	}
 	ix.resolveReferences(graph)
 	graph.finish()
@@ -1245,12 +1257,22 @@ func (ix *Index) resolveReferences(graph *Graph) {
 // checkReferentialIntegrity reports dangling parents, milestones and link
 // targets, and comment folders with no item (W-REF-DANGLING, W-CMT-ORPHAN).
 func (ix *Index) checkReferentialIntegrity() {
+	blocks := map[ItemID]map[int]bool{}
 	dangling := func(it *Item, field string, target string) {
 		if target == "" {
 			return
 		}
-		bare := ItemID(bareTarget(target))
-		if _, ok := ix.byID[bare]; ok {
+		bare := bareTarget(target)
+		what := "item"
+		if ref, err := ParseRequirementRef(bare); err == nil {
+			what = "spec"
+			if spec, ok := ix.byID[ref.Spec]; ok && spec.Type == TypeSpec {
+				if ix.hasRequirementBlock(blocks, spec, ref.Number) {
+					return
+				}
+				what = "requirement"
+			}
+		} else if _, ok := ix.byID[ItemID(bare)]; ok {
 			return
 		}
 		// A qualified reference into a project this vault does not hold is a
@@ -1260,7 +1282,7 @@ func (ix *Index) checkReferentialIntegrity() {
 		}
 		ix.derivedDiags = append(ix.derivedDiags, Diagnostic{
 			Code: idxCodeRefDangling, Severity: SeverityWarning, Path: it.Path, Field: field,
-			Message: fmt.Sprintf("%s points at unknown item %s", field, target),
+			Message: fmt.Sprintf("%s points at unknown %s %s", field, what, target),
 		})
 	}
 	for _, id := range sortedIDs(ix.byID) {
@@ -1274,6 +1296,13 @@ func (ix *Index) checkReferentialIntegrity() {
 		dangling(it, "milestone", string(it.Milestone))
 		for _, l := range it.Links {
 			dangling(it, "links."+string(l.Kind), l.Target)
+		}
+		for _, key := range it.Requirements.Keys() {
+			if e := it.Requirements[key]; e != nil {
+				for _, l := range e.Links {
+					dangling(it, "requirements."+key+".links."+string(l.Kind), l.Target)
+				}
+			}
 		}
 		if it.Inbox != nil && it.Inbox.DuplicateOf != "" {
 			if _, ok := ix.byID[ItemID(bareTarget(string(it.Inbox.DuplicateOf)))]; !ok {

@@ -45,7 +45,7 @@ type Item struct {
 
 // Link is one typed relation of an item.
 type Link struct {
-	Kind   string `json:"kind" jsonschema:"blocks, blocked_by, relates_to or duplicates"`
+	Kind   string `json:"kind" jsonschema:"blocks, blocked_by, relates_to, duplicates, duplicated_by, implements, modifies, supersedes or superseded_by (docs/03 section 12.1). Spec links are one-sided: write implements or modifies on the story or task; implemented_by and modified_by are computed inverses that reads may return but writes refuse (E-LINK-COMPUTED-ONLY)"`
 	Target string `json:"target"`
 }
 

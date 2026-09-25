@@ -15,7 +15,28 @@ import type { Link, LinkKind } from '@/core-bridge/api';
 import type { EditorProjectSchema } from '@/features/editor/project-schema';
 import { customFieldsFor } from '@/features/editor/project-schema';
 
-export const linkKinds: LinkKind[] = ['blocks', 'blocked_by', 'relates_to', 'duplicates'];
+/**
+ * The relation kinds a user may write (docs/03-data-model.md §12.1).
+ * `implemented_by` and `modified_by` are left out: spec links are one-sided and
+ * those two exist only as inverses the index computes (R-LINK-8).
+ */
+export const linkKinds: LinkKind[] = [
+  'blocks',
+  'blocked_by',
+  'relates_to',
+  'duplicates',
+  'duplicated_by',
+  'implements',
+  'modifies',
+  'supersedes',
+  'superseded_by',
+];
+
+/** Kinds that exist only as computed inverses, mapped to the kind to write instead. */
+export const computedOnlyLinkKinds: Partial<Record<LinkKind, LinkKind>> = {
+  implemented_by: 'implements',
+  modified_by: 'modifies',
+};
 
 export const priorities: Priority[] = ['critical', 'high', 'medium', 'low'];
 
@@ -142,6 +163,17 @@ function readLinks(raw: unknown, issues: Diagnostic[]): Link[] {
     }
     const kind = entry.kind;
     const target = entry.target;
+    const writeInstead = typeof kind === 'string' ? computedOnlyLinkKinds[kind as LinkKind] : undefined;
+    if (writeInstead) {
+      issues.push(
+        issue(
+          'E-LINK-COMPUTED-ONLY',
+          `${String(kind)} is computed by the index and cannot be written; record ${writeInstead} on the story or task instead`,
+          'links',
+        ),
+      );
+      continue;
+    }
     if (typeof kind !== 'string' || !linkKinds.includes(kind as LinkKind)) {
       issues.push(
         issue(

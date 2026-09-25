@@ -328,7 +328,7 @@ Handles are declared in the team repository's `team.yaml` (doc 04, §3.2) and MA
 | `type` | `epic`, `story`, `task`, `milestone`, `comment`, `spec` ([§21](#21-specs-and-requirement-blocks)) (the `board`, `sprint` and `retro` types exist only in the team repo, and are specified in [doc 04](./04-team-repository.md) §§5, 8 and 9; all three round-trip through the same byte-stable emitter as an item, so an edit to one field is a one-line diff). A sprint's stored `state` is `planned`, `active` or `closed`; the `draft`/`upcoming`/`current`/`completed` status a reader sees is derived from its dates and is never a stored value ([ADR-034](./adr/ADR-034-sprint-status-is-derived-from-dates.md)) |
 | `priority` | `critical`, `high`, `medium`, `low` |
 | `status` | any `id` declared in `project.yaml:workflow.statuses` |
-| relation kind | `blocks`, `blocked_by`, `relates_to`, `duplicates`, `duplicated_by`; added by ADR-037: `implements`, `implemented_by`, `modifies`, `modified_by`, `supersedes`, `superseded_by` ([§12.1](#121-the-links-field)) |
+| relation kind | `blocks`, `blocked_by`, `relates_to`, `duplicates`, `duplicated_by`; added by ADR-037: `implements`, `modifies`, `supersedes`, `superseded_by` ([§12.1](#121-the-links-field)); `implemented_by` and `modified_by` are computed inverses only and are never written (R-LINK-8) |
 | `estimate` | number (story points), see [§8.3](#83-estimates-and-effort) |
 
 ---
@@ -1327,9 +1327,9 @@ links:
 | `duplicates` | `duplicated_by` | source SHOULD be closed as `cancelled` |
 | `duplicated_by` | `duplicates` | |
 | `implements` | `implemented_by` | story/task → requirement or spec: the work realises it (ADR-037) |
-| `implemented_by` | `implements` | |
+| `implemented_by` | `implements` | *computed only* (R-LINK-8): the index's view from the requirement or spec; never written |
 | `modifies` | `modified_by` | story/task → requirement or spec: the work changes an existing requirement (ADR-037) |
-| `modified_by` | `modifies` | |
+| `modified_by` | `modifies` | *computed only* (R-LINK-8): the index's view from the requirement or spec; never written |
 | `supersedes` | `superseded_by` | requirement → requirement, spec → spec: the source replaces the target (ADR-037) |
 | `superseded_by` | `supersedes` | |
 
@@ -1344,13 +1344,28 @@ links:
 - **R-LINK-5** `parent` and `milestone` are *not* links; they are dedicated fields because they are
   hierarchical and are indexed differently.
 - **R-LINK-6** *(ADR-037.)* `target` MAY also be a requirement ref, qualified or not:
-  `<link-target> ::= [<KEY> "/"] (<ID> | <REQREF>)`. A missing spec or block is `W-REF-DANGLING`.
-  `implements`/`modifies` (and inverses) need a spec or requirement target, `supersedes`/
+  `<link-target> ::= [<KEY> "/"] (<ID> | <REQREF>)`. A missing spec or block is `W-REF-DANGLING`
+  (a block deleted by hand is missing even when its `requirements:` entry survives, R-REQ-6).
+  `implements`/`modifies` need a spec or requirement target, `supersedes`/
   `superseded_by` need a target of the source's own kind (requirement ↔ requirement, spec ↔ spec);
   any other combination is `E-LINK-TARGET-TYPE`. Requirement-level relations are stored in
   `requirements.R<n>.links` ([§21.4](#214-the-requirements-map)), same `{kind, target}` shape,
   restricted to `supersedes`, `superseded_by` and `relates_to` (R-REQ-13). Using any of the new
   kinds or a spec/requirement target requires `schema: 2` ([§21.10](#2110-schema-version-2)).
+- **R-LINK-7** *(ADR-037.)* A requirement is a node of the link graph: the links of its
+  `requirements:` entry leave from its ref, and the index computes the inverse of every link that
+  targets it, so "which stories implement `ACME-SP-0003.R2`" is an index lookup (the
+  `implemented_by` relations of that ref). A link to a whole spec stays on the spec; it is not
+  copied to each of its requirements.
+- **R-LINK-8** *(ADR-037, review 2026-09-24.)* **Spec links are one-sided.** `implements` and
+  `modifies` are written only on the story or task (the source), pointing at a spec or a
+  requirement ref. `implemented_by` and `modified_by` exist only as the inverses the index
+  computes (R-LINK-7): a file that writes one, in `links` or anywhere else, is
+  `E-LINK-COMPUTED-ONLY`, whatever its source or target, and the target type is not reported on
+  top. Reads (the link graph, `Index.Related`, MCP and the web app) may still return them as
+  computed relations. Unlike the other pairs, the tools never mirror these links onto the target
+  (R-LINK-1's "writing both sides is allowed" does not apply). `supersedes`/`superseded_by` are
+  unaffected.
 
 ### 12.2 Convenience aliases
 
@@ -1873,7 +1888,7 @@ Severity: **E** = error (blocks writes to the affected item; `doctor` exits non-
 | `E-INBOX-SNOOZE` | E | `inbox.snoozed_until` missing on a snoozed item, or present on any other |
 | `E-INBOX-DUPLICATE` | E | `inbox.duplicate_of` is not an item id, names the item itself, or is missing on a `duplicate` |
 | `W-SLUG-STALE` | W | Filename slug ≠ slug(title) |
-| `W-REF-DANGLING` | W | `parent`/`milestone`/`links.target` points at an unknown ID |
+| `W-REF-DANGLING` | W | `parent`/`milestone`/`links.target` (item-level or `requirements.R<n>.links`) points at an unknown ID, or a requirement ref names an unknown spec or a block its spec does not declare (R-LINK-6) |
 | `W-REF-CYCLE-BLOCK` | W | Cycle in `blocks`/`blocked_by` |
 | `W-WORKFLOW-TRANSITION` | W | Current status unreachable per declared transitions (informational on files) |
 | `W-PERSON-UNKNOWN` | W | Handle not found in `people`/`team.yaml` |
@@ -1901,7 +1916,8 @@ every write and by the index (so by `gintrack doctor`):
 | `E-REQ-STATUS` | E | `requirements.R<n>.status` is a status of the `triage` category (an unknown status is `E-STATUS-UNKNOWN`); also a spec whose own status is in the `triage` category ([§21.1](#211-front-matter-and-body)) |
 | `E-REQ-FIELD` | E | A `requirements:` key is not `R<n>`, or `trace`/`verified`/`links` has the wrong shape (bad trace ref, `verified.rev` not a rev, `commit` not hex, `at` not a timestamp, a `links` kind other than `supersedes`/`superseded_by`/`relates_to`); also a `requirements:` map on an item that is not a spec |
 | `E-SCHEMA-FEATURE` | E | A spec construct in a `schema: 1` project ([§21.10](#2110-schema-version-2)); `doctor --fix` raises `schema` to 2 |
-| `E-LINK-TARGET-TYPE` | E | A link kind used with a target of the wrong type (R-LINK-6). Emitted for requirement-level links (R-REQ-13) only until the item-level spec link kinds land (`GIT-US-0106`) |
+| `E-LINK-TARGET-TYPE` | E | A link kind used with a target of the wrong type (R-LINK-6, R-REQ-13): `implements`/`modifies` whose target is not a spec or a requirement; an item-level `supersedes`/`superseded_by` whose source is not a spec or whose target is not a spec; a requirement-level one whose target is not a requirement |
+| `E-LINK-COMPUTED-ONLY` | E | A link written with `implemented_by` or `modified_by`, which exist only as computed inverses (R-LINK-8); write `implements`/`modifies` on the story or task instead. In `requirements.R<n>.links` these kinds are `E-REQ-FIELD` as before |
 | `W-REQ-SEPARATOR` | W | Requirement heading uses ` - `, ` -- ` or ` – ` instead of ` — ` |
 | `W-REQ-HEADING` | W | A level-3 heading under `## Requirements` that is not a requirement heading, or a heading whose ref is well formed but whose separator or title is missing |
 | `W-REQ-NO-ENTRY` | W | A block with no `requirements:` entry, or an entry with no `status` |
@@ -2054,8 +2070,7 @@ Outline of the shared definitions:
       "additionalProperties": false,
       "properties": {
         "kind":   { "enum": ["blocks", "blocked_by", "relates_to", "duplicates", "duplicated_by",
-                             "implements", "implemented_by", "modifies", "modified_by",
-                             "supersedes", "superseded_by"] },
+                             "implements", "modifies", "supersedes", "superseded_by"] },
         "target": { "$ref": "common.defs.json#/$defs/linkTarget" },
         "note":   { "type": "string", "maxLength": 200 }
       }
@@ -2114,7 +2129,8 @@ Outline of the shared definitions:
 
 `reqRef`, `linkTarget`, `rev`, `traceRef` and `requirement` are added by
 [ADR-037](./adr/ADR-037-specs-with-requirement-blocks.md), together with `SP` in `id` and the six
-new link kinds. `requirement` is open like `inbox`, for the same reason: unknown keys inside an
+new link kinds (four of them writable: `implemented_by` and `modified_by` are computed only,
+R-LINK-8, so they are absent from the `link.kind` enum). `requirement` is open like `inbox`, for the same reason: unknown keys inside an
 entry are preserved (R-FMT-6). Which link kinds may sit in a requirement's `links`, and which target
 type each kind accepts, depend on the source and cannot be expressed here; the Go validator reports
 them as `E-LINK-TARGET-TYPE`.
@@ -2288,8 +2304,11 @@ validation, and produce the `E-STATUS-UNKNOWN`, `W-LABEL-UNDECLARED`, and `E-CF-
 > the `requirements:` map, the validation of §21.1–21.4 (including the requirement-level `links`
 > of R-REQ-13), `NextRequirementNumber` (R-REQ-5, without Spec Delta headings yet), and
 > §21.10 in full: `schema: 2`, `E-SCHEMA-FEATURE`, the upgrade on first use and the write gate.
-> Not implemented yet: the item-level link kinds and requirement-ref link targets of §12.1
-> (`GIT-US-0106`), requirement reads and writes through the vault (`GIT-US-0107`), the grammar
+> `GIT-US-0106` implements the six spec link kinds and requirement-ref link targets of §12.1
+> (R-LINK-6, R-LINK-7, R-LINK-8): validation, `E-LINK-TARGET-TYPE`, `E-LINK-COMPUTED-ONLY` on a
+> written `implemented_by`/`modified_by`, `W-REF-DANGLING` on a missing spec or block, and
+> requirement nodes in the link graph.
+> Not implemented yet: requirement reads and writes through the vault (`GIT-US-0107`), the grammar
 > lint of §21.9 (`GIT-US-0108`), `## Spec Delta` (§21.8), verification and coverage (§21.6), and
 > the marker scan (§21.7). This section is the normative format; the ADR records the reasoning,
 > the consequences and the alternatives rejected. Using specs raises the project to `schema: 2`

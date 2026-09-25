@@ -88,6 +88,13 @@ const linkKindNames: Record<LinkKind, string> = {
   blocked_by: 'Blocked by',
   relates_to: 'Relates to',
   duplicates: 'Duplicates',
+  duplicated_by: 'Duplicated by',
+  implements: 'Implements',
+  implemented_by: 'Implemented by',
+  modifies: 'Modifies',
+  modified_by: 'Modified by',
+  supersedes: 'Supersedes',
+  superseded_by: 'Superseded by',
 };
 
 /** Inverse of a typed relation (docs/03-data-model.md §12.1). */
@@ -96,6 +103,13 @@ const linkKindInverses: Record<LinkKind, string> = {
   blocked_by: 'Blocks',
   relates_to: 'Relates to',
   duplicates: 'Duplicated by',
+  duplicated_by: 'Duplicates',
+  implements: 'Implemented by',
+  implemented_by: 'Implements',
+  modifies: 'Modified by',
+  modified_by: 'Modifies',
+  supersedes: 'Superseded by',
+  superseded_by: 'Supersedes',
 };
 
 export function linkKindName(kind: LinkKind): string {

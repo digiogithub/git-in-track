@@ -1,9 +1,10 @@
 # ADR-037 — Specs are items; requirements are addressable blocks inside them
 
-- **Status:** Accepted — 2026-09-24, decided by the human maintainer after two review rounds (see
-  "Decisions from review"). Core implemented by `GIT-US-0105` (the `spec` type, requirement
-  blocks and revs, the `requirements:` map, schema 2 and the write gate); link kinds, lint,
-  Spec Delta, verification and markers follow in their own stories (docs/03 §21 banner).
+- **Status:** Accepted — 2026-09-24, decided by the human maintainer after two review rounds, and
+  amended by a third (see "Decisions from review"). Core implemented by `GIT-US-0105` (the `spec` type, requirement
+  blocks and revs, the `requirements:` map, schema 2 and the write gate); the link kinds and
+  requirement-ref link targets of §5 by `GIT-US-0106`; lint, Spec Delta, verification and
+  markers follow in their own stories (docs/03 §21 banner).
 - **Date:** 2026-09-24
 - **Phase:** 11 (Spec-driven development)
 - **Related:** [ADR-001](ADR-001-markdown-yaml-storage.md), [ADR-003](ADR-003-shared-go-core-wasm.md),
@@ -219,7 +220,9 @@ requirements:
 ### 5. Link kinds and the link-target grammar
 
 Three new pairs join the five kinds of docs/03 §12.1. As before, a link is stored on one side only
-and the index computes the inverse (R-LINK-1).
+and the index computes the inverse (R-LINK-1). For `implements` and `modifies` that side is fixed:
+spec links are **one-sided**, written on the story or task, and `implemented_by`/`modified_by`
+exist only as computed inverses (third review round, below; docs/03 R-LINK-8).
 
 | Kind | Inverse | Source → target | Semantics |
 |---|---|---|---|
@@ -235,10 +238,12 @@ The link-target grammar of R-LINK-2 is extended to accept requirement refs:
 
 - A `<REQREF>` target resolves to a block; a dangling spec **or** a dangling block is
   `W-REF-DANGLING` (a warning, as for every other target).
-- `implements`, `modifies` and their inverses require a spec or requirement target; `supersedes`
+- `implements` and `modifies` require a spec or requirement target; `supersedes`
   and `superseded_by` require a target of the same kind as the source (requirement → requirement,
   spec → spec). Any other combination is `E-LINK-TARGET-TYPE`. This is statically visible from
   the ref itself, so it is an error rather than a warning.
+- `implemented_by` and `modified_by` are never written: a file that holds one is
+  `E-LINK-COMPUTED-ONLY` (third review round). Reads still report them as computed relations.
 - **Requirement-level links (approved).** Relations whose source is a requirement live in
   `requirements.R<n>.links`, a list of `{kind, target}` entries with exactly the shape of an
   item's `links` (docs/03 §12.1); item-level ones live in the item's `links`. The allowed kinds
@@ -596,6 +601,24 @@ the ADR.
 4. **Accepted as drafted:** two hashes per requirement (§6); allocating ADDED numbers when the
    story is done (§9); and the minor costs listed under Consequences — the reformatter risk,
    front-matter growth and the `LINT-*` naming.
+
+### Third round (2026-09-24)
+
+The human maintainer reviewed the implementation of §5 (`GIT-US-0106`) and settled how the
+work-to-requirement pairs are stored. The ADR stays **Accepted**.
+
+1. **Spec links are one-sided** (§5; docs/03 R-LINK-8). Only `implements` and `modifies` are
+   written, on the story or task that is the source, pointing at a spec or a requirement ref.
+   `implemented_by` and `modified_by` exist only as inverses the index computes (R-LINK-7), so
+   "which work implements `GIT-SP-0003.R2`" stays an index lookup. Writing either kind in a file
+   is the new error `E-LINK-COMPUTED-ONLY`, a clearer finding than `E-ENUM` (the kind is known)
+   or `E-LINK-TARGET-TYPE` (the target may be right); in `requirements.R<n>.links` they remain
+   `E-REQ-FIELD`. The tools follow: `gintrack item link` refuses the two kinds with a pointer to
+   `implements`/`modifies` and never writes an inverse for them, the web editor does not offer
+   them, and the MCP `Link.kind` description says so. A spec is therefore never rewritten
+   because a story linked to it, and the two sides cannot disagree.
+2. **`supersedes`/`superseded_by` are unchanged**: spec → spec in an item's `links`,
+   requirement → requirement in `requirements.R<n>.links`, and either side may be written.
 
 ## Consequences
 

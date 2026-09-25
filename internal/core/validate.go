@@ -273,40 +273,116 @@ func validateItemLinks(d *diagSet, item *Item, cfg *ProjectConfig) {
 			d.errorf(field, CodeFieldType, "a relation needs a kind")
 		case !l.Kind.Valid():
 			d.errorf(field+".kind", CodeEnum, "unknown relation kind %q", l.Kind)
+		case l.Kind.ComputedOnly():
+			d.errorf(field+".kind", CodeLinkComputedOnly,
+				"%s is computed by the index and cannot be written; record %s on the story or task instead",
+				l.Kind, l.Kind.Inverse())
 		}
 		if l.Target == "" {
 			d.errorf(field, CodeFieldType, "a relation needs a target")
 			continue
 		}
-		validateLinkTarget(d, cfg, field+".target", l.Target)
+		// A computed-only kind is already refused; its target type would only
+		// repeat the finding.
+		if validateLinkTarget(d, cfg, field+".target", l.Target) && !l.Kind.ComputedOnly() {
+			validateLinkTargetType(d, item, field+".target", l)
+		}
 	}
 }
 
-// validateLinkTarget accepts the bare form "ACME-US-0042", which implies the
-// current project, and the qualified form "WEB/WEB-US-0031" (R-LINK-2).
-func validateLinkTarget(d *diagSet, cfg *ProjectConfig, field, target string) {
+// validateLinkTarget applies the link-target grammar of R-LINK-2 and R-LINK-6:
+// an item id or a requirement ref, bare ("ACME-US-0042", "ACME-SP-0003.R2"),
+// which implies the current project, or qualified ("WEB/WEB-US-0031",
+// "WEB/WEB-SP-0001.R4"). It reports whether the target is well formed, so the
+// caller can go on to check its type.
+func validateLinkTarget(d *diagSet, cfg *ProjectConfig, field, target string) bool {
 	qualifier := ProjectKey("")
 	id := target
 	if before, after, found := strings.Cut(target, "/"); found {
 		qualifier, id = ProjectKey(before), after
 		if !ValidProjectKey(qualifier) {
 			d.errorf(field, CodeIDGrammar, "%q does not match <KEY>/<ID>", target)
-			return
+			return false
 		}
 	}
-	key, _, _, err := ParseItemID(id)
-	if err != nil {
-		d.errorf(field, CodeIDGrammar, "%q does not match <KEY>-<EP|US|T|M|SP>-<NNNN>", target)
-		return
+	key, ok := linkTargetKey(id)
+	if !ok {
+		d.errorf(field, CodeIDGrammar, "%q does not match <KEY>-<EP|US|T|M|SP>-<NNNN> or <KEY>-SP-<NNNN>.R<n>", target)
+		return false
 	}
 	if qualifier != "" {
 		if key != qualifier {
 			d.errorf(field, CodeIDKey, "%q is qualified with project %q but its id belongs to %q", target, qualifier, key)
 		}
-		return
+		return true
 	}
 	if cfg != nil && cfg.Key != "" && key != cfg.Key {
 		d.errorf(field, CodeIDKey, "%q belongs to project %q; qualify it as %q to link across projects", target, key, key.String()+"/"+id)
+	}
+	return true
+}
+
+// linkTargetKey returns the project key of an unqualified link target, an item
+// id or a requirement ref, and whether the target matches either grammar.
+func linkTargetKey(id string) (ProjectKey, bool) {
+	if ref, err := ParseRequirementRef(id); err == nil {
+		key, _, _, _ := ParseItemID(string(ref.Spec))
+		return key, true
+	}
+	key, _, _, err := ParseItemID(id)
+	return key, err == nil
+}
+
+// linkTargetType is what a link target names, read from its grammar alone.
+type linkTargetType int
+
+const (
+	targetMalformed linkTargetType = iota
+	targetItem
+	targetSpec
+	targetRequirement
+)
+
+// classifyLinkTarget tells an item id, a spec id and a requirement ref apart,
+// qualified or not.
+func classifyLinkTarget(target string) linkTargetType {
+	bare := bareTarget(target)
+	if IsRequirementRef(bare) {
+		return targetRequirement
+	}
+	_, code, _, err := ParseItemID(bare)
+	switch {
+	case err != nil:
+		return targetMalformed
+	case code == CodeSpec:
+		return targetSpec
+	default:
+		return targetItem
+	}
+}
+
+// validateLinkTargetType applies the per-kind target rules of R-LINK-6 to an
+// item-level link: implements and modifies need a spec or a requirement target
+// (their inverses are computed only, R-LINK-8); supersedes and superseded_by link a spec to a spec, since
+// a requirement's supersession lives in requirements.R<n>.links (R-REQ-13).
+// Every other kind MAY target a spec or a requirement. The type is visible in
+// the ref itself, so a mismatch is E-LINK-TARGET-TYPE, not a warning.
+func validateLinkTargetType(d *diagSet, item *Item, field string, l Link) {
+	t := classifyLinkTarget(l.Target)
+	switch l.Kind {
+	case LinkImplements, LinkModifies:
+		if t != targetSpec && t != targetRequirement {
+			d.errorf(field, CodeLinkTargetType, "%s must target a spec or a requirement ref, not %q", l.Kind, l.Target)
+		}
+	case LinkSupersedes, LinkSupersededBy:
+		switch {
+		case item.Type != TypeSpec:
+			d.errorf(field, CodeLinkTargetType,
+				"%s links a spec to a spec or a requirement to a requirement, not a %s to %q", l.Kind, item.Type, l.Target)
+		case t != targetSpec:
+			d.errorf(field, CodeLinkTargetType,
+				"a spec's %s must target a spec, not %q; a requirement's goes in requirements.R<n>.links", l.Kind, l.Target)
+		}
 	}
 }
 
