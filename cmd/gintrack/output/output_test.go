@@ -154,6 +154,33 @@ func TestPrinterJSONMode(t *testing.T) {
 	}
 }
 
+func TestPrinterCompactJSON(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		compact bool
+		want    string
+	}{
+		{"indented by default", false, "{\n  \"a\": \"<1>\"\n}\n"},
+		{"compact on request", true, "{\"a\":\"<1>\"}\n"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var out, errs bytes.Buffer
+			p := New(&out, &errs, true)
+			p.SetCompact(tc.compact)
+			if err := p.JSON(map[string]string{"a": "<1>"}); err != nil {
+				t.Fatalf("json: %v", err)
+			}
+			if got := out.String(); got != tc.want {
+				t.Errorf("stdout = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestPrinterQuiet(t *testing.T) {
 	t.Parallel()
 
