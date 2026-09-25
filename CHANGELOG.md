@@ -371,6 +371,17 @@ because a commit list cannot express them.
   listed in `specDelta.unstamped` with a reason, and the move is never refused for want of
   evidence. The core type `core.VerifyCache` has a file store and an in-memory store whose
   document a browser host can keep in IndexedDB.
+- **`gintrack spec hook install|uninstall`** (`GIT-US-0134`, docs/07 §4.21, docs/09 §2). Writes
+  a POSIX `sh` `pre-push` hook that runs `gintrack spec impact --since <upstream> --head
+  <pushed commit> --tiers 1,2 --fail-on failing,suspect` for every pushed branch (`@{upstream}`,
+  else `origin/main`; `GINTRACK_HOOK_SINCE` overrides) and refuses the push on a non-zero exit.
+  It reads already-ingested results and runs no tests. The hooks folder is resolved like `git
+  rev-parse --git-path hooks` with both git backends, so `core.hooksPath` and linked worktrees
+  are honored. The script carries a marker line: reinstalling is idempotent, uninstall removes
+  only its own hook, and a foreign hook is refused (exit 5) unless `--force`, which backs it up
+  to `<hook>.gintrack-backup` for uninstall to restore. `--dry-run` and `--json` as elsewhere.
+  In a Jujutsu repository nothing is written: the command prints an equivalent `jj` alias and
+  exits 0.
 
 ### Changed
 
