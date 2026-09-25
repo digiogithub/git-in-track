@@ -33,11 +33,14 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'kb', label: 'KB' },
 ];
 
-/** Items are item hits, comment matches included; KB is pages and files. */
+/**
+ * Items are item hits, comment matches and spec requirements included; KB is
+ * pages and files.
+ */
 function inTab(hit: SearchHit, tab: Tab): boolean {
   switch (tab) {
     case 'items':
-      return hit.kind === 'item';
+      return hit.kind === 'item' || hit.kind === 'requirement';
     case 'kb':
       return hit.kind === 'page' || hit.kind === 'file';
     default:
@@ -55,6 +58,8 @@ type HitTarget =
 function hitTarget(hit: SearchHit, project: string): HitTarget | null {
   const key = hit.project ?? project;
   if (hit.kind === 'item' && hit.id) return { kind: 'item', project: key, id: hit.id };
+  // A requirement opens the spec that holds it (story GIT-US-0118).
+  if (hit.kind === 'requirement' && hit.spec) return { kind: 'item', project: key, id: hit.spec };
   // The KB route's splat is the vault path, which is what a page hit carries.
   if (hit.kind === 'page' && hit.path) return { kind: 'page', project: key, path: hit.path };
   return null;

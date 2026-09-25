@@ -107,6 +107,31 @@ func TestSearchSemantic(t *testing.T) {
 		}
 	})
 
+	t.Run("a requirement hit carries its ref, spec, anchor and requirement rev", func(t *testing.T) {
+		h := newHarness(t, true)
+		spec := specFixture(t, h)
+		ref := spec + ".R2"
+		withSemantic(t, h, []core.SearchHit{{
+			Kind: core.SearchKindRequirement, ID: core.ItemID(ref), Title: "Reject empty postcode",
+			Project: "DEMO", Spec: core.ItemID(spec), Anchor: "demo-sp-0001-r2",
+			Path: "docs/.pmngr/specs/x.md", Score: 0.5, Snippet: "SHALL reject empty postcode",
+			Source: core.SearchSourcePando, Index: core.SearchIndexKB,
+		}})
+
+		got := call[SemanticHits](t, h, "search_semantic", map[string]any{"query": "postcodes", "kind": "requirement"})
+		if len(got.Hits) != 1 {
+			t.Fatalf("hits = %+v, want one", got.Hits)
+		}
+		hit := got.Hits[0]
+		if hit.Kind != "requirement" || hit.ID != ref || hit.Spec != spec || hit.Anchor != "demo-sp-0001-r2" {
+			t.Errorf("requirement hit = %+v, want its ref, spec and anchor", hit)
+		}
+		read := call[ItemResult](t, h, "get_item", map[string]any{"id": ref})
+		if read.Requirement == nil || hit.Rev != read.Requirement.Rev || hit.Status == "" {
+			t.Errorf("requirement hit rev = %q status = %q, want the requirement rev get_item returns", hit.Rev, hit.Status)
+		}
+	})
+
 	t.Run("scopes to one kind", func(t *testing.T) {
 		h := newHarness(t, false)
 		backend := withSemantic(t, h, nil)

@@ -969,12 +969,13 @@ export function toKbPage(value: unknown, requestedPath: string): KbPage {
 }
 
 /**
- * The three kinds a hit can be. `file` is a document the semantic backend found
+ * The kinds a hit can be. `file` is a document the semantic backend found
  * inside the indexed tree that the index owns neither as an item nor as a page
- * — a source file, or Markdown outside the knowledge base.
+ * — a source file, or Markdown outside the knowledge base. `requirement` is
+ * one requirement block of a spec (GIT-US-0118).
  */
 function toSearchHitKind(value: string | undefined): SearchHit['kind'] {
-  return value === 'item' || value === 'file' ? value : 'page';
+  return value === 'item' || value === 'file' || value === 'requirement' ? value : 'page';
 }
 
 export function toSearchHits(value: unknown): SearchHit[] {
@@ -1006,6 +1007,10 @@ export function toSearchHits(value: unknown): SearchHit[] {
       // answered, so the UI can label every row (GIT-US-0016).
       put(mapped, 'project', asString(hit['project']));
       put(mapped, 'vaultId', asString(hit['vaultId']));
+      // A requirement names its spec, its status and its block anchor.
+      put(mapped, 'spec', asString(hit['spec']));
+      put(mapped, 'status', asString(hit['status']));
+      put(mapped, 'anchor', asString(hit['anchor']));
       return mapped;
     })
     .filter((entry): entry is SearchHit => entry !== null);

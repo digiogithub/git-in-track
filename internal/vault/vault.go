@@ -1616,7 +1616,7 @@ func (v *Vault) search(raw []byte) (any, error) {
 		out = append(out, searchHit{
 			Kind: h.Kind, ID: string(h.ID), Path: h.Path, Title: h.Title,
 			Snippet: h.Snippet, Score: h.Score, Project: string(h.Project), Source: source,
-			Spec: string(h.Spec), Status: string(h.Status),
+			Spec: string(h.Spec), Status: string(h.Status), Anchor: h.Anchor,
 		})
 		if p.Limit > 0 && len(out) >= p.Limit {
 			break

@@ -187,6 +187,35 @@ describe('ProjectSearchOverlay', () => {
     expect(await screen.findByText('Item page ACME-US-0042')).toBeInTheDocument();
   });
 
+  it('opens the spec of a requirement hit, which the Items tab lists (GIT-US-0118)', async () => {
+    const user = userEvent.setup();
+    const provider = new FakeProvider({ repos: [] });
+    const requirement: SearchHit = {
+      kind: 'requirement',
+      id: 'ACME-SP-0003.R2',
+      spec: 'ACME-SP-0003',
+      anchor: 'acme-sp-0003-r2',
+      path: 'docs/.pmngr/specs/ACME-SP-0003-sso.md',
+      title: 'Accept SSO logins',
+      score: 4,
+      source: 'core',
+    };
+    vi.spyOn(provider, 'search').mockResolvedValue({ hits: [requirement] });
+    renderApp('/p/ACME/items', provider);
+    await screen.findByRole('button', { name: 'Backlog action' });
+
+    const dialog = await openOverlay(user);
+    await user.type(within(dialog).getByRole('combobox'), 'login');
+    await within(dialog).findByText('Accept SSO logins');
+    await user.click(within(dialog).getByRole('tab', { name: 'Items' }));
+    const results = within(dialog).getByRole('listbox', { name: /search results/i });
+    const [option] = within(results).getAllByRole('option');
+    expect(within(results).getAllByRole('option')).toHaveLength(1);
+
+    await user.click(option!);
+    expect(await screen.findByText('Item page ACME-SP-0003')).toBeInTheDocument();
+  });
+
   it('closes on Escape and gives focus back', async () => {
     const user = userEvent.setup();
     renderApp('/p/ACME/items', new FakeProvider({ repos: [] }));

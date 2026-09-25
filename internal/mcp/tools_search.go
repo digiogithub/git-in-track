@@ -38,7 +38,7 @@ type SearchSemanticInput struct {
 	Query   string `json:"query" jsonschema:"What you are looking for, in words; for example how do we rotate refresh tokens"`
 	Limit   int    `json:"limit,omitempty" jsonschema:"Hits to return, 1 to 20; default 10"`
 	Project string `json:"project,omitempty" jsonschema:"Project key; omit for every mounted repository"`
-	Kind    string `json:"kind,omitempty" jsonschema:"Restrict the answer to item or page; omit for both"`
+	Kind    string `json:"kind,omitempty" jsonschema:"Restrict the answer to item, page or requirement; omit for all. item keeps a spec whole instead of resolving it to its requirements"`
 }
 
 // SemanticHits is the answer of search_semantic: candidates ranked by meaning,
@@ -64,11 +64,13 @@ func registerSearchTools(s *Server) {
 	register(s, toolDef{
 		Name:  "search_semantic",
 		Title: "Search the backlog and knowledge base by meaning",
-		Description: "Ranked-by-meaning search over backlog items and knowledge-base pages. " +
+		Description: "Ranked-by-meaning search over backlog items, spec requirements and knowledge-base pages. " +
 			"Use it for \"which stories or pages are about X\", where the wording of the question " +
 			"is not the wording of the item; use search_items or search_kb when the exact words " +
 			"appear in the text, and list_items when the question is a filter. " +
 			"Scores come from the embedding backend and are comparable only with each other. " +
+			"A hit inside a spec is the requirement it landed in: kind requirement, id the ref " +
+			"(ACME-SP-0003.R2), with spec, anchor and the requirement rev. " +
 			"Hits are candidates: read the winner with get_item or get_kb_page before answering.",
 		Untrusted: true,
 	}, searchSemantic)
@@ -82,10 +84,10 @@ func searchSemantic(ctx context.Context, s *Server, in SearchSemanticInput) (Sem
 			"how do we rotate refresh tokens")
 	}
 	kind := strings.ToLower(strings.TrimSpace(in.Kind))
-	if kind != "" && kind != "item" && kind != "page" {
+	if kind != "" && kind != "item" && kind != "page" && kind != "requirement" {
 		return SemanticHits{}, invalidField("kind",
-			"kind selects what to search: item, page, or nothing for both",
-			[]string{"item", "page"})
+			"kind selects what to search: item, page, requirement, or nothing for all",
+			[]string{"item", "page", "requirement"})
 	}
 	limit := in.Limit
 	switch {
@@ -107,6 +109,7 @@ func searchSemantic(ctx context.Context, s *Server, in SearchSemanticInput) (Sem
 		hit := Hit{
 			Kind: h.Kind, ID: h.ID, Path: h.Path, Title: h.Title,
 			Snippet: h.Snippet, Score: h.Score, Project: h.Project,
+			Spec: h.Spec, Anchor: h.Anchor,
 		}
 		// A hit carries the token the next call needs: the rev of the item or
 		// page it names, exactly as search_items and search_kb return one, so
@@ -119,6 +122,10 @@ func searchSemantic(ctx context.Context, s *Server, in SearchSemanticInput) (Sem
 		case "page":
 			if hit.Path != "" {
 				hit.Rev = s.pageRev(ctx, hit.Path, hit.Project)
+			}
+		case "requirement":
+			if hit.ID != "" {
+				hit.Rev, hit.Status = s.requirementRev(ctx, hit.ID)
 			}
 		}
 		hits = append(hits, hit)
@@ -165,6 +172,8 @@ type semanticAnswer struct {
 		Snippet string  `json:"snippet"`
 		Score   float64 `json:"score"`
 		Project string  `json:"project"`
+		Spec    string  `json:"spec"`
+		Anchor  string  `json:"anchor"`
 	} `json:"hits"`
 	Engine   string `json:"engine"`
 	Degraded bool   `json:"degraded"`

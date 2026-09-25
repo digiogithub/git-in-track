@@ -322,7 +322,7 @@ func (ix *Index) SearchRequirements(q string, limit int) []SearchHit {
 		hits = append(hits, SearchHit{
 			Kind: SearchKindRequirement, ID: ItemID(v.Ref.String()), Path: v.Path, Title: v.Title,
 			Project: v.Project, Score: score, Snippet: snippet(v.Text, terms[0]), Source: SearchSourceCore,
-			Spec: v.Spec, Status: v.Status,
+			Spec: v.Spec, Status: v.Status, Anchor: v.Anchor,
 		})
 	}
 	sort.SliceStable(hits, func(i, j int) bool {

@@ -2933,6 +2933,10 @@ A Pando hit carries three more fields (GIT-US-0096, GIT-US-0098):
 - `kind: "file"` — a path inside the indexed tree that this index owns neither as
   an item nor as a page. It carries a path and a snippet and nothing else. Only a
   path that is gone from disk is dropped.
+- `kind: "requirement"` — a chunk of a spec file that lies inside a requirement
+  block, resolved to that block (GIT-US-0118, docs/21 §2.1): `id` is the ref
+  (`ACME-SP-0003.R2`), with `spec`, `anchor` (`acme-sp-0003-r2`) and the
+  requirement's `status`. A chunk outside every block stays the spec's `item` row.
 
 **The order is the contract.** Exact hits lead, in the order the substring index
 ranked them; semantic hits the exact half did not already find follow. The two

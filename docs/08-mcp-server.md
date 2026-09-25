@@ -910,14 +910,23 @@ from disk is dropped, so nothing Pando holds can reach an agent as if it were ba
      "snippet":"…the discovery document is cached by the token service…"},
     {"kind":"page","path":"docs/architecture/auth.md","title":"Authentication","project":"ACME",
      "score":0.57,"rev":"sha256:2a90f31c7b054d81",
-     "snippet":"…refresh tokens are rotated on every use…"}
+     "snippet":"…refresh tokens are rotated on every use…"},
+    {"kind":"requirement","id":"ACME-SP-0003.R2","spec":"ACME-SP-0003",
+     "anchor":"acme-sp-0003-r2","title":"Rotate refresh tokens","status":"todo",
+     "path":"docs/.pmngr/specs/ACME-SP-0003-sessions.md","project":"ACME","score":0.41,
+     "rev":"sha256:9d03be12a47c5f60","snippet":"…SHALL rotate a refresh token on every use…"}
   ],
   "engine": "pando"
 }
 ```
 
 - `limit` is 1 to 20, default 10, clamped rather than refused. `kind` narrows the answer to
-  `item` or `page`; `project` scopes it to one project key.
+  `item`, `page` or `requirement`; `project` scopes it to one project key.
+- **A hit inside a spec is the requirement it landed in** (`GIT-US-0118`, docs/21 §2.1):
+  `kind: "requirement"`, `id` the ref, `spec` the spec id and `anchor` the block anchor of
+  ADR-037 §3. Its `rev` is the **requirement rev**, the token `update_requirement` quotes, and
+  `status` the requirement's own. A chunk of the spec outside every block (its purpose, its
+  notes) stays a hit on the spec itself, and `kind: "item"` keeps every spec hit whole.
 - Each hit carries the current `rev` (and `status`, for an item), so an agent can act on a
   candidate without a second read.
 - `score` comes from the embedding backend. It is comparable only with the other scores of

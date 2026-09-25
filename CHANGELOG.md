@@ -152,6 +152,16 @@ because a commit list cannot express them.
   MODIFIED/REMOVED target is a pending `modifies` edge of the link graph (`pending: true`), and
   every ref a delta names keeps its number reserved for requirement allocation. ADDED blocks
   get no number yet; applying a delta when the story is done is `GIT-US-0110`.
+- **Requirement hits in semantic search** (`GIT-US-0118`, docs/21 §2.1, ADR-036 follow-up). A
+  Pando knowledge-base hit on a spec file resolves to the requirement block its chunk landed in
+  (`core.LocateRequirement` over the block parser's byte ranges) and is answered as a row of its
+  own: `kind: "requirement"` with the ref as `id`, `spec`, `anchor` (`git-sp-0003-r2`), `title`,
+  `status` and a snippet clipped to the block. Workspace search, the project search overlay
+  (which opens the spec) and the MCP `search_semantic` tool return them; `search_semantic`
+  accepts `kind: "requirement"`, and its requirement rows carry the requirement rev. Hits now
+  carry `anchor` on the wire, core requirement hits included. A chunk outside every block stays
+  the spec's row. Pando is only read: no derived document is fed to it and nothing is written
+  to `docs/.pmngr/specs/`.
 
 ### Changed
 

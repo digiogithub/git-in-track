@@ -1370,9 +1370,12 @@ export type SearchHit = {
   /**
    * `file` is a document a semantic backend found inside the indexed tree that
    * the index owns neither as an item nor as a page. It carries a path and a
-   * snippet and nothing else (story GIT-US-0096).
+   * snippet and nothing else (story GIT-US-0096). `requirement` is one
+   * requirement block of a spec: `id` is its ref (`ACME-SP-0003.R2`), `spec`
+   * the spec it lives in and `anchor` the block's anchor in that file (story
+   * GIT-US-0118).
    */
-  kind: 'item' | 'page' | 'file';
+  kind: 'item' | 'page' | 'file' | 'requirement';
   id?: string;
   path?: string;
   title: string;
@@ -1401,6 +1404,12 @@ export type SearchHit = {
   match?: 'comment';
   /** Further comments of the same item collapsed into this hit. */
   moreMatches?: number;
+  /** The spec a `requirement` hit lives in. */
+  spec?: string;
+  /** The requirement's status, on a `requirement` hit. */
+  status?: string;
+  /** The block anchor of a `requirement` hit, e.g. `acme-sp-0003-r2`. */
+  anchor?: string;
 };
 
 /**

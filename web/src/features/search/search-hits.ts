@@ -20,7 +20,12 @@ export function queryTerms(query: string): string[] {
   return [...seen];
 }
 
-/** A stable key for a hit: two repositories can hold the same path. */
+/**
+ * A stable key for a hit: two repositories can hold the same path, and the
+ * requirements of one spec share its path, so a requirement is keyed by its
+ * ref (GIT-US-0118).
+ */
 export function hitKey(hit: SearchHit): string {
+  if (hit.kind === 'requirement' && hit.id) return `${hit.vaultId ?? ''}:${hit.id}`;
   return `${hit.vaultId ?? ''}:${hit.path ?? hit.id ?? hit.title}`;
 }

@@ -634,6 +634,10 @@ type SearchHit struct {
 	// lives in and the requirement's status (docs/03 section 21).
 	Spec   ItemID `json:"spec,omitempty"`
 	Status Status `json:"status,omitempty"`
+	// Anchor is the block anchor of a requirement hit inside its spec file,
+	// e.g. "git-sp-0003-r2" (R-REQ-7), so a client links to the block rather
+	// than to the top of the spec (GIT-US-0118).
+	Anchor string `json:"anchor,omitempty"`
 }
 
 // SearchKindRequirement is the [SearchHit.Kind] of a requirement block, which
