@@ -113,9 +113,12 @@ type TraceHit struct {
 	// Reason is "file" (a whole-file edge, or a change with no lines),
 	// "symbol" (a changed symbol encloses or is enclosed by the edge's),
 	// "marker" (a changed line is one of the edge's marker lines),
-	// "renamed" (the edge's path is the old side of a rename) or "removed"
-	// (the change deleted the marker or the file behind the edge).
+	// "renamed" (the edge's path is the old side of a rename), "removed"
+	// (the change deleted the marker or the file behind the edge) or "decl"
+	// (the edge's Go function uses a package-level const, var or type the
+	// change changed, GIT-US-0158).
 	Reason string `json:"reason"`
-	// Changed is the changed symbol that hit a symbol edge.
+	// Changed is the changed symbol that hit a symbol edge, or the changed
+	// package-level name behind a decl hit.
 	Changed string `json:"changed,omitempty"`
 }

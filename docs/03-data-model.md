@@ -2794,9 +2794,28 @@ Two hashes per requirement, both `"sha256:" + lowercase_hex(sha256(x))[0:16]` li
     (R-MARK-2), and an edge is hit when it is a whole-file edge (`file`), when a changed symbol
     equals, encloses or is enclosed by its symbol (`symbol`: `TestX` ↔ `TestX/sub`, `Type` ↔
     `Type.Method`, `describe` ↔ `describe > it`), when a changed line is one of its marker lines
-    (`marker`), when its path is the old side of a rename (`renamed`), or when the change removed
-    the marker or file behind it (`removed`). A change without lines, or to a file that no longer
-    exists, touches every edge of its path.
+    (`marker`), when its path is the old side of a rename (`renamed`), when the change removed
+    the marker or file behind it (`removed`), or when its Go function uses a package-level
+    declaration the change changed (`decl`, below). A change without lines, or to a file that no
+    longer exists, touches every edge of its path.
+  - **Removed lines** (`GIT-US-0158`). A pure deletion (`count: 0`, between new-side lines
+    `start` and `start + 1`) touches the symbol that encloses **both** neighbors — the function
+    it was removed from, or the test that held a removed sub-test (`TestX` for a deletion between
+    `TestX/a` and `TestX/b`). A deletion between two declarations, such as a whole function
+    removed, touches neither neighbor; the markers it took away are `removed` hits. Its marker
+    line is still the one it happened after.
+  - **Package-level declarations** (`GIT-US-0158`, Go only). When a change with known lines
+    changes a top-level `const`, `var` or `type` spec of a `.go` file (every name of the spec),
+    the functions of the same package — the `.go` files of the directory with the same package
+    clause, internal `_test.go` files included, an external `_test` package not — that use the
+    name are touched too, and each of their edges (or a whole-file edge of their file) is hit
+    with `decl`, `changed` naming the declaration. A use is found on the go/parser syntax tree
+    with block scopes: a parameter, `:=`, `var`/`const`/`type` statement, range or type-switch
+    variable of the same name shadows it, and a selector's field or method, a struct literal's
+    bare key and a struct field name never match. It is one hop and deterministic: a
+    package-level declaration whose own initializer uses the name is not followed, no type
+    checking runs, and nothing asks Pando. A direct reason (`file`, `symbol`, `marker`) of the
+    same edge wins over `decl`.
   - Every list is sorted (requirements by spec and number; edges by path, symbol, ref and role),
     so the same repository state gives byte-identical answers. The graph lives in memory, is
     rebuilt when the index or the scan changes, and is never written to any file. The companion
@@ -3002,7 +3021,8 @@ answers `unavailable`.
   (callers per symbol for tier 2, default 20; candidates for tier 3, default 8; at most 50).
 - **R-IMP-2 Tier 1, direct.** The trace graph's reverse query (§21.7) over the changes: each
   touched edge adds `<reason>:<trace ref>` with `reason` one of `file`, `symbol`, `marker`,
-  `renamed`, `removed`. The `implements`/`modifies` links of `story` that name a requirement add
+  `renamed`, `removed`, or `decl:<trace ref> uses <name>` when it was reached through a changed
+  package-level declaration (§21.7, `GIT-US-0158`). The `implements`/`modifies` links of `story` that name a requirement add
   `<kind>:<story>`, and its **pending** `modifies` edges (an unapplied Spec Delta, R-DELTA-10) add
   `delta:<story>`.
 - **R-IMP-3 Tier 2, transitive.** Each changed symbol outside a test file (its simple name: the

@@ -1,0 +1,45 @@
+{
+  "base": "<base>",
+  "files": 2,
+  "symbols": 2,
+  "tiers": [
+    {
+      "tier": 1,
+      "status": "ok",
+      "hits": 2
+    },
+    {
+      "tier": 2,
+      "status": "unavailable",
+      "hits": 0,
+      "message": "no Pando code graph is configured"
+    },
+    {
+      "tier": 3,
+      "status": "skipped",
+      "hits": 0
+    }
+  ],
+  "hits": [
+    {
+      "ref": "ACME-SP-0002.R1",
+      "title": "Cap the page size",
+      "tier": 1,
+      "kind": "behaviour",
+      "status": "untested",
+      "reasons": [
+        "decl:src/mcp/page.go#boundedLimit uses maxPageSize"
+      ]
+    },
+    {
+      "ref": "ACME-SP-0002.R2",
+      "title": "Register the requirement tools",
+      "tier": 1,
+      "kind": "behaviour",
+      "status": "untested",
+      "reasons": [
+        "symbol:src/mcp/tools.go#registerTools"
+      ]
+    }
+  ]
+}
