@@ -81,14 +81,8 @@ func (v *Vault) impactReport(ctx context.Context, raw []byte) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if p.Budget < 0 || p.Budget > core.MaxImpactBudget {
-		return nil, failf("invalid_request", "budget %d is out of range: use 1 to %d tokens (0 is %d)",
-			p.Budget, core.MaxImpactBudget, core.DefaultImpactBudget)
-	}
-	switch p.Format {
-	case "", core.ImpactReportJSON, core.ImpactReportText:
-	default:
-		return nil, failf("invalid_request", "unknown report format %q: use json or text", p.Format)
+	if err := checkReportPage(p.Budget, p.Format); err != nil {
+		return nil, err
 	}
 	res, err := v.resolveImpact(ctx, p.ImpactQuery)
 	if err != nil {

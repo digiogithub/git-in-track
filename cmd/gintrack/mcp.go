@@ -36,11 +36,12 @@ func newMCPCommand(build buildInfo, flags *globalFlags) *cobra.Command {
 		Short: "Serve the backlog to AI agents over the Model Context Protocol",
 		Long: `Mcp speaks the Model Context Protocol over stdin and stdout, so that an agent
 runtime can spawn it as a tool server. It exposes the workspace's backlog and
-knowledge base as typed tools: thirty of them with writes enabled, eleven
-without.
+knowledge base as typed tools: thirty-two of them with writes enabled,
+thirteen without.
 
-The eleven read-only tools are list_items, search_items, search_semantic,
-get_item, list_requirements, spec_impact, trace_requirement, list_inbox,
+The thirteen read-only tools are list_items, search_items, search_semantic,
+get_item, list_requirements, spec_context, spec_coverage, spec_impact,
+trace_requirement, list_inbox,
 list_kb_pages, get_kb_page and search_kb. search_semantic ranks by meaning rather than by substring and needs
 the Pando backend configured under "search.pando"; without one it refuses and
 names search_items as the fallback, so an empty answer is never mistaken for
@@ -57,7 +58,10 @@ Specs are addressed one requirement at a time: list_requirements returns
 compact rows, get_item on a requirement ref (ACME-SP-0003.R2) returns only that
 block and its entry, and update_requirement quotes the requirement's own rev,
 so a write to one requirement never races another of the same spec.
-spec_impact reports the requirements a diff affects, trace_requirement the
+spec_context returns what a story requires — its linked requirements with
+one-line statements, scenarios, coverage and related pages, within a token
+budget — and spec_coverage one coverage row per requirement. spec_impact
+reports the requirements a diff affects, trace_requirement the
 code, tests and work traced to one requirement, and verify_requirement stamps
 a requirement whose linked tests all passed in the results "gintrack spec
 ingest" recorded. The trace, coverage and impact backends are the companion's,

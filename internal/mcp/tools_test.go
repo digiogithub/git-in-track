@@ -16,7 +16,7 @@ import (
 var readTools = []string{
 	"get_item", "get_kb_page", "list_inbox", "list_items", "list_kb_pages",
 	"list_requirements", "search_items", "search_kb", "search_semantic",
-	"spec_impact", "trace_requirement",
+	"spec_context", "spec_coverage", "spec_impact", "trace_requirement",
 }
 
 // writeTools is what enabling writes adds.

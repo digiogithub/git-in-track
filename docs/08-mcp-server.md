@@ -6,7 +6,7 @@ with `GIT-US-0024`, plus `create_milestone` from `GIT-US-0033`;
 Phase: **Phase 5 — MCP server + agent workflows** (depends on Phase 2 companion CLI, Phase 3 boards, Phase 4 sync)
 Audience: contributors working on `internal/mcp`; authors of agent instructions (`AGENTS.md`)
 
-What ships today: thirty tools over stdio and over streamable HTTP, read-only by default,
+What ships today: thirty-two tools over stdio and over streamable HTTP, read-only by default,
 with cursor pagination, field projection and a `rev` on every item. Resources, prompts, the
 audit log, dry-run and rate limiting are specified here and land in later stories of the
 epic; each is labelled where it appears.
@@ -167,7 +167,8 @@ advertised yet; they arrive with sections 5 and 6.
    `--max-tokens` the server truncates the list (never an individual object) and sets
    `truncated: true, hint: "narrow the filter or use fields"`. Until then the page-size cap
    is what bounds a result. The impact report is the first result budgeted in tokens
-   (section 4.21, doc 03 §21.11 R-IMP-9).
+   (section 4.21, doc 03 §21.11 R-IMP-9), and the spec context (section 4.22) the second;
+   both share one estimator, one budget range and one cursor shape.
 8. **One obvious tool per intent.** No tool overlaps another's purpose: `list_items` is
    structured, `search_items` is ranked prose over the backlog, `search_kb` is ranked prose
    over the knowledge base, and `search_semantic` is ranked *meaning* over both (§4.19). Fewer, sharper tools reduce mis-selection by the model. Tools
@@ -194,11 +195,12 @@ three inbox tools with `GIT-US-0056`, the two sprint rollover tools with `GIT-US
 four YouTrack tools with `GIT-US-0062`, `GIT-US-0079` and `GIT-US-0094`, `search_semantic`
 with `GIT-US-0088`, and the four spec tools (`list_requirements`, `create_spec`,
 `create_requirement`, `update_requirement`) with `GIT-US-0122`, and the three spec-driven tools
-(`spec_impact`, `trace_requirement`, `verify_requirement`) with `GIT-US-0124`. They are the same
-thirty on both transports, from the same registry, over the same workspace.
+(`spec_impact`, `trace_requirement`, `verify_requirement`) with `GIT-US-0124`, and the two
+spec reads (`spec_context`, `spec_coverage`) with `GIT-US-0123`. They are the same
+thirty-two on both transports, from the same registry, over the same workspace.
 
-Eleven are read tools and nineteen are write tools; `gintrack mcp --list-tools` prints eleven,
-and with `--allow-write` thirty.
+Thirteen are read tools and nineteen are write tools; `gintrack mcp --list-tools` prints
+thirteen, and with `--allow-write` thirty-two.
 
 Common conventions for all tools:
 
@@ -237,6 +239,8 @@ Common conventions for all tools:
 | `update_requirement` | write | `requirement.update`  | ~75 tokens          |
 | `spec_impact`    | read  | `impact.report`           | ≤ `budget` (default 1500); ~50 tokens/hit as text |
 | `trace_requirement` | read | `trace.requirement`     | ~40 tokens + ~20/edge |
+| `spec_context`   | read  | `spec.context`            | ≤ `budget` (default 1500); ~90 tokens/requirement as json |
+| `spec_coverage`  | read  | `coverage.list`           | ~40 tokens/row + ~15/further test |
 | `verify_requirement` | write | `requirement.stamp` (+ `requirement.get`, `coverage.list` on refusal) | ~90 tokens |
 | `add_comment`    | write | `comment.add`             | ~70 tokens          |
 | `move_on_board`  | write | `board.move`              | ~90 tokens          |
@@ -1188,12 +1192,103 @@ A `rev` that is no longer current is `stale_revision`, exactly as for `update_re
 `invalid_request`: a stamp records the text that was verified, so it is never written blind.
 Without a coverage backend the tool answers `unavailable`.
 
-### 4.22 Planned tools
+### 4.22 The spec reads: `spec_context` and `spec_coverage`
+
+Step 1 of the agent loop ([research overview §5](research/2026-09-24-spec-driven-development-overview.md)):
+an agent that picks up a story asks what it requires before touching code. Both tools are read
+tools, present without `--allow-write`, and both carry the data-not-instructions sentence and the
+`_meta` mark of principle 11: statements, scenarios, titles and page titles are repository content.
+
+**`spec_context`** (`spec.context`, doc 07 §6.7) takes `story` (a story or task id), `budget`
+(tokens, default 1500, at most 20000), `cursor` and `format` (`json` or `text`). It returns the
+requirements the item implements or modifies — generated on demand, never copied into the story:
+
+- its declared `implements` and `modifies` links (a link to a whole spec names each of its
+  requirements, marked `wholeSpec`);
+- the targets of its unapplied `## Spec Delta` (doc 03 §21.8): MODIFIED and REMOVED refs,
+  `Supersedes:` targets and **ADDED blocks not yet numbered**, whose `ref` is the spec they will
+  join. `proposed: true` marks a statement and scenarios read from the delta's proposal — what the
+  requirement will say — rather than from the spec.
+
+Each requirement carries `via` (`implements`, `modifies`, `delta-added`, `delta-modified`,
+`delta-removed`, `delta-superseded`), its title, a one-line `statement` (clipped at 160
+characters), its `scenarios`, and its coverage `status` and `reasons` from the coverage backend.
+`pages` lists the knowledge-base pages the story and those specs wikilink — cheap, no semantic
+call — at most ten, on the first page only. A session without a coverage backend (browser-only
+mode) still answers, with `coverage: "unavailable"` and no `status`: the requirements and their
+text come from the index.
+
+The budget is measured exactly as for `spec_impact` — `ceil(bytes / 3)` of the compact JSON,
+through the same helpers — and the page **degrades in a fixed order**: scenario steps are kept
+only when every remaining requirement fits with them (`detail: "steps"`); otherwise every
+requirement drops to its scenario names (`detail: "names"`); only then is the list cut, with
+`truncated` and a `nextCursor` to pass back with the same story. The statement, the scenario names,
+the status and the reasons of a requirement on the page are never dropped. A five-requirement
+story in the `text` form (≈ 373 tokens; ≈ 457 as JSON):
+
+```text
+context DEMO-US-0001 "Guest checkout": 5 requirements, coverage ok
+DEMO-SP-0001.R1 implements passing "Trim input"
+  The checkout SHALL trim input.
+DEMO-SP-0001.R2 modifies failing "Reject empty postcode"
+  The checkout SHALL reject empty postcode.
+DEMO-SP-0001.R3 delta-modified untested proposed "Normalize the country code"
+  The checkout SHALL store the country as an ISO 3166 alpha-2 code.
+DEMO-SP-0001.R4 implements passing "Validate the street"
+  The checkout SHALL refuse a street shorter than three characters.
+  scenario Short street: WHEN the street is "ab" / THEN the form shows an error
+  scenario Long street: WHEN the street has 200 characters / THEN the form accepts it
+DEMO-SP-0001 delta-added - proposed "Uppercase the postcode"
+  The checkout SHALL store the postcode in upper case.
+  scenario Lower-case input: WHEN the postcode is "sw1a 1aa" / THEN it is stored as "SW1A 1AA"
+kb: docs/architecture/overview.md "Architecture overview"
+```
+
+The `json` form carries the same as `requirements` and `pages`; a first page cut at
+`budget: 300`, abridged to two of its requirements:
+
+```json
+{ "item": "DEMO-US-0001", "title": "Guest checkout", "coverage": "ok", "detail": "names",
+  "requirements": [
+    {"ref":"DEMO-SP-0001.R2","title":"Reject empty postcode","via":["modifies"],
+     "statement":"The checkout SHALL reject empty postcode.","status":"failing","reasons":["failed"]},
+    {"ref":"DEMO-SP-0001","title":"Uppercase the postcode","via":["delta-added"],"proposed":true,
+     "statement":"The checkout SHALL store the postcode in upper case.","scenarios":[{"name":"Lower-case input"}]}],
+  "pages": [{"path":"docs/architecture/overview.md","title":"Architecture overview"}],
+  "total": 5, "truncated": 3, "nextCursor": "eyJvIjoyLCJmIjoiOWQ2YjE0ZTAifQ",
+  "budget": 300, "tokens": 291 }
+```
+
+An unknown story is `not_found`; a cursor from another context (the story's links or its delta
+changed under the walk), a budget out of range or an unknown `format` is `invalid_request`.
+
+**`spec_coverage`** (`coverage.list`) takes `project`, `spec`, `status` (any of `untested`,
+`passing`, `failing`, `suspect`), `fields`, `limit` and `cursor`, and returns one compact row per
+requirement — `ref`, `status`, short `reasons` (doc 03 §21.6) and the linked `tests` with their
+latest ingested result (`pass`, `fail`, `skip`, `missing`) — plus `counts` per state over the whole
+filter. `fields: ["reasons"]` or `["tests"]` narrows a row; `ref` and `status` are always kept.
+Rows are paged with the filter-bound cursor of principle 4 (default 20, at most 100):
+
+```json
+{ "coverage": [
+    {"ref":"DEMO-SP-0001.R1","status":"passing","tests":[{"test":"internal/address/trim_test.go#TestTrim","result":"pass"}]},
+    {"ref":"DEMO-SP-0001.R2","status":"failing","reasons":["failed"],
+     "tests":[{"test":"internal/address/postcode_test.go#TestEmpty","result":"fail"},
+              {"test":"internal/address/postcode_test.go#TestBlank","result":"missing"}]}],
+  "total": 3, "counts": {"untested":1,"passing":1,"failing":1}, "nextCursor": "eyJvIjoyLCJmIjoiM2E4YzFkMGIifQ" }
+```
+
+A row is about 40 tokens with one linked test and about 15 per further test. A session without a
+coverage backend (browser-only mode) answers `unavailable`, never an empty list, and its `retry`
+names the fallback: `list_requirements`, or a native session (`gintrack mcp` or the companion)
+after `gintrack spec ingest`.
+
+### 4.23 Planned tools
 
 `08` specified a larger catalog than `GIT-US-0024` implements. These are *planned*, each
 behind its own story: `list_workspaces`, `list_projects`, `get_kb_tree`, `link_items`,
 `list_comments`, `list_boards`, `get_board`, `get_sprint`, `list_retros`, `get_sync_status`
-and `run_sync` — verb first, like the thirty above. Every one of them already has a core
+and `run_sync` — verb first, like the thirty-two above. Every one of them already has a core
 method behind it, so the work is framing rather than domain logic.
 
 `delete_item` is deliberately **not** on that list: deleting a backlog item is a human action

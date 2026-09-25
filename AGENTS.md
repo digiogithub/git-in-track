@@ -228,12 +228,12 @@ use the same shape):
 Drop `--allow-write` for a read-only session; the write tools are then absent
 from `tools/list` rather than failing at call time. `--agent <name>` is the
 author recorded on comments you write. Verify with `gintrack mcp --list-tools`
-(11 tools read-only, 30 with `--allow-write`).
+(13 tools read-only, 32 with `--allow-write`).
 
-The thirty tools: `list_items`, `search_items`, `search_semantic`,
+The thirty-two tools: `list_items`, `search_items`, `search_semantic`,
 `get_item`, `list_requirements`, `create_epic`, `create_story`, `create_task`,
 `create_milestone`, `create_spec`, `create_requirement`, `update_requirement`,
-`spec_impact`, `trace_requirement`, `verify_requirement`, `update_item`, `add_comment`, `move_on_board`, `list_kb_pages`, `get_kb_page`,
+`spec_context`, `spec_coverage`, `spec_impact`, `trace_requirement`, `verify_requirement`, `update_item`, `add_comment`, `move_on_board`, `list_kb_pages`, `get_kb_page`,
 `search_kb`, `list_inbox`, `create_inbox_item`, `triage_inbox_item`, `close_sprint`,
 `transfer_sprint_items`, `import_youtrack_issues`, `push_comment_to_youtrack`,
 `publish_kb_page_to_youtrack`, `sync_kb_page_from_youtrack`.

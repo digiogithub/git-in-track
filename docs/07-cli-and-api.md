@@ -1189,6 +1189,8 @@ push_comment_to_youtrack
 search_items
 search_kb
 search_semantic
+spec_context
+spec_coverage
 spec_impact
 sync_kb_page_from_youtrack
 trace_requirement
@@ -1199,12 +1201,13 @@ update_requirement
 verify_requirement
 
 $ gintrack mcp --agent claude-code
-gintrack mcp 0.4.0: workspace work, 2 repositories, 11 tools (read-only)
+gintrack mcp 0.4.0: workspace work, 2 repositories, 13 tools (read-only)
 ```
 
 Nothing but JSON-RPC frames is written to stdout; the startup line and every log go to
-stderr. There are **thirty tools**: eleven read-only — `list_items`, `search_items`,
-`search_semantic`, `get_item`, `list_requirements`, `spec_impact`, `trace_requirement`,
+stderr. There are **thirty-two tools**: thirteen read-only — `list_items`, `search_items`,
+`search_semantic`, `get_item`, `list_requirements`, `spec_context`, `spec_coverage`,
+`spec_impact`, `trace_requirement`,
 `list_inbox`, `list_kb_pages`, `get_kb_page` and `search_kb` — and nineteen writes. Without writes
 enabled the nineteen write tools are absent
 from `tools/list`, not merely refused.
@@ -1217,7 +1220,7 @@ what the companion's **Settings › Agent tools (MCP)** switch writes
 (`PATCH /api/v1/mcp/settings`, section 5.5), which is the way to enable writes without
 editing a file or teaching every agent runtime a flag.
 
-The **same thirty tools** are served over streamable HTTP at `POST /mcp` by
+The **same thirty-two tools** are served over streamable HTTP at `POST /mcp` by
 `gintrack serve --mcp-http` (section 4.1), which is what to use when the companion is already
 running: one index and one watcher, shared with the web UI.
 
@@ -5033,6 +5036,31 @@ Hits are ranked failing, suspect, then tier (candidates last), then ref; the low
 cut, `truncated` counts them and `nextCursor` — passed back as `cursor` with the query unchanged —
 fetches the rest. A cursor from another result, a budget out of range or an unknown `format` is
 `invalid_request`; browser-only mode answers `unavailable`.
+
+**Spec context (`GIT-US-0123`).** `spec.context` renders the context of one story or task — step 1
+of the agent loop — through the same token estimator, budget bounds and cursor shape as
+`impact.report` (the shared helpers of `internal/core/budget.go`). It is the method behind the MCP
+tool `spec_context` (doc 08 §4.22).
+
+| Method | Params | Result |
+|---|---|---|
+| `spec.context` | `{id, budget?, cursor?, format?: "json" \| "text"}` | `{report: {item, title, coverage, detail, requirements?, pages?, morePages?, text?, total, offset?, truncated?, nextCursor?, budget, tokens}}` |
+
+`requirements` are those the item's `implements` and `modifies` links name (a link to a whole spec
+names each of its requirements, `wholeSpec: true`) plus the targets of its unapplied Spec Delta
+(doc 03 §21.8) — MODIFIED and REMOVED refs, `Supersedes:` targets and ADDED blocks not yet
+numbered, whose `ref` is the spec they will join — ordered by spec, then number, unnumbered
+blocks last. Each carries `via` (`implements`, `modifies`, `delta-added`, `delta-modified`,
+`delta-removed`, `delta-superseded`), a one-line `statement` (clipped at 160 characters), its
+`scenarios` and, from the coverage seam, `status` and `reasons`; `proposed: true` marks a statement
+and scenarios read from the delta's proposal rather than the spec. `pages` are the
+knowledge-base pages the item and those specs wikilink (at most ten, `morePages` counts the rest),
+on the first page only. The method reads only the index, so it answers in browser-only mode too,
+with `coverage: "unavailable"` and no `status`. Degradation is fixed: scenario steps are kept only
+when every remaining requirement fits with them (`detail: "steps"`); otherwise the page drops to
+scenario names (`detail: "names"`) and then cuts the list, with `truncated` and `nextCursor`. An
+unknown item is `not_found`; a foreign cursor, a budget out of range or an unknown `format` is
+`invalid_request`.
 
 ---
 
