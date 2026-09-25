@@ -187,9 +187,43 @@ func (c *Client) call(ctx context.Context, name string, args map[string]any) (*t
 			}
 			return nil, c.classify(ctx, err)
 		}
-		return newToolResult(name, res)
+		out, err := newToolResult(name, res)
+		if err != nil {
+			return nil, err
+		}
+		if err := c.resolveCached(ctx, sess, out); err != nil {
+			return nil, err
+		}
+		return out, nil
 	}
 	return nil, fmt.Errorf("%w: %s: the Pando session could not be rebuilt", ErrUnreachable, name)
+}
+
+// resolveCached replaces a cached-response stub with the full text Pando
+// cached (see cache.go). A stub that cannot be paged back fails the call,
+// unless the result also carries structuredContent.metadata, which Pando keeps
+// intact on a stub: a decoder that reads the metadata still works, and one
+// that needs the text gets the fixed error instead of the stub.
+func (c *Client) resolveCached(ctx context.Context, sess *mcpsdk.ClientSession, r *toolResult) error {
+	stub, isStub, err := parseCachedStub(r.text)
+	if !isStub {
+		return nil
+	}
+	if err == nil {
+		var text string
+		if text, err = c.followCache(ctx, sess, r.tool, stub); err == nil {
+			r.text = text
+			return nil
+		}
+	}
+	if IsUnavailable(err) && !errors.Is(err, ErrUnreadable) {
+		return err // the transport failed: that is the answer, metadata or not
+	}
+	if len(r.metadata) == 0 {
+		return err
+	}
+	r.text, r.unread = "", err
+	return nil
 }
 
 // acquire returns the shared session, opening one if needed. The boolean

@@ -486,6 +486,29 @@ func TestImpactTiers(t *testing.T) {
 		}
 	})
 
+	// A Pando error whose text carries a random value — a cache id — must
+	// not reach the report: two runs give byte-identical tier lines, and the
+	// line is a short fixed reason (GIT-US-0164).
+	t.Run("pando failure messages are fixed", func(t *testing.T) {
+		run := func(id string) []core.ImpactTier {
+			err := fmt.Errorf("semantic search: %w: kb_search_documents returned an unexpected result: "+
+				"\"[Response cached: 412 lines, 16433 bytes → cache_id: \\\"%s\\\"\"", pando.ErrUnreadable, id)
+			return f.impact(f.resolver(&fakeGraph{err: err}, &fakeSemantic{err: err}), core.ImpactQuery{Base: f.base}).Tiers
+		}
+		first, second := run("0b1c2d3e-aaaa"), run("9f8e7d6c-bbbb")
+		a, _ := json.Marshal(first)
+		b, _ := json.Marshal(second)
+		if string(a) != string(b) {
+			t.Errorf("two runs differ:\n%s\n%s", a, b)
+		}
+		for _, tier := range first[1:] {
+			if tier.Status != core.ImpactTierUnavailable ||
+				tier.Message != "Pando answered with a result this client cannot read" {
+				t.Errorf("tier %d = %+v, want unavailable with the fixed reason", tier.Tier, tier)
+			}
+		}
+	})
+
 	t.Run("tiers the caller skipped", func(t *testing.T) {
 		graph := fixtureGraph()
 		res := f.impact(f.resolver(graph, fixtureSemantic()), core.ImpactQuery{Base: f.base, Tiers: []int{3}})

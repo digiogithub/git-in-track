@@ -30,16 +30,13 @@ type toolResult struct {
 	// metadata is Pando's structuredContent.metadata: a JSON document some
 	// tools carry alongside their human-readable text.
 	metadata []byte
+	// unread is set when the text was a cached-response stub that could not
+	// be paged back while the metadata survived; decoding the text answers it.
+	unread error
 }
 
 func newToolResult(tool string, res *mcpsdk.CallToolResult) (*toolResult, error) {
-	var b strings.Builder
-	for _, content := range res.Content {
-		if tc, ok := content.(*mcpsdk.TextContent); ok {
-			b.WriteString(tc.Text)
-		}
-	}
-	text := b.String()
+	text := textOf(res)
 	if res.IsError {
 		return nil, &toolError{Tool: tool, Message: strings.TrimSpace(text)}
 	}
@@ -55,9 +52,12 @@ func newToolResult(tool string, res *mcpsdk.CallToolResult) (*toolResult, error)
 // decode renders the tool's text content into the JSON data model. Pando emits
 // TOON, so this is not a JSON unmarshal; see toon.go.
 func (r *toolResult) decode() (any, error) {
+	if r.unread != nil {
+		return nil, r.unread
+	}
 	v, err := decodeStructured(r.text)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s returned a result this client cannot read: %w", ErrUnreachable, r.tool, err)
+		return nil, fmt.Errorf("%w: %s returned a result this client cannot read: %w", ErrUnreadable, r.tool, err)
 	}
 	return v, nil
 }
@@ -77,7 +77,7 @@ func (r *toolResult) object() (obj map[string]any, ok bool, err error) {
 	if strings.HasPrefix(strings.TrimSpace(r.text), "No ") {
 		return nil, false, nil
 	}
-	return nil, false, fmt.Errorf("%w: %s returned an unexpected result: %.120q", ErrUnreachable, r.tool, r.text)
+	return nil, false, fmt.Errorf("%w: %s returned an unexpected result: %.120q", ErrUnreadable, r.tool, r.text)
 }
 
 // remarshal moves a decoded document into a typed struct. Unknown fields are
@@ -89,7 +89,7 @@ func remarshal(tool string, v, into any) error {
 		return fmt.Errorf("%w: %s: %w", ErrUnreachable, tool, err)
 	}
 	if err := json.Unmarshal(raw, into); err != nil {
-		return fmt.Errorf("%w: %s returned a result this client cannot read: %w", ErrUnreachable, tool, err)
+		return fmt.Errorf("%w: %s returned a result this client cannot read: %w", ErrUnreadable, tool, err)
 	}
 	return nil
 }
@@ -237,7 +237,7 @@ func (c *Client) SearchCode(ctx context.Context, projectID, query string, o Code
 	case len(res.metadata) > 0:
 		if err := json.Unmarshal(res.metadata, &wire); err != nil {
 			return nil, fmt.Errorf("%w: %s returned metadata this client cannot read: %w",
-				ErrUnreachable, toolCodeSearch, err)
+				ErrUnreadable, toolCodeSearch, err)
 		}
 	default:
 		// No metadata: either there were no hits (Pando answers with a bare
@@ -333,14 +333,14 @@ func (c *Client) IndexProject(ctx context.Context, path, name string) (string, e
 		return "", err
 	}
 	if !ok {
-		return "", fmt.Errorf("%w: %s returned no job: %.120q", ErrUnreachable, toolCodeIndex, res.text)
+		return "", fmt.Errorf("%w: %s returned no job: %.120q", ErrUnreadable, toolCodeIndex, res.text)
 	}
 	var wire indexJobWire
 	if err := remarshal(toolCodeIndex, obj, &wire); err != nil {
 		return "", err
 	}
 	if wire.JobID == "" {
-		return "", fmt.Errorf("%w: %s returned no job id", ErrUnreachable, toolCodeIndex)
+		return "", fmt.Errorf("%w: %s returned no job id", ErrUnreadable, toolCodeIndex)
 	}
 	return wire.JobID, nil
 }

@@ -1,6 +1,7 @@
 package pando
 
 import (
+	"context"
 	"errors"
 	"fmt"
 )
@@ -27,6 +28,13 @@ var (
 	// with something this client cannot use: connection refused, a dead
 	// session that would not rebuild, a malformed result.
 	ErrUnreachable = errors.New("pando: unreachable")
+
+	// ErrUnreadable is returned when Pando answered with something this
+	// client cannot decode: a malformed result, or a cached response
+	// (cache.go) that could not be paged back. It unwraps to ErrUnreachable,
+	// so IsUnavailable holds for it: a result that cannot be read is as
+	// absent as one that never arrived.
+	ErrUnreadable = fmt.Errorf("%w: the result could not be read", ErrUnreachable)
 
 	// ErrUnauthorized is returned when Pando rejected the credential: a 401 or
 	// 403 from the MCP transport or from the REST surface.
@@ -104,4 +112,28 @@ func IsUnavailable(err error) bool {
 		errors.Is(err, ErrUnreachable) ||
 		errors.Is(err, ErrUnauthorized) ||
 		errors.Is(err, ErrTimeout)
+}
+
+// Reason is a short, fixed sentence for an error IsUnavailable holds for, fit
+// for a report that must be byte-for-byte reproducible: the impact tiers put
+// it in their message. It never quotes the underlying error, whose text can
+// carry a Pando cache id, an address or anything else that changes from one
+// run to the next (GIT-US-0164). It returns "" for any other error, which the
+// caller reports as itself.
+func Reason(err error) string {
+	switch {
+	case err == nil:
+		return ""
+	case errors.Is(err, ErrNotConfigured):
+		return "Pando is not configured"
+	case errors.Is(err, ErrUnauthorized):
+		return "Pando rejected the token"
+	case errors.Is(err, ErrTimeout), errors.Is(err, context.DeadlineExceeded):
+		return "Pando did not answer in time"
+	case errors.Is(err, ErrUnreadable):
+		return "Pando answered with a result this client cannot read"
+	case errors.Is(err, ErrUnreachable):
+		return "Pando is unreachable"
+	}
+	return ""
 }

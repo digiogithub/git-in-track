@@ -25,6 +25,17 @@ because a commit list cannot express them.
   only to refresh and capture the index, and release it before the seam runs. Verification
   stamps (`requirement.stamp`, the done transition) still decide and write under the mutex,
   and their evidence backend must not call back into the vault.
+- **The Pando client follows Pando's response cache** (`GIT-US-0164`). Pando replaces any tool
+  result over 15,000 bytes or 300 lines with a `[Response cached …]` stub to be paged with its
+  `cache_read` tool, and no setting turns that off. `internal/pando` could not read the stub, so
+  impact tier 3 always reported `unavailable` and any large `search_semantic` or workspace
+  search page failed the same way. The client now pages the full result back over the same
+  session, bounded by the call's deadline, 4 MiB and 64 pages, and checks it against the size
+  the stub declares (docs/21 §6.0).
+- **Impact tier messages are deterministic.** An `unavailable` tier 2 or 3 now carries a short,
+  fixed reason such as `Pando is unreachable` instead of the error text, which quoted Pando's
+  random cache id. Two runs against one index give byte-identical reports, and the tier line
+  is shorter.
 
 ## [2.1.0] — 2026-09-25
 

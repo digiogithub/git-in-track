@@ -10,6 +10,8 @@ import (
 	"time"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/digiogithub/git-in-track/internal/pando/pandotest"
 )
 
 // fakePando is an in-process Pando: a real MCP server built with the same
@@ -25,6 +27,9 @@ type fakePando struct {
 	tools   map[string]toolFunc
 	calls   []recordedCall
 	handler http.Handler
+	// cache is Pando's response cache, which no setting turns off: a result
+	// past its threshold reaches the client as a stub (GIT-US-0164).
+	cache *pandotest.Cache
 }
 
 type toolFunc func(ctx context.Context, args map[string]any) (*mcpsdk.CallToolResult, error)
@@ -62,7 +67,12 @@ func (f *fakePando) serve(w http.ResponseWriter, r *http.Request) {
 }
 
 func (f *fakePando) buildHandler() http.Handler {
+	cache := pandotest.NewCache()
+	f.mu.Lock()
+	f.cache = cache
+	f.mu.Unlock()
 	srv := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "pando-fake", Version: "test"}, nil)
+	cache.Register(srv)
 	for _, name := range fakeToolNames {
 		srv.AddTool(
 			&mcpsdk.Tool{
@@ -82,7 +92,11 @@ func (f *fakePando) buildHandler() http.Handler {
 				if fn == nil {
 					return textResult("No documents found matching the query."), nil
 				}
-				return fn(ctx, args)
+				res, err := fn(ctx, args)
+				if err != nil {
+					return nil, err
+				}
+				return cache.Intercept(req.Params.Name, res), nil
 			},
 		)
 	}
@@ -102,6 +116,13 @@ func (f *fakePando) setTool(name string, fn toolFunc) {
 	f.mu.Lock()
 	f.tools[name] = fn
 	f.mu.Unlock()
+}
+
+// responseCache is the cache the current handler intercepts with.
+func (f *fakePando) responseCache() *pandotest.Cache {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.cache
 }
 
 func (f *fakePando) mcpURL() string { return f.srv.URL + "/mcp" }

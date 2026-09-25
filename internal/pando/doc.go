@@ -85,6 +85,11 @@
 // parses. Both paths tolerate unknown fields, because Pando adds them without
 // warning.
 //
+// Pando's MCP server replaces any result past 15,000 bytes or 300 lines with a
+// `[Response cached …]` stub, and nothing turns that off. cache.go pages the
+// full text back with Pando's cache_read before any decoder sees it
+// (docs/21-semantic-search.md §6.0).
+//
 // # Lifecycle
 //
 // One MCP session is established lazily and shared by every caller. Reuse is
@@ -102,6 +107,8 @@
 // the server can map them onto status codes without matching on strings:
 // ErrNotConfigured (the feature is off), ErrInvalidOptions and ErrRemoteRefused
 // (New rejected the configuration), ErrUnreachable (Pando is not answering),
+// ErrUnreadable (it answered with something this client cannot decode, which
+// unwraps to ErrUnreachable),
 // ErrUnauthorized (the token was rejected), ErrTimeout (the deadline expired,
 // which is deliberately not the same as unreachable), ErrToolFailed (Pando ran
 // the tool and the tool failed, which is deliberately not the same as an empty

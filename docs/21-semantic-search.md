@@ -325,6 +325,35 @@ Search itself is specified with `GIT-US-0082`. The contract the two indexations 
   client and searcher to impact tiers 2 and 3 (GIT-US-0147). A session with no backend installed (every browser-only one, and a
   native one with no `search.pando.mcpUrl`) answers `unavailable` rather than an empty result.
 
+### 6.0 Pando's response cache
+
+Pando's MCP server replaces every tool result of 15,000 bytes or more, or of 300 lines or more,
+with a stub: a `[Response cached: N lines, M bytes → cache_id: "…" | tool: …]` header, a
+line-numbered preview of the first 200 lines and a pointer to its `cache_read` tool (Pando
+`internal/llm/tools/cache_interceptor.go`). No Pando setting turns it off, and a knowledge-base
+search of 16 chunks already crosses the threshold (docs/research/2026-09-25-spec-impact-benchmark.md
+§9.5). The cache is per MCP session, and the stub keeps the tool's `structuredContent.metadata`.
+
+`internal/pando` follows it (`GIT-US-0164`), so no caller above the package ever sees a stub:
+
+- **Detect.** Every tool result whose text starts with `[Response cached:` is a stub.
+- **Page.** The client calls `cache_read` with the cache id, `offset` and `limit: 500` (Pando's
+  cap) over the same session, until it holds every line the header declares. It checks each
+  page's line numbers and the reassembled size against the header, and hands the decoders the
+  full text, byte for byte what the tool produced.
+- **Bound.** Paging runs inside the call's own deadline (the client's 20 s default, and the
+  300 ms `pandoBudget` of a search). It stops at 4 MiB and 64 pages, which is far beyond any
+  result this client asks for.
+- **Fail closed, and briefly.** A stub that cannot be read back — an unknown header, an entry
+  Pando has evicted or lost with a restarted session, a page that does not match, a result past
+  the bounds — is `pando.ErrUnreadable`. It unwraps to `ErrUnreachable`, so the caller reports it
+  as `unavailable`. The exception is a tool read from its `structuredContent.metadata`
+  (`code_hybrid_search`, `code_find_symbol`): Pando keeps the metadata on the stub, so that result
+  still decodes. No error of this package names the cache id.
+
+`search_semantic`, the workspace search (`GET /api/v1/search`) and impact tiers 2 and 3 all go
+through this client, so all of them read large results the same way.
+
 ### 6.1 Code-graph wrappers
 
 Next to the two searches, `internal/pando` wraps the three tools that read the call and import
@@ -344,7 +373,8 @@ edges Pando builds while it indexes a code project (`GIT-US-0117`, for the impac
 - Impact resolution is by **name** over call edges: approximate when unrelated symbols share a
   name. Pin a definition with `FindSymbol` first.
 - Pando's `No …` sentence is an empty result, never an error. `pando.IsUnavailable(err)` is true
-  for `ErrNotConfigured`, `ErrUnreachable`, `ErrUnauthorized` and `ErrTimeout` — the cases a
+  for `ErrNotConfigured`, `ErrUnreachable` (and `ErrUnreadable`, a result that could not be
+  decoded, §6.0), `ErrUnauthorized` and `ErrTimeout` — the cases a
   caller reports as `unavailable` and degrades over — and false for `ErrToolFailed` (for example
   a project that is not indexed) and `ErrInvalidOptions`.
 
@@ -357,6 +387,11 @@ traced symbols of the trace graph. Tier 3 sends one `search.semantic` query of k
 `candidate`s with a score and never raise a tier-1 or tier-2 hit. Both read the client at call
 time, so a settings change applies to the next query. An `IsUnavailable` error, or no Pando at
 all, makes the tier `unavailable`; any other error makes it `error`; tier 1 answers regardless.
+The message of an `unavailable` tier is a short, fixed sentence (`pando.Reason`): `Pando is not
+configured`, `Pando is unreachable`, `Pando rejected the token`, `Pando did not answer in time` or
+`Pando answered with a result this client cannot read`. It never quotes the error itself, whose
+text can carry a Pando cache id or an address, so two runs against one index give byte-identical
+reports (`GIT-US-0164`).
 
 ---
 
