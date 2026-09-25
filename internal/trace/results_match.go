@@ -2,6 +2,7 @@ package trace
 
 import (
 	"sort"
+	"time"
 
 	"github.com/digiogithub/git-in-track/internal/core"
 )
@@ -57,6 +58,9 @@ type RequirementResult struct {
 	// Commits are the distinct commits of the matched results, sorted; more
 	// than one means the evidence comes from several runs.
 	Commits []string `json:"commits,omitempty"`
+	// Latest is the newest ingest time of the matched results (UTC); zero
+	// when nothing matched. It dates the evidence for coverage (GIT-US-0116).
+	Latest time.Time `json:"-"`
 }
 
 // ResultSet indexes test results by file for matching. Only results mapped
@@ -135,6 +139,9 @@ func (s *ResultSet) MatchRequirement(tr core.TracedRequirement) RequirementResul
 				lt.Results = append(lt.Results, r.ID)
 				if r.Commit != "" {
 					commits[r.Commit] = true
+				}
+				if r.At.After(out.Latest) {
+					out.Latest = r.At
 				}
 			}
 			sort.Strings(lt.Results)

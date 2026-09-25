@@ -80,6 +80,10 @@ type Vault struct {
 	// tracer answers the requirement trace graph. Nil where no host installed
 	// one, which is every browser-only session (see SetRequirementTracer).
 	tracer RequirementTracer
+	// coverage answers requirement coverage and the evidence a verification
+	// stamp copies. Nil where no host installed one, which is every
+	// browser-only session (see SetRequirementCoverage).
+	coverage RequirementCoverage
 }
 
 // Options configures a Vault.
@@ -430,6 +434,10 @@ func (v *Vault) Dispatch(ctx context.Context, method string, raw []byte) (any, e
 		return v.traceRequirement(ctx, raw)
 	case "trace.touching":
 		return v.traceTouching(ctx, raw)
+	case "coverage.list":
+		return v.coverageList(ctx, raw)
+	case "requirement.stamp":
+		return v.requirementStamp(ctx, raw)
 	case "inbox.list":
 		return v.inboxList(ctx, raw)
 	case "inbox.triage":

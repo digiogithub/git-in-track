@@ -4958,6 +4958,29 @@ lines?}`; `broken` lists the `W-TRACE-BROKEN` warnings of the requirement's `tra
 rescans the whole working tree on the first call after 30 s. Both answers are sorted and derived:
 nothing is written.
 
+**Coverage and the verification stamp (`GIT-US-0116`).** Two more methods answer from the
+coverage backend of doc 03 §21.6 (R-REQ-12a), a second host seam, `Vault.SetRequirementCoverage`
+(`vault.RequirementCoverage`, implemented by `internal/trace`'s `Coverage` over the trace engine,
+the test-result cache of `gintrack spec ingest` and the repository's git history). The companion
+installs one per repository; a browser-only session installs none, where both fail with
+`unavailable`.
+
+| Method | Params | Result |
+|---|---|---|
+| `coverage.list` | `{project?, spec?, refs?: string[], status?: ("untested" \| "passing" \| "failing" \| "suspect")[]}` | `{coverage: {ref, status, reasons?: string[], tests?: {test, result}[]}[], total}` |
+| `requirement.stamp` | `{refs?: string[], spec?, by}` | `{stamped: {ref, verified: {rev, commit, at, by}}[], unstamped: {ref, reason}[], writes}` |
+
+A coverage row is deliberately compact — about 40 tokens with one linked test, plus about 15 per
+further test — because the MCP tools of `GIT-US-0123`/`GIT-US-0124` return it as is. `reasons` are
+the short codes of doc 03 §21.6; a test's `result` is `pass`, `fail`, `skip` or `missing`.
+`requirement.stamp` is what `gintrack spec verify --commit` (`GIT-US-0125`) sends after running
+the tests: it writes `requirements.R<n>.verified` for each named requirement whose evidence
+passed at one commit, through `UpdateRequirement` under the requirement rev, and lists every
+other one in `unstamped` with its reason; `by` is recorded when the evidence names nobody. It
+never refuses a requirement and never writes anything but `verified`. The done-transition stamp
+of `GIT-US-0110` calls the same code from inside its own write. The coverage state itself is
+never written.
+
 ---
 
 ## 7. Cross-platform concerns

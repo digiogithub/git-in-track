@@ -25,6 +25,12 @@
 // is kept in a per-machine cache outside the repository, and the results
 // of a requirement's linked tests are aggregated (GIT-US-0115).
 //
+// Coverage turns that evidence, the requirement's verified: stamp and the
+// changes gitops reports since the evidence's commit into the computed
+// coverage state — untested, failing, suspect, passing — and offers the
+// stamp a passing run allows; it is the coverage backend a native host
+// installs into a vault (vault.RequirementCoverage, GIT-US-0116).
+//
 // The package walks the filesystem and is therefore native only; it imports
 // internal/core for the ref grammar, never the other way round, and neither
 // internal/core nor internal/vault may import it (the WASM build stays free

@@ -23,5 +23,11 @@ func TestTraceSeamInstalled(t *testing.T) {
 		if !strings.Contains(out, `"hits":[]`) {
 			t.Errorf("trace.touching on %s = %s, want no hits", m.id, out)
 		}
+		if !m.vlt.CoverageAvailable() {
+			t.Errorf("repository %s has no coverage backend", m.id)
+		}
+		if out := m.vlt.Call("coverage.list", `{}`); !strings.Contains(out, `"ok":true`) {
+			t.Errorf("coverage.list on %s = %s", m.id, out)
+		}
 	}
 }
