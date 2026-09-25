@@ -174,6 +174,15 @@ because a commit list cannot express them.
   rebuilt, never fatal. Each requirement's linked tests are aggregated (failing beats passing;
   `pass`, `fail`, `partial`, `untested`) and listed. Nothing is written into a spec; the
   `verified` stamp, coverage and `verify.json` are later stories.
+- **Changed files between two revisions** (GIT-US-0112). The companion's git layer gains
+  `Backend.ChangedFiles(from, to)`: the files that differ between two refs — or between a
+  ref and the working tree — as added, modified, deleted or renamed (with the old path),
+  plus the changed line ranges on the new side. Refs accept branch names, SHAs and
+  `origin/main`-style remote-tracking refs; an unknown one fails with
+  `git_unknown_revision`. The go-git, system-git and jj backends return identical results
+  on the same history, and the jj backend answers without snapshotting the working copy.
+  It is the diff primitive the trace and impact work of GIT-EP-0024 builds on; nothing
+  user-facing calls it yet. See [docs/06-git-sync.md](docs/06-git-sync.md) §7.4.
 
 ### Changed
 

@@ -84,6 +84,10 @@ const (
 	// because the integration moved on while the resolver was open
 	// (GIT-US-0022).
 	CodeNotFound = "not_found"
+	// CodeUnknownRevision means a ref handed to ChangedFiles — a branch, a
+	// remote-tracking ref, a SHA — names no commit in the repository
+	// (GIT-US-0112).
+	CodeUnknownRevision = "git_unknown_revision"
 )
 
 // ErrGit is the sentinel behind every failure of this package, so a caller can
