@@ -627,6 +627,29 @@ export type ImpactResult = {
   hits: ImpactHit[];
 };
 
+/**
+ * One page of the token-budgeted impact report (doc 03 §21.11, R-IMP-8..10).
+ * The JSON form carries `tiers` and ranked `hits`; the text form carries
+ * `text`, one line per requirement. `truncated` counts the hits after this
+ * page and `nextCursor` fetches them; `tokens` is the page's estimate
+ * (bytes / 3, rounded up).
+ */
+export type ImpactReport = {
+  base: string;
+  head?: string;
+  files: number;
+  symbols: number;
+  tiers?: ImpactResult['tiers'];
+  hits?: ImpactHit[];
+  text?: string;
+  total: number;
+  offset?: number;
+  truncated?: number;
+  nextCursor?: string;
+  budget: number;
+  tokens: number;
+};
+
 /** What a stamp run wrote, and what it left alone and why. */
 export type StampReport = {
   stamped: { ref: string; verified: { rev: string; commit: string; at: string; by: string } }[];
@@ -2103,6 +2126,22 @@ export type CoreApi = {
       limit?: number;
     };
     result: { impact: ImpactResult };
+  };
+  /** The impact as a ranked report cut at a token budget (default 1500); `unavailable` in the browser. */
+  'impact.report': {
+    params: {
+      base?: string;
+      head?: string;
+      story?: string;
+      title?: string;
+      tiers?: (1 | 2 | 3)[];
+      depth?: number;
+      limit?: number;
+      budget?: number;
+      cursor?: string;
+      format?: 'json' | 'text';
+    };
+    result: { report: ImpactReport };
   };
   'inbox.list': { params: InboxFilter | undefined; result: InboxPage };
   /**

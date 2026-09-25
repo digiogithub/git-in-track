@@ -67,3 +67,85 @@ func TestImpactQuery(t *testing.T) {
 		})
 	}
 }
+
+// hitsImpact answers every query with n hits of spec DEMO-SP-0001.
+type hitsImpact struct{ n int }
+
+func (s hitsImpact) Impact(_ context.Context, _ *core.Index, q core.ImpactQuery) (core.ImpactResult, error) {
+	res := core.ImpactResult{Base: q.Base, Tiers: []core.ImpactTier{{Tier: 1, Status: core.ImpactTierOK, Hits: s.n}}}
+	for i := 1; i <= s.n; i++ {
+		res.Hits = append(res.Hits, core.ImpactHit{
+			Ref: core.RequirementRef{Spec: "DEMO-SP-0001", Number: i}, Title: "Requirement", Tier: 1,
+			Status: core.CoverageUntested, Reasons: []string{"symbol:src/a.go#F"},
+		})
+	}
+	return res, nil
+}
+
+func TestImpactReport(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		backend  bool
+		params   map[string]any
+		wantCode string
+		wantHits int
+		wantText bool
+	}{
+		{"unavailable without a host", false, map[string]any{}, "unavailable", 0, false},
+		{"default budget fits", true, map[string]any{}, "", 30, false},
+		{"text form", true, map[string]any{"format": "text"}, "", 0, true},
+		{"small budget truncates", true, map[string]any{"budget": 200}, "", -1, false},
+		{"negative budget", true, map[string]any{"budget": -1}, "invalid_request", 0, false},
+		{"budget too high", true, map[string]any{"budget": core.MaxImpactBudget + 1}, "invalid_request", 0, false},
+		{"unknown format", true, map[string]any{"format": "yaml"}, "invalid_request", 0, false},
+		{"foreign cursor", true, map[string]any{"cursor": "eyJvIjoxLCJmIjoiMDAwMDAwMDAifQ"}, "invalid_request", 0, false},
+		{"query validated", true, map[string]any{"tiers": []int{4}}, "invalid_request", 0, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			v := specVault(t)
+			if tc.backend {
+				v.SetRequirementImpact(hitsImpact{n: 30})
+			}
+			env := rawCall(t, v, "impact.report", tc.params)
+			if tc.wantCode != "" {
+				if env.OK || env.Error.Code != tc.wantCode {
+					t.Fatalf("impact.report = %+v, want %s", env, tc.wantCode)
+				}
+				return
+			}
+			if !env.OK {
+				t.Fatalf("impact.report failed: %s %s", env.Error.Code, env.Error.Message)
+			}
+			got := decode[struct {
+				Report core.ImpactReport `json:"report"`
+			}](t, env.Result).Report
+			if got.Total != 30 || got.Tokens > got.Budget {
+				t.Errorf("report = %+v", got)
+			}
+			if tc.wantText != (got.Text != "") {
+				t.Errorf("text = %q, want text form %v", got.Text, tc.wantText)
+			}
+			if tc.wantHits >= 0 && !tc.wantText && len(got.Hits) != tc.wantHits {
+				t.Errorf("hits = %d, want %d", len(got.Hits), tc.wantHits)
+			}
+			if tc.wantHits < 0 {
+				if got.Truncated == 0 || got.NextCursor == "" || len(got.Hits)+got.Truncated != 30 {
+					t.Fatalf("small budget: %d hits, truncated %d, cursor %q", len(got.Hits), got.Truncated, got.NextCursor)
+				}
+				next := rawCall(t, v, "impact.report", map[string]any{"budget": 200, "cursor": got.NextCursor})
+				if !next.OK {
+					t.Fatalf("resuming failed: %+v", next.Error)
+				}
+				page := decode[struct {
+					Report core.ImpactReport `json:"report"`
+				}](t, next.Result).Report
+				if page.Offset != len(got.Hits) || page.Hits[0].Ref.Number != len(got.Hits)+1 {
+					t.Errorf("resumed at %d (%s), want %d", page.Offset, page.Hits[0].Ref, len(got.Hits))
+				}
+			}
+		})
+	}
+}

@@ -223,6 +223,15 @@ because a commit list cannot express them.
   method `impact.query` reaches it; browser-only mode answers `unavailable`. See
   [docs/03-data-model.md](docs/03-data-model.md) §21.11 and
   [docs/07-cli-and-api.md](docs/07-cli-and-api.md) §6.7.
+- **Token-budgeted impact report (`GIT-US-0120`).** `core.RenderImpactReport` ranks the impact
+  hits — failing, suspect, then tier with semantic candidates last, then ref — and renders one
+  page as JSON or as terse text (one line per requirement: ref, tier, status, suspect, clipped
+  title, first reason) within a `budget` in tokens (default 1500, estimated as `ceil(bytes / 3)`).
+  The cut hits are counted in `truncated` and fetched with a filter-bound `nextCursor` that
+  resumes with no gap or repeat. The new CoreApi method `impact.report` reaches it, the one
+  renderer for the MCP tool, the CLI and the HTTP API; the typical-PR fixture is ≈ 775 tokens as
+  JSON and ≈ 475 as text (golden tests). See [docs/03-data-model.md](docs/03-data-model.md)
+  §21.11 and [docs/08-mcp-server.md](docs/08-mcp-server.md) §4.21.
 
 ### Changed
 

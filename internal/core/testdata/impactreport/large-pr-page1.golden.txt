@@ -1,0 +1,39 @@
+impact main..HEAD: 140 files, 380 symbols, 150 hits, showing 1-36
+tiers: 1 ok 0; 2 ok 0 (partial); 3 unavailable (Pando is not configured for this session; set...)
+ACME-SP-0002.R2 t1 failing "Requirement 24 of a large change, wit..." symbol:internal/pkg6/file4.go#Func24
+ACME-SP-0004.R1 t1 failing "Requirement 3 of a large change, with..." symbol:internal/pkg3/file3.go#Func3
+ACME-SP-0015.R6 t1 failing "Requirement 129 of a large change, wi..." symbol:internal/pkg3/file4.go#Func129
+ACME-SP-0017.R5 t1 failing "Requirement 108 of a large change, wi..." symbol:internal/pkg0/file3.go#Func108
+ACME-SP-0019.R4 t1 failing "Requirement 87 of a large change, wit..." symbol:internal/pkg6/file2.go#Func87
+ACME-SP-0021.R3 t1 failing "Requirement 66 of a large change, wit..." symbol:internal/pkg3/file1.go#Func66
+ACME-SP-0023.R2 t1 failing "Requirement 45 of a large change, wit..." symbol:internal/pkg0/file0.go#Func45
+ACME-SP-0001.R6 t2 failing "Requirement 115 of a large change, wi..." symbol:internal/pkg7/file0.go#Func115
+ACME-SP-0003.R5 t2 failing "Requirement 94 of a large change, wit..." symbol:internal/pkg4/file4.go#Func94
+ACME-SP-0005.R4 t2 failing "Requirement 73 of a large change, wit..." symbol:internal/pkg1/file3.go#Func73
+ACME-SP-0007.R3 t2 failing "Requirement 52 of a large change, wit..." symbol:internal/pkg7/file2.go#Func52
+ACME-SP-0009.R2 t2 failing "Requirement 31 of a large change, wit..." symbol:internal/pkg4/file1.go#Func31
+ACME-SP-0011.R1 t2 failing "Requirement 10 of a large change, wit..." symbol:internal/pkg1/file0.go#Func10
+ACME-SP-0022.R6 t2 failing "Requirement 136 of a large change, wi..." symbol:internal/pkg1/file1.go#Func136
+ACME-SP-0001.R1 t1 passing suspect "Requirement 0 of a large change, with..." symbol:internal/pkg0/file0.go#Func0
+ACME-SP-0001.R7 t1 passing suspect "Requirement 138 of a large change, wi..." symbol:internal/pkg3/file3.go#Func138
+ACME-SP-0005.R5 t1 passing suspect "Requirement 96 of a large change, wit..." symbol:internal/pkg6/file1.go#Func96
+ACME-SP-0007.R7 t1 suspect "Requirement 144 of a large change, wi..." symbol:internal/pkg0/file4.go#Func144
+ACME-SP-0009.R3 t1 passing suspect "Requirement 54 of a large change, wit..." symbol:internal/pkg0/file4.go#Func54
+ACME-SP-0009.R6 t1 suspect "Requirement 123 of a large change, wi..." symbol:internal/pkg6/file3.go#Func123
+ACME-SP-0011.R5 t1 suspect "Requirement 102 of a large change, wi..." symbol:internal/pkg3/file2.go#Func102
+ACME-SP-0012.R6 t1 passing suspect "Requirement 126 of a large change, wi..." symbol:internal/pkg0/file1.go#Func126
+ACME-SP-0013.R1 t1 passing suspect "Requirement 12 of a large change, wit..." symbol:internal/pkg3/file2.go#Func12
+ACME-SP-0013.R4 t1 suspect "Requirement 81 of a large change, wit..." symbol:internal/pkg0/file1.go#Func81
+ACME-SP-0015.R3 t1 suspect "Requirement 60 of a large change, wit..." symbol:internal/pkg6/file0.go#Func60
+ACME-SP-0016.R4 t1 passing suspect "Requirement 84 of a large change, wit..." symbol:internal/pkg3/file4.go#Func84
+ACME-SP-0017.R2 t1 suspect "Requirement 39 of a large change, wit..." symbol:internal/pkg3/file4.go#Func39
+ACME-SP-0019.R1 t1 suspect "Requirement 18 of a large change, wit..." symbol:internal/pkg0/file3.go#Func18
+ACME-SP-0020.R2 t1 passing suspect "Requirement 42 of a large change, wit..." symbol:internal/pkg6/file2.go#Func42
+ACME-SP-0001.R3 t2 suspect "Requirement 46 of a large change, wit..." symbol:internal/pkg1/file1.go#Func46
+ACME-SP-0002.R4 t2 passing suspect "Requirement 70 of a large change, wit..." symbol:internal/pkg7/file0.go#Func70
+ACME-SP-0003.R2 t2 suspect "Requirement 25 of a large change, wit..." symbol:internal/pkg7/file0.go#Func25
+ACME-SP-0005.R1 t2 suspect "Requirement 4 of a large change, with..." symbol:internal/pkg4/file4.go#Func4
+ACME-SP-0006.R2 t2 passing suspect "Requirement 28 of a large change, wit..." symbol:internal/pkg1/file3.go#Func28
+ACME-SP-0010.R6 t2 passing suspect "Requirement 124 of a large change, wi..." symbol:internal/pkg7/file4.go#Func124
+ACME-SP-0014.R4 t2 passing suspect "Requirement 82 of a large change, wit..." symbol:internal/pkg1/file2.go#Func82
+truncated: 114, cursor: eyJvIjozNiwiZiI6ImYyMTFkZmNlIn0

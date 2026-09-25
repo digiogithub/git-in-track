@@ -2880,5 +2880,30 @@ answers `unavailable`.
   not indexed) or `skipped` (not asked for); tier 1 always answers when the query does. Hits are
   sorted by tier, then spec and number.
 - **R-IMP-7 Determinism.** Tiers 1 and 2 are deterministic: the same diff, index and Pando answer
-  give a byte-identical result (golden test). No timestamp or map order reaches it. The token
-  budget and the ranking for agents are `GIT-US-0120`'s.
+  give a byte-identical result (golden test). No timestamp or map order reaches it.
+- **R-IMP-8 Report ranking** (`GIT-US-0120`). The report agents read (`impact.report`, docs/07
+  §6.7, rendered by `core.RenderImpactReport` for MCP, CLI and HTTP alike) ranks the hits:
+  `failing` first, then suspect, then by tier — tier-3 candidates last, highest `score` first —
+  then by ref (spec, then number). The order is total, so a page offset always means the same
+  hit.
+- **R-IMP-9 Token budget.** `budget` (tokens, default 1500, at most 20000) bounds a page in the
+  asked form, `json` (the hits) or `text` (one line per hit). Tokens are estimated as
+  `ceil(bytes / 3)` of the page's compact JSON, envelope included — conservative against the ~4
+  bytes per token of English prose and the ~3–3.5 of JSON and paths. The page keeps the
+  per-tier status and cuts the lowest-ranked hits, reporting `truncated: n` and `nextCursor`; it
+  always carries at least one hit when any remain, so a walk advances. The typical-PR fixture
+  (12 hits over the three tiers) is ≈ 775 tokens as JSON and ≈ 475 as text (golden test).
+- **R-IMP-10 Report cursor.** `nextCursor` is the opaque base64 `{o: offset, f: fingerprint}`
+  of docs/08 §3 principle 4, the fingerprint hashing `base`, `head` and the ranked refs: it
+  resumes exactly where the page stopped, with no gap or repeat, across a change of budget or
+  form, and a result whose hits changed refuses it (`invalid_request`) rather than skipping.
+  The text form is:
+
+  ```text
+  impact <base>..<head|worktree>: <files> files, <symbols> symbols, <total> hits[, showing a-b]
+  tiers: 1 ok <n>; 2 ok <n>[ (partial)]; 3 unavailable (<message, clipped>)
+  <ref> t<tier>[~<score>] <status|-> [suspect] "<title, 40 runes>" <first reason, 60 runes>[ +<n>]
+  truncated: <n>, cursor: <token>
+  ```
+
+  `suspect` is printed after a status other than `suspect`; `+<n>` counts the other reasons.
