@@ -183,7 +183,7 @@ func TestWorkspaceSprintWrite(t *testing.T) {
 		t.Run("a new sprint is allocated the next id", func(t *testing.T) {
 			result := decode[SprintResult](t, wsCall(t, w, "sprint.create", map[string]any{
 				"board": "demo-scrum", "title": "Sprint 2",
-				"start": "2026-09-07", "end": "2026-09-20",
+				"start": "2099-09-07", "end": "2099-09-20",
 				"goal": "Payment methods", "items": []string{"DEMO/DEMO-US-0002"},
 			}))
 			if result.Sprint.Sprint.ID != "DEMO-TEAM-S-0002" {
@@ -225,7 +225,7 @@ func TestWorkspaceSprintStartAndClose(t *testing.T) {
 		t.Run("a second active sprint is refused, then confirmed", func(t *testing.T) {
 			wsCall(t, w, "sprint.create", map[string]any{
 				"board": "demo-scrum", "title": "Sprint 2",
-				"start": "2026-09-07", "end": "2026-09-20",
+				"start": "2099-09-07", "end": "2099-09-20",
 			})
 			code, message := wsFail(t, w, "sprint.start", map[string]any{"id": "DEMO-TEAM-S-0002"})
 			if code != SprintActiveCode {
@@ -358,7 +358,7 @@ func TestWorkspaceBoardUpdate(t *testing.T) {
 
 		t.Run("a board can be pointed at another sprint", func(t *testing.T) {
 			wsCall(t, w, "sprint.create", map[string]any{
-				"board": "demo-scrum", "start": "2026-09-07", "end": "2026-09-20",
+				"board": "demo-scrum", "start": "2099-09-07", "end": "2099-09-20",
 			})
 			result := decode[BoardUpdateResult](t, wsCall(t, w, "board.update", map[string]any{
 				"board": "demo-scrum", "rev": "*",
