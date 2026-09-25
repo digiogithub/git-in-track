@@ -444,7 +444,9 @@ All commands accept the global flags above. Exit codes:
 | 7    | gate tripped: `gintrack spec impact --fail-on` found a hit in a listed state (§4.20) |
 
 With `--json`, machine-readable output goes to stdout and human logs to stderr, so
-`gintrack item list --json | jq` is always safe.
+`gintrack item list --json | jq` is always safe. The JSON is indented, except for
+`gintrack spec impact`, which prints compact JSON so the output matches its token estimate
+(`--pretty` indents it; §4.20).
 
 ### 4.1 `gintrack serve`
 
@@ -1930,7 +1932,17 @@ token-budgeted report of `GIT-US-0120` — the same renderer `spec_impact` and t
 | `--budget <n>` | 1500 | token budget of the page, 1 to 20000 |
 | `--cursor <token>` | | `nextCursor` of the previous page, with the query unchanged |
 | `--format text\|json` | `text` | report form; `json` (or `--json`) prints `{report, failOn?, offending?}` with the report's tiers and ranked hits |
+| `--pretty` | off | indent the JSON output; without it the JSON is one compact line |
 | `--fail-on <states>` | | comma-separated coverage states — `untested`, `passing`, `failing`, `suspect` — that fail the run |
+
+**JSON is compact by default.** Unlike the indented `--json` of the other commands,
+`spec impact --format json` (and `--json`) prints the payload as one line of compact JSON, because
+the report's `tokens` field is `ceil(bytes / 3)` of the compact JSON of `report` — the same measure
+as the MCP `spec_impact` result and the `--budget` cut. What is printed is therefore what the
+estimate measured: the `report` object costs at most `tokens`, and the envelope adds only
+`{"report":}`, a newline and, with `--fail-on`, the `failOn` and `offending` fields. `--pretty`
+indents the output for a human reader; it is then about 45 % larger than `tokens` says
+(`GIT-US-0160`, docs/research/2026-09-25-spec-impact-benchmark.md).
 
 The text form is one header line, one tiers line and one line per requirement:
 

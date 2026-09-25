@@ -1,10 +1,13 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/digiogithub/git-in-track/internal/core"
 )
 
 // gitSpecRepo is specRepo with real git history: one commit holding the whole
@@ -155,6 +158,41 @@ func TestSpecImpactFailOn(t *testing.T) {
 		}
 		got := decode[specImpactPayload](t, stdout)
 		if len(got.Offending) != 1 || got.Offending[0].Ref.String() != "ACME-SP-0001.R1" || len(got.Report.Hits) == 0 {
+			t.Errorf("payload = %+v", got)
+		}
+	})
+	t.Run("json is compact and within the reported tokens", func(t *testing.T) {
+		// GIT-US-0160: the report's tokens estimate measures compact JSON, so
+		// the printed report must not cost more than it says.
+		stdout := h.mustRun("spec", "impact", "--since", "HEAD", "--format", "json")
+		if strings.Count(stdout, "\n") != 1 || !strings.HasSuffix(stdout, "\n") {
+			t.Fatalf("output is not one compact line:\n%s", stdout)
+		}
+		var raw struct {
+			Report json.RawMessage `json:"report"`
+		}
+		if err := json.Unmarshal([]byte(stdout), &raw); err != nil {
+			t.Fatal(err)
+		}
+		got := decode[specImpactPayload](t, stdout)
+		if got.Report.Tokens == 0 || len(got.Report.Hits) == 0 {
+			t.Fatalf("payload = %+v", got)
+		}
+		if est := core.EstimateTokens(string(raw.Report)); est > got.Report.Tokens {
+			t.Errorf("printed report = %d estimated tokens, reported %d", est, got.Report.Tokens)
+		}
+		// Without --fail-on the envelope {"report":…} is all that is added.
+		envelope := len(`{"report":}` + "\n")
+		if limit := 3*got.Report.Tokens + envelope; len(stdout) > limit {
+			t.Errorf("printed %d bytes, want ≤ %d (3 × %d tokens + envelope)", len(stdout), limit, got.Report.Tokens)
+		}
+	})
+	t.Run("pretty indents the json", func(t *testing.T) {
+		stdout := h.mustRun("spec", "impact", "--since", "HEAD", "--json", "--pretty")
+		if !strings.Contains(stdout, "\n  \"report\": {") {
+			t.Errorf("output is not indented:\n%s", stdout)
+		}
+		if got := decode[specImpactPayload](t, stdout); len(got.Report.Hits) == 0 {
 			t.Errorf("payload = %+v", got)
 		}
 	})

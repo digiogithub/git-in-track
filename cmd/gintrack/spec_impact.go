@@ -21,6 +21,7 @@ type specImpactFlags struct {
 	cursor  string
 	tiers   []int
 	format  string
+	pretty  bool
 	failOn  []string
 	asJSON  bool
 }
@@ -55,7 +56,9 @@ has no Pando client, so they report unavailable and tier 1 still answers.
 The diff runs from --since to --head; without --head it ends at the working
 tree. The report is ranked failing, then suspect, then by tier, and cut at
 --budget tokens; walk the rest with --cursor. The default output is the terse
-text report; --format json (or --json) prints the report's structured form.
+text report; --format json (or --json) prints the report's structured form as
+one line of compact JSON, the form the report's "tokens" estimate measures
+(unlike the indented JSON of other commands); --pretty indents it.
 
 --fail-on lists coverage states that fail the run: when any hit of the whole
 result — not just the page shown — is in one of them, the report is still
@@ -79,7 +82,8 @@ traces.`,
 	f.IntSliceVar(&local.tiers, "tiers", nil, "tiers to run, from 1, 2 and 3 (default all)")
 	f.StringVar(&local.format, "format", "", "report form: text (default) or json")
 	f.StringSliceVar(&local.failOn, "fail-on", nil, "exit 7 when a hit is in one of these states: untested, passing, failing, suspect")
-	f.BoolVar(&local.asJSON, "json", false, "print machine-readable JSON")
+	f.BoolVar(&local.asJSON, "json", false, "print machine-readable JSON (compact; see --pretty)")
+	f.BoolVar(&local.pretty, "pretty", false, "indent the JSON output; the report's tokens estimate measures the compact form")
 	return cmd
 }
 
@@ -169,6 +173,9 @@ func runSpecImpact(cmd *cobra.Command, flags *globalFlags, local *specImpactFlag
 		payload.FailOn = append(payload.FailOn, string(st))
 	}
 	p := flags.printer(cmd, jsonOut)
+	// The JSON is compact by default so that what is printed is what the
+	// report's tokens estimate measured (GIT-US-0160).
+	p.SetCompact(!local.pretty)
 	if p.JSONMode() {
 		if err := render(p.JSON(payload)); err != nil {
 			return err

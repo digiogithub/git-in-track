@@ -88,8 +88,21 @@ func lastNonEmpty(cells []string) int {
 // HTML escaping is off so that a title with an ampersand reads the same on the
 // terminal as in the file it came from.
 func JSON(w io.Writer, v any) error {
+	return encodeJSON(w, v, "  ")
+}
+
+// CompactJSON writes v as one line of JSON followed by a newline, with the
+// same escaping as JSON. It is for payloads whose size is part of the
+// contract, such as a token-budgeted report.
+func CompactJSON(w io.Writer, v any) error {
+	return encodeJSON(w, v, "")
+}
+
+func encodeJSON(w io.Writer, v any, indent string) error {
 	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
+	if indent != "" {
+		enc.SetIndent("", indent)
+	}
 	enc.SetEscapeHTML(false)
 	if err := enc.Encode(v); err != nil {
 		return fmt.Errorf("encode JSON: %w", err)
@@ -101,10 +114,11 @@ func JSON(w io.Writer, v any) error {
 //
 // The zero value is not usable; call New.
 type Printer struct {
-	out    io.Writer
-	err    io.Writer
-	asJSON bool
-	quiet  bool
+	out     io.Writer
+	err     io.Writer
+	asJSON  bool
+	quiet   bool
+	compact bool
 }
 
 // New returns a printer writing to out, with human notes going to notes.
@@ -114,6 +128,9 @@ func New(out, notes io.Writer, asJSON bool) *Printer {
 
 // SetQuiet suppresses the human lines Printf and Line write.
 func (p *Printer) SetQuiet(quiet bool) { p.quiet = quiet }
+
+// SetCompact makes JSON print one compact line instead of indented output.
+func (p *Printer) SetCompact(compact bool) { p.compact = compact }
 
 // JSONMode reports whether the printer emits JSON.
 func (p *Printer) JSONMode() bool { return p.asJSON }
@@ -142,6 +159,9 @@ func (p *Printer) Table(headers []string, rows [][]string) error {
 func (p *Printer) JSON(v any) error {
 	if !p.asJSON {
 		return nil
+	}
+	if p.compact {
+		return CompactJSON(p.out, v)
 	}
 	return JSON(p.out, v)
 }

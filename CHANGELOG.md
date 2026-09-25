@@ -36,6 +36,14 @@ because a commit list cannot express them.
   fixed reason such as `Pando is unreachable` instead of the error text, which quoted Pando's
   random cache id. Two runs against one index give byte-identical reports, and the tier line
   is shorter.
+### Changed
+
+- **`gintrack spec impact --format json` prints compact JSON** (`GIT-US-0160`, docs/07
+  §4.20). The payload is now one line, so what is printed matches the report's `tokens`
+  estimate, which has always measured compact JSON; the indented form printed about 45 % more
+  (docs/research/2026-09-25-spec-impact-benchmark.md). `--pretty` restores the indented output.
+  This differs on purpose from the other commands' `--json`, which stays indented. Scripts that
+  parse the JSON are unaffected; scripts that grep the indented lines need `--pretty`.
 
 ## [2.1.0] — 2026-09-25
 
