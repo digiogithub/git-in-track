@@ -2613,11 +2613,13 @@ GET   /api/v1/projects/{key}/specs/coverage                 ?spec=&ref=&status= 
 GET   /api/v1/projects/{key}/specs/{spec}/coverage          the same, for one spec
 GET   /api/v1/projects/{key}/specs/impact                   ?base=&head=&story=&title=&tiers=&depth=&limit=
 GET   /api/v1/projects/{key}/specs/impact/report            the same query and ?budget=&cursor=&format=json|text
+POST  /api/v1/projects/{key}/specs/lint                     {"type":"spec|story|task","body":…,"id"?}
+POST  /api/v1/projects/{key}/specs/delta/preview            {"body":…,"id"?}
 ```
 
 Every route is one method of the CoreApi contract (§6.7) — `item.list`/`item.get` for a spec,
 `requirement.list|get|create|update`, `trace.requirement`, `coverage.list`, `impact.query`,
-`impact.report` — against the repository that exposes `{key}`, and answers with the method's own
+`impact.report`, `spec.lint`, `spec.delta.preview` — against the repository that exposes `{key}`, and answers with the method's own
 result, so the companion serves what browser-only mode reads through the WASM core. They sit
 behind the bearer token like every other route. `{spec}` must be a spec id of `{key}`
 (`404 not_found` for another project's, `400 invalid_request` for an id that is not a spec);
@@ -2637,6 +2639,9 @@ repeatable parameters (`status`, `ref`, `tiers`) also take comma-separated value
   tiers 2 and 3 report `unavailable` inside a `200` when Pando is missing. `base` defaults to
   `HEAD` and no `head` is the working tree. An unknown revision, a tier outside 1–3, a depth or
   limit out of range, a budget out of range or a foreign cursor is `400 invalid_request`.
+- **Live lint and Spec Delta preview** (`GIT-US-0132`) are pure reads of the posted body —
+  nothing is written, no rev is involved — and answer `200` with `{findings}` and `{operations}`
+  of §6.7. They are `POST` because a body does not fit a query string.
 - **Refresh.** A spec edited on disk, or by any other writer, reaches the event stream as the
   `file.changed` and `item.changed` (with the spec id) the watcher emits for any item, so an open
   spec, requirement, coverage or impact view refetches on the spec id.
@@ -5332,6 +5337,28 @@ Hits are ranked failing, suspect, then tier (candidates last), then ref; the low
 cut, `truncated` counts them and `nextCursor` — passed back as `cursor` with the query unchanged —
 fetches the rest. A cursor from another result, a budget out of range or an unknown `format` is
 `invalid_request`; browser-only mode answers `unavailable`.
+
+**Live lint and Spec Delta preview (`GIT-US-0132`).** Two pure reads over a body the web editor
+holds, not yet written: they exist so that the editor's live lint runs the core's rules in both
+modes — through `gintrackCore.call` in the browser and through `POST …/specs/lint` and
+`…/specs/delta/preview` (§5.5) on the companion — rather than a TypeScript copy of them.
+
+| Method | Params | Result |
+|---|---|---|
+| `spec.lint` | `{project?, id?, type: "spec" \| "story" \| "task", body}` | `{findings: [{code, severity, line, ref?, message}]}` |
+| `spec.delta.preview` | `{project?, id?, body}` | `{operations: [{op, spec, specTitle?, target, title, line, supersedes?, reason?, proposed?, current?: {ref, title, status?, text}, dangling?}]}` |
+
+`spec.lint` lints a spec body block by block (`LintSpec`, plus the parser's findings such as
+`W-REQ-SEPARATOR`) and a story or task body through its `## Spec Delta`: the parse findings
+(`E-DELTA-*`), the grammar lint of every ADDED and MODIFIED block (`LintSpecDelta`) and
+`W-DELTA-DANGLING` for a target this repository does not hold; any other type yields no findings,
+and a missing `type` is `invalid_request`. `line` is 1-based in the body sent. Each `LINT-REQ-*`
+finding carries the severity `specs.lint` of the project (`project`, else the key of `id`, else
+the repository's only project) gives its rule; a rule at `off` does not run. `spec.delta.preview`
+returns every operation with the block it proposes (`proposed`, below the heading and without the
+`Supersedes:` line; empty for REMOVED) and `current`, the requirement as its spec holds it now —
+the target of MODIFIED and REMOVED, the `Supersedes:` target of an ADDED move — or `dangling`,
+the `W-DELTA-DANGLING` message, when this repository does not hold it.
 
 **Spec context (`GIT-US-0123`).** `spec.context` renders the context of one story or task — step 1
 of the agent loop — through the same token estimator, budget bounds and cursor shape as

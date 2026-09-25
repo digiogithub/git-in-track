@@ -2322,10 +2322,11 @@ validation, and produce the `E-STATUS-UNKNOWN`, `W-LABEL-UNDECLARED`, and `E-CF-
 > from those markers, the `trace:` entries and the `implements`/`modifies` links (§21.7, derived
 > and never stored; the vault methods `trace.requirement` and `trace.touching`, `unavailable` in
 > browser-only mode). `GIT-US-0108` implements the grammar lint of
-> §21.9 and the `specs.lint` key in the core (the web editor's live lint consumes it in a later
-> story). `GIT-US-0109` implements the parsing and validation of `## Spec Delta` (§21.8, R-DELTA-1
-> to R-DELTA-5 up to applying): its diagnostics, the pending `modifies` relations and the refs it
-> reserves. `GIT-US-0115` ingests `go test -json`, JUnit XML and Vitest JSON reports
+> §21.9 and the `specs.lint` key in the core (the web editor's live lint consumes it since
+> `GIT-US-0132`, through the vault method `spec.lint`, docs/05 §8.7). `GIT-US-0109` implements
+> the parsing and validation of `## Spec Delta` (§21.8, R-DELTA-1 to R-DELTA-5 up to
+> applying): its diagnostics, the pending `modifies` relations and the refs it reserves.
+> `GIT-US-0115` ingests `go test -json`, JUnit XML and Vitest JSON reports
 > (`gintrack spec ingest`, docs/07 §4.19): each test is mapped to the `<path>#<symbol>` its
 > markers and `trace.tests` entries spell, its last result is kept in a per-machine test-result
 > cache outside the repository, and each requirement's linked tests are aggregated into raw

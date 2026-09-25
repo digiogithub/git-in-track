@@ -448,6 +448,10 @@ func (v *Vault) Dispatch(ctx context.Context, method string, raw []byte) (any, e
 		return v.impactReport(ctx, raw)
 	case "spec.context":
 		return v.specContext(ctx, raw)
+	case "spec.lint":
+		return v.specLint(raw)
+	case "spec.delta.preview":
+		return v.specDeltaPreview(raw)
 	case "inbox.list":
 		return v.inboxList(ctx, raw)
 	case "inbox.triage":

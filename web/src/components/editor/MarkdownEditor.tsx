@@ -16,6 +16,7 @@ import {
   indentOnInput,
   syntaxHighlighting,
 } from '@codemirror/language';
+import { forceLinting, linter } from '@codemirror/lint';
 import { highlightSelectionMatches, searchKeymap } from '@codemirror/search';
 import { Compartment, EditorState } from '@codemirror/state';
 import {
@@ -39,6 +40,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { editorHighlightStyle, editorTheme } from '@/components/editor/editor-theme';
+import { toCodeMirrorDiagnostics, type EditorLintSource } from '@/components/editor/lint';
 import { insertLink, toggleLinePrefix, wrapSelection } from '@/components/editor/markdown-commands';
 import { MarkdownPreview } from '@/components/editor/MarkdownPreview';
 import { Button } from '@/components/ui/button';
@@ -58,6 +60,13 @@ export type MarkdownEditorProps = {
   className?: string;
   /** Item ids offered as `[[wikilink]]` completions. */
   references?: EditorReference[];
+  /**
+   * Live lint: called with the document once typing pauses for `lintDelayMs`,
+   * its findings underlined in place with a tooltip (GIT-US-0132).
+   */
+  lint?: EditorLintSource | undefined;
+  /** How long typing must pause before `lint` runs. */
+  lintDelayMs?: number;
 };
 
 function referenceCompletions(references: EditorReference[]) {
@@ -88,6 +97,8 @@ export function MarkdownEditor({
   placeholder,
   className,
   references = [],
+  lint,
+  lintDelayMs = 500,
 }: MarkdownEditorProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -97,6 +108,8 @@ export function MarkdownEditor({
   const themeCompartment = useRef(new Compartment()).current;
   const editableCompartment = useRef(new Compartment()).current;
   const completionCompartment = useRef(new Compartment()).current;
+  const lintCompartment = useRef(new Compartment()).current;
+  const lintRef = useRef(lint);
   const [showPreview, setShowPreview] = useState(false);
 
   useEffect(() => {
@@ -154,6 +167,7 @@ export function MarkdownEditor({
           themeCompartment.of([]),
           editableCompartment.of([]),
           completionCompartment.of([]),
+          lintCompartment.of([]),
           ...(placeholder ? [placeholderExt(placeholder)] : []),
           EditorView.updateListener.of((update) => {
             if (!update.docChanged) return;
@@ -207,6 +221,37 @@ export function MarkdownEditor({
       ),
     });
   }, [completionCompartment, references]);
+
+  // The linter reads the source through a ref, so a new source (the project
+  // loaded, the item changed) re-lints the document without rebuilding the
+  // extension. CodeMirror debounces the calls itself and drops an answer that
+  // arrives after the document moved on.
+  const linting = lint !== undefined;
+  useEffect(() => {
+    lintRef.current = lint;
+    const view = viewRef.current;
+    if (view && lint) forceLinting(view);
+  }, [lint]);
+
+  useEffect(() => {
+    viewRef.current?.dispatch({
+      effects: lintCompartment.reconfigure(
+        linting
+          ? [
+              linter(
+                async (view) => {
+                  const source = lintRef.current;
+                  if (!source) return [];
+                  const doc = view.state.doc;
+                  return toCodeMirrorDiagnostics(doc, await source(doc.toString()));
+                },
+                { delay: lintDelayMs },
+              ),
+            ]
+          : [],
+      ),
+    });
+  }, [lintCompartment, linting, lintDelayMs]);
 
   useEffect(() => {
     const view = viewRef.current;

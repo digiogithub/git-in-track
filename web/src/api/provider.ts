@@ -135,6 +135,9 @@ import type {
   RequirementDraft,
   RequirementPatch,
   RequirementWrite,
+  DeltaPreviewCurrent,
+  DeltaPreviewOperation,
+  SpecLintFinding,
   TraceEdge,
   TracedRequirement,
 } from '@/core-bridge/api';
@@ -251,6 +254,9 @@ export type {
   Requirement,
   RequirementDraft,
   RequirementPatch,
+  DeltaPreviewCurrent,
+  DeltaPreviewOperation,
+  SpecLintFinding,
   TraceEdge,
   TracedRequirement,
 };
@@ -2372,6 +2378,14 @@ export interface DataProvider {
   queryImpact(project: string, query?: ImpactQuery): Promise<ImpactResult>;
   /** The same query as the ranked, token-budgeted report; `unavailable` like `queryImpact`. */
   getImpactReport(project: string, query?: ImpactReportQuery): Promise<ImpactReport>;
+  /**
+   * The live grammar lint of the body the editor holds (GIT-US-0132), at the
+   * severities of the project's `specs.lint`. Answered by the core in both
+   * modes — the rules are never re-implemented in TypeScript.
+   */
+  lintSpecText(project: string, input: SpecLintInput): Promise<SpecLintFinding[]>;
+  /** Each operation of a body's `## Spec Delta` next to the current text of its target. */
+  previewSpecDelta(project: string, input: SpecDeltaPreviewInput): Promise<DeltaPreviewOperation[]>;
 
   subscribe(handler: (event: ChangeEvent) => void): Unsubscribe;
 }
@@ -2389,6 +2403,12 @@ export type RequirementFilter = {
   text?: boolean;
   includeDeleted?: boolean;
 };
+
+/** What `lintSpecText` lints: the body of an item of `type`, `id` when it exists. */
+export type SpecLintInput = { id?: string; type: ItemType; body: string };
+
+/** What `previewSpecDelta` reads: the body of a story or task. */
+export type SpecDeltaPreviewInput = { id?: string; body: string };
 
 export type RequirementList = { requirements: Requirement[]; total: number };
 

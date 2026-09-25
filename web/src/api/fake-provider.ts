@@ -157,6 +157,10 @@ import type {
   ImpactQuery,
   ImpactReport,
   ImpactReportQuery,
+  DeltaPreviewOperation,
+  SpecDeltaPreviewInput,
+  SpecLintFinding,
+  SpecLintInput,
   ImpactResult,
   Requirement,
   RequirementDraft,
@@ -265,6 +269,18 @@ export type FakeData = {
    * fails with `unavailable`, which is what a browser does.
    */
   specAnalysis?: FakeSpecAnalysis;
+  /**
+   * The core's live lint and Spec Delta preview, scripted: the fake runs no
+   * grammar rules of its own (GIT-US-0132). Absent answers nothing to lint and
+   * no delta.
+   */
+  specLive?: FakeSpecLive;
+};
+
+/** Scripted `spec.lint` and `spec.delta.preview` answers (GIT-US-0132). */
+export type FakeSpecLive = {
+  lint?: (input: SpecLintInput) => SpecLintFinding[];
+  preview?: (input: SpecDeltaPreviewInput) => DeltaPreviewOperation[];
 };
 
 /** Scripted trace, coverage and impact answers (GIT-US-0127). */
@@ -1365,6 +1381,7 @@ export class FakeProvider implements DataProvider {
   /** Requirements by ref, in insertion order (GIT-US-0127). */
   private requirements: Map<string, Requirement>;
   private specAnalysis: FakeSpecAnalysis | null;
+  private specLive: FakeSpecLive;
   /** Commit-on-save settings, in memory (story GIT-US-0020). */
   private git: GitSettings;
   /** The public tunnel, in memory. */
@@ -1451,6 +1468,7 @@ export class FakeProvider implements DataProvider {
     this.agent = data.agent ?? null;
     this.requirements = new Map((data.requirements ?? []).map((r) => [r.ref, structuredClone(r)]));
     this.specAnalysis = data.specAnalysis ?? null;
+    this.specLive = data.specLive ?? {};
     this.syncEngine = data.syncEngine ?? null;
     this.syncJobs = structuredClone(data.syncEngine?.jobs ?? []);
     this.engineSettings =
@@ -5051,6 +5069,17 @@ export class FakeProvider implements DataProvider {
       budget,
       tokens: Math.ceil(JSON.stringify(impact).length / 3),
     };
+  }
+
+  lintSpecText(_project: string, input: SpecLintInput): Promise<SpecLintFinding[]> {
+    return settle(() => structuredClone(this.specLive.lint?.(input) ?? []));
+  }
+
+  previewSpecDelta(
+    _project: string,
+    input: SpecDeltaPreviewInput,
+  ): Promise<DeltaPreviewOperation[]> {
+    return settle(() => structuredClone(this.specLive.preview?.(input) ?? []));
   }
 
   subscribe(handler: (event: ChangeEvent) => void): Unsubscribe {

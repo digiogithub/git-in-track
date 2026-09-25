@@ -24,6 +24,11 @@ func (s *Server) mountSpecs(r chi.Router) {
 	r.Get("/coverage", s.handleSpecCoverage)
 	r.Get("/impact", s.handleSpecImpact)
 	r.Get("/impact/report", s.handleSpecImpactReport)
+	// The live lint and Spec Delta preview of the editor: pure reads over the
+	// text it holds, posted because a body does not fit a query string
+	// (GIT-US-0132).
+	r.Post("/lint", s.handleSpecLive("spec.lint"))
+	r.Post("/delta/preview", s.handleSpecLive("spec.delta.preview"))
 
 	r.Get("/{spec}", s.handleSpecGet)
 	r.Get("/{spec}/coverage", s.handleSpecCoverage)
@@ -32,6 +37,34 @@ func (s *Server) mountSpecs(r chi.Router) {
 	r.Get("/{spec}/requirements/{req}", s.handleRequirementGet)
 	r.Patch("/{spec}/requirements/{req}", s.handleRequirementUpdate)
 	r.Get("/{spec}/requirements/{req}/trace", s.handleRequirementTrace)
+}
+
+// handleSpecLive serves POST /projects/{key}/specs/lint and
+// /projects/{key}/specs/delta/preview: the body is {id?, type?, body} and is
+// handed to the vault method of the same name with the project of the path,
+// so the companion answers exactly what the WASM core answers in the browser.
+func (s *Server) handleSpecLive(method string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		m, key, ok := s.specProject(w, r)
+		if !ok {
+			return
+		}
+		var body struct {
+			ID   string `json:"id,omitempty"`
+			Type string `json:"type,omitempty"`
+			Body string `json:"body"`
+		}
+		if !decodeBody(w, r, &body) {
+			return
+		}
+		result, ok := s.call(w, r, m, method, map[string]any{
+			"project": key, "id": body.ID, "type": body.Type, "body": body.Body,
+		})
+		if !ok {
+			return
+		}
+		writeJSON(w, r, http.StatusOK, result)
+	}
 }
 
 // specProject resolves the repository that exposes the project of the path.

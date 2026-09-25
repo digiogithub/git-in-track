@@ -174,6 +174,10 @@ import type {
   ImpactQuery,
   ImpactReport,
   ImpactReportQuery,
+  DeltaPreviewOperation,
+  SpecDeltaPreviewInput,
+  SpecLintFinding,
+  SpecLintInput,
   ImpactResult,
   RequirementDraft,
   RequirementFilter,
@@ -3294,6 +3298,25 @@ export class CompanionProvider implements DataProvider {
     const report = body?.['report'];
     if (asRecord(report) === null) throw malformed('impact report');
     return report as ImpactReport;
+  }
+
+  async lintSpecText(project: string, input: SpecLintInput): Promise<SpecLintFinding[]> {
+    const body = asRecord(
+      await this.#json(`${specsBase(project)}/lint`, { method: 'POST', body: input }),
+    );
+    if (body === null) throw malformed('spec lint');
+    return asArray(body['findings']) as SpecLintFinding[];
+  }
+
+  async previewSpecDelta(
+    project: string,
+    input: SpecDeltaPreviewInput,
+  ): Promise<DeltaPreviewOperation[]> {
+    const body = asRecord(
+      await this.#json(`${specsBase(project)}/delta/preview`, { method: 'POST', body: input }),
+    );
+    if (body === null) throw malformed('spec delta preview');
+    return asArray(body['operations']) as DeltaPreviewOperation[];
   }
 
   subscribe(handler: (event: ChangeEvent) => void): Unsubscribe {

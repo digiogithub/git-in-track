@@ -434,3 +434,46 @@ func TestSpecFileEditsReachTheEventStream(t *testing.T) {
 		t.Errorf("title = %q, want the edit the watcher folded in", got.Requirement.Title)
 	}
 }
+
+func TestSpecLiveRoutes(t *testing.T) {
+	t.Parallel()
+	s, _ := specServer(t)
+
+	story := "## Spec Delta\n\n### MODIFIED DEMO-SP-0001.R1 — Trim\n\nThe checkout SHALL trim input fast.\n\n" +
+		"#### Scenario: spaces\n- **WHEN** it ends in spaces\n- **THEN** they go\n\n" +
+		"### REMOVED DEMO-SP-0001.R9 — Gone\n\nReason: unused.\n"
+
+	var lint struct {
+		Findings []struct {
+			Code     string `json:"code"`
+			Severity string `json:"severity"`
+			Line     int    `json:"line"`
+		} `json:"findings"`
+	}
+	decode(t, send(t, s, request{method: http.MethodPost, target: specsBase + "/lint",
+		body: map[string]any{"type": "story", "body": story}}), http.StatusOK, &lint)
+	if len(lint.Findings) != 2 || lint.Findings[0].Code != "LINT-REQ-VAGUE" || lint.Findings[0].Line != 5 ||
+		lint.Findings[1].Code != "W-DELTA-DANGLING" || lint.Findings[1].Line != 11 {
+		t.Errorf("findings = %+v", lint.Findings)
+	}
+
+	var preview struct {
+		Operations []struct {
+			Op       string `json:"op"`
+			Target   string `json:"target"`
+			Dangling string `json:"dangling"`
+			Current  *struct {
+				Text string `json:"text"`
+			} `json:"current"`
+		} `json:"operations"`
+	}
+	decode(t, send(t, s, request{method: http.MethodPost, target: specsBase + "/delta/preview",
+		body: map[string]any{"body": story}}), http.StatusOK, &preview)
+	if len(preview.Operations) != 2 || preview.Operations[0].Current == nil || preview.Operations[1].Dangling == "" {
+		t.Errorf("operations = %+v", preview.Operations)
+	}
+
+	var doc problemBody
+	decode(t, send(t, s, request{method: http.MethodPost, target: "/api/v1/projects/NOPE/specs/lint",
+		body: map[string]any{"type": "spec", "body": ""}}), http.StatusNotFound, &doc)
+}
