@@ -48,6 +48,9 @@ type ProjectConfig struct {
 	People       []Person                  `yaml:"people,omitempty"`
 	Team         *TeamLink                 `yaml:"team,omitempty"`
 	Links        *LinksConfig              `yaml:"links,omitempty"`
+	// Specs holds the spec settings of ADR-037; today only the grammar lint
+	// (docs/03 section 21.9). Absent means every lint rule at warning.
+	Specs *SpecsConfig `yaml:"specs,omitempty"`
 }
 
 // DocsConfig holds the knowledge-base rendering settings.
@@ -342,6 +345,10 @@ func (p *ProjectConfig) Validate() []Diagnostic {
 			continue
 		}
 		labels[name] = true
+	}
+
+	for _, d := range p.Specs.validate() {
+		add(d.Code, d.Severity, d.Field, d.Message)
 	}
 
 	sortDiagnostics(out)
