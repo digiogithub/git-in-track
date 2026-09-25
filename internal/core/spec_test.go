@@ -246,6 +246,7 @@ func revsOf(body string) map[string]Rev {
 	return out
 }
 
+// Verifies: GIT-SP-0001.R8
 func TestBlockRevIsolation(t *testing.T) {
 	t.Parallel()
 
@@ -338,6 +339,7 @@ func TestBlockRevIgnoresFrontMatter(t *testing.T) {
 	}
 }
 
+// Verifies: GIT-SP-0001.R8
 func TestRequirementRevVersusBlockRev(t *testing.T) {
 	t.Parallel()
 
@@ -404,6 +406,7 @@ func TestRequirementCanonicalJSON(t *testing.T) {
 	}
 }
 
+// Verifies: GIT-SP-0002.R7
 func TestNextRequirementNumber(t *testing.T) {
 	t.Parallel()
 

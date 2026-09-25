@@ -58,6 +58,7 @@ func TestParseItemID(t *testing.T) {
 	}
 }
 
+// Verifies: GIT-SP-0002.R6
 func TestFormatItemID(t *testing.T) {
 	t.Parallel()
 

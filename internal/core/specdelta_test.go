@@ -372,6 +372,7 @@ func TestIndexReportsSpecDeltaFindings(t *testing.T) {
 	}
 }
 
+// Verifies: GIT-SP-0002.R8
 func TestIndexSpecDeltaReservesRequirementNumbers(t *testing.T) {
 	t.Parallel()
 	ix := specDeltaVault(t)

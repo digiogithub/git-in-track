@@ -358,6 +358,7 @@ func createSpec(ctx context.Context, s *Server, in CreateSpecInput) (WriteResult
 }
 
 // createRequirement appends one requirement to a spec.
+// Implements: GIT-SP-0002.R7
 func createRequirement(ctx context.Context, s *Server, in CreateRequirementInput) (RequirementWriteResult, error) {
 	if strings.TrimSpace(in.Spec) == "" {
 		return RequirementWriteResult{}, invalidField("spec", "create_requirement needs the spec id", "ACME-SP-0003")

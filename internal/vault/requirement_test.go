@@ -92,6 +92,7 @@ func specText(t *testing.T, writes WriteSet) string {
 	return ""
 }
 
+// Verifies: GIT-SP-0001.R8
 func TestRequirementGetReturnsBothRevs(t *testing.T) {
 	v := specVault(t)
 	got := getRequirement(t, v, "DEMO-SP-0001.R1")
@@ -124,6 +125,7 @@ func TestRequirementGetReturnsBothRevs(t *testing.T) {
 	}
 }
 
+// Verifies: GIT-SP-0001.R8, GIT-SP-0001.R10
 func TestRequirementUpdatePatchesOneBlock(t *testing.T) {
 	v := specVault(t)
 	r1 := getRequirement(t, v, "DEMO-SP-0001.R1").Requirement
@@ -171,6 +173,7 @@ func TestRequirementUpdatePatchesOneBlock(t *testing.T) {
 	}
 }
 
+// Verifies: GIT-SP-0001.R2, GIT-SP-0001.R3, GIT-SP-0001.R4, GIT-SP-0001.R10
 func TestRequirementUpdateConflictMatrix(t *testing.T) {
 	tests := []struct {
 		name string
@@ -278,6 +281,7 @@ func TestRequirementUpdateConflictMatrix(t *testing.T) {
 	}
 }
 
+// Verifies: GIT-SP-0001.R9
 func TestRequirementUpdateNeedsTheRequirementRev(t *testing.T) {
 	v := specVault(t)
 	r1 := getRequirement(t, v, "DEMO-SP-0001.R1")
@@ -322,6 +326,7 @@ func TestRequirementUpdateRefusals(t *testing.T) {
 	}
 }
 
+// Verifies: GIT-SP-0002.R7
 func TestRequirementCreateAllocatesMaxPlusOne(t *testing.T) {
 	v := specVault(t)
 
@@ -353,6 +358,7 @@ func TestRequirementCreateAllocatesMaxPlusOne(t *testing.T) {
 	}
 }
 
+// Verifies: GIT-SP-0002.R7
 func TestRequirementCreateSkipsOrphanEntryNumbers(t *testing.T) {
 	v := NewInMemory()
 	files := fixtureFiles(t)

@@ -122,6 +122,7 @@ func (ix *Index) RequirementRefsTo(spec ItemID) []RequirementRef {
 	return ix.requirementRefsTo(spec)
 }
 
+// Implements: GIT-SP-0002.R7, GIT-SP-0002.R8
 func (ix *Index) requirementRefsTo(spec ItemID) []RequirementRef {
 	seen := map[int]bool{}
 	var out []RequirementRef
@@ -156,6 +157,7 @@ func (ix *Index) requirementRefsTo(spec ItemID) []RequirementRef {
 // NextRequirementNumber returns the number the next requirement of a spec gets,
 // max + 1 over its blocks, its requirements: keys and every inbound ref the
 // index holds (R-REQ-5).
+// Implements: GIT-SP-0002.R7
 func (ix *Index) NextRequirementNumber(spec ItemID) (int, error) {
 	ix.mu.RLock()
 	defer ix.mu.RUnlock()

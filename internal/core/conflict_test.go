@@ -9,6 +9,7 @@ import (
 // TestUpdateReportsTheFieldsInConflict pins what a refused conditional write
 // tells the caller: the revision on disk now, and the fields the write would
 // still have changed against it.
+// Verifies: GIT-SP-0001.R2, GIT-SP-0001.R3, GIT-SP-0001.R4
 func TestUpdateReportsTheFieldsInConflict(t *testing.T) {
 	t.Parallel()
 
@@ -189,6 +190,7 @@ func TestUpdateValidatesAStatusChange(t *testing.T) {
 
 // TestAddCommentHonorsTheItemRevision keeps a comment from being written by a
 // writer that has not seen the item as it stands.
+// Verifies: GIT-SP-0001.R2
 func TestAddCommentHonorsTheItemRevision(t *testing.T) {
 	t.Parallel()
 

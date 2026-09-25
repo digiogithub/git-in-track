@@ -107,6 +107,7 @@ func invalidField(field, message string, expected any) *toolError {
 // the code the REST API and the browser report for the same mistake. A rule
 // that exists in MCP but not in the rest of the product would be a bug, and so
 // would an error code.
+// Implements: GIT-SP-0001.R2, GIT-SP-0001.R6
 func fromVault(err error) error {
 	if err == nil {
 		return nil
@@ -140,6 +141,7 @@ const staleRetry = "Someone else wrote this file first. Re-read the item with ge
 // wildcard, which is how the core spells "write unconditionally". A missing rev
 // is refused here rather than passed on, because the core treats an empty rev
 // as an unconditional write and an agent must never reach that by omission.
+// Implements: GIT-SP-0001.R5, GIT-SP-0001.R7
 func requiredRev(field, value string) (string, error) {
 	switch trimmed := strings.TrimSpace(value); trimmed {
 	case "":

@@ -46,6 +46,7 @@ type CommentDraft struct {
 // .pmngr/comments/<ITEM-ID>/, named "<YYYYMMDDTHHMMSSZ>-<author>.md". One file
 // per comment is what keeps concurrent replies from ever conflicting in git
 // (docs/03 section 11).
+// Implements: GIT-SP-0001.R2
 func (s *FileStore) AddComment(ctx context.Context, id ItemID, c CommentDraft) (*Comment, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, wrapContext("add comment", err)
