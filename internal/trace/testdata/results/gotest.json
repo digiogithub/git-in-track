@@ -1,0 +1,22 @@
+{"Time":"2026-09-24T10:00:00Z","Action":"start","Package":"example.com/acme/src"}
+{"Time":"2026-09-24T10:00:00Z","Action":"run","Package":"example.com/acme/src","Test":"TestNextID"}
+{"Time":"2026-09-24T10:00:00Z","Action":"run","Package":"example.com/acme/src","Test":"TestNextID/stale_counter"}
+{"Time":"2026-09-24T10:00:00Z","Action":"pause","Package":"example.com/acme/src","Test":"TestNextID/stale_counter"}
+{"Time":"2026-09-24T10:00:00Z","Action":"run","Package":"example.com/acme/src","Test":"TestNextID/fresh"}
+{"Time":"2026-09-24T10:00:00Z","Action":"start","Package":"other.org/tools/cmd/tool"}
+{"Time":"2026-09-24T10:00:00Z","Action":"run","Package":"other.org/tools/cmd/tool","Test":"TestTool"}
+{"Time":"2026-09-24T10:00:00Z","Action":"pause","Package":"example.com/acme/src","Test":"TestNextID/fresh"}
+{"Time":"2026-09-24T10:00:00Z","Action":"cont","Package":"example.com/acme/src","Test":"TestNextID/stale_counter"}
+{"Time":"2026-09-24T10:00:00Z","Action":"output","Package":"example.com/acme/src","Test":"TestNextID/stale_counter","Output":"    alloc_test.go:9: bad\n"}
+{"Time":"2026-09-24T10:00:00Z","Action":"pass","Package":"other.org/tools/cmd/tool","Test":"TestTool","Elapsed":0.5}
+{"Time":"2026-09-24T10:00:00Z","Action":"cont","Package":"example.com/acme/src","Test":"TestNextID/fresh"}
+{"Time":"2026-09-24T10:00:00Z","Action":"pass","Package":"example.com/acme/src","Test":"TestNextID/fresh","Elapsed":0.01}
+{"Time":"2026-09-24T10:00:00Z","Action":"fail","Package":"example.com/acme/src","Test":"TestNextID/stale_counter","Elapsed":0.02}
+{"Time":"2026-09-24T10:00:00Z","Action":"fail","Package":"example.com/acme/src","Test":"TestNextID","Elapsed":0.03}
+{"Time":"2026-09-24T10:00:00Z","Action":"run","Package":"example.com/acme/src","Test":"TestPlatform"}
+{"Time":"2026-09-24T10:00:00Z","Action":"skip","Package":"example.com/acme/src","Test":"TestPlatform","Elapsed":0}
+{"Time":"2026-09-24T10:00:00Z","Action":"pass","Package":"example.com/unknown","Test":"TestGhost","Elapsed":0}
+{"Time":"2026-09-24T10:00:00Z","Action":"output","Package":"example.com/acme/src","Output":"FAIL\n"}
+{"Time":"2026-09-24T10:00:00Z","Action":"fail","Package":"example.com/acme/src","Elapsed":0.05}
+ok  	other.org/tools/cmd/tool	0.5s
+{"Time":"2026-09-24T10:00:00Z","Action":"pass","Package":"other.org/tools/cmd/tool","Elapsed":0.5}

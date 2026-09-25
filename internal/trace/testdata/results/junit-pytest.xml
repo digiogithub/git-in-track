@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<testsuite name="pytest" errors="0" failures="1" skipped="0" tests="3" time="1,234.5">
+  <testcase classname="tests.test_mod.TestCase" name="test_x" time="0.001"/>
+  <testcase classname="tests.test_mod" name="test_free" file="tests/test_mod.py" time="0.002">
+    <failure message="assert 1 == 2">assert 1 == 2</failure>
+  </testcase>
+  <testcase classname="com.acme.FooTest" name="testBar" time="0.1"/>
+</testsuite>

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites tests="4" failures="1">
+  <testsuite name="example.com/acme/src" tests="4" failures="1" skipped="1" time="0.050">
+    <properties><property name="go.version" value="go1.26"></property></properties>
+    <testcase classname="example.com/acme/src" name="TestNextID" time="0.030">
+      <failure message="Failed" type="">alloc_test.go:9: bad</failure>
+    </testcase>
+    <testcase classname="example.com/acme/src" name="TestNextID/stale_counter" time="0.020">
+      <failure message="Failed" type=""><![CDATA[alloc_test.go:9: bad
+a very long stack trace]]></failure>
+    </testcase>
+    <testcase classname="example.com/acme/src" name="TestNextID/fresh" time="0.010"></testcase>
+    <testcase classname="example.com/acme/src" name="TestPlatform" time="0.000">
+      <skipped message="not on this platform"></skipped>
+    </testcase>
+  </testsuite>
+</testsuites>
