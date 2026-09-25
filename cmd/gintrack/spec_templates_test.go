@@ -100,3 +100,48 @@ func TestSpecTemplatesExport(t *testing.T) {
 		}
 	})
 }
+
+// TestItemNewSpecUsesTheTemplate: `item new --type spec` without --body
+// starts from the spec template in effect — the embedded one, then the
+// project's override — and an explicit body wins (GIT-US-0162).
+func TestItemNewSpecUsesTheTemplate(t *testing.T) {
+	h := newHarness(t)
+	root := specRepo(t)
+	h.mustRun("add", root)
+
+	read := func(out string) string {
+		t.Helper()
+		var payload struct {
+			Path string `json:"path"`
+		}
+		if err := json.Unmarshal([]byte(out), &payload); err != nil || payload.Path == "" {
+			t.Fatalf("decode %q: %v", out, err)
+		}
+		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(payload.Path)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+
+	embedded := read(h.mustRun("item", "new", "--type", "spec", "--title", "Embedded", "--json"))
+	if !strings.Contains(embedded, "## Glossary\n") || strings.Contains(embedded, core.SpecIDPlaceholder) {
+		t.Errorf("no body did not start from the embedded template:\n%s", embedded)
+	}
+
+	dir := filepath.Join(root, "docs", ".pmngr", "templates")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const custom = "## Purpose\n\nOur house style.\n"
+	if err := os.WriteFile(filepath.Join(dir, "spec.md"), []byte(custom), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(h.mustRun("item", "new", "--type", "spec", "--title", "Ours", "--json")); !strings.Contains(got, "Our house style.") {
+		t.Errorf("no body did not start from the override:\n%s", got)
+	}
+	explicit := read(h.mustRun("item", "new", "--type", "spec", "--title", "Mine", "--body", "## Purpose\n\nMine.\n", "--json"))
+	if strings.Contains(explicit, "Our house style.") || !strings.Contains(explicit, "Mine.") {
+		t.Errorf("an explicit body was replaced:\n%s", explicit)
+	}
+}

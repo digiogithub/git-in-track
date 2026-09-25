@@ -59,7 +59,9 @@ func newItemNewCommand(flags *globalFlags) *cobra.Command {
 
 The id is allocated by the core, which takes the maximum of the counter in
 project.yaml and the highest id on disk, so two writers never collide. The
-project defaults fill whatever the flags leave out.`,
+project defaults fill whatever the flags leave out. A spec created without
+--body starts from the project's spec template: <docs>/.pmngr/templates/spec.md
+when it is valid, the embedded template otherwise.`,
 		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runItemNew(cmd, flags, local)
@@ -110,6 +112,11 @@ func runItemNew(cmd *cobra.Command, flags *globalFlags, local *itemNewFlags) err
 	store, overlay, err := v.storeFor(project, local.dryRun)
 	if err != nil {
 		return err
+	}
+	if typ == core.TypeSpec && strings.TrimSpace(body) == "" {
+		// A spec without --body starts from the project's spec template, its
+		// override file when valid (ADR-038), exactly as create_spec does.
+		body = core.LoadSpecTemplates(v.FS, project.Ref.BacklogPath, project.Ref.Config).Spec
 	}
 
 	draft := core.ItemDraft{

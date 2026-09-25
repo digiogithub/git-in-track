@@ -938,11 +938,15 @@ gintrack item new [flags]
   --effort float          Hours
   --milestone string
   --due string            YYYY-MM-DD
-  --body string           Body Markdown ("-" reads stdin)
+  --body string           Body Markdown ("-" reads stdin); a spec without it gets the spec template
   --dry-run               Print the file that would be written, write nothing
 ```
 
-`--template` waits for body templates to exist in `project.yaml`.
+A spec created without `--body` (or with a blank one) starts from the project's spec template —
+`<docs>/.pmngr/templates/spec.md` when it is valid, the embedded one otherwise (ADR-038, doc 03
+§21.1) — exactly as `create_spec` without `body` does over MCP; its example block becomes `R1`.
+Other types get the body given, or none. `--template` (choosing among named templates) waits for
+body templates to exist in `project.yaml`.
 
 ```bash
 $ gintrack item new --project ACME --type task --title "Wire OIDC discovery endpoint" \
@@ -2031,8 +2035,8 @@ unknown requirement.
 Writes the two templates the binary ships (doc 03 §21.1) into one project's
 `<docs>/.pmngr/templates/` — `spec.md` and `requirement.md` — so a team can customise them. A
 valid file there wins over the embedded template for every new spec and requirement: the web
-editor's *New spec*, the *Add requirement* dialog, and `create_spec` without `body` and
-`create_requirement` without `text` over MCP. An invalid one is reported `W-TEMPLATE-INVALID` by
+editor's *New spec*, the *Add requirement* dialog, `gintrack item new --type spec` without
+`--body`, and `create_spec` without `body` and `create_requirement` without `text` over MCP. An invalid one is reported `W-TEMPLATE-INVALID` by
 `gintrack doctor`, and the embedded template is used in its place (doc 03 R-TPL-2).
 
 ```bash
