@@ -1,5 +1,12 @@
 import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
-import { ChevronDown, ChevronRight, ExternalLink, Grid3x3, Plus } from 'lucide-react';
+import {
+  ChevronDown,
+  ChevronRight,
+  ExternalLink,
+  GitCompareArrows,
+  Grid3x3,
+  Plus,
+} from 'lucide-react';
 import { useCallback, useId, useMemo, useState } from 'react';
 
 import type { ProjectSummary } from '@/api/provider';
@@ -143,6 +150,14 @@ export function SpecsPage() {
           >
             <Grid3x3 aria-hidden="true" className="h-4 w-4" />
             Coverage matrix
+          </Link>
+          <Link
+            to="/p/$project/specs/impact"
+            params={{ project: projectKey }}
+            className="inline-flex h-9 items-center gap-1.5 rounded-md border border-input px-3 text-sm font-medium hover:bg-secondary"
+          >
+            <GitCompareArrows aria-hidden="true" className="h-4 w-4" />
+            Impact
           </Link>
           {writable ? (
             <NewItemLink project={projectKey} type="spec" label="New spec" variant="bar" />
