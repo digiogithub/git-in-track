@@ -142,7 +142,7 @@ func (v *Vault) inboxList(ctx context.Context, raw []byte) (any, error) {
 	}
 	page, err := v.index.Inbox(ctx, filter)
 	if err != nil {
-		return nil, failf("invalid_request", "%v", err)
+		return nil, queryFailure(err)
 	}
 	items := page.Items
 	if items == nil {

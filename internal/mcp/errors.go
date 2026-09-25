@@ -24,7 +24,7 @@ const (
 	codeWriteDisabled = "write_disabled"
 	// codeInvalidCursor is a cursor that does not belong to the filter it was
 	// presented with.
-	codeInvalidCursor = "invalid_cursor"
+	codeInvalidCursor = vault.InvalidCursorCode
 	// codeNotFound is an item, page or board that is not indexed.
 	codeNotFound = "not_found"
 	// codeUnavailable is a capability this session does not have: today the
@@ -121,6 +121,9 @@ func fromVault(err error) error {
 		return nil
 	}
 	out := &toolError{Code: classified.Code, Message: classified.Message, Path: classified.Path}
+	if classified.Code == vault.InvalidCursorCode {
+		out.Field = "cursor"
+	}
 	if classified.Code == core.StaleRevisionCode {
 		out.CurrentRev = classified.Current
 		out.Conflicts = classified.Conflicts

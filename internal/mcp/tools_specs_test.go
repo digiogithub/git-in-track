@@ -187,12 +187,25 @@ func TestListRequirements(t *testing.T) {
 
 	t.Run("a cursor refuses a changed filter", func(t *testing.T) {
 		page := call[RequirementPage](t, h, "list_requirements", map[string]any{"project": "DEMO", "limit": 1})
-		got := callFails(t, h, "list_requirements", map[string]any{
-			"project": "DEMO", "limit": 1, "status": []string{"todo"}, "cursor": page.NextCursor,
-		})
-		if got.Code != codeInvalidCursor {
-			t.Errorf("code = %q, want %q", got.Code, codeInvalidCursor)
+		for name, changed := range map[string]map[string]any{
+			"status":  {"status": []string{"todo"}},
+			"spec":    {"spec": spec},
+			"text":    {"text": "trim"},
+			"project": {"project": ""},
+		} {
+			args := map[string]any{"project": "DEMO", "limit": 1, "cursor": page.NextCursor}
+			for k, v := range changed {
+				args[k] = v
+			}
+			got := callFails(t, h, "list_requirements", args)
+			if got.Code != codeInvalidCursor {
+				t.Errorf("%s: code = %q, want %q", name, got.Code, codeInvalidCursor)
+			}
 		}
+		// The page size and the projection may change mid-walk.
+		call[RequirementPage](t, h, "list_requirements", map[string]any{
+			"project": "DEMO", "limit": 2, "fields": []string{"text"}, "cursor": page.NextCursor,
+		})
 	})
 
 	t.Run("status filters", func(t *testing.T) {

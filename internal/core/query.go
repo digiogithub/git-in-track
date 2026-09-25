@@ -46,6 +46,12 @@ type Filter struct {
 	Text string `json:"text,omitempty"`
 	// UpdatedSince keeps items updated at or after this instant.
 	UpdatedSince Timestamp `json:"updated_since,omitempty"`
+	// UpdatedSinceSpec is how the caller spelled UpdatedSince: a duration such
+	// as "7d" or an RFC 3339 instant. A cursor is bound to this spelling rather
+	// than to the resolved instant, which a relative value moves on every call,
+	// so that a walk of "updated in the last seven days" survives the clock.
+	// Empty binds the cursor to UpdatedSince itself. It does not affect matching.
+	UpdatedSinceSpec string `json:"-"`
 	// IncludeDeleted keeps items whose front matter says deleted: true. They are
 	// excluded by default.
 	IncludeDeleted bool `json:"include_deleted,omitempty"`
@@ -97,13 +103,30 @@ type Page[T any] struct {
 }
 
 // cursor is the decoded form of the opaque pagination token: the sort it was
-// produced for, the offset it stands at and the id of the last item returned.
-// The id is what makes paging stable when an item is inserted mid-scroll; the
-// offset is the fallback when that item is gone.
+// produced for, the fingerprint of the filter it was produced for, the offset
+// it stands at and the id of the last item returned. The id is what makes
+// paging stable when an item is inserted mid-scroll; the offset is the
+// fallback when that item is gone.
 type cursor struct {
 	Sort   string `json:"s"`
+	Query  string `json:"q"`
 	Offset int    `json:"o"`
 	LastID ItemID `json:"i,omitempty"`
+}
+
+// cursorQuery is the fingerprint an item cursor is bound to: every clause that
+// decides which items match (GIT-US-0156). The page size, the cursor itself
+// and the projection are left out, so a walk may change them between pages.
+// So is SnoozeAsOf, which is the caller's clock rather than a filter, and a
+// relative UpdatedSince is fingerprinted as it was spelled.
+func (f Filter) cursorQuery() string {
+	since := f.UpdatedSinceSpec
+	if since == "" && !f.UpdatedSince.IsZero() {
+		since = f.UpdatedSince.UTC().Format(time.RFC3339Nano)
+	}
+	return Fingerprint("item.list", f.Projects, f.Types, f.Statuses, f.Priorities,
+		f.Assignees, f.Me, f.Labels, f.Parent, f.Milestone, f.Text, since,
+		f.IncludeDeleted, f.ExternalSystem, f.ExternalID, f.Inbox, f.InboxStatuses)
 }
 
 func encodeCursor(c cursor) string {
@@ -114,14 +137,28 @@ func encodeCursor(c cursor) string {
 	return base64.RawURLEncoding.EncodeToString(data)
 }
 
-func decodeCursor(s string) (cursor, error) {
+// decodeCursor reads an item cursor and refuses it, with ErrInvalidCursor,
+// unless it was issued for this sort and this filter.
+// Implements: GIT-SP-0004.R5
+func decodeCursor(s, sortSpec, query string) (cursor, error) {
 	data, err := base64.RawURLEncoding.DecodeString(s)
 	if err != nil {
-		return cursor{}, fmt.Errorf("decode cursor: %w", err)
+		return cursor{}, fmt.Errorf("%w: %q is not an item cursor", ErrInvalidCursor, s)
 	}
 	var c cursor
 	if err := json.Unmarshal(data, &c); err != nil {
-		return cursor{}, fmt.Errorf("decode cursor: %w", err)
+		return cursor{}, fmt.Errorf("%w: %q is not an item cursor", ErrInvalidCursor, s)
+	}
+	if c.Sort != sortSpec {
+		return cursor{}, fmt.Errorf("%w: the cursor was issued for sort %q, not %q; "+
+			"restart the walk without a cursor after changing the sort", ErrInvalidCursor, c.Sort, sortSpec)
+	}
+	if c.Query != query {
+		return cursor{}, fmt.Errorf("%w: the cursor was issued for a different filter; "+
+			"restart the walk without a cursor after changing any filter", ErrInvalidCursor)
+	}
+	if c.Offset < 0 {
+		return cursor{}, fmt.Errorf("%w: the cursor's offset %d is out of range", ErrInvalidCursor, c.Offset)
 	}
 	return c, nil
 }
@@ -130,7 +167,9 @@ func decodeCursor(s string) (cursor, error) {
 //
 // Ordering is total: the requested keys first, the id last, so that two calls
 // with the same filter over the same index return the same order and a cursor
-// means the same thing on both.
+// means the same thing on both. A cursor is bound to the sort and to every
+// filter clause; presented with either changed it is refused with
+// ErrInvalidCursor rather than resuming a walk over another result set.
 // Implements: GIT-SP-0004.R2, GIT-SP-0004.R3, GIT-SP-0004.R5
 func (ix *Index) Items(ctx context.Context, f Filter) (Page[Item], error) {
 	if err := checkCancelled(ctx); err != nil {
@@ -160,14 +199,12 @@ func (ix *Index) Items(ctx context.Context, f Filter) (Page[Item], error) {
 		limit = MaxLimit
 	}
 
+	query := f.cursorQuery()
 	offset := 0
 	if f.Cursor != "" {
-		c, err := decodeCursor(f.Cursor)
+		c, err := decodeCursor(f.Cursor, sortSpec, query)
 		if err != nil {
 			return Page[Item]{}, err
-		}
-		if c.Sort != sortSpec {
-			return Page[Item]{}, fmt.Errorf("cursor was issued for sort %q, not %q", c.Sort, sortSpec)
 		}
 		offset = c.Offset
 		if c.LastID != "" {
@@ -198,7 +235,7 @@ func (ix *Index) Items(ctx context.Context, f Filter) (Page[Item], error) {
 		page.Items = append(page.Items, cloneItem(it))
 	}
 	if page.Truncated {
-		page.NextCursor = encodeCursor(cursor{Sort: sortSpec, Offset: end, LastID: matched[end-1].ID})
+		page.NextCursor = encodeCursor(cursor{Sort: sortSpec, Query: query, Offset: end, LastID: matched[end-1].ID})
 	}
 	return page, nil
 }

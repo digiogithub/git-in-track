@@ -258,6 +258,95 @@ func TestItemsPagination(t *testing.T) {
 	})
 }
 
+// Verifies: GIT-SP-0004.R5
+func TestItemsCursorIsBoundToTheFilter(t *testing.T) {
+	ix, _ := buildFixtureIndex(t)
+	ctx := context.Background()
+	base := Filter{Sort: "id", Limit: 1, Projects: []ProjectKey{"DEMO"}}
+	first, err := ix.Items(ctx, base)
+	if err != nil {
+		t.Fatalf("Items: %v", err)
+	}
+	if first.NextCursor == "" {
+		t.Fatal("the fixture does not produce a second page")
+	}
+	since := NewTimestamp(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+
+	refused := map[string]func(f *Filter){
+		"project":        func(f *Filter) { f.Projects = []ProjectKey{"OTHER"} },
+		"type":           func(f *Filter) { f.Types = []ItemType{TypeStory} },
+		"status":         func(f *Filter) { f.Statuses = []Status{"todo"} },
+		"priority":       func(f *Filter) { f.Priorities = []Priority{PriorityHigh} },
+		"assignee":       func(f *Filter) { f.Assignees = []string{"marta"} },
+		"me":             func(f *Filter) { f.Me = "jose" },
+		"label":          func(f *Filter) { f.Labels = []string{"frontend"} },
+		"parent":         func(f *Filter) { f.Parent = "DEMO-EP-0001" },
+		"milestone":      func(f *Filter) { f.Milestone = "DEMO-M-0001" },
+		"text":           func(f *Filter) { f.Text = "checkout" },
+		"updatedSince":   func(f *Filter) { f.UpdatedSince = since },
+		"includeDeleted": func(f *Filter) { f.IncludeDeleted = true },
+		"externalSystem": func(f *Filter) { f.ExternalSystem = "youtrack" },
+		"externalId":     func(f *Filter) { f.ExternalID = "DEMO-1" },
+		"inbox":          func(f *Filter) { f.Inbox = InboxOnly },
+		"inboxStatus":    func(f *Filter) { f.InboxStatuses = []InboxStatus{InboxPending} },
+		"sort":           func(f *Filter) { f.Sort = "-id" },
+	}
+	for name, change := range refused {
+		t.Run("refuses a changed "+name, func(t *testing.T) {
+			f := base
+			f.Cursor = first.NextCursor
+			change(&f)
+			_, err := ix.Items(ctx, f)
+			if !errors.Is(err, ErrInvalidCursor) {
+				t.Errorf("err = %v, want ErrInvalidCursor", err)
+			}
+		})
+	}
+
+	t.Run("refuses a malformed cursor", func(t *testing.T) {
+		f := base
+		f.Cursor = "not a cursor"
+		if _, err := ix.Items(ctx, f); !errors.Is(err, ErrInvalidCursor) {
+			t.Errorf("err = %v, want ErrInvalidCursor", err)
+		}
+	})
+
+	t.Run("accepts a changed page size, projection and clock", func(t *testing.T) {
+		f := base
+		f.Cursor = first.NextCursor
+		f.Limit = 2
+		f.Fields = []string{"title"}
+		f.SnoozeAsOf = since
+		next, err := ix.Items(ctx, f)
+		if err != nil {
+			t.Fatalf("Items: %v", err)
+		}
+		if len(next.Items) == 0 || next.Items[0].ID == first.Items[0].ID {
+			t.Errorf("the walk did not continue: %v", itemIDs(next))
+		}
+	})
+
+	t.Run("binds a relative updatedSince to its spelling", func(t *testing.T) {
+		f := base
+		f.UpdatedSince = since
+		f.UpdatedSinceSpec = "7d"
+		page, err := ix.Items(ctx, f)
+		if err != nil || page.NextCursor == "" {
+			t.Fatalf("Items: %v, cursor %q", err, page.NextCursor)
+		}
+		// The same "7d" resolved a moment later is the same walk.
+		f.UpdatedSince = NewTimestamp(since.Add(time.Minute))
+		f.Cursor = page.NextCursor
+		if _, err := ix.Items(ctx, f); err != nil {
+			t.Errorf("the walk broke as the clock moved: %v", err)
+		}
+		f.UpdatedSinceSpec = "30d"
+		if _, err := ix.Items(ctx, f); !errors.Is(err, ErrInvalidCursor) {
+			t.Errorf("err = %v, want ErrInvalidCursor for a changed spelling", err)
+		}
+	})
+}
+
 func TestItemChildrenAndComments(t *testing.T) {
 	ix, _ := buildFixtureIndex(t)
 

@@ -215,6 +215,7 @@ func TestSpecContext(t *testing.T) {
 	})
 }
 
+// Verifies: GIT-SP-0004.R4
 func TestSpecCoverage(t *testing.T) {
 	t.Run("one row per requirement, paged and counted", func(t *testing.T) {
 		h := newHarness(t, true)
@@ -260,10 +261,25 @@ func TestSpecCoverage(t *testing.T) {
 			t.Errorf("unknown status = %+v", bad)
 		}
 		first := call[CoveragePage](t, h, "spec_coverage", map[string]any{"spec": spec, "limit": 1})
-		moved := callFails(t, h, "spec_coverage", map[string]any{"spec": spec, "status": []string{"passing"}, "cursor": first.NextCursor})
-		if moved.Code != codeInvalidCursor {
-			t.Errorf("a cursor under another filter = %+v", moved)
+		// Every filter is part of the cursor; the page size and the
+		// projection are not (GIT-US-0156).
+		for name, changed := range map[string]map[string]any{
+			"status":  {"spec": spec, "status": []string{"passing"}},
+			"spec":    {"spec": ""},
+			"project": {"spec": spec, "project": "DEMO"},
+		} {
+			args := map[string]any{"limit": 1, "cursor": first.NextCursor}
+			for k, v := range changed {
+				args[k] = v
+			}
+			moved := callFails(t, h, "spec_coverage", args)
+			if moved.Code != codeInvalidCursor {
+				t.Errorf("a cursor under another %s = %+v", name, moved)
+			}
 		}
+		call[CoveragePage](t, h, "spec_coverage", map[string]any{
+			"spec": spec, "limit": 2, "fields": []string{"reasons"}, "cursor": first.NextCursor,
+		})
 	})
 
 	t.Run("no coverage backend answers unavailable with a fallback", func(t *testing.T) {

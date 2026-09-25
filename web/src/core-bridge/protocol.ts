@@ -49,7 +49,8 @@ export type CoreErrorCode =
   | 'invalid_front_matter'
   | 'duplicate_id'
   | 'precondition_required'
-  | 'read_only';
+  | 'read_only'
+  | 'invalid_cursor';
 
 export type CoreResponse =
   { id: number; ok: true; result: unknown } | { id: number; ok: false; error: CoreErrorPayload };

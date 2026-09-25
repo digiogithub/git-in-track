@@ -242,21 +242,12 @@ func registerItemTools(s *Server) {
 
 // listItems answers a filtered, paginated query. The core owns the position of
 // the walk, so it stays consistent with what the index knows rather than with a
-// snapshot this package took; this handler binds that position to every filter
-// and to the sort, because the core cursor alone only remembers the sort.
+// snapshot this package took, and it binds that position to every filter and
+// to the sort: a changed filter comes back from the vault as invalid_cursor.
 // Implements: GIT-SP-0004.R1, GIT-SP-0004.R7
 
 func listItems(ctx context.Context, s *Server, in ListItemsInput) (ItemPage, error) {
 	limit := boundedLimit(in.Limit)
-	// The page size and the projection are deliberately not part of the
-	// query: changing them mid-walk still continues the same result set.
-	filter := fingerprint("list_items", in.Project, in.Type, in.Status, in.Category,
-		in.Priority, in.Assignee, in.Label, in.Parent, in.Milestone, in.Text,
-		in.UpdatedSince, sortField(in.Sort), sortOrder(in.Order))
-	inner, err := unwrapCursor(in.Cursor, filter)
-	if err != nil {
-		return ItemPage{}, err
-	}
 	params := map[string]any{
 		"project":      in.Project,
 		"type":         in.Type,
@@ -272,7 +263,7 @@ func listItems(ctx context.Context, s *Server, in ListItemsInput) (ItemPage, err
 		"sort":         sortField(in.Sort),
 		"order":        sortOrder(in.Order),
 		"limit":        limit,
-		"cursor":       inner,
+		"cursor":       in.Cursor,
 	}
 	page, err := dispatch[struct {
 		Items      []core.Item `json:"items"`
@@ -284,7 +275,7 @@ func listItems(ctx context.Context, s *Server, in ListItemsInput) (ItemPage, err
 	}
 	out := ItemPage{
 		Items: make([]Item, 0, len(page.Items)), Total: page.Total,
-		NextCursor: wrapCursor(page.NextCursor, filter),
+		NextCursor: page.NextCursor,
 	}
 	for _, it := range page.Items {
 		// A list never returns bodies, however the projection is spelled: the
@@ -315,7 +306,7 @@ func searchItems(ctx context.Context, s *Server, in SearchItemsInput) (HitPage, 
 		items = append(items, h)
 	}
 	limit := boundedLimit(in.Limit)
-	filter := fingerprint("search_items", in.Query, in.Project)
+	filter := core.Fingerprint("search_items", in.Query, in.Project)
 	offset, err := decodeCursor(in.Cursor, filter)
 	if err != nil {
 		return HitPage{}, err

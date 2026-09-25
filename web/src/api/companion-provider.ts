@@ -339,6 +339,9 @@ const PROBLEM_CODES: Record<string, ProviderErrorCode> = {
   conflict: 'stale_revision',
   validation_failed: 'validation_failed',
   workflow_transition_denied: 'validation_failed',
+  // A list cursor presented with another filter or sort (GIT-US-0156): the
+  // caller restarts the walk rather than retrying it.
+  invalid_cursor: 'validation_failed',
   // The body changed since it was rendered, so the line a toggle addressed is
   // no longer a checkbox: re-read the item, do not retry.
   task_list_mismatch: 'task_list_mismatch',
