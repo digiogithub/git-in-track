@@ -771,3 +771,61 @@ The allocator SHALL allocate max + 2.
 		t.Fatal(err)
 	}
 }
+
+// reentrantSemantic resolves its hits back into the vault the way the
+// companion's Pando searcher does: through the vault's own locked lookups.
+type reentrantSemantic struct {
+	vlt *vault.Vault
+}
+
+func (s reentrantSemantic) SearchSemantic(_ context.Context, _ vault.SemanticQuery) ([]core.SearchHit, error) {
+	ref := core.RequirementRef{Spec: "ACME-SP-0001", Number: 1}
+	if _, ok := s.vlt.Requirement(ref); !ok {
+		return nil, fmt.Errorf("%s does not resolve", ref)
+	}
+	if _, ok := s.vlt.Item("ACME-US-0001"); !ok {
+		return nil, fmt.Errorf("ACME-US-0001 does not resolve")
+	}
+	return []core.SearchHit{{Kind: core.SearchKindRequirement, ID: core.ItemID(ref.String()), Score: 1}}, nil
+}
+
+// reentrantGraph reads the vault while it answers code_impact_analysis, the
+// way any host-installed seam may.
+type reentrantGraph struct {
+	vlt   *vault.Vault
+	inner *fakeGraph
+}
+
+func (g reentrantGraph) ImpactAnalysis(ctx context.Context, projectID string, symbols []string, o pando.ImpactOptions) (pando.ImpactResult, error) {
+	_ = g.vlt.Stats()
+	return g.inner.ImpactAnalysis(ctx, projectID, symbols, o)
+}
+
+// TestImpactSeamsMayReenterTheVault reproduces GIT-US-0163: the resolver's
+// Pando seams run while "impact.query" is being dispatched, and the semantic
+// searcher resolves its hits through the vault. Holding the vault mutex
+// across the seams deadlocked `gintrack spec impact` with Pando configured.
+func TestImpactSeamsMayReenterTheVault(t *testing.T) {
+	f := newFixture(t)
+	r := f.resolver(reentrantGraph{vlt: f.vlt, inner: fixtureGraph()}, reentrantSemantic{vlt: f.vlt})
+	f.vlt.SetRequirementImpact(r)
+	for _, method := range []string{"impact.query", "impact.report"} {
+		t.Run(method, func(t *testing.T) {
+			done := make(chan string, 1)
+			go func() {
+				done <- f.vlt.Call(method, fmt.Sprintf(`{"base":%q}`, f.base))
+			}()
+			select {
+			case out := <-done:
+				if !strings.HasPrefix(out, `{"ok":true`) {
+					t.Fatalf("%s = %s", method, out)
+				}
+				if !strings.Contains(out, "ACME-SP-0001.R1") {
+					t.Errorf("%s = %s, want the requirement tier 3 resolved", method, out)
+				}
+			case <-time.After(20 * time.Second):
+				t.Fatalf("%s deadlocked: a seam that calls back into the vault never returned", method)
+			}
+		})
+	}
+}

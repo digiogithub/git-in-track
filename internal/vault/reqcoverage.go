@@ -30,6 +30,13 @@ import (
 // [Vault.SetRequirementCoverage]. Both methods receive the vault's own index
 // and the requirements as the caller read them, so the block rev a status is
 // computed against is the one the caller holds.
+//
+// Coverage runs without the vault mutex held ("coverage.list" and
+// "spec.context", GIT-US-0163), so it may call back into the vault.
+// StampEvidence does not: a stamp is a write, decided and written in one
+// transaction under the mutex, so an implementation must never call back
+// into the vault from it — trace.Coverage reads only the trace engine, the
+// test-result evidence and git.
 type RequirementCoverage interface {
 	// Coverage returns one row per requirement, in the order given.
 	Coverage(ctx context.Context, ix *core.Index, reqs []core.RequirementView) ([]core.CoverageRow, error)
@@ -57,7 +64,7 @@ func (v *Vault) requirementCoverage() RequirementCoverage {
 // CoverageAvailable reports whether a coverage backend is installed.
 func (v *Vault) CoverageAvailable() bool { return v.requirementCoverage() != nil }
 
-func (v *Vault) coverageUnavailable() error {
+func coverageUnavailable() error {
 	return failf("unavailable",
 		"requirement coverage is not available: this session cannot read test results or git history (browser-only mode)")
 }
@@ -72,8 +79,9 @@ type coverageListParams struct {
 	Status stringList `json:"status,omitempty"`
 }
 
-// coverageList answers "coverage.list": one compact row per requirement.
-func (v *Vault) coverageList(ctx context.Context, raw []byte) (any, error) {
+// coverageList answers "coverage.list": one compact row per requirement,
+// computed by provider over ix without the vault mutex (see seamCall).
+func coverageList(ctx context.Context, provider RequirementCoverage, ix *core.Index, raw []byte) (any, error) {
 	p, err := decodeParams[coverageListParams](raw)
 	if err != nil {
 		return nil, err
@@ -86,9 +94,8 @@ func (v *Vault) coverageList(ctx context.Context, raw []byte) (any, error) {
 		}
 		want[st] = true
 	}
-	provider := v.requirementCoverage()
 	if provider == nil {
-		return nil, v.coverageUnavailable()
+		return nil, coverageUnavailable()
 	}
 	var reqs []core.RequirementView
 	if len(p.Refs) > 0 {
@@ -97,7 +104,7 @@ func (v *Vault) coverageList(ctx context.Context, raw []byte) (any, error) {
 			if err != nil {
 				return nil, err
 			}
-			view, err := v.index.Requirement(ref)
+			view, err := ix.Requirement(ref)
 			if err != nil {
 				return nil, fmt.Errorf("coverage of %s: %w", ref, err)
 			}
@@ -108,11 +115,11 @@ func (v *Vault) coverageList(ctx context.Context, raw []byte) (any, error) {
 		if p.Project != "" {
 			f.Projects = []core.ProjectKey{core.ProjectKey(p.Project)}
 		}
-		if reqs, err = v.index.Requirements(f); err != nil {
+		if reqs, err = ix.Requirements(f); err != nil {
 			return nil, fmt.Errorf("list requirements: %w", err)
 		}
 	}
-	rows, err := provider.Coverage(ctx, v.index, reqs)
+	rows, err := provider.Coverage(ctx, ix, reqs)
 	if err != nil {
 		return nil, fmt.Errorf("coverage: %w", err)
 	}
@@ -291,7 +298,7 @@ func (v *Vault) requirementStamp(ctx context.Context, raw []byte) (any, error) {
 		return nil, failf("invalid_request", "requirement.stamp needs by: the handle that ran the verification")
 	}
 	if v.requirementCoverage() == nil {
-		return nil, v.coverageUnavailable()
+		return nil, coverageUnavailable()
 	}
 	var refs []core.RequirementRef
 	for _, s := range p.Refs {

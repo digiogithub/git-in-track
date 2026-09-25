@@ -321,7 +321,10 @@ func (v *Vault) Call(method, params string) string {
 // be classified with AsError.
 //
 // The vault mutex is held for the whole call so that a query never observes a
-// half-applied write. A read that shows one file to a person first re-reads it
+// half-applied write — except for the methods that run network or host work:
+// the YouTrack methods take it only around their index reads and writes, and
+// the reads answered by a host-installed seam release it before the seam runs
+// (see seamCall). A read that shows one file to a person first re-reads it
 // when it changed on disk since it was indexed (see freshen); the refresh hook
 // hears about that once the lock is released.
 func (v *Vault) Dispatch(ctx context.Context, method string, raw []byte) (any, error) {
@@ -349,6 +352,16 @@ func (v *Vault) Dispatch(ctx context.Context, method string, raw []byte) (any, e
 		return v.youtrackKBDispatch(ctx, method, raw)
 	case "youtrack.comment.push":
 		return v.youtrackCommentDispatch(ctx, raw)
+	case "trace.requirement", "trace.touching", "coverage.list",
+		"spec.context", "impact.query", "impact.report":
+		// These reads hand the index to a host-installed seam — the trace
+		// engine, the coverage backend, the impact resolver — which reads git
+		// and the working tree and, for impact tiers 2 and 3, calls Pando,
+		// whose semantic searcher resolves its hits back through this vault.
+		// None of that may run with the vault mutex held: the call back
+		// would deadlock, and a slow network call would block every other
+		// reader of the repository (GIT-US-0163).
+		return v.seamCall(ctx, method, raw)
 	case "comment.add":
 		// A new comment on a linked item is queued for YouTrack when the
 		// project asked for it. The enqueue runs after the lock is released, so
@@ -434,20 +447,8 @@ func (v *Vault) Dispatch(ctx context.Context, method string, raw []byte) (any, e
 		return v.requirementCreate(ctx, raw)
 	case "requirement.update":
 		return v.requirementUpdate(ctx, raw)
-	case "trace.requirement":
-		return v.traceRequirement(ctx, raw)
-	case "trace.touching":
-		return v.traceTouching(ctx, raw)
-	case "coverage.list":
-		return v.coverageList(ctx, raw)
 	case "requirement.stamp":
 		return v.requirementStamp(ctx, raw)
-	case "impact.query":
-		return v.impactQuery(ctx, raw)
-	case "impact.report":
-		return v.impactReport(ctx, raw)
-	case "spec.context":
-		return v.specContext(ctx, raw)
 	case "spec.lint":
 		return v.specLint(raw)
 	case "spec.delta.preview":
@@ -485,6 +486,46 @@ func (v *Vault) Dispatch(ctx context.Context, method string, raw []byte) (any, e
 
 	case "search":
 		return v.search(raw)
+	default:
+		return nil, failf("unknown_method", "unknown method %q", method)
+	}
+}
+
+// seamCall answers a read whose work is done by a host-installed seam. It
+// takes the vault mutex only to refresh what the read shows and to capture
+// the index, then releases it before the seam runs, so that the seam may call
+// back into the vault (the Pando searcher resolving a hit through Requirement,
+// Item or Page) and may wait on git or the network without blocking anyone.
+//
+// The index is safe for concurrent use and hands out copies, so the seam
+// reads it without the vault mutex. What it gives up is the snapshot
+// guarantee of Dispatch: a write that lands while the seam runs may be seen
+// by some of its index reads and not by others. The seams already read the
+// working tree and git, which no lock of this vault covers, so their answers
+// were never a snapshot of one instant; a caller that needs one re-asks.
+func (v *Vault) seamCall(ctx context.Context, method string, raw []byte) (any, error) {
+	v.mu.Lock()
+	refreshed := v.freshen(ctx, method, raw)
+	hook := v.onRefresh
+	ix := v.index
+	v.mu.Unlock()
+	if hook != nil && !refreshed.Empty() {
+		hook(refreshed)
+	}
+
+	switch method {
+	case "trace.requirement":
+		return traceRequirement(ctx, v.requirementTracer(), ix, raw)
+	case "trace.touching":
+		return traceTouching(ctx, v.requirementTracer(), ix, raw)
+	case "coverage.list":
+		return coverageList(ctx, v.requirementCoverage(), ix, raw)
+	case "spec.context":
+		return specContext(ctx, v.requirementCoverage(), ix, raw)
+	case "impact.query":
+		return impactQuery(ctx, v.requirementImpact(), ix, raw)
+	case "impact.report":
+		return impactReport(ctx, v.requirementImpact(), ix, raw)
 	default:
 		return nil, failf("unknown_method", "unknown method %q", method)
 	}

@@ -25,8 +25,10 @@ type specContextParams struct {
 	Format core.ImpactReportFormat `json:"format,omitempty"`
 }
 
-// specContext answers "spec.context".
-func (v *Vault) specContext(ctx context.Context, raw []byte) (any, error) {
+// specContext answers "spec.context" over ix, with the coverage of provider
+// when the host installed one. It runs without the vault mutex (see
+// seamCall): the coverage backend reads git and the working tree.
+func specContext(ctx context.Context, provider RequirementCoverage, ix *core.Index, raw []byte) (any, error) {
 	p, err := decodeParams[specContextParams](raw)
 	if err != nil {
 		return nil, err
@@ -38,22 +40,22 @@ func (v *Vault) specContext(ctx context.Context, raw []byte) (any, error) {
 	if err := checkReportPage(p.Budget, p.Format); err != nil {
 		return nil, err
 	}
-	sc, err := v.index.SpecContext(id)
+	sc, err := ix.SpecContext(id)
 	if err != nil {
 		return nil, fmt.Errorf("spec.context: %w", err)
 	}
 	sc.Coverage = core.SpecCoverageUnavailable
-	if provider := v.requirementCoverage(); provider != nil {
+	if provider != nil {
 		refs := sc.Refs()
 		views := make([]core.RequirementView, 0, len(refs))
 		for _, ref := range refs {
-			view, err := v.index.Requirement(ref)
+			view, err := ix.Requirement(ref)
 			if err != nil {
 				return nil, fmt.Errorf("coverage of %s: %w", ref, err)
 			}
 			views = append(views, view)
 		}
-		rows, err := provider.Coverage(ctx, v.index, views)
+		rows, err := provider.Coverage(ctx, ix, views)
 		if err != nil {
 			return nil, fmt.Errorf("coverage: %w", err)
 		}
