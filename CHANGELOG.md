@@ -333,6 +333,17 @@ because a commit list cannot express them.
   URL (`?spec=&status=`). Sticky headers and requirement column, windowed rows for large
   matrices, horizontal scroll inside the matrix only at phone width, and `unavailable` with a
   hint to run `gintrack serve` in browser-only mode.
+- **Requirement detail with a trace panel in the web app** (`GIT-US-0129`, docs/05 §3.1).
+  `/p/$project/specs/<SPEC-ID>/R<n>` renders one requirement block, a status control limited to
+  the workflow's transitions, the `verified` stamp (rev against the current block rev, commit, at,
+  by) and the coverage state with its suspect reasons. The trace panel lists code and tests
+  grouped by origin (marker, `trace:` entry, both) as `path#symbol` with marker lines and each
+  test's last result, and the stories and tasks that `implements` / `modifies` it. *Edit block*
+  saves the title and text of that block only, quoting the requirement rev; a `stale_revision`
+  shows the per-field diff with *Reload theirs* / *Save mine over theirs*. `ProviderError` now
+  carries `currentRev` and `conflicts[]` in every provider. Specs page rows and coverage matrix
+  row headers link here, with *Open in spec* kept as a secondary link. Browser-only mode reads and
+  edits the block; trace and coverage show `unavailable`.
 
 ### Changed
 

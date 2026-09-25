@@ -25,6 +25,10 @@ export type CoreErrorPayload = {
   message: string;
   /** Vault-relative path the failure is about, when it is about one file. */
   path?: string;
+  /** A refused conditional write: the rev the file holds now. */
+  currentRev?: string;
+  /** A refused conditional write: the fields it would still change. */
+  conflicts?: { field: string; current?: string; proposed?: string }[];
 };
 
 /**

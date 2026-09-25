@@ -95,6 +95,11 @@ function renderSpecs(path: string, withAnalysis = true, readOnly = false) {
         }),
         createRoute({
           getParentRoute: () => projectRoute,
+          path: 'specs/$spec/$req',
+          component: () => <div data-testid="requirement" />,
+        }),
+        createRoute({
+          getParentRoute: () => projectRoute,
           path: 'items/new',
           component: () => <div data-testid="new-item" />,
         }),
@@ -145,8 +150,12 @@ describe('SpecsPage', () => {
       .querySelector('[data-ref="ACME-SP-0001.R10"]') as HTMLElement;
     expect(within(r10).getByText('untested')).toBeInTheDocument();
 
-    // The ref deep-links to the requirement's block anchor in the spec.
+    // The ref opens the requirement detail; the block anchor stays a secondary link.
     expect(within(row).getByRole('link', { name: 'ACME-SP-0001.R2' })).toHaveAttribute(
+      'href',
+      '/p/ACME/specs/ACME-SP-0001/R2',
+    );
+    expect(within(row).getByRole('link', { name: 'Open ACME-SP-0001.R2 in spec' })).toHaveAttribute(
       'href',
       '/p/ACME/items/ACME-SP-0001#acme-sp-0001-r2',
     );

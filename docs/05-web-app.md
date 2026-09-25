@@ -148,6 +148,7 @@ state is shareable by URL and survives reloads.
   /p/$projectKey/milestones/$milestoneId    MilestoneDetail
   /p/$projectKey/specs                      SpecsPage     (as built, ?status= &coverage=)
   /p/$projectKey/specs/coverage             CoverageMatrixPage (as built, ?spec= &status=)
+  /p/$projectKey/specs/$specId/$req         RequirementDetail (as built, $req = R<n>)
   /p/$projectKey/graph                      LinkGraph (Phase 6)
 /team/$teamId                            TeamLayout
   /team/$teamId/kb/*                        TeamKbViewer
@@ -362,8 +363,9 @@ badge always spells the state out; colour and icon only reinforce it. The sideba
 *`<KEY>` specs* entry under every project. Two chip rows filter by requirement status and by
 coverage; both live in the URL as comma-separated lists (`?status=todo,in_progress&coverage=failing`,
 `features/specs/search.ts`), and a filter hides the specs none of whose requirements match. The
-ref deep-links to the requirement's block anchor in the spec's detail view
-(`/p/$projectKey/items/<SPEC-ID>#acme-sp-0003-r2`, R-REQ-7): the Markdown pipeline gives every
+ref opens the requirement detail below (`/p/$projectKey/specs/<SPEC-ID>/R2`); a secondary
+*Open in spec* icon beside the title deep-links to the requirement's block anchor in the spec's
+detail view (`/p/$projectKey/items/<SPEC-ID>#acme-sp-0003-r2`, R-REQ-7): the Markdown pipeline gives every
 `### <REF> — <title>` heading that anchor as its id (§7), and the item body scrolls to the hash
 once it has rendered. **Browser-only mode:** `listCoverage` answers `unavailable`, so every badge
 reads `unavailable`, a notice carries the provider's hint to run `gintrack serve`, the coverage
@@ -376,8 +378,8 @@ the block text prefilled with the EARS template (a `WHEN …, the … SHALL …`
 `#### Scenario:`) and calls `createRequirement`, so the core allocates `R<n>` and writes the
 heading. Both actions are absent in a read-only workspace. Every query key sits under
 `['items', <key>, 'specs', …]`, so the `items` change a requirement write or a spec edit emits
-refetches the page. The header links the coverage matrix below; the requirement detail and the
-impact view arrive as `specs/…` routes with GIT-US-0129 and GIT-US-0131.
+refetches the page. The header links the coverage matrix below; the impact view arrives as a
+`specs/…` route with GIT-US-0131.
 
 **CoverageMatrixPage (`/p/$projectKey/specs/coverage`, as built, story GIT-US-0130)** — The
 requirements × tests matrix, from the same `listRequirements` and `listCoverage` answers as the
@@ -389,8 +391,8 @@ count, one count column per state), then the matrix in a bordered box at most 70
 viewport high. The matrix's first header row names each **test file** over the columns of its
 tests, the second names each **test symbol** (the `#symbol` of the trace ref
 `<path>[#<symbol>]`, doc 03 §21.7; `(file)` for a file-level test). Each row's sticky first
-column carries the requirement's ref (a link to its block anchor in the spec view, like a specs
-page row, until GIT-US-0129 adds a detail route), its title, the coverage badge and the reason
+column carries the requirement's ref (a link to the requirement detail, with the same secondary
+*Open in spec* icon as a specs page row), its title, the coverage badge and the reason
 codes of doc 03 §21.6 as muted text (`failed · results`; the full list in the tooltip). Each cell
 is that test's last local result spelled out with an icon — `pass`, `fail`, `skip`, or `—`
 (read as "no result") for `missing` — and a blank cell means the test is not linked to that
@@ -407,6 +409,43 @@ inside it and the page itself never does; the requirement column narrows to 11re
 **Browser-only mode:** `listCoverage` answers `unavailable`, so the page shows *Coverage
 unavailable* with the provider's reason and a hint to run `gintrack serve` and open the app it
 serves, and no matrix.
+
+**RequirementDetail (`/p/$projectKey/specs/$specId/$req`, as built, story GIT-US-0129,
+ADR-037)** — One requirement, lazily loaded (`features/specs/RequirementDetail.tsx`). `$req` is
+the local `R<n>`, so `/p/ACME/specs/ACME-SP-0003/R2` names `ACME-SP-0003.R2`; a full ref in that
+segment is accepted too. *What it looks like:* under a *← Specs* back link, the ref, its status
+badge and the title as the page heading, with *Open in spec* linking the block anchor in the spec
+view. The main column holds the **block** — the text below the heading (statement and
+scenarios) rendered with the shared Markdown pipeline — and the **trace panel**; a side column
+(stacked at phone width) holds the **status** control, the **coverage** state and the
+**verified** stamp. *Status* is a select limited to the workflow's declared transitions from the
+current status, as for items (`allowedStatuses`, no `triage`-category status: E-REQ-STATUS); a
+move is `updateRequirement({status})` under the requirement rev, and a `stale_revision` toasts and
+reloads like an item move. *Coverage* is the badge of `listCoverage({refs:[ref]})` with its reason
+codes as chips under *Suspect because* (or *Reasons*) — `text`, `stamp`, `code:<ref>`, … (doc 03
+§21.6); a requirement the answer does not name is `untested`. *Verified* lists the stamp's `rev`
+(marked *current text* when it equals the `blockRev`, else *older text*), `commit` (12
+characters, the full id in the tooltip), `at` and `by`, or *Never verified*. The **trace panel**
+(`TracePanel.tsx`, pure grouping in `trace-groups.ts`) lists **Code** and **Tests** from
+`traceRequirement`, each grouped by origin — *Marker and trace:*, *Marker*, *trace: entry* — as
+`path#symbol` (`(file)` without a symbol) with the marker lines (`L12, L40`); every test carries
+its last local result from the coverage row (`pass`, `fail`, `skip`, `no result`). **Stories and
+tasks** lists the computed inverses of the one-sided `implements` / `modifies` links (R-LINK-8) as
+*implemented by* / *modified by* with a link to each item, and broken `trace:` entries
+(`W-TRACE-BROKEN`) follow when there are any. **Editing:** *Edit block* swaps the rendered block
+for a title field and the block text; *Save block* sends only the fields that changed through
+`updateRequirement`, quoting the **requirement rev** the edit started from — the write token of
+doc 03 §21.5, never the `blockRev` a stamp records — so only that block (and its heading) is
+rewritten. A `stale_revision` keeps the draft and shows an alert with the **per-field diff**
+(`features/editor/ConflictFields.tsx`): for each entry of the error's `conflicts[]`, *Theirs (on
+disk)* next to *Yours*; the core names `text` without quoting it, so the view reloads the
+requirement and fills in theirs once it holds the reported `currentRev`. *Reload theirs* drops the
+draft and shows the file; *Save mine over theirs* repeats the same patch quoting `currentRev`
+(never `*`); *Keep editing* closes the alert. `ProviderError` carries `currentRev` and
+`conflicts[]` for this in all three providers (§4). Nothing to edit is offered in a read-only
+workspace. **Browser-only mode:** the block, the status control and editing work over the WASM
+core; the trace panel reads *Trace unavailable* and coverage `unavailable`, each with the
+provider's hint to run `gintrack serve`.
 
 **BoardView (`/team/$teamId/boards/$boardSlug`)** — §9. Columns from the board
 file, cards resolved from every configured project. Kanban and Scrum share the
@@ -912,8 +951,12 @@ has no tracer, test results or git history for the answer — browser-only mode 
 coverage and impact, and the companion for impact on a repository without history. A view
 renders it as a state with a hint to run the companion, never as an error. The specs page
 (GIT-US-0128, §3.1) consumes `listSpecs`, `listRequirements`, `listCoverage` and
-`createRequirement`; the requirement detail, coverage matrix and impact screens that consume the
-rest arrive with GIT-US-0129 to GIT-US-0131.
+`createRequirement`; the requirement detail (GIT-US-0129) adds `getRequirement`,
+`updateRequirement` and `traceRequirement`, and the impact screen (GIT-US-0131) the rest. A
+refused conditional write surfaces as a `ProviderError` with `code: 'stale_revision'` that also
+carries `currentRev` and `conflicts[]` (`{field, current?, proposed?}`) when the runtime reported
+them — the problem document's fields on the companion, the core's error envelope over WASM — so a
+view can show the per-field diff without a second round trip.
 
 `Capabilities` is what the UI branches on — never `kind`:
 

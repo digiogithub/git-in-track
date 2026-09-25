@@ -1,5 +1,5 @@
 import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
-import { ChevronDown, ChevronRight, Grid3x3, Plus } from 'lucide-react';
+import { ChevronDown, ChevronRight, ExternalLink, Grid3x3, Plus } from 'lucide-react';
 import { useCallback, useId, useMemo, useState } from 'react';
 
 import type { ProjectSummary } from '@/api/provider';
@@ -27,6 +27,7 @@ import {
   type SpecSearch,
   type SpecSearchInput,
 } from '@/features/specs/search';
+import { requirementRouteParams } from '@/features/specs/trace-groups';
 import { cn } from '@/lib/cn';
 import { requirementAnchor } from '@/markdown';
 
@@ -388,14 +389,25 @@ function SpecGroupCard({
                   className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-1 px-3 py-2 sm:grid-cols-[minmax(9rem,auto)_1fr_auto_auto] sm:px-4"
                 >
                   <Link
-                    to="/p/$project/items/$id"
-                    params={{ project: projectKey, id: specId }}
-                    hash={requirement.anchor || requirementAnchor(requirement.ref)}
+                    to="/p/$project/specs/$spec/$req"
+                    params={{ project: projectKey, ...requirementRouteParams(requirement.ref) }}
                     className="font-mono text-xs text-accent underline-offset-4 hover:underline"
                   >
                     {requirement.ref}
                   </Link>
-                  <span className="min-w-0 break-words text-sm">{requirement.title}</span>
+                  <span className="min-w-0 break-words text-sm">
+                    {requirement.title}{' '}
+                    <Link
+                      to="/p/$project/items/$id"
+                      params={{ project: projectKey, id: specId }}
+                      hash={requirement.anchor || requirementAnchor(requirement.ref)}
+                      aria-label={`Open ${requirement.ref} in spec`}
+                      title="Open in spec"
+                      className="inline-flex align-middle text-muted-foreground hover:text-accent"
+                    >
+                      <ExternalLink aria-hidden="true" className="h-3 w-3" />
+                    </Link>
+                  </span>
                   <span className="col-start-2 flex flex-wrap items-center gap-1.5 sm:col-start-auto sm:contents">
                     <StatusBadge status={requirement.status} project={project} />
                     <CoverageBadge state={coverage} />

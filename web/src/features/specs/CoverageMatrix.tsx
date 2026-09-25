@@ -1,5 +1,5 @@
 import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
-import { ArrowLeft, CircleCheck, CircleMinus, CircleX } from 'lucide-react';
+import { ArrowLeft, CircleCheck, CircleMinus, CircleX, ExternalLink } from 'lucide-react';
 import {
   useCallback,
   useLayoutEffect,
@@ -34,6 +34,7 @@ import {
 } from '@/features/specs/matrix';
 import { useCoverage, useRequirements, useSpecs } from '@/features/specs/queries';
 import { coverageStates, listParam } from '@/features/specs/search';
+import { requirementRouteParams } from '@/features/specs/trace-groups';
 import { cn } from '@/lib/cn';
 import { requirementAnchor } from '@/markdown';
 
@@ -533,14 +534,25 @@ function MatrixBodyRow({
         className="sticky left-0 z-10 w-44 min-w-44 max-w-44 border-b border-r border-border bg-card px-3 py-1 text-left align-middle font-normal sm:w-72 sm:min-w-72 sm:max-w-72"
       >
         <div className="flex min-w-0 flex-col gap-0.5 overflow-hidden">
-          <Link
-            to="/p/$project/items/$id"
-            params={{ project: projectKey, id: bareItemId(row.spec) }}
-            hash={row.anchor || requirementAnchor(row.ref)}
-            className="truncate font-mono text-xs leading-4 text-accent underline-offset-4 hover:underline"
-          >
-            {row.ref}
-          </Link>
+          <span className="flex min-w-0 items-center gap-1.5">
+            <Link
+              to="/p/$project/specs/$spec/$req"
+              params={{ project: projectKey, ...requirementRouteParams(row.ref) }}
+              className="truncate font-mono text-xs leading-4 text-accent underline-offset-4 hover:underline"
+            >
+              {row.ref}
+            </Link>
+            <Link
+              to="/p/$project/items/$id"
+              params={{ project: projectKey, id: bareItemId(row.spec) }}
+              hash={row.anchor || requirementAnchor(row.ref)}
+              aria-label={`Open ${row.ref} in spec`}
+              title="Open in spec"
+              className="shrink-0 text-muted-foreground hover:text-accent"
+            >
+              <ExternalLink aria-hidden="true" className="h-3 w-3" />
+            </Link>
+          </span>
           <span className="truncate text-sm leading-5" title={row.title}>
             {row.title}
           </span>

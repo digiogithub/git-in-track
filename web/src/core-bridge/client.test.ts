@@ -120,6 +120,27 @@ describe('CoreClient', () => {
     });
   });
 
+  it('carries the current rev and the fields in conflict of a stale write', async () => {
+    const { worker } = createFakeWorker((request) => ({
+      id: request.id,
+      ok: false,
+      error: {
+        code: 'stale_revision',
+        message: 'rev mismatch',
+        currentRev: 'sha256:now',
+        conflicts: [{ field: 'text' }],
+      },
+    }));
+    const client = new CoreClient({ createWorker: () => worker });
+
+    await expect(
+      client.updateItem('DEMO-US-0001', { set: { title: 'x' } }, 'sha256:stale'),
+    ).rejects.toMatchObject({
+      code: 'stale_revision',
+      details: { currentRev: 'sha256:now', conflicts: [{ field: 'text' }] },
+    });
+  });
+
   it('spawns the worker once and terminates it on dispose', async () => {
     const { worker, terminate } = createFakeWorker();
     const createWorker = vi.fn(() => worker);

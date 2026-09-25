@@ -2584,16 +2584,43 @@ export type CardMove = {
   team?: string;
 };
 
+/**
+ * One field a refused conditional write would still have changed, judged
+ * against the content on disk now (R-REV-3a). `current` and `proposed` are
+ * absent for a body or block text, which is named, never quoted back.
+ */
+export type ConflictField = { field: string; current?: string; proposed?: string };
+
+/** What a `stale_revision` carries so a retry needs no second round trip. */
+export type ProviderErrorDetails = {
+  /** The rev the file (or requirement) holds now. */
+  currentRev?: string;
+  /**
+   * The fields still in conflict. Both runtimes omit an empty list, so absent
+   * means "no field named": show a plain reload/retry rather than a diff.
+   */
+  conflicts?: ConflictField[];
+};
+
 /** A typed provider failure. Callers switch on `code`, never on an HTTP status. */
 export class ProviderError extends Error {
   readonly code: ProviderErrorCode;
   readonly path: string | undefined;
+  readonly currentRev: string | undefined;
+  readonly conflicts: ConflictField[] | undefined;
 
-  constructor(code: ProviderErrorCode, message: string, path?: string) {
+  constructor(
+    code: ProviderErrorCode,
+    message: string,
+    path?: string,
+    details: ProviderErrorDetails = {},
+  ) {
     super(message);
     this.name = 'ProviderError';
     this.code = code;
     this.path = path;
+    this.currentRev = details.currentRev;
+    this.conflicts = details.conflicts;
   }
 }
 

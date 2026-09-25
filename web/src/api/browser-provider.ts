@@ -132,7 +132,7 @@ import type {
   VaultWriteSet,
   WriteSet,
 } from '@/core-bridge/api';
-import { coreClient, type CoreClient } from '@/core-bridge/client';
+import { CoreError, coreClient, type CoreClient } from '@/core-bridge/client';
 import {
   FsaVault,
   getHandleRecord,
@@ -295,6 +295,12 @@ export function toProviderError(error: unknown): ProviderError {
   }
 
   const code = errorCode(error);
+  if (error instanceof CoreError && code) {
+    // A refused conditional write keeps the rev on disk and the fields in
+    // conflict, so the UI can show a per-field diff (R-REV-3a).
+    const mapped = CORE_ERROR_CODES[code] ?? 'internal';
+    return new ProviderError(mapped, message, error.path, error.details);
+  }
   if (code) return new ProviderError(CORE_ERROR_CODES[code] ?? 'internal', message);
   return new ProviderError('internal', message);
 }

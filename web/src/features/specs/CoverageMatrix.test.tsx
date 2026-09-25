@@ -115,6 +115,11 @@ function renderMatrix(
           path: 'items/$id',
           component: () => <div data-testid="item" />,
         }),
+        createRoute({
+          getParentRoute: () => projectRoute,
+          path: 'specs/$spec/$req',
+          component: () => <div data-testid="requirement" />,
+        }),
       ]),
     ]),
     history: createMemoryHistory({ initialEntries: [path] }),
@@ -166,11 +171,14 @@ describe('CoverageMatrixPage', () => {
     expect(within(bodyRow('ACME-SP-0001.R3')).getByText('untested')).toBeInTheDocument();
     expect(within(bodyRow('ACME-SP-0002.R1')).getByText('suspect')).toBeInTheDocument();
 
-    // The ref links to the requirement's block anchor in the spec.
+    // The ref opens the requirement detail; the block anchor stays a secondary link.
     expect(within(failing).getByRole('link', { name: 'ACME-SP-0001.R2' })).toHaveAttribute(
       'href',
-      '/p/ACME/items/ACME-SP-0001#acme-sp-0001-r2',
+      '/p/ACME/specs/ACME-SP-0001/R2',
     );
+    expect(
+      within(failing).getByRole('link', { name: 'Open ACME-SP-0001.R2 in spec' }),
+    ).toHaveAttribute('href', '/p/ACME/items/ACME-SP-0001#acme-sp-0001-r2');
   });
 
   it('groups the test columns by file and shows each last result in words', async () => {
