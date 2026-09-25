@@ -12,7 +12,12 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
 import { DataProviderProvider } from '@/api/DataProviderProvider';
-import { FakeProvider, sampleItems, type FakeSpecAnalysis } from '@/api/fake-provider';
+import {
+  FakeProvider,
+  sampleItems,
+  type FakeData,
+  type FakeSpecAnalysis,
+} from '@/api/fake-provider';
 import type { Item, Requirement } from '@/api/provider';
 import { BROWSER_SPEC_ANALYSIS_REASON } from '@/api/provider';
 import { ToastProvider } from '@/components/ui/toast';
@@ -65,12 +70,18 @@ const analysis: FakeSpecAnalysis = {
   ],
 };
 
-function renderSpecs(path: string, withAnalysis = true, readOnly = false) {
+function renderSpecs(
+  path: string,
+  withAnalysis = true,
+  readOnly = false,
+  extra: Partial<FakeData> = {},
+) {
   const provider = new FakeProvider(
     {
       items: [...sampleItems, ...specs],
       requirements,
       ...(withAnalysis ? { specAnalysis: analysis } : {}),
+      ...extra,
     },
     { readOnly },
   );
@@ -238,6 +249,25 @@ describe('SpecsPage', () => {
     });
     const { requirement: created } = await provider.getRequirement('ACME', 'ACME-SP-0002.R2');
     expect(created.title).toBe('Allocate by index scan');
+  });
+
+  it("prefills the dialog with the project's requirement template override", async () => {
+    const user = userEvent.setup();
+    const custom = 'The <system> SHALL <response>.\n\n#### Scenario: <name>\n- **GIVEN** <context>\n';
+    renderSpecs('/p/ACME/specs', true, false, {
+      specTemplates: {
+        requirement: custom,
+        requirementSource: 'docs/.pmngr/templates/requirement.md',
+      },
+    });
+
+    await screen.findByRole('list', { name: 'Requirements of ACME-SP-0002' });
+    await user.click(screen.getByRole('button', { name: 'Add requirement to ACME-SP-0002' }));
+    const dialog = await screen.findByRole('dialog');
+    const text = within(dialog).getByLabelText<HTMLTextAreaElement>('Statement and scenarios');
+    await waitFor(() => {
+      expect(text.value).toBe(custom);
+    });
   });
 
   it('shows similar requirements after a create as a non-blocking hint', async () => {

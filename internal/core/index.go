@@ -517,6 +517,7 @@ func (ix *Index) scanBacklog(ctx context.Context, p ProjectRef, pass *buildPass)
 		indexDirName:        true,
 		indexFileName:       true,
 		VerifyCacheFileName: true,
+		TemplatesDirName:    true,
 	}
 	for _, f := range itemFolders {
 		known[f.Dir] = true
@@ -525,6 +526,9 @@ func (ix *Index) scanBacklog(ctx context.Context, p ProjectRef, pass *buildPass)
 		}
 	}
 	if err := ix.scanComments(ctx, p, pass); err != nil {
+		return err
+	}
+	if err := ix.scanTemplates(p, pass); err != nil {
 		return err
 	}
 
@@ -620,6 +624,39 @@ func (ix *Index) markStray(full string, pass *buildPass) {
 		Path:     full,
 		Message:  "only Markdown files are indexed here",
 	}})
+}
+
+// scanTemplates checks the spec template overrides of templates/ (ADR-038,
+// R-LOC-7). They are never items: spec.md and requirement.md carry their
+// W-TEMPLATE-INVALID and lint findings, anything else is W-LAYOUT-STRAY.
+func (ix *Index) scanTemplates(p ProjectRef, pass *buildPass) error {
+	dir := joinPath(p.BacklogPath, TemplatesDirName)
+	entries, err := readDirTolerant(ix.fs, dir)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		ix.checkTemplate(p, joinPath(dir, e.Name), e.IsDir, pass)
+	}
+	return nil
+}
+
+// checkTemplate records the findings of one entry of templates/.
+func (ix *Index) checkTemplate(p ProjectRef, full string, isDir bool, pass *buildPass) {
+	pass.seen[full] = true
+	ix.files[full] = FileMeta{}
+	rel, _ := underDir(joinPath(p.BacklogPath, TemplatesDirName), full)
+	if isDir || (rel != SpecTemplateFileName && rel != RequirementTemplateFileName) {
+		ix.setFileDiags(full, []Diagnostic{{
+			Code:     idxCodeLayoutStray,
+			Severity: SeverityWarning,
+			Path:     full,
+			Message:  "templates/ holds only spec.md and requirement.md; this entry is ignored",
+		}})
+		return
+	}
+	_, diags, _ := CheckTemplateFile(ix.fs, full, p.Config)
+	ix.setFileDiags(full, diags)
 }
 
 // scanComments indexes comments/<ITEM-ID>/*.md.
@@ -926,6 +963,9 @@ func (ix *Index) reload(filePath string, pass *buildPass, changedProjects *[]Pro
 		return ix.loadCommentFile(p, filePath, pass)
 	case filePage:
 		return ix.loadPageFile(p, filePath, pass)
+	case fileTemplate:
+		ix.checkTemplate(p, filePath, false, pass)
+		return nil
 	case fileConfig:
 		data, err := ix.fs.ReadFile(filePath)
 		if err != nil {
@@ -968,6 +1008,7 @@ const (
 	fileComment
 	filePage
 	fileConfig
+	fileTemplate
 )
 
 // classify locates a path inside the projects the index covers.
@@ -995,6 +1036,8 @@ func (ix *Index) classify(filePath string) (ProjectRef, fileKind, ItemType, bool
 				}
 			case len(parts) == 3 && parts[0] == commentsDirName && isMarkdown(parts[2]):
 				return p, fileComment, "", true
+			case len(parts) >= 2 && parts[0] == TemplatesDirName:
+				return p, fileTemplate, "", true
 			}
 			return p, fileOther, "", false
 		}

@@ -1,4 +1,4 @@
-import { useId, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -14,11 +14,12 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/toast';
 import { requirementTemplate } from '@/features/editor/templates';
-import { useCreateRequirement } from '@/features/specs/queries';
+import { useCreateRequirement, useSpecTemplates } from '@/features/specs/queries';
 
 /**
- * "Add requirement": a title and the block text, prefilled with the EARS
- * template. It goes through `createRequirement`, so the core allocates the
+ * "Add requirement": a title and the block text, prefilled with the project's
+ * requirement template — its override file when valid, the embedded EARS
+ * template otherwise (ADR-038). It goes through `createRequirement`, so the core allocates the
  * `R<n>` (R-REQ-5), writes the `### <REF> — <title>` heading itself and
  * records the entry with the workflow's initial status — this form never
  * guesses a number or touches the rest of the spec.
@@ -38,7 +39,15 @@ export function AddRequirementDialog({
 }) {
   const [title, setTitle] = useState('');
   const [text, setText] = useState(requirementTemplate);
+  const template = useSpecTemplates(project, open).data?.requirement ?? requirementTemplate;
   const create = useCreateRequirement(project);
+
+  // Adopt the project's template while the text is still untouched.
+  useEffect(() => {
+    setText((current) =>
+      current === requirementTemplate || current.trim() === '' ? template : current,
+    );
+  }, [template]);
   const { toast } = useToast();
   const titleId = useId();
   const textId = useId();
@@ -46,7 +55,7 @@ export function AddRequirementDialog({
   const close = (next: boolean) => {
     if (!next) {
       setTitle('');
-      setText(requirementTemplate);
+      setText(template);
       create.reset();
     }
     onOpenChange(next);

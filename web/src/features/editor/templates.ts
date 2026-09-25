@@ -8,7 +8,9 @@ import specTemplateSource from '@core-templates/spec.md?raw';
  * The spec and requirement templates are the Go core's own files
  * (internal/core/templates, GIT-US-0111), imported at build time so the editor,
  * the CLI and the MCP surface start from the same text, which the core's tests
- * hold lint-clean.
+ * hold lint-clean. A project may override either with a file under
+ * `<docs>/.pmngr/templates/` (ADR-038): the forms ask the core for the
+ * effective text (`useSpecTemplates`) and show these only until it answers.
  */
 
 export type EditableItemType = 'epic' | 'story' | 'task' | 'milestone' | 'spec';
@@ -34,13 +36,26 @@ const templates: Record<EditableItemType, string> = {
  */
 export const requirementTemplate = requirementTemplateSource;
 
-export function bodyTemplate(type: EditableItemType): string {
-  return templates[type];
+/**
+ * The body a new item of this type starts from. `specTemplate` is the
+ * project's effective spec template (`spec.templates`, ADR-038) once it is
+ * known; until then the embedded one stands in.
+ */
+export function bodyTemplate(type: EditableItemType, specTemplate?: string): string {
+  return type === 'spec' && specTemplate !== undefined ? specTemplate : templates[type];
 }
 
-/** True when the body is still an untouched template, so switching type may replace it. */
-export function isPristineTemplate(body: string): boolean {
-  return body.trim() === '' || editableItemTypes.some((type) => templates[type] === body);
+/**
+ * True when the body is still an untouched template — an embedded one or the
+ * project's spec template — so switching type, or the project's template
+ * arriving, may replace it.
+ */
+export function isPristineTemplate(body: string, specTemplate?: string): boolean {
+  return (
+    body.trim() === '' ||
+    body === specTemplate ||
+    editableItemTypes.some((type) => templates[type] === body)
+  );
 }
 
 export function isEditableItemType(value: unknown): value is EditableItemType {

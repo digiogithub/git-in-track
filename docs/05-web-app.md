@@ -379,7 +379,13 @@ requirement* opens a dialog with a title and the block text prefilled with the c
 requirement template (a `WHEN …, the … SHALL …` statement and one `#### Scenario:`) and calls
 `createRequirement`, so the core allocates `R<n>` and writes the heading. Both templates are
 imported from `internal/core/templates/` at build time (`@core-templates/*.md?raw`), so the
-editor and the core cannot drift. When the answer carries a non-empty `similar[]` (GIT-US-0111),
+editor and the core cannot drift. A project may override either with a file under
+`<docs>/.pmngr/templates/` (ADR-038, `GIT-US-0162`): both forms ask the core for the effective
+text through `getSpecTemplates` (`useSpecTemplates`, the vault method `spec.templates` — `GET
+…/specs/templates` on the companion, the WASM core in browser-only mode) and adopt it as soon
+as it arrives, as long as the author has not typed over the embedded text shown meanwhile. An
+override that is invalid falls back to the embedded template in the core, so the forms never
+see it; `gintrack doctor` reports it. When the answer carries a non-empty `similar[]` (GIT-US-0111),
 a second toast, *Similar requirements exist*, lists their refs and titles; it is a hint only —
 the requirement is already written. Both actions are absent in a read-only workspace. Every query key sits under
 `['items', <key>, 'specs', …]`, so the `items` change a requirement write or a spec edit emits

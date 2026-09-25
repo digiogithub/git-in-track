@@ -33,6 +33,7 @@ func newSpecCommand(flags *globalFlags) *cobra.Command {
 		newSpecVerifyCommand(flags),
 		newSpecTraceCommand(flags),
 		newSpecHookCommand(flags),
+		newSpecTemplatesCommand(flags),
 	)
 	return cmd
 }

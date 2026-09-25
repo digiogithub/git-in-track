@@ -451,6 +451,8 @@ func (v *Vault) Dispatch(ctx context.Context, method string, raw []byte) (any, e
 		return v.requirementStamp(ctx, raw)
 	case "spec.lint":
 		return v.specLint(raw)
+	case "spec.templates":
+		return v.specTemplates(raw)
 	case "spec.delta.preview":
 		return v.specDeltaPreview(raw)
 	case "inbox.list":

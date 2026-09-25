@@ -995,7 +995,11 @@ body) that follows.
 
 **`create_spec`** creates the spec item: `project`, `title`, `body` (by convention `## Purpose`,
 `## Scope`, `## Requirements`), `status`, `priority`, `assignees` (owners), `labels`, `author`. A
-spec has no parent, milestone, estimate or due date, so the tool does not accept them. The
+spec has no parent, milestone, estimate or due date, so the tool does not accept them. Without a
+`body` (or with a blank one) the spec starts from the project's spec template — the override file
+`<docs>/.pmngr/templates/spec.md` when it is valid, the embedded one otherwise (ADR-038) — whose
+example block becomes `R1`: rewrite it with `update_requirement` rather than leave it and add
+`R2`, or pass a body of your own. The
 first spec of a project raises `project.yaml` to `schema: 2` in the same write and reports
 `"schemaUpgraded": 2`, exactly like `create_story` does for a first spec link.
 
@@ -1043,7 +1047,9 @@ call naming neither `project` nor `spec` goes to the workspace's default reposit
 ```
 
 **`create_requirement`** appends one block `### <REF> — <title>` to a spec: `spec`, `title`,
-`text` (the statement and its `#### Scenario` sections; no level 1–3 heading), `status`
+`text` (the statement and its `#### Scenario` sections; no level 1–3 heading; omitted or blank,
+the project's requirement template, `<docs>/.pmngr/templates/requirement.md` or the embedded
+one), `status`
 (default: the workflow's initial status), `trace {code[], tests[]}`, `links` (`supersedes`,
 `superseded_by` or `relates_to` only). `R<n>` is allocated by the tool as max + 1 and never
 reused; never propose one. It needs no `rev`. When a Pando backend is configured the result also

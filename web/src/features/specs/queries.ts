@@ -20,6 +20,7 @@ import type {
   RequirementPatch,
   RequirementRead,
   RequirementWriteResult,
+  SpecTemplates,
   SyncRepoStatus,
   TracedRequirement,
 } from '@/api/provider';
@@ -38,6 +39,7 @@ export const specKeys = {
     ['items', project, 'specs', 'coverage-of', ref] as const,
   impact: (project: string, base: string, head: string) =>
     ['items', project, 'specs', 'impact', base, head] as const,
+  templates: (project: string) => ['items', project, 'specs', 'templates'] as const,
 };
 
 /** `unavailable` is a state, never retried; anything else gets two more tries. */
@@ -151,6 +153,23 @@ export function useUpdateRequirement(project: string) {
       );
       void queryClient.invalidateQueries({ queryKey: ['items', project] });
     },
+  });
+}
+
+/**
+ * The templates a new spec and a new requirement of the project start from
+ * (ADR-038): the override files of `<docs>/.pmngr/templates/` when valid, the
+ * embedded copies otherwise. A template file is not an item, so the answer is
+ * re-read whenever a form that uses it mounts rather than kept.
+ */
+export function useSpecTemplates(project: string, enabled = true) {
+  const provider = useProvider();
+  return useQuery({
+    queryKey: specKeys.templates(project),
+    queryFn: (): Promise<SpecTemplates> => provider.getSpecTemplates(project),
+    enabled: enabled && project !== '',
+    staleTime: 0,
+    retry: retryUnlessUnavailable,
   });
 }
 

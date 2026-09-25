@@ -12,6 +12,79 @@ because a commit list cannot express them.
 
 ## [Unreleased]
 
+### Added
+
+- **Test-only impact hits** (`GIT-US-0157`, docs/03 R-IMP-5 and R-IMP-8, docs/07 §4.20,
+  docs/08 §4.21). Every tier-1 and tier-2 impact hit now carries a `kind`: `behaviour` when a
+  reason reaches the requirement through its code (`Implements:`, `trace.code`) or the story,
+  `test-only` when every reason reaches it through a test that verifies it (`Verifies:`,
+  `trace.tests`). The report ranks `test-only` hits below the behaviour hits of their class
+  (failing still first) and marks them `test-only` in the text form. `gintrack spec impact
+  --fail-on` accepts `behaviour` next to the states to leave `test-only` hits out of the gate;
+  the default gate is unchanged. The field is additive: a tier-3 candidate has no `kind`.
+- **Impact reaches traced code through package-level declarations** (`GIT-US-0158`, docs/03
+  §21.7 and R-IMP-2). A diff that changes a top-level Go `const`, `var` or `type` now touches
+  the traced functions of the same package that use it, found on the go/parser syntax tree with
+  block scopes (shadowing, selectors and struct keys never match), deterministically and without
+  Pando. The new reason is `decl:<trace ref> uses <name>`; the benchmark's `maxPageSize` miss now
+  reaches `boundedLimit`.
+- **Impact blind spots and marker placement** (`GIT-US-0159`, docs/08 §10.8 and §4.21,
+  AGENTS.md). The docs now list what tiers 1–2 cannot see — callees such as a removed call in an
+  untraced registrar, Go declarations used outside their package, unmarked code without Pando,
+  test and multi-marker granularity — and where to put `Implements:` and `Verifies:` markers so
+  impact stays useful, with the spec impact benchmark linked as evidence.
+- **Spec impact benchmark re-run with Pando tiers 2 and 3** (`GIT-US-0161`,
+  docs/research/2026-09-25-spec-impact-benchmark.md §9). The same PR set ran against a Pando
+  instance that had indexed the repository. Tier 2 is deterministic, but its own 22 hits are
+  5 % behaviour (45 % counting test evidence), and it raises the worst report from 716 to 1,393
+  tokens (5.9× the folder read). Tier 3 delivered no candidate. The benchmark records why, and
+  proposes the follow-ups.
+- **Customisable spec templates** (`GIT-US-0162`, ADR-038, docs/03 R-LOC-7 and §21.1
+  R-TPL-1..5, docs/05, docs/07 §4.20 and §6.7, docs/08 §4.20). A backlog may override the
+  embedded spec and requirement templates with `<docs>/.pmngr/templates/spec.md` and
+  `requirement.md`. A valid file wins over the embedded copy; an invalid one (blank, not UTF-8,
+  a requirement template holding a level-1–3 heading or an open fence, a spec template whose
+  headings name a real spec) is reported with the new warning `W-TEMPLATE-INVALID` and the
+  embedded template is used instead. `gintrack doctor` also reports the `LINT-REQ-*` findings of
+  a valid override, at warning at most. The core resolves the templates through the file system
+  it is given (`core.LoadSpecTemplates`), served as the vault method `spec.templates` and
+  `GET /api/v1/projects/{key}/specs/templates`, so the web editor's *New spec* and the *Add
+  requirement* dialog use the override in companion and browser-only mode alike. The new
+  command `gintrack spec templates export [--project] [--force] [--dry-run] [--json]` writes the
+  embedded templates there: it creates missing files, leaves identical ones alone and never
+  overwrites an edited file without `--force`. The index treats `templates/` as part of the
+  layout: its files are never items and are not reported `W-LAYOUT-STRAY`; any other file in it
+  is.
+
+### Changed
+
+- **`gintrack spec impact --format json` prints compact JSON** (`GIT-US-0160`, docs/07
+  §4.20). The payload is now one line, so what is printed matches the report's `tokens`
+  estimate, which has always measured compact JSON; the indented form printed about 45 % more
+  (docs/research/2026-09-25-spec-impact-benchmark.md). `--pretty` restores the indented output.
+  This differs on purpose from the other commands' `--json`, which stays indented. Scripts that
+  parse the JSON are unaffected; scripts that grep the indented lines need `--pretty`.
+- **REST, browser and MCP item cursors are bound to every filter** (`GIT-US-0156`).
+  `GET /api/v1/items`, `GET /api/v1/inbox` and the browser-only mode's `item.list` and
+  `inbox.list` accepted a cursor whose filter had changed mid-walk and silently paged a
+  different result set; only the MCP tools refused it. The binding now lives in the core
+  query itself: an item cursor carries a fingerprint of every filter clause next to the
+  sort, and a mismatch — or a cursor the server never issued — is refused with
+  `invalid_cursor`, which the REST API answers as `400` (it used to be `400
+  invalid_request` for a malformed cursor, and nothing for a changed filter). A relative
+  `updatedSince` such as `7d` is bound as spelled, and the snooze clock is not part of the
+  filter, so neither breaks a walk as time passes. The MCP `list_items` and `list_inbox`
+  tools no longer wrap the core cursor; their behaviour is unchanged. `list_requirements`
+  and `spec_coverage` were checked and already bound every filter; their tests now cover
+  each one (docs/07 §5.3 and §5.4, docs/08 §3, docs/05 §5).
+- **`create_spec` without `body`, `create_requirement` without `text` and `gintrack item new
+  --type spec` without `--body` start from the project's templates** (`GIT-US-0162`, docs/08
+  §4.20). A spec created over MCP with no body now holds the spec template, whose example
+  block becomes `R1`; a requirement created with no text holds the requirement template
+  instead of a bare heading. `gintrack item new --type spec` without `--body` does the same
+  and starts from the spec template instead of an empty body (docs/07 §4.5). The vault methods
+  `item.create` and `requirement.create` are unchanged: an empty body stays empty there.
+
 ### Fixed
 
 - **Impact, trace and coverage reads no longer deadlock the vault** (`GIT-US-0163`, docs/02 §6).
@@ -36,63 +109,10 @@ because a commit list cannot express them.
   fixed reason such as `Pando is unreachable` instead of the error text, which quoted Pando's
   random cache id. Two runs against one index give byte-identical reports, and the tier line
   is shorter.
-### Changed
-
-- **`gintrack spec impact --format json` prints compact JSON** (`GIT-US-0160`, docs/07
-  §4.20). The payload is now one line, so what is printed matches the report's `tokens`
-  estimate, which has always measured compact JSON; the indented form printed about 45 % more
-  (docs/research/2026-09-25-spec-impact-benchmark.md). `--pretty` restores the indented output.
-  This differs on purpose from the other commands' `--json`, which stays indented. Scripts that
-  parse the JSON are unaffected; scripts that grep the indented lines need `--pretty`.
-- **REST, browser and MCP item cursors are bound to every filter** (`GIT-US-0156`).
-  `GET /api/v1/items`, `GET /api/v1/inbox` and the browser-only mode's `item.list` and
-  `inbox.list` accepted a cursor whose filter had changed mid-walk and silently paged a
-  different result set; only the MCP tools refused it. The binding now lives in the core
-  query itself: an item cursor carries a fingerprint of every filter clause next to the
-  sort, and a mismatch — or a cursor the server never issued — is refused with
-  `invalid_cursor`, which the REST API answers as `400` (it used to be `400
-  invalid_request` for a malformed cursor, and nothing for a changed filter). A relative
-  `updatedSince` such as `7d` is bound as spelled, and the snooze clock is not part of the
-  filter, so neither breaks a walk as time passes. The MCP `list_items` and `list_inbox`
-  tools no longer wrap the core cursor; their behaviour is unchanged. `list_requirements`
-  and `spec_coverage` were checked and already bound every filter; their tests now cover
-  each one (docs/07 §5.3 and §5.4, docs/08 §3, docs/05 §5).
-### Added
-
-- **Test-only impact hits** (`GIT-US-0157`, docs/03 R-IMP-5 and R-IMP-8, docs/07 §4.20,
-  docs/08 §4.21). Every tier-1 and tier-2 impact hit now carries a `kind`: `behaviour` when a
-  reason reaches the requirement through its code (`Implements:`, `trace.code`) or the story,
-  `test-only` when every reason reaches it through a test that verifies it (`Verifies:`,
-  `trace.tests`). The report ranks `test-only` hits below the behaviour hits of their class
-  (failing still first) and marks them `test-only` in the text form. `gintrack spec impact
-  --fail-on` accepts `behaviour` next to the states to leave `test-only` hits out of the gate;
-  the default gate is unchanged. The field is additive: a tier-3 candidate has no `kind`.
-- **Impact reaches traced code through package-level declarations** (`GIT-US-0158`, docs/03
-  §21.7 and R-IMP-2). A diff that changes a top-level Go `const`, `var` or `type` now touches
-  the traced functions of the same package that use it, found on the go/parser syntax tree with
-  block scopes (shadowing, selectors and struct keys never match), deterministically and without
-  Pando. The new reason is `decl:<trace ref> uses <name>`; the benchmark's `maxPageSize` miss now
-  reaches `boundedLimit`.
-
-- **Impact blind spots and marker placement** (`GIT-US-0159`, docs/08 §10.8 and §4.21,
-  AGENTS.md). The docs now list what tiers 1–2 cannot see — callees such as a removed call in an
-  untraced registrar, Go declarations used outside their package, unmarked code without Pando,
-  test and multi-marker granularity — and where to put `Implements:` and `Verifies:` markers so
-  impact stays useful, with the spec impact benchmark linked as evidence.
-- **Spec impact benchmark re-run with Pando tiers 2 and 3** (`GIT-US-0161`,
-  docs/research/2026-09-25-spec-impact-benchmark.md §9). The same PR set ran against a Pando
-  instance that had indexed the repository. Tier 2 is deterministic, but its own 22 hits are
-  5 % behaviour (45 % counting test evidence), and it raises the worst report from 716 to 1,393
-  tokens (5.9× the folder read). Tier 3 delivered no candidate. The benchmark records why, and
-  proposes the follow-ups.
-
-### Fixed
-
 - **Removed lines touch the symbol they were removed from** (`GIT-US-0158`, docs/03 §21.7). A
   pure deletion now touches the symbol enclosing both of its neighbors, so a removed line inside
   a traced function (or a removed sub-test) touches it, and a whole function removed after a
   traced one no longer touches the one before it.
-
 ## [2.1.0] — 2026-09-25
 
 A minor release: spec-driven development (Phase 11, ADR-037). Specs are opt-in — a project

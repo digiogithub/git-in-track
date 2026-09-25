@@ -162,7 +162,7 @@ type RequirementPage struct {
 type CreateSpecInput struct {
 	Project   string   `json:"project,omitempty" jsonschema:"Project key; required when the workspace holds more than one"`
 	Title     string   `json:"title" jsonschema:"The capability the spec describes"`
-	Body      string   `json:"body,omitempty" jsonschema:"Markdown body: ## Purpose, ## Scope, ## Requirements; add requirements with create_requirement"`
+	Body      string   `json:"body,omitempty" jsonschema:"Markdown body: ## Purpose, ## Scope, ## Requirements; add requirements with create_requirement. Omitted: the project's spec template, whose example block becomes R1 (rewrite it with update_requirement)"`
 	Status    string   `json:"status,omitempty" jsonschema:"A status the project declares, never a triage one; default is the initial status of its workflow"`
 	Priority  string   `json:"priority,omitempty"`
 	Assignees []string `json:"assignees,omitempty" jsonschema:"Owners of the spec"`
@@ -174,7 +174,7 @@ type CreateSpecInput struct {
 type CreateRequirementInput struct {
 	Spec   string           `json:"spec" jsonschema:"Spec id, for example ACME-SP-0003"`
 	Title  string           `json:"title" jsonschema:"One line, 1 to 200 characters"`
-	Text   string           `json:"text,omitempty" jsonschema:"Block text below the heading: the SHALL statement and its #### Scenario sections; no level 1-3 heading"`
+	Text   string           `json:"text,omitempty" jsonschema:"Block text below the heading: the SHALL statement and its #### Scenario sections; no level 1-3 heading. Omitted: the project's requirement template"`
 	Status string           `json:"status,omitempty" jsonschema:"Default is the initial status of the project workflow"`
 	Trace  *RequirementCode `json:"trace,omitempty"`
 	Links  []Link           `json:"links,omitempty" jsonschema:"Requirement-level links: supersedes, superseded_by or relates_to"`
@@ -332,11 +332,15 @@ func createSpec(ctx context.Context, s *Server, in CreateSpecInput) (WriteResult
 	if strings.TrimSpace(in.Title) == "" {
 		return WriteResult{}, invalidField("title", "a new spec needs a title", "Checkout address validation")
 	}
+	body := in.Body
+	if strings.TrimSpace(body) == "" {
+		body = effectiveTemplates(ctx, s, in.Project).Spec
+	}
 	draft := map[string]any{
 		"project":   in.Project,
 		"type":      string(core.TypeSpec),
 		"title":     in.Title,
-		"body":      in.Body,
+		"body":      body,
 		"status":    in.Status,
 		"priority":  in.Priority,
 		"assignees": in.Assignees,
@@ -358,6 +362,19 @@ func createSpec(ctx context.Context, s *Server, in CreateSpecInput) (WriteResult
 	return out, nil
 }
 
+// effectiveTemplates returns the spec and requirement templates of a project:
+// its override files when valid, the embedded copies otherwise (ADR-038). A
+// create that brings no text starts from them. When the answer cannot be had
+// the embedded pair stands in: the create that follows reports any real
+// problem with the project itself.
+func effectiveTemplates(ctx context.Context, s *Server, project string) core.SpecTemplates {
+	got, err := dispatch[core.SpecTemplates](ctx, s, "spec.templates", map[string]any{"project": project})
+	if err != nil || strings.TrimSpace(got.Spec) == "" || strings.TrimSpace(got.Requirement) == "" {
+		return core.SpecTemplates{Spec: core.SpecTemplate(), Requirement: core.RequirementTemplate()}
+	}
+	return got
+}
+
 // createRequirement appends one requirement to a spec.
 // Implements: GIT-SP-0002.R7
 func createRequirement(ctx context.Context, s *Server, in CreateRequirementInput) (RequirementWriteResult, error) {
@@ -368,10 +385,15 @@ func createRequirement(ctx context.Context, s *Server, in CreateRequirementInput
 		return RequirementWriteResult{}, invalidField("title", "a new requirement needs a title",
 			"Trim pasted addresses")
 	}
+	text := in.Text
+	if strings.TrimSpace(text) == "" {
+		key, _, _, _ := core.ParseItemID(strings.TrimSpace(in.Spec))
+		text = effectiveTemplates(ctx, s, string(key)).Requirement
+	}
 	params := map[string]any{
 		"spec":   strings.TrimSpace(in.Spec),
 		"title":  in.Title,
-		"text":   in.Text,
+		"text":   text,
 		"status": in.Status,
 	}
 	if in.Trace != nil {
