@@ -70,6 +70,7 @@ func TestSpecRoutesRequireTheToken(t *testing.T) {
 		specsBase + "/DEMO-SP-0001/requirements/R1",
 		specsBase + "/coverage",
 		specsBase + "/impact?base=HEAD",
+		specsBase + "/templates",
 	} {
 		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, target, nil)
 		rec := httptest.NewRecorder()
@@ -586,4 +587,47 @@ func TestRequirementCreateSimilar(t *testing.T) {
 			t.Errorf("created = %+v", got)
 		}
 	})
+}
+
+// TestSpecTemplatesRoute serves the effective templates: the embedded pair,
+// then an override written to disk, which the next call reads (GIT-US-0162).
+func TestSpecTemplatesRoute(t *testing.T) {
+	t.Parallel()
+	s, root := specServer(t)
+	var got struct {
+		Spec              string `json:"spec"`
+		Requirement       string `json:"requirement"`
+		SpecSource        string `json:"specSource"`
+		RequirementSource string `json:"requirementSource"`
+		Diagnostics       []struct {
+			Code string `json:"code"`
+		} `json:"diagnostics"`
+	}
+	decode(t, send(t, s, request{method: http.MethodGet, target: specsBase + "/templates"}), http.StatusOK, &got)
+	if got.Spec != core.SpecTemplate() || got.RequirementSource != core.TemplateSourceEmbedded {
+		t.Errorf("default answer = %+v", got)
+	}
+
+	dir := filepath.Join(root, "docs", ".pmngr", "templates")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const custom = "The <system> SHALL <response>.\n\n#### Scenario: <name>\n- **WHEN** <action>\n- **THEN** <result>\n"
+	if err := os.WriteFile(filepath.Join(dir, "requirement.md"), []byte(custom), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "spec.md"), []byte("\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	decode(t, send(t, s, request{method: http.MethodGet, target: specsBase + "/templates"}), http.StatusOK, &got)
+	if got.Requirement != custom || got.RequirementSource != "docs/.pmngr/templates/requirement.md" {
+		t.Errorf("requirement = %q from %q, want the override", got.Requirement, got.RequirementSource)
+	}
+	if got.Spec != core.SpecTemplate() || len(got.Diagnostics) != 1 || got.Diagnostics[0].Code != "W-TEMPLATE-INVALID" {
+		t.Errorf("a blank spec override did not fall back: %+v", got)
+	}
+
+	var doc problemBody
+	decode(t, send(t, s, request{method: http.MethodGet, target: "/api/v1/projects/NOPE/specs/templates"}),
+		http.StatusNotFound, &doc)
 }

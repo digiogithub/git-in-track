@@ -6,6 +6,9 @@
  * that matter to the UI: rev checks, read-only capability, change events.
  */
 
+import requirementTemplateSource from '@core-templates/requirement.md?raw';
+import specTemplateSource from '@core-templates/spec.md?raw';
+
 import type {
   AgentHealth,
   AgentRunOptions,
@@ -162,6 +165,7 @@ import type {
   SpecDeltaPreviewInput,
   SpecLintFinding,
   SpecLintInput,
+  SpecTemplates,
   ImpactResult,
   Requirement,
   RequirementDraft,
@@ -276,6 +280,11 @@ export type FakeData = {
    * no delta.
    */
   specLive?: FakeSpecLive;
+  /**
+   * The `spec.templates` answer (ADR-038); absent answers the embedded pair
+   * with no override. Fields left out keep their embedded default.
+   */
+  specTemplates?: Partial<SpecTemplates>;
 };
 
 /** Scripted `spec.lint` and `spec.delta.preview` answers (GIT-US-0132). */
@@ -1383,6 +1392,7 @@ export class FakeProvider implements DataProvider {
   private requirements: Map<string, Requirement>;
   private specAnalysis: FakeSpecAnalysis | null;
   private specLive: FakeSpecLive;
+  private specTemplates: SpecTemplates;
   /** Commit-on-save settings, in memory (story GIT-US-0020). */
   private git: GitSettings;
   /** The public tunnel, in memory. */
@@ -1470,6 +1480,14 @@ export class FakeProvider implements DataProvider {
     this.requirements = new Map((data.requirements ?? []).map((r) => [r.ref, structuredClone(r)]));
     this.specAnalysis = data.specAnalysis ?? null;
     this.specLive = data.specLive ?? {};
+    this.specTemplates = {
+      spec: specTemplateSource,
+      requirement: requirementTemplateSource,
+      specSource: 'embedded',
+      requirementSource: 'embedded',
+      diagnostics: [],
+      ...data.specTemplates,
+    };
     this.syncEngine = data.syncEngine ?? null;
     this.syncJobs = structuredClone(data.syncEngine?.jobs ?? []);
     this.engineSettings =
@@ -5116,6 +5134,10 @@ export class FakeProvider implements DataProvider {
     input: SpecDeltaPreviewInput,
   ): Promise<DeltaPreviewOperation[]> {
     return settle(() => structuredClone(this.specLive.preview?.(input) ?? []));
+  }
+
+  getSpecTemplates(_project: string): Promise<SpecTemplates> {
+    return settle(() => structuredClone(this.specTemplates));
   }
 
   subscribe(handler: (event: ChangeEvent) => void): Unsubscribe {

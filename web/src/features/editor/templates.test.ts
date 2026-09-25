@@ -16,3 +16,18 @@ describe('spec templates', () => {
     expect(bodyTemplate('spec').endsWith(`\n\n${requirementTemplate}`)).toBe(true);
   });
 });
+
+describe('a project spec template override', () => {
+  const custom = '## Purpose\n\nOurs.\n';
+
+  it('replaces the embedded spec template and nothing else', () => {
+    expect(bodyTemplate('spec', custom)).toBe(custom);
+    expect(bodyTemplate('story', custom)).toBe(bodyTemplate('story'));
+  });
+
+  it('counts as pristine, so the type can still be switched', () => {
+    expect(isPristineTemplate(custom, custom)).toBe(true);
+    expect(isPristineTemplate(custom)).toBe(false);
+    expect(isPristineTemplate(`${custom}edited`, custom)).toBe(false);
+  });
+});

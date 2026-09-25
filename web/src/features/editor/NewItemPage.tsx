@@ -17,6 +17,7 @@ import { readProjectSchema } from '@/features/editor/project-schema';
 import { parseNewItemSearch } from '@/features/editor/search';
 import type { EditableItemType } from '@/features/editor/templates';
 import { bodyTemplate, editableItemTypes, isPristineTemplate } from '@/features/editor/templates';
+import { useSpecTemplates } from '@/features/specs/queries';
 
 const selectClass = `${fieldClasses} h-9 px-2`;
 
@@ -40,6 +41,9 @@ export function NewItemPage() {
 
   const [type, setType] = useState<EditableItemType>(search.type);
   const [body, setBody] = useState(() => bodyTemplate(search.type));
+  // The project's own spec template, when it overrides the embedded one
+  // (ADR-038); the embedded text is shown until the answer arrives.
+  const specTemplate = useSpecTemplates(projectKey, type === 'spec').data?.spec;
   const [values, setValues] = useState<FrontMatterValues>(() => ({
     ...emptyValues(),
     parent: search.parent ?? null,
@@ -57,9 +61,17 @@ export function NewItemPage() {
     );
   }, [schema.initialStatus]);
 
+  // Adopt the project's spec template while the body is still untouched.
+  useEffect(() => {
+    if (type !== 'spec' || specTemplate === undefined) return;
+    setBody((current) => (isPristineTemplate(current) ? specTemplate : current));
+  }, [type, specTemplate]);
+
   const changeType = (next: EditableItemType) => {
     setType(next);
-    setBody((current) => (isPristineTemplate(current) ? bodyTemplate(next) : current));
+    setBody((current) =>
+      isPristineTemplate(current, specTemplate) ? bodyTemplate(next, specTemplate) : current,
+    );
     if (next === 'epic' || next === 'milestone') {
       setValues((current) => ({ ...current, parent: null }));
     }

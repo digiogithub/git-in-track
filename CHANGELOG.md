@@ -92,6 +92,28 @@ because a commit list cannot express them.
   pure deletion now touches the symbol enclosing both of its neighbors, so a removed line inside
   a traced function (or a removed sub-test) touches it, and a whole function removed after a
   traced one no longer touches the one before it.
+- **Customisable spec templates** (`GIT-US-0162`, ADR-038, docs/03 R-LOC-7 and §21.1
+  R-TPL-1..5, docs/05, docs/07 §4.20 and §6.7, docs/08 §4.20). A backlog may override the
+  embedded spec and requirement templates with `<docs>/.pmngr/templates/spec.md` and
+  `requirement.md`. A valid file wins over the embedded copy; an invalid one (blank, not UTF-8,
+  a requirement template holding a level-1–3 heading or an open fence, a spec template whose
+  headings name a real spec) is reported with the new warning `W-TEMPLATE-INVALID` and the
+  embedded template is used instead. `gintrack doctor` also reports the `LINT-REQ-*` findings of
+  a valid override, at warning at most. The core resolves the templates through the file system
+  it is given (`core.LoadSpecTemplates`), served as the vault method `spec.templates` and
+  `GET /api/v1/projects/{key}/specs/templates`, so the web editor's *New spec* and the *Add
+  requirement* dialog use the override in companion and browser-only mode alike. The new
+  command `gintrack spec templates export [--project] [--force] [--dry-run] [--json]` writes the
+  embedded templates there: it creates missing files, leaves identical ones alone and never
+  overwrites an edited file without `--force`. The index treats `templates/` as part of the
+  layout: its files are never items and are not reported `W-LAYOUT-STRAY`; any other file in it
+  is.
+
+- **`create_spec` without `body` and `create_requirement` without `text` start from the
+  project's templates** (`GIT-US-0162`, docs/08 §4.20). A spec created over MCP with no body
+  now holds the spec template, whose example block becomes `R1`; a requirement created with no
+  text holds the requirement template instead of a bare heading. The vault methods
+  `item.create` and `requirement.create` are unchanged: an empty body stays empty there.
 
 ## [2.1.0] — 2026-09-25
 

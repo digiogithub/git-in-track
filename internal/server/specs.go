@@ -29,6 +29,8 @@ func (s *Server) mountSpecs(r chi.Router) {
 	// (GIT-US-0132).
 	r.Post("/lint", s.handleSpecLive("spec.lint"))
 	r.Post("/delta/preview", s.handleSpecLive("spec.delta.preview"))
+	// The effective spec and requirement templates of the project (ADR-038).
+	r.Get("/templates", s.handleSpecTemplates)
 
 	r.Get("/{spec}", s.handleSpecGet)
 	r.Get("/{spec}/coverage", s.handleSpecCoverage)
@@ -65,6 +67,21 @@ func (s *Server) handleSpecLive(method string) http.HandlerFunc {
 		}
 		writeJSON(w, r, http.StatusOK, result)
 	}
+}
+
+// handleSpecTemplates serves GET /projects/{key}/specs/templates: the
+// "spec.templates" answer of the project's repository, the same value
+// browser-only mode reads through the WASM core (GIT-US-0162).
+func (s *Server) handleSpecTemplates(w http.ResponseWriter, r *http.Request) {
+	m, key, ok := s.specProject(w, r)
+	if !ok {
+		return
+	}
+	result, ok := s.call(w, r, m, "spec.templates", map[string]any{"project": key})
+	if !ok {
+		return
+	}
+	writeJSON(w, r, http.StatusOK, result)
 }
 
 // specProject resolves the repository that exposes the project of the path.

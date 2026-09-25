@@ -2024,6 +2024,36 @@ and tasks that implement or modify it; and the `trace:` entries that no longer r
 `--json` prints the `trace.requirement` answer. Exit `0`, `2` for a malformed ref, `4` for an
 unknown requirement.
 
+#### `spec templates export`
+
+> **Implemented** by `GIT-US-0162` ([ADR-038](./adr/ADR-038-customisable-spec-templates.md)).
+
+Writes the two templates the binary ships (doc 03 §21.1) into one project's
+`<docs>/.pmngr/templates/` — `spec.md` and `requirement.md` — so a team can customise them. A
+valid file there wins over the embedded template for every new spec and requirement: the web
+editor's *New spec*, the *Add requirement* dialog, and `create_spec` without `body` and
+`create_requirement` without `text` over MCP. An invalid one is reported `W-TEMPLATE-INVALID` by
+`gintrack doctor`, and the embedded template is used in its place (doc 03 R-TPL-2).
+
+```bash
+gintrack spec templates export                  # both files; --project with several projects
+gintrack spec templates export --dry-run        # print the outcome, write nothing
+gintrack spec templates export --force --json   # overwrite edited files with the embedded text
+```
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--project <KEY>` | the only project | project to export into; required when the workspace holds more than one |
+| `--force` | off | overwrite a file that differs from the embedded template |
+| `--dry-run` | off | report the outcome, write nothing |
+| `--json` | off | print `{project, dryRun, templates: [{name, path, action}]}` |
+
+Each file gets one outcome: `created` (it was missing), `unchanged` (it already holds the
+embedded text, so a second export writes nothing), `skipped` (it differs — the team edited it —
+and `--force` was not given) or `overwritten`. A skipped file is not a failure: the command exits
+`0` and a note names `--force`. Exit `4` for an unknown `--project`, `2` for a missing one in a
+workspace of several projects. The folder is committed with the backlog; nothing ignores it.
+
 ### 4.21 `gintrack spec hook install|uninstall`
 
 > **Implemented** by `GIT-US-0134`. Native only. The local face of the CI gate (docs/09 §2): a
@@ -2692,11 +2722,12 @@ GET   /api/v1/projects/{key}/specs/impact                   ?base=&head=&story=&
 GET   /api/v1/projects/{key}/specs/impact/report            the same query and ?budget=&cursor=&format=json|text
 POST  /api/v1/projects/{key}/specs/lint                     {"type":"spec|story|task","body":…,"id"?}
 POST  /api/v1/projects/{key}/specs/delta/preview            {"body":…,"id"?}
+GET   /api/v1/projects/{key}/specs/templates                the effective spec and requirement templates
 ```
 
 Every route is one method of the CoreApi contract (§6.7) — `item.list`/`item.get` for a spec,
 `requirement.list|get|create|update`, `trace.requirement`, `coverage.list`, `impact.query`,
-`impact.report`, `spec.lint`, `spec.delta.preview` — against the repository that exposes `{key}`, and answers with the method's own
+`impact.report`, `spec.lint`, `spec.delta.preview`, `spec.templates` — against the repository that exposes `{key}`, and answers with the method's own
 result, so the companion serves what browser-only mode reads through the WASM core. They sit
 behind the bearer token like every other route. `{spec}` must be a spec id of `{key}`
 (`404 not_found` for another project's, `400 invalid_request` for an id that is not a spec);
@@ -4778,6 +4809,7 @@ cmd/gintrack/
   item.go item_list.go item_get.go item_new.go item_edit.go item_move.go
   item_comment.go item_link.go
   spec.go spec_lint.go spec_impact.go spec_trace.go spec_verify.go spec_space.go
+  spec_templates.go
   output/          // table + json renderers shared by all commands
 ```
 
@@ -5476,6 +5508,7 @@ modes — through `gintrackCore.call` in the browser and through `POST …/specs
 |---|---|---|
 | `spec.lint` | `{project?, id?, type: "spec" \| "story" \| "task", body}` | `{findings: [{code, severity, line, ref?, message}]}` |
 | `spec.delta.preview` | `{project?, id?, body}` | `{operations: [{op, spec, specTitle?, target, title, line, supersedes?, reason?, proposed?, current?: {ref, title, status?, text}, dangling?}]}` |
+| `spec.templates` | `{project?}` | `{spec, requirement, specSource, requirementSource, diagnostics: [{code, severity, path, line?, message}]}` |
 
 `spec.lint` lints a spec body block by block (`LintSpec`, plus the parser's findings such as
 `W-REQ-SEPARATOR`) and a story or task body through its `## Spec Delta`: the parse findings
@@ -5490,6 +5523,17 @@ returns every operation with the block it proposes (`proposed`, below the headin
 `Supersedes:` line; empty for REMOVED) and `current`, the requirement as its spec holds it now —
 the target of MODIFIED and REMOVED, the `Supersedes:` target of an ADDED move — or `dangling`,
 the `W-DELTA-DANGLING` message, when this repository does not hold it.
+
+**Spec templates (`GIT-US-0162`, ADR-038).** `spec.templates` answers the templates a new spec
+and a new requirement of `project` (else the repository's only project) start from:
+`core.LoadSpecTemplates` over the vault's file system, so the companion
+(`GET …/specs/templates`) and the WASM core answer the same. Each override file of
+`<docs>/.pmngr/templates/` that is valid wins over its embedded copy; `specSource` and
+`requirementSource` are `embedded` or the override's path. `diagnostics` carries
+`W-TEMPLATE-INVALID` for an override that fell back and the `LINT-REQ-*` findings of a valid one,
+all at `warning` (doc 03 R-TPL-2, R-TPL-3). It is a read and never writes; `item.create` and
+`requirement.create` never inject a template into an empty body or text — the callers that
+prefill (the web forms, the MCP create tools) ask for it first.
 
 **Spec context (`GIT-US-0123`).** `spec.context` renders the context of one story or task — step 1
 of the agent loop — through the same token estimator, budget bounds and cursor shape as

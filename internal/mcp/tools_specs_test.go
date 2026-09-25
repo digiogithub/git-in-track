@@ -3,6 +3,8 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -422,4 +424,39 @@ func TestCreateRequirementSimilar(t *testing.T) {
 			t.Errorf("asked = %+v", backend.asked)
 		}
 	})
+}
+
+// TestCreateFromTemplates: a create_spec without a body and a
+// create_requirement without text start from the project's effective
+// templates — the embedded ones, then the override files (GIT-US-0162).
+func TestCreateFromTemplates(t *testing.T) {
+	h := newHarness(t, true)
+
+	spec := call[WriteResult](t, h, "create_spec", map[string]any{"project": "DEMO", "title": "Checkout"})
+	first := call[ItemResult](t, h, "get_item", map[string]any{"id": spec.Item.ID + ".R1", "fields": []string{"text"}})
+	if first.Requirement == nil || first.Requirement.Text != strings.TrimSpace(core.RequirementTemplate()) {
+		t.Fatalf("the spec did not start from the embedded template: %+v", first.Requirement)
+	}
+
+	const custom = "The <system> SHALL <response>.\n\n#### Scenario: <name>\n- **GIVEN** <context>\n- **WHEN** <action>\n- **THEN** <result>\n"
+	dir := filepath.Join(h.roots[1], "docs", ".pmngr", "templates")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "requirement.md"), []byte(custom), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	created := call[RequirementWriteResult](t, h, "create_requirement", map[string]any{"spec": spec.Item.ID, "title": "Trim"})
+	got := call[ItemResult](t, h, "get_item", map[string]any{"id": created.Requirement.Ref, "fields": []string{"text"}})
+	if got.Requirement == nil || got.Requirement.Text != strings.TrimSpace(custom) {
+		t.Errorf("the requirement did not start from the override: %+v", got.Requirement)
+	}
+
+	explicit := call[RequirementWriteResult](t, h, "create_requirement", map[string]any{
+		"spec": spec.Item.ID, "title": "Keep", "text": "The checkout SHALL keep input.",
+	})
+	got = call[ItemResult](t, h, "get_item", map[string]any{"id": explicit.Requirement.Ref, "fields": []string{"text"}})
+	if got.Requirement == nil || got.Requirement.Text != "The checkout SHALL keep input." {
+		t.Errorf("an explicit text was replaced: %+v", got.Requirement)
+	}
 }

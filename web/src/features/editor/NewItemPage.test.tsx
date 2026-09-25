@@ -59,6 +59,20 @@ describe('NewItemPage', () => {
     expect(screen.queryByLabelText('Due')).toBeNull();
   });
 
+  it("opens a spec with the project's spec template override", async () => {
+    const custom = '## Purpose\n\n<why>\n\n## Requirements\n\n### <SPEC-ID>.R1 — <title>\n\nOurs.\n';
+    renderEditorRoute(
+      '/p/ACME/items/new?type=spec',
+      new FakeProvider({
+        specTemplates: { spec: custom, specSource: 'docs/.pmngr/templates/spec.md' },
+      }),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByLabelText<HTMLTextAreaElement>('Item body').value).toBe(custom);
+    });
+  });
+
   it('uses the story template and creates the item, then opens its detail page', async () => {
     const user = userEvent.setup();
     const create = vi.spyOn(provider, 'createItem');

@@ -116,6 +116,7 @@ import type {
   DeltaPreviewOperation,
   SpecDeltaPreviewInput,
   SpecLintFinding,
+  SpecTemplates,
   SpecLintInput,
   ImpactResult,
   RequirementDraft,
@@ -1865,6 +1866,11 @@ export class BrowserProvider implements DataProvider {
     await this.#ensureActive();
     const { operations } = await this.#call('spec.delta.preview', { ...input, project });
     return operations;
+  }
+
+  async getSpecTemplates(project: string): Promise<SpecTemplates> {
+    await this.#ensureActive();
+    return this.#call('spec.templates', { project });
   }
 
   subscribe(handler: (event: ChangeEvent) => void): Unsubscribe {

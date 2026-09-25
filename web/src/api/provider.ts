@@ -138,6 +138,7 @@ import type {
   DeltaPreviewCurrent,
   DeltaPreviewOperation,
   SpecLintFinding,
+  SpecTemplates,
   TraceEdge,
   TracedRequirement,
 } from '@/core-bridge/api';
@@ -257,6 +258,7 @@ export type {
   DeltaPreviewCurrent,
   DeltaPreviewOperation,
   SpecLintFinding,
+  SpecTemplates,
   TraceEdge,
   TracedRequirement,
 };
@@ -2416,6 +2418,12 @@ export interface DataProvider {
   lintSpecText(project: string, input: SpecLintInput): Promise<SpecLintFinding[]>;
   /** Each operation of a body's `## Spec Delta` next to the current text of its target. */
   previewSpecDelta(project: string, input: SpecDeltaPreviewInput): Promise<DeltaPreviewOperation[]>;
+  /**
+   * The templates a new spec and a new requirement start from (ADR-038): the
+   * project's override files when valid, the embedded copies otherwise.
+   * Answered by the core in both modes.
+   */
+  getSpecTemplates(project: string): Promise<SpecTemplates>;
 
   subscribe(handler: (event: ChangeEvent) => void): Unsubscribe;
 }

@@ -719,6 +719,22 @@ export type SpecLintFinding = {
   message: string;
 };
 
+/**
+ * The templates a new spec and a new requirement of one project start from
+ * (ADR-038, GIT-US-0162): each valid override file of
+ * `<docs>/.pmngr/templates/` wins over the embedded copy. `specSource` and
+ * `requirementSource` are `embedded` or the override's vault-relative path;
+ * `diagnostics` are the findings about the override files
+ * (`W-TEMPLATE-INVALID` for one that fell back, `LINT-REQ-*` at warning).
+ */
+export type SpecTemplates = {
+  spec: string;
+  requirement: string;
+  specSource: string;
+  requirementSource: string;
+  diagnostics: Diagnostic[];
+};
+
 /** The current text of one requirement, as `spec.delta.preview` shows it. */
 export type DeltaPreviewCurrent = { ref: string; title: string; status?: string; text: string };
 
@@ -2252,6 +2268,8 @@ export type CoreApi = {
     params: { project?: string; id?: string; type: ItemType; body: string };
     result: { findings: SpecLintFinding[] };
   };
+  /** The effective spec and requirement templates of a project (ADR-038). */
+  'spec.templates': { params: { project?: string }; result: SpecTemplates };
   /** The Spec Delta of a body, each operation with the current text of its target. */
   'spec.delta.preview': {
     params: { project?: string; id?: string; body: string };

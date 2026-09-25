@@ -180,6 +180,7 @@ import type {
   DeltaPreviewOperation,
   SpecDeltaPreviewInput,
   SpecLintFinding,
+  SpecTemplates,
   SpecLintInput,
   ImpactResult,
   RequirementDraft,
@@ -3337,6 +3338,14 @@ export class CompanionProvider implements DataProvider {
     );
     if (body === null) throw malformed('spec delta preview');
     return asArray(body['operations']) as DeltaPreviewOperation[];
+  }
+
+  async getSpecTemplates(project: string): Promise<SpecTemplates> {
+    const body = asRecord(await this.#json(`${specsBase(project)}/templates`));
+    if (body === null || typeof body['spec'] !== 'string' || typeof body['requirement'] !== 'string') {
+      throw malformed('spec templates');
+    }
+    return { ...body, diagnostics: asArray(body['diagnostics']) } as SpecTemplates;
   }
 
   subscribe(handler: (event: ChangeEvent) => void): Unsubscribe {

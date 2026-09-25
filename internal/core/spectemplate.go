@@ -12,7 +12,9 @@ import (
 // They live in templates/ as plain Markdown so that there is one source: the Go
 // core embeds them, and the web editor imports the very same files at build
 // time (web/src/features/editor/templates.ts). Both are linted clean by the
-// default specs.lint rules (spectemplate_test.go).
+// default specs.lint rules (spectemplate_test.go). A backlog may override
+// either with a file under .pmngr/templates/ (ADR-038): LoadSpecTemplates in
+// spectemplateoverride.go resolves the effective pair.
 
 // specTemplate is the body a new spec starts from.
 //
