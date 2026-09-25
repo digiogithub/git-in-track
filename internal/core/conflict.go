@@ -1,6 +1,7 @@
 package core
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -22,17 +23,148 @@ import (
 
 // conflictWith reports the fields this patch would still change if it were
 // applied to the item as it stands on disk now.
+//
+// An empty result is a promise: every field the patch proposes is already on
+// disk, so the caller may drop the write (docs/08 section 7.3). A patch the
+// store would refuse anyway — a blank title, an unknown field to unset — can
+// never keep that promise, because nothing it asked for can have happened; it
+// is reported field by field instead, so a refused change never reads as a
+// saved one (GIT-US-0152).
 func (p ItemPatch) conflictWith(current *Item) []ConflictField {
 	if current == nil {
 		return nil
 	}
 	proposed := current.clone()
 	if err := applyPatch(proposed, p); err != nil {
-		// A patch the store would refuse anyway has no meaningful field diff;
-		// the revisions alone are what the caller gets.
-		return nil
+		return p.carriedFields(current)
 	}
 	return diffFields(current, proposed)
+}
+
+// carriedFields names every field a patch carries, with the value on disk and
+// the value the patch asked for, whether or not the two differ. It describes a
+// patch that cannot be applied, so it never computes a result: set operations
+// are rendered as "+value" and "-value", and structured fields (the body,
+// custom, external, inbox) are named but never quoted.
+func (p ItemPatch) carriedFields(current *Item) []ConflictField {
+	var out []ConflictField
+	seen := map[string]bool{}
+	add := func(field, currentValue, proposedValue string) {
+		if seen[field] {
+			return
+		}
+		seen[field] = true
+		out = append(out, ConflictField{Field: field, Current: currentValue, Proposed: proposedValue})
+	}
+	if p.Title != nil {
+		add("title", current.Title, *p.Title)
+	}
+	if p.Status != nil {
+		add("status", string(current.Status), string(*p.Status))
+	}
+	if p.Priority != nil {
+		add("priority", string(current.Priority), string(*p.Priority))
+	}
+	if p.Parent != nil {
+		add("parent", string(current.Parent), string(*p.Parent))
+	}
+	if p.Milestone != nil {
+		add("milestone", string(current.Milestone), string(*p.Milestone))
+	}
+	if p.Sprint != nil {
+		add("sprint", current.Sprint, *p.Sprint)
+	}
+	if p.Author != nil {
+		add("author", current.Author, *p.Author)
+	}
+	if p.Owner != nil {
+		add("owner", current.Owner, *p.Owner)
+	}
+	if p.Assignees != nil || len(p.AddAssignees) > 0 || len(p.RemoveAssignees) > 0 {
+		add("assignees", joinList(current.Assignees), listOps(renderList(p.Assignees), p.AddAssignees, p.RemoveAssignees))
+	}
+	if p.Labels != nil || len(p.AddLabels) > 0 || len(p.RemoveLabels) > 0 {
+		add("labels", joinList(current.Labels), listOps(renderList(p.Labels), p.AddLabels, p.RemoveLabels))
+	}
+	if p.Estimate != nil {
+		add("estimate", renderNumber(current.Estimate), renderNumber(p.Estimate))
+	}
+	if p.Effort != nil {
+		add("effort", renderNumber(current.Effort), renderNumber(p.Effort))
+	}
+	if p.Spent != nil {
+		add("spent", renderNumber(current.Spent), renderNumber(p.Spent))
+	}
+	if p.Start != nil {
+		add("start", current.Start.String(), p.Start.String())
+	}
+	if p.Due != nil {
+		add("due", current.Due.String(), p.Due.String())
+	}
+	if p.Links != nil || len(p.AddLinks) > 0 || len(p.RemoveLinks) > 0 {
+		var replace *string
+		if p.Links != nil {
+			rendered := renderLinks(*p.Links)
+			replace = &rendered
+		}
+		add("links", renderLinks(current.Links), listOps(replace, linkStrings(p.AddLinks), linkStrings(p.RemoveLinks)))
+	}
+	if len(p.AddAttachments) > 0 {
+		add("attachments", joinList(current.Attachments), listOps(nil, p.AddAttachments, nil))
+	}
+	if p.Deleted != nil {
+		add("deleted", strconv.FormatBool(current.Deleted), strconv.FormatBool(*p.Deleted))
+	}
+	if p.External != nil || len(p.AddExternal) > 0 || len(p.RemoveExternal) > 0 {
+		add("external", "", "")
+	}
+	if p.Inbox != nil {
+		add("inbox", "", "")
+	}
+	if len(p.Custom) > 0 {
+		add("custom", "", "")
+	}
+	if p.Body != nil || p.BodyAppend != "" {
+		add("body", "", "")
+	}
+	for _, field := range p.Unset {
+		add(field, "", "")
+	}
+	return out
+}
+
+// renderList renders an optional list replacement; nil means "no replacement".
+func renderList(values *[]string) *string {
+	if values == nil {
+		return nil
+	}
+	rendered := joinList(*values)
+	return &rendered
+}
+
+// listOps renders the list operations of a patch: the replacement first, then
+// each addition as "+value" and each removal as "-value".
+func listOps(replace *string, added, removed []string) string {
+	var parts []string
+	if replace != nil && *replace != "" {
+		parts = append(parts, *replace)
+	}
+	for _, v := range added {
+		parts = append(parts, "+"+v)
+	}
+	for _, v := range removed {
+		parts = append(parts, "-"+v)
+	}
+	return strings.Join(parts, ", ")
+}
+
+// linkStrings renders links one per value.
+func linkStrings(links []Link) []string {
+	out := make([]string, 0, len(links))
+	for _, l := range links {
+		out = append(out, fmt.Sprintf("%s %s", l.Kind, l.Target))
+	}
+	return out
 }
 
 // statusIntent builds the intent of a move: one field, the target status.
@@ -113,12 +245,47 @@ func diffFields(current, proposed *Item) []ConflictField {
 	add("links", renderLinks(current.Links), renderLinks(proposed.Links))
 	add("attachments", joinList(current.Attachments), joinList(proposed.Attachments))
 	add("deleted", strconv.FormatBool(current.Deleted), strconv.FormatBool(proposed.Deleted))
+	// Structured fields are compared, never quoted, like the body: a field a
+	// patch can change must be able to appear here, or a stale write to it
+	// would come back with an empty list and read as already applied.
+	for _, f := range []struct {
+		name              string
+		current, proposed any
+	}{
+		{"external", current.External, proposed.External},
+		{"inbox", current.Inbox, proposed.Inbox},
+		{"custom", current.Custom, proposed.Custom},
+	} {
+		if !sameEncoding(f.current, f.proposed) {
+			out = append(out, ConflictField{Field: f.name})
+		}
+	}
 	// The body is compared, never quoted: it can be the whole file, and the
 	// caller already holds the version it proposed.
 	if strings.TrimRight(current.Body, "\n") != strings.TrimRight(proposed.Body, "\n") {
 		out = append(out, ConflictField{Field: "body"})
 	}
 	return out
+}
+
+// sameEncoding compares two structured values by their JSON encoding, which
+// sorts map keys and treats nil and empty collections alike once normalized.
+func sameEncoding(a, b any) bool {
+	ja, errA := json.Marshal(a)
+	jb, errB := json.Marshal(b)
+	if errA != nil || errB != nil {
+		return false
+	}
+	return normalizeEmpty(string(ja)) == normalizeEmpty(string(jb))
+}
+
+// normalizeEmpty folds the encodings of an absent value into one.
+func normalizeEmpty(s string) string {
+	switch s {
+	case "null", "[]", "{}":
+		return ""
+	}
+	return s
 }
 
 // joinList renders a list field as a comma-separated value.

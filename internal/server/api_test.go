@@ -822,3 +822,54 @@ func TestNoRepositoryMountedIsAProblem(t *testing.T) {
 		t.Errorf("code = %q", doc.Code)
 	}
 }
+
+// TestStalePatchNeverReportsARefusedPatchAsApplied pins the promise an empty
+// conflicts[] makes on PATCH /items/{id}: every proposed field is already on
+// disk. A patch the store would refuse anyway never makes it (GIT-US-0152).
+func TestStalePatchNeverReportsARefusedPatchAsApplied(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newAPIServer(t)
+	tests := []struct {
+		name string
+		body map[string]any
+		want []string
+	}{
+		{
+			name: "a patch already on disk has no conflict",
+			body: map[string]any{"title": "Add address validation", "priority": "high"},
+			want: nil,
+		},
+		{
+			name: "a partial overlap names only the fields still to change",
+			body: map[string]any{"title": "Add address validation", "priority": "low"},
+			want: []string{"priority"},
+		},
+		{
+			name: "a refused patch names every field it carries",
+			body: map[string]any{"title": "   ", "priority": "high"},
+			want: []string{"title", "priority"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var doc problemBody
+			decode(t, send(t, s, request{
+				method: http.MethodPatch,
+				target: "/api/v1/items/DEMO-T-0001",
+				body:   tt.body,
+				header: map[string]string{"If-Match": "sha256:0000000000000000"},
+			}), http.StatusPreconditionFailed, &doc)
+			if doc.Code != "stale_revision" {
+				t.Fatalf("code = %q, want stale_revision", doc.Code)
+			}
+			var got []string
+			for _, c := range doc.Conflicts {
+				got = append(got, c.Field)
+			}
+			if strings.Join(got, ",") != strings.Join(tt.want, ",") {
+				t.Errorf("conflicts = %+v, want fields %v", doc.Conflicts, tt.want)
+			}
+		})
+	}
+}

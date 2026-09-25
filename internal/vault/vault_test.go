@@ -852,3 +852,50 @@ func TestConflictMerge(t *testing.T) {
 		})
 	}
 }
+
+// TestStaleItemUpdateConflicts pins the promise an empty conflicts[] makes on
+// item.update: every proposed field is already on disk. A patch the store would
+// refuse anyway never makes it, so a refused change cannot read as a saved one
+// (GIT-US-0152).
+func TestStaleItemUpdateConflicts(t *testing.T) {
+	v, _ := loadedVault(t)
+
+	tests := []struct {
+		name  string
+		patch string
+		want  []string
+	}{
+		{
+			name:  "a patch already on disk has no conflict",
+			patch: `{"set":{"title":"Guest checkout","priority":"high"}}`,
+			want:  nil,
+		},
+		{
+			name:  "a partial overlap names only the fields still to change",
+			patch: `{"set":{"title":"Guest checkout","priority":"low"}}`,
+			want:  []string{"priority"},
+		},
+		{
+			name:  "a refused patch names every field it carries",
+			patch: `{"set":{"title":"   ","priority":"high"}}`,
+			want:  []string{"title", "priority"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			params := `{"id":"DEMO-US-0001","rev":"sha256:0000000000000000","patch":` + tt.patch + `}`
+			_, err := v.Dispatch(context.Background(), "item.update", []byte(params))
+			e, ok := AsError(err)
+			if !ok || e.Code != core.StaleRevisionCode {
+				t.Fatalf("error = %v, want a stale revision", err)
+			}
+			var got []string
+			for _, c := range e.Conflicts {
+				got = append(got, c.Field)
+			}
+			if strings.Join(got, ",") != strings.Join(tt.want, ",") {
+				t.Errorf("conflicts = %+v, want fields %v", e.Conflicts, tt.want)
+			}
+		})
+	}
+}

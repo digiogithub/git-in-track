@@ -292,3 +292,54 @@ func TestOneWriteForFieldsAndStatus(t *testing.T) {
 		t.Errorf("changed = %v, want one file", got.Changed)
 	}
 }
+
+// TestStaleUpdateNeverReportsARefusedPatchAsApplied pins the promise an empty
+// conflicts[] makes to an agent: every proposed field is already on disk, so it
+// may stop. A patch the store would refuse anyway never makes that promise
+// (GIT-US-0152).
+func TestStaleUpdateNeverReportsARefusedPatchAsApplied(t *testing.T) {
+	h := newHarness(t, true)
+	before := call[ItemResult](t, h, "get_item", map[string]any{"id": "DEMO-US-0002"})
+	call[WriteResult](t, h, "update_item", map[string]any{
+		"id": "DEMO-US-0002", "rev": before.Item.Rev, "priority": "low",
+	})
+
+	tests := []struct {
+		name string
+		args map[string]any
+		want []string
+	}{
+		{
+			name: "a patch already on disk has no conflict",
+			args: map[string]any{"priority": "low"},
+			want: nil,
+		},
+		{
+			name: "a partial overlap names only the fields still to change",
+			args: map[string]any{"priority": "low", "title": "Save cards"},
+			want: []string{"title"},
+		},
+		{
+			name: "a refused patch names every field it carries",
+			args: map[string]any{"priority": "low", "title": "   "},
+			want: []string{"title", "priority"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.args["id"] = "DEMO-US-0002"
+			tt.args["rev"] = before.Item.Rev
+			got := callFails(t, h, "update_item", tt.args)
+			if got.Code != "stale_revision" {
+				t.Fatalf("code = %q, want stale_revision (%s)", got.Code, got.Message)
+			}
+			var named []string
+			for _, c := range got.Conflicts {
+				named = append(named, c.Field)
+			}
+			if strings.Join(named, ",") != strings.Join(tt.want, ",") {
+				t.Errorf("conflicts = %+v, want fields %v", got.Conflicts, tt.want)
+			}
+		})
+	}
+}

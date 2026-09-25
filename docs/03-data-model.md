@@ -473,8 +473,11 @@ Example: `rev: "sha256:9f2b1c7d0a4e5b31"`.
   judged against that current content: `{ "field": "status", "current": "in_progress",
   "proposed": "in_review" }`. It is not a diff against the caller's base version — the base is a
   hash, not a document, so no reader holds it — and an empty list therefore means the write had
-  already been made by whoever won the race, so the caller has nothing left to do. The body is
-  reported as the bare field name `body`, never quoted back.
+  already been made by whoever won the race, so the caller has nothing left to do. The list is
+  empty only when every proposed field is already on disk: a write the store would refuse anyway
+  (a blank title, an unknown field to unset) names every field it carries instead, so a refused
+  change never reads as a saved one. The body, `custom`, `external` and `inbox` are reported as
+  the bare field name, never quoted back.
 - **R-REV-3b** Omitting the revision is not the same as waiving the check. A surface that serves
   unattended writers MUST refuse a write that carries no revision (`precondition_required`); the
   waiver is spelled explicitly as `If-Match: *` over HTTP and `rev: "*"` over MCP, and is
