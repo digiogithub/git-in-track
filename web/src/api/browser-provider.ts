@@ -87,6 +87,7 @@ import type {
   Unsubscribe,
   UpdateOp,
   GitCommit,
+  GitRefs,
   GitRepoStatus,
   GitSettings,
   GitSettingsPatch,
@@ -126,7 +127,12 @@ import type {
   SpecFilter,
   TracedRequirement,
 } from '@/api/provider';
-import { BROWSER_SPEC_ANALYSIS_REASON, ProviderError, teamScope } from '@/api/provider';
+import {
+  BROWSER_GIT_REFS_REASON,
+  BROWSER_SPEC_ANALYSIS_REASON,
+  ProviderError,
+  teamScope,
+} from '@/api/provider';
 import { hydrateOrBuild } from '@/cache/index-cache';
 import type {
   ConflictResolutionParams,
@@ -1272,6 +1278,14 @@ export class BrowserProvider implements DataProvider {
         error instanceof Error ? error.message : String(error),
       );
     }
+  }
+
+  /**
+   * Browser-only mode lists no refs: the impact view they pick for is a
+   * companion answer, and its pickers fall back to free text (GIT-US-0149).
+   */
+  listGitRefs(_repoId: string, _opts?: { limit?: number }): Promise<GitRefs> {
+    return Promise.reject(new ProviderError('unavailable', BROWSER_GIT_REFS_REASON));
   }
 
   /**

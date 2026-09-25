@@ -717,6 +717,30 @@ export type GitRepoStatus = {
   };
 };
 
+/** One local or remote-tracking branch (a jj bookmark) of `GET /api/v1/git/refs`. */
+export type GitBranch = {
+  /** `main`, or `origin/main` for a remote-tracking branch, whatever the VCS. */
+  name: string;
+  /** The remote of a remote-tracking branch; absent for a local one. */
+  remote?: string;
+  sha: string;
+  /** The checked-out branch, or the bookmark the jj line of work publishes to. */
+  current?: boolean;
+};
+
+/**
+ * The branches and recent commits of one repository (`GET /api/v1/git/refs`,
+ * GIT-US-0149): what the base and head pickers of the impact view offer.
+ */
+export type GitRefs = {
+  repo: string;
+  backend: string;
+  /** Local branches first, then remote-tracking ones, each by name. */
+  branches: GitBranch[];
+  /** The last commits reachable from `HEAD` (jj: `@`), newest first. */
+  commits: SyncCommit[];
+};
+
 /** One commit made by commit-on-save or by an explicit commit. */
 export type GitCommit = {
   repo: string;
@@ -2063,6 +2087,12 @@ export interface DataProvider {
   updateGitSettings(patch: GitSettingsPatch): Promise<GitSettings>;
   /** Per-repository git state: backend, identity and dirty set. */
   getGitStatus(repoId?: string): Promise<GitRepoStatus[]>;
+  /**
+   * The branches and the last `limit` commits (default 20) of one repository,
+   * for the ref pickers of the impact view (GIT-US-0149). `unavailable` in
+   * browser-only mode and on a repository without git history.
+   */
+  listGitRefs(repoId: string, opts?: { limit?: number }): Promise<GitRefs>;
 
   // semantic search settings (`GET|PATCH /api/v1/search/settings`, GIT-US-0091)
   /**
@@ -2441,6 +2471,10 @@ export type ImpactReportQuery = ImpactQuery & {
 };
 
 /** Why browser-only mode has no trace, coverage or impact (GIT-US-0127). */
+/** Why browser-only mode has no ref listing for the impact pickers (GIT-US-0149). */
+export const BROWSER_GIT_REFS_REASON =
+  'Listing branches and commits needs the git history the companion reads. Run `gintrack serve` to pick refs; typing one still works.';
+
 export const BROWSER_SPEC_ANALYSIS_REASON =
   'Requirement trace, coverage and impact are not available in browser-only mode: they need the code scanner, test results and git history of the companion. Run `gintrack serve` to see them.';
 

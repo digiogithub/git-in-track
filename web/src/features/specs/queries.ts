@@ -11,6 +11,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   CoverageList,
   CoverageRow,
+  GitRefs,
   ImpactQuery,
   ImpactResult,
   Item,
@@ -192,6 +193,23 @@ export function useRefStatus(repoId: string | undefined, enabled: boolean) {
     queryKey: ['sync', 'status', 'impact-refs', repoId ?? ''] as const,
     queryFn: (): Promise<SyncRepoStatus[]> => provider.getSyncStatus(repoId),
     enabled,
+    retry: false,
+    staleTime: 30_000,
+  });
+}
+
+/**
+ * The branches and recent commits of the project's repository (GIT-US-0149),
+ * which the ref pickers offer. `unavailable` — browser-only mode, or a
+ * repository without git history — leaves the pickers on their fallback
+ * suggestions; it is a state, never retried, and never shown.
+ */
+export function useGitRefs(repoId: string | undefined, enabled: boolean) {
+  const provider = useProvider();
+  return useQuery({
+    queryKey: ['git', 'refs', repoId ?? ''] as const,
+    queryFn: (): Promise<GitRefs> => provider.listGitRefs(repoId ?? '', { limit: 20 }),
+    enabled: enabled && repoId !== undefined && repoId !== '',
     retry: false,
     staleTime: 30_000,
   });

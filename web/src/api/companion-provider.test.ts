@@ -1084,6 +1084,35 @@ describe('CompanionProvider git surface (story GIT-US-0020)', () => {
     expect(repos[0]).toMatchObject({ repo: 'acme', git: true, backend: 'system' });
   });
 
+  it('lists the branches and recent commits of one repository', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      response({
+        repo: 'acme',
+        backend: 'jj',
+        branches: [{ name: 'origin/main', remote: 'origin', sha: 'abc123' }],
+        commits: [{ sha: 'abc123', subject: 'feat: x', date: '2026-09-02T10:00:00Z' }],
+      }),
+    );
+    const refs = await provider(fetchImpl).listGitRefs('acme', { limit: 5 });
+
+    expect(lastCall(fetchImpl).url).toBe(`${BASE}/api/v1/git/refs?repo=acme&limit=5`);
+    expect(refs.backend).toBe('jj');
+    expect(refs.branches).toEqual([{ name: 'origin/main', remote: 'origin', sha: 'abc123' }]);
+    expect(refs.commits[0]).toMatchObject({ sha: 'abc123', subject: 'feat: x' });
+  });
+
+  it('maps a repository without git history onto unavailable refs', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(
+        response({ code: 'unavailable', status: 503, detail: 'no git history' }, { status: 503 }),
+      );
+    await expect(provider(fetchImpl).listGitRefs('acme')).rejects.toMatchObject({
+      name: 'ProviderError',
+      code: 'unavailable',
+    });
+  });
+
   it('flushes the batched edits with an empty commit request', async () => {
     const fetchImpl = vi
       .fn()

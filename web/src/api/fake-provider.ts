@@ -58,6 +58,7 @@ import type {
   DataProvider,
   Diagnostic,
   GitCommit,
+  GitRefs,
   GitRepoStatus,
   GitSettings,
   GitSettingsPatch,
@@ -4645,6 +4646,41 @@ export class FakeProvider implements DataProvider {
           },
         })),
     );
+  }
+
+  /**
+   * What `listGitRefs` answers: `main` and `origin/main` with two commits
+   * unless a test moves it; an `Error` is thrown instead (GIT-US-0149).
+   */
+  gitRefs: GitRefs | Error | null = null;
+
+  listGitRefs(repoId: string, opts: { limit?: number } = {}): Promise<GitRefs> {
+    if (this.gitRefs instanceof Error) return Promise.reject(this.gitRefs);
+    const refs: GitRefs = this.gitRefs ?? {
+      repo: repoId,
+      backend: 'go-git',
+      branches: [
+        { name: 'main', sha: 'c0ffee0000000000000000000000000000000002', current: true },
+        { name: 'origin/main', remote: 'origin', sha: 'c0ffee0000000000000000000000000000000001' },
+      ],
+      commits: [
+        {
+          sha: 'c0ffee0000000000000000000000000000000002',
+          subject: 'feat: second',
+          date: '2026-09-02T10:00:00Z',
+        },
+        {
+          sha: 'c0ffee0000000000000000000000000000000001',
+          subject: 'chore: first',
+          date: '2026-09-01T10:00:00Z',
+        },
+      ],
+    };
+    const limit = opts.limit;
+    return Promise.resolve({
+      ...refs,
+      commits: limit === undefined ? refs.commits : refs.commits.slice(0, limit),
+    });
   }
 
   commitNow(

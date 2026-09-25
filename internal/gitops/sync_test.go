@@ -510,6 +510,8 @@ func (s *stubBackend) Identity(context.Context) (Identity, error) {
 
 func (s *stubBackend) Status(context.Context) (Status, error) { return Status{Clean: true}, nil }
 
+func (s *stubBackend) Branches(context.Context) ([]Branch, error) { return []Branch{}, nil }
+
 func (s *stubBackend) ChangedFiles(context.Context, string, string) ([]FileChange, error) {
 	return []FileChange{}, nil
 }

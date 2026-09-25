@@ -3607,6 +3607,7 @@ There is no migration — adding a status in the `triage` category to
 GET   /api/v1/git/settings                   effective commit-on-save settings
 PATCH /api/v1/git/settings                   {"commitOnSave":true,"messageTemplate":"…"}
 GET   /api/v1/git/status?repo=ACME           backend, identity, branch, dirty set
+GET   /api/v1/git/refs?repo=ACME&limit=20    branches and the last N commits (ref pickers)
 POST  /api/v1/git/commit                     {} flushes what is batched, or
                                              {"repo":"ACME","paths":[…],"message":"…"}
 GET   /api/v1/git/cors-proxy                 where the CORS proxy is, and its allow-list
@@ -4402,6 +4403,33 @@ A repository that is not a git working tree answers `"git": false` with a
 `reason`, which is a normal state for a folder someone opened without cloning
 it, not an error.
 
+`GET /api/v1/git/refs?repo=<id>&limit=<n>` (GIT-US-0149) lists what the base and
+head pickers of the impact view offer: the repository's branches — local first,
+then remote-tracking, each by name, named `origin/main` whatever the backend; a
+jj repository lists its bookmarks the same way (doc 06 §7.5) — and the last `n`
+commits reachable from `HEAD` (jj: `@`), newest first. `limit` defaults to 20,
+accepts 0 to 200 and `0` lists branches only. It is a read on every backend —
+go-git, system git and jj — and sits behind the same bearer token as the rest
+of `/git`. `repo` is required (`400 invalid_request` without it), an unknown one
+is `404 repo_not_registered`, and a repository with no git history is
+`503 unavailable`, which browser-only mode also answers without a request. A
+repository without a commit yet answers two empty lists.
+
+```json
+GET /api/v1/git/refs?repo=acme-api&limit=2
+200
+{ "repo": "acme-api", "backend": "system",
+  "branches": [
+    { "name": "main", "sha": "4e5f1c2…", "current": true },
+    { "name": "feat/sso", "sha": "9a0b7d3…" },
+    { "name": "origin/main", "remote": "origin", "sha": "1c2d3e4…" } ],
+  "commits": [
+    { "sha": "4e5f1c2…", "subject": "feat(web): login with SSO",
+      "author": "Jose <jose@digio.es>", "date": "2026-09-04T10:31:55Z" },
+    { "sha": "1c2d3e4…", "subject": "fix(core): trim titles",
+      "author": "Jose <jose@digio.es>", "date": "2026-09-03T17:02:10Z" } ] }
+```
+
 Commit-on-save is **debounced**, so a commit cannot be part of the write
 response that triggered it. The write responses therefore carry no `commit`
 field; the outcome arrives on the event stream as `git.commit`:
@@ -4984,7 +5012,12 @@ Integrate(ctx, IntegrateRequest) (IntegrateResult, error)   // rebase or merge
 Push(ctx, PushRequest) (PushResult, error)                  // req.Target, not a branch
 Undo(ctx) error                                             // git: --abort; jj: jj undo
 Resume(ctx) (IntegrateResult, error)                        // git: --continue; jj: nothing
-Commits(ctx, LogRequest) ([]Commit, error)                  // dry-run previews
+Commits(ctx, LogRequest) ([]Commit, error)                  // dry-run previews,
+                                                            // the ref pickers
+// The read-only listings (GIT-US-0112, GIT-US-0149, doc 06 sections 7.4, 7.5).
+ChangedFiles(ctx, from, to string) ([]FileChange, error)    // to "" = working tree
+Branches(ctx) ([]Branch, error)                             // local, then origin/…;
+                                                            // jj: the bookmarks
 
 // The structured conflict surface (GIT-US-0022, doc 06 section 5.7).
 ConflictFile(ctx, path string) (ConflictVersions, error)    // the three sides, however

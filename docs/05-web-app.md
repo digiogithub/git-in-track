@@ -458,14 +458,17 @@ provider's hint to run `gintrack serve`.
 a diff affects (doc 03 §21.11), lazily loaded (`features/specs/ImpactView.tsx`, the pure model in
 `features/specs/impact.ts`), from `queryImpact` — the same resolver as `spec_impact` and
 `impact.report`. *What it looks like:* under a *← Specs* back link and the title, a **range form**
-with a *Base* and a *Head* field and *Show impact*. Both fields take any revision (a branch, a tag,
-a commit) and suggest, through a native `<datalist>`, the repository's current branch and its
-upstream from `getSyncStatus`, the default `main` and `HEAD`, `HEAD~1`, `HEAD~2`, `HEAD~5`; the
-head also offers `worktree`, the working tree with uncommitted changes, which is what an empty
-head means (R-IMP-1). The range lives in the URL (`?base=v1.0&head=HEAD~1`): base defaults to
-`main`, and a head of `worktree` is left out of both the URL and the query. No companion route
-lists refs or recent commits, so the pickers are free text with suggestions rather than closed
-lists. Under the form a summary line (`main..worktree: 3 files, 4 symbols, 3 requirements`), then
+with a *Base* and a *Head* picker and *Show impact*. Both pickers are comboboxes over a native
+`<datalist>` backed by `listGitRefs` (`GET /api/v1/git/refs`, GIT-US-0149): the default `main`,
+the repository's current branch and its upstream from `getSyncStatus`, every other local and
+remote branch (a jj repository's bookmarks, named `origin/main` like git's), `HEAD` and the last
+20 commits by their 12-character id, each labelled with its subject and date. The head also
+offers `worktree` first, the working tree with uncommitted changes, which is what an empty head
+means (R-IMP-1). The pickers stay free text: a tag or any other revision can be typed. When the
+listing answers `unavailable` (browser-only mode, a repository without git history) or fails,
+they fall back silently to the sync-status branch and upstream plus `HEAD`, `HEAD~1`, `HEAD~2`
+and `HEAD~5`. The range lives in the URL (`?base=v1.0&head=HEAD~1`): base defaults to `main`,
+and a head of `worktree` is left out of both the URL and the query. Under the form a summary line (`main..worktree: 3 files, 4 symbols, 3 requirements`), then
 three sections — **Tier 1 · Direct**, **Tier 2 · Transitive**, **Tier 3 · Candidates** — always
 in that order. A hit whose `candidate` is set is shown in tier 3 whatever its `tier`, so a guess
 never sits among the certain hits; candidates are ranked by `score` (highest first), drawn with a
@@ -974,6 +977,9 @@ export interface DataProvider {
   listCoverage(project: string, filter?: CoverageFilter): Promise<CoverageList>;
   queryImpact(project: string, query?: ImpactQuery): Promise<ImpactResult>;
   getImpactReport(project: string, query?: ImpactReportQuery): Promise<ImpactReport>;
+  // The ref pickers of the impact view (GIT-US-0149): branches and the last
+  // `limit` commits of one repository; `unavailable` in browser-only mode.
+  listGitRefs(repoId: string, opts?: { limit?: number }): Promise<GitRefs>;
   // The editor's live lint and Spec Delta preview (GIT-US-0132, §8.7): pure reads
   // of the text the editor holds, answered by the core in both modes.
   lintSpecText(project: string, input: SpecLintInput): Promise<SpecLintFinding[]>;
@@ -993,7 +999,8 @@ coverage and impact, and the companion for impact on a repository without histor
 renders it as a state with a hint to run the companion, never as an error. The specs page
 (GIT-US-0128, §3.1) consumes `listSpecs`, `listRequirements`, `listCoverage` and
 `createRequirement`; the requirement detail (GIT-US-0129) adds `getRequirement`,
-`updateRequirement` and `traceRequirement`, and the impact view (GIT-US-0131) `queryImpact`;
+`updateRequirement` and `traceRequirement`, and the impact view (GIT-US-0131) `queryImpact`
+and, for its pickers, `listGitRefs` (GIT-US-0149);
 `getImpactReport` is the ranked, token-budgeted form agents and the CLI page through. A
 refused conditional write surfaces as a `ProviderError` with `code: 'stale_revision'` that also
 carries `currentRev` and `conflicts[]` (`{field, current?, proposed?}`) when the runtime reported
