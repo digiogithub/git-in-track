@@ -175,6 +175,52 @@ func TestSpecImpactFailOn(t *testing.T) {
 	})
 }
 
+// TestSpecImpactGateClearsAtHead is the gate of GIT-US-0148 end to end: a
+// pull request that edits the traced code of a passing requirement trips
+// `--fail-on suspect` until the linked tests are re-run and ingested at its
+// head, and a failing re-run still trips it as failing.
+func TestSpecImpactGateClearsAtHead(t *testing.T) {
+	h := newHarness(t)
+	root := gitSpecRepo(t, h)
+	ingest(t, h, root, r1Passes) // R1 passed on main.
+
+	gitIn(t, root, "checkout", "-b", "pr")
+	src := filepath.Join(root, "src", "alloc.go")
+	data, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(src, []byte(strings.Replace(string(data), "return 1", "return 1 + 0", 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, root, "commit", "-am", "fix: change NextID")
+	gate := []string{"spec", "impact", "--since", "main", "--tiers", "1,2", "--format", "text", "--fail-on", "failing,suspect"}
+
+	t.Run("tests not re-run: suspect trips the gate", func(t *testing.T) {
+		_, stderr, code := h.run(gate...)
+		if code != exitGate || !strings.Contains(stderr, "ACME-SP-0001.R1  suspect") {
+			t.Fatalf("exit %d, want %d with R1 suspect\n%s", code, exitGate, stderr)
+		}
+	})
+	t.Run("tests re-run and ingested at head: the gate passes", func(t *testing.T) {
+		ingest(t, h, root, r1Passes)
+		stdout, stderr, code := h.run(gate...)
+		if code != exitOK {
+			t.Fatalf("exit %d, want 0\n%s\n%s", code, stdout, stderr)
+		}
+		if !strings.Contains(stdout, "ACME-SP-0001.R1 t1 passing") || strings.Contains(stdout, "suspect") {
+			t.Errorf("R1 is not a plain passing hit:\n%s", stdout)
+		}
+	})
+	t.Run("a failing re-run at head still trips the gate", func(t *testing.T) {
+		ingest(t, h, root, r1Fails)
+		_, stderr, code := h.run(gate...)
+		if code != exitGate || !strings.Contains(stderr, "ACME-SP-0001.R1  failing") {
+			t.Fatalf("exit %d, want %d with R1 failing\n%s", code, exitGate, stderr)
+		}
+	})
+}
+
 func TestSpecVerifyCoverageTrace(t *testing.T) {
 	h := newHarness(t)
 	root := gitSpecRepo(t, h)

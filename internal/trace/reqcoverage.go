@@ -35,6 +35,8 @@ type Evidence struct {
 	Rev core.Rev
 	// Commits are the distinct commits the results were taken at, sorted.
 	Commits []string
+	// Uncommitted is set when some result records no commit.
+	Uncommitted bool
 	// At is when the newest result was recorded (UTC); zero when none.
 	At time.Time
 	// By is who ran the tests; empty when the source does not record it.
@@ -68,7 +70,9 @@ func (r ResultEvidence) Evidence(_ context.Context, _ *Graph, reqs []core.Traced
 	out := make([]Evidence, 0, len(reqs))
 	for _, tr := range reqs {
 		rr := set.MatchRequirement(tr)
-		out = append(out, Evidence{Result: rr.Result, Commits: rr.Commits, At: rr.Latest, Tests: rr.Tests})
+		out = append(out, Evidence{
+			Result: rr.Result, Commits: rr.Commits, Uncommitted: rr.Uncommitted, At: rr.Latest, Tests: rr.Tests,
+		})
 	}
 	return out, nil
 }
@@ -311,6 +315,12 @@ const maxDriftReasons = 3
 // result — is not a pass: it never counts as evidence, and it adds "partial"
 // to whatever the stamp decides. The reasons also say which evidence decided:
 // "results" or "stamp".
+//
+// A passing row also names the one commit its evidence verified the current
+// text at (CoverageRow.Commit): the commit of a counting pass run whose every
+// matched result records that same commit, or the stamp's commit when the
+// stamp's rev is the current block rev. The impact query clears the suspect
+// flag of a touched requirement whose Commit is the diff's head (GIT-US-0148).
 func Classify(in CoverageInput, driftSince DriftFunc) (core.CoverageRow, error) {
 	ev := in.Evidence
 	row := core.CoverageRow{Ref: in.Ref}
@@ -338,6 +348,9 @@ func Classify(in CoverageInput, driftSince DriftFunc) (core.CoverageRow, error) 
 			return core.CoverageRow{}, err
 		}
 		row.Reasons = append(row.Reasons, core.CoverageReasonResults)
+		if row.Status == core.CoveragePassing && len(ev.Commits) == 1 && !ev.Uncommitted {
+			row.Commit = ev.Commits[0]
+		}
 	case in.Stamp != nil:
 		var commits []string
 		if in.Stamp.Commit != "" {
@@ -347,6 +360,9 @@ func Classify(in CoverageInput, driftSince DriftFunc) (core.CoverageRow, error) 
 			return core.CoverageRow{}, err
 		}
 		row.Reasons = append(row.Reasons, core.CoverageReasonStamp)
+		if row.Status == core.CoveragePassing && in.Stamp.Commit != "" && in.Stamp.Rev == in.BlockRev {
+			row.Commit = in.Stamp.Commit
+		}
 	default:
 		row.Status = core.CoverageUntested
 		switch {

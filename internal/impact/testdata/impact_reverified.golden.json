@@ -1,0 +1,54 @@
+{
+  "base": "<base>",
+  "files": 1,
+  "symbols": 1,
+  "tiers": [
+    {
+      "tier": 1,
+      "status": "ok",
+      "hits": 2
+    },
+    {
+      "tier": 2,
+      "status": "ok",
+      "hits": 1
+    },
+    {
+      "tier": 3,
+      "status": "skipped",
+      "hits": 0
+    }
+  ],
+  "hits": [
+    {
+      "ref": "ACME-SP-0001.R1",
+      "title": "Allocate by scan",
+      "tier": 1,
+      "status": "passing",
+      "reasons": [
+        "symbol:src/alloc.go#NextID"
+      ]
+    },
+    {
+      "ref": "ACME-SP-0001.R4",
+      "title": "Reserve numbers",
+      "tier": 1,
+      "status": "untested",
+      "reasons": [
+        "delta:ACME-US-0001"
+      ],
+      "pending": [
+        "ACME-US-0001"
+      ]
+    },
+    {
+      "ref": "ACME-SP-0001.R2",
+      "title": "Format ids",
+      "tier": 2,
+      "status": "passing",
+      "reasons": [
+        "call:src/format.go#Format calls NextID d1"
+      ]
+    }
+  ]
+}

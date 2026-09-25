@@ -47,6 +47,14 @@ type Differ interface {
 	ChangedFiles(ctx context.Context, from, to string) ([]gitops.FileChange, error)
 }
 
+// CommitLister resolves a revision to its commit; gitops.Backend is one. A
+// Differ that is also a CommitLister lets the resolver name the diff's head
+// commit, which clears the suspect flag of a requirement re-verified there
+// (GIT-US-0148); without one every touched passing requirement is suspect.
+type CommitLister interface {
+	Commits(ctx context.Context, req gitops.LogRequest) ([]gitops.Commit, error)
+}
+
 // CallGraph is the slice of the Pando client tier 2 uses; *pando.Client is
 // one.
 type CallGraph interface {
@@ -207,7 +215,15 @@ func (r *Resolver) Impact(ctx context.Context, ix *core.Index, q core.ImpactQuer
 		h.score = s.score
 	}
 
-	hits, err := r.render(ctx, ix, col)
+	var headSHA string
+	for _, h := range col.hits {
+		if h.touched {
+			// Only a touched hit needs the head commit: one more diff.
+			headSHA = r.headCommit(ctx, ix, q.Head)
+			break
+		}
+	}
+	hits, err := r.render(ctx, ix, col, headSHA)
 	if err != nil {
 		return core.ImpactResult{}, err
 	}
@@ -217,6 +233,59 @@ func (r *Resolver) Impact(ctx context.Context, ix *core.Index, q core.ImpactQuer
 	res.Tiers = tiers
 	res.Hits = hits
 	return res, nil
+}
+
+// headCommit returns the full commit id the diff ends at, "" when there is
+// none to compare evidence with (GIT-US-0148, docs/03 R-IMP-5):
+//
+//   - a revision head is the commit it names;
+//   - the working-tree head is HEAD — the commit `gintrack spec ingest`
+//     records by default — but only while the working tree differs from
+//     HEAD in backlog files at most (a project's .pmngr folder: a status
+//     move, a comment, a verified: stamp): tests run on uncommitted code are
+//     not evidence of any commit, so a tree with any other uncommitted change
+//     has no head commit.
+//
+// Nothing here reads a clock, so the answer is a function of the history
+// and the working tree alone.
+func (r *Resolver) headCommit(ctx context.Context, ix *core.Index, head string) string {
+	lister, ok := r.opts.Differ.(CommitLister)
+	if !ok {
+		return ""
+	}
+	commits, err := lister.Commits(ctx, gitops.LogRequest{To: head, Limit: 1})
+	if err != nil || len(commits) == 0 || commits[0].SHA == "" {
+		return ""
+	}
+	sha := commits[0].SHA
+	if head == "" || head == gitops.WorkingTree {
+		dirty, err := r.opts.Differ.ChangedFiles(ctx, sha, gitops.WorkingTree)
+		if err != nil {
+			return ""
+		}
+		for _, f := range dirty {
+			if !isBacklogPath(ix, f.Path) || (f.OldPath != "" && !isBacklogPath(ix, f.OldPath)) {
+				return ""
+			}
+		}
+	}
+	return sha
+}
+
+// isBacklogPath reports whether p lies in the backlog folder of one of the
+// index's projects.
+func isBacklogPath(ix *core.Index, p string) bool {
+	p = path.Clean(strings.ReplaceAll(p, "\\", "/"))
+	for _, pr := range ix.Projects() {
+		b := path.Clean(pr.BacklogPath)
+		if b == "." || b == "" {
+			continue
+		}
+		if strings.HasPrefix(p, b+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // storyHits adds the requirements the story names in its links and its
@@ -501,8 +570,9 @@ func queryText(ix *core.Index, q core.ImpactQuery, symbols []changedSymbol) stri
 }
 
 // render turns the collected hits into the sorted answer: title, coverage
-// status, suspect, capped reasons and the pending Spec Deltas.
-func (r *Resolver) render(ctx context.Context, ix *core.Index, col *collector) ([]core.ImpactHit, error) {
+// status, suspect, capped reasons and the pending Spec Deltas. head is the
+// diff's head commit, "" when there is none.
+func (r *Resolver) render(ctx context.Context, ix *core.Index, col *collector, head string) ([]core.ImpactHit, error) {
 	refs := make([]core.RequirementRef, 0, len(col.hits))
 	for ref := range col.hits {
 		refs = append(refs, ref)
@@ -549,7 +619,7 @@ func (r *Resolver) render(ctx context.Context, ix *core.Index, col *collector) (
 		}
 		if rows != nil {
 			h.Status = rows[i].Status
-			h.Suspect = h.Status == core.CoverageSuspect || (h.Status == core.CoveragePassing && st.touched)
+			h.Suspect = suspect(rows[i], st.touched, head)
 		}
 		var reasons []string
 		for t := core.ImpactTierDirect; t <= core.ImpactTierSemantic; t++ {
@@ -566,6 +636,23 @@ func (r *Resolver) render(ctx context.Context, ix *core.Index, col *collector) (
 		out = append(out, h)
 	}
 	return out, nil
+}
+
+// suspect decides a hit's suspect flag (docs/03 R-IMP-5): a suspect
+// coverage state always is; a passing one is when the diff touches a traced
+// edge of it, directly or through a call, unless its evidence verified the
+// current text at the diff's head commit — every linked test passed in
+// results ingested at head, or its stamp names head on the current block
+// rev (CoverageRow.Commit). A failing, untested or candidate hit never is:
+// failing wins, and the gate trips on it as failing.
+func suspect(row core.CoverageRow, touched bool, head string) bool {
+	switch row.Status {
+	case core.CoverageSuspect:
+		return true
+	case core.CoveragePassing:
+		return touched && (head == "" || row.Commit != head)
+	}
+	return false
 }
 
 // pendingDeltas lists the open items whose unapplied Spec Delta modifies ref.

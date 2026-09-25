@@ -148,23 +148,34 @@ script's defaults for experiments; CI uses the defaults.
 
 **When the gate trips.** A `failing` requirement is fixed, not acknowledged: fix the code or the
 test, or — when the requirement itself is wrong — change it. A `suspect` one passed before but
-no longer proves the current code or text:
+has not been re-verified since the change (docs/03 R-REQ-12a, R-IMP-5). `suspect` means
+*changed and not re-verified*: a passing requirement whose traced code the pull request touches
+is **not** suspect when its linked tests all passed in results ingested at the diff's head
+commit, or when its `verified:` stamp names that commit on the current block rev. The gate
+itself runs the whole suite at the checkout's `HEAD` and ingests it there (`spec ingest`
+records `HEAD` by default), so in CI a touched requirement whose tests pass is `passing`, not
+suspect; what remains suspect is what the run could not re-verify:
 
-- **The behavior changed on purpose** — add a `## Spec Delta` to the story with
-  `### MODIFIED <REF> — <title>` and the new text (docs/03 §21.8). The spec changes when the story
-  reaches `done`; until then the report lists the story under the hit's `pending`.
-- **The behavior did not change** — rerun the linked tests, ingest them and re-verify:
+- **The linked tests did not run or did not report** — a `Verifies:` marker or `trace.tests`
+  entry that names a test the suites no longer have, or a suite that reported nothing: fix the
+  trace so the requirement's tests run, and the next gate run clears it.
+- **The text or code drifted from its evidence** (the coverage state `suspect`: `text`,
+  `code:<ref>`, `commit-unknown`) — rerun the linked tests, ingest them and re-verify:
   `verify_requirement` over MCP, or `gintrack spec verify <REF>` (dry) then
   `gintrack spec verify --commit <REF>`, which stamps `verified:` with the commit and the current
   block rev (docs/03 §21.6, ADR-037 §7). A stamp on the current text clears a `text` suspect.
+- **The behavior changed on purpose** — add a `## Spec Delta` to the story with
+  `### MODIFIED <REF> — <title>` and the new text (docs/03 §21.8), and make the linked tests
+  prove the new behavior. The delta alone clears nothing: the requirement stops being suspect
+  when its tests pass at head. The spec changes when the story reaches `done`; until then the
+  report lists the story under the hit's `pending`.
 - **Neither is clear** — ask a human on the story, naming the ref.
 
-> **Known limitation.** `--fail-on suspect` also matches the `suspect` **flag** the impact query
-> raises on a *passing* requirement whose traced code the diff touches (docs/03 R-IMP-5). That
-> flag is computed from the diff alone: neither a pending `MODIFIED` delta nor a fresh stamp
-> clears it while the pull request still changes the traced code, so a PR that edits traced code
-> of a passing requirement trips the gate until the gate's semantics are refined in a follow-up.
-> The coverage **state** `suspect` (docs/03 R-REQ-12a) is cleared as described above.
+**Locally**, the same rule applies to `gintrack spec impact --fail-on suspect` against the
+working tree: commit the change, rerun the linked tests and `gintrack spec ingest` their report
+at that commit. While the working tree holds uncommitted or untracked changes outside the
+backlog folders (`.pmngr/`: status moves, comments and stamps are fine), there is no head commit
+the results could prove, and every touched passing requirement stays suspect.
 
 ### Notes on the CI workflow
 

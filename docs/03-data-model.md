@@ -2545,7 +2545,8 @@ Two hashes per requirement, both `"sha256:" + lowercase_hex(sha256(x))[0:16]` li
   `coverage` or test-result key; the marker scan is a derived cache too.
 - **R-REQ-12a Coverage as implemented (`GIT-US-0116`).** One compact row per requirement,
   `{ref, status, reasons[], tests[{test, result}]}`, computed natively and reached through a host
-  seam (`coverage.list`, docs/07 §6.7); a browser-only session answers `unavailable`. The rules,
+  seam (`coverage.list`, docs/07 §6.7), plus `commit` on a passing row (rule 6); a browser-only
+  session answers `unavailable`. The rules,
   applied in this order:
   1. **Evidence.** A run — the linked tests' aggregate `pass` or `fail` — counts when it is later
      than `verified.at` and, if its source records the tested block rev, that rev is the current
@@ -2564,6 +2565,13 @@ Two hashes per requirement, both `"sha256:" + lowercase_hex(sha256(x))[0:16]` li
      `unchecked` and the row is `passing`.
   5. Otherwise `untested`: `no-tests` (no `Verifies:` marker or `trace.tests` entry), `partial`,
      or `no-results`.
+  6. **Verified at** (`GIT-US-0148`). A `passing` row also carries `commit`, the one full commit
+     id at which its evidence verified the current text: the commit of a counting `pass` run when
+     **every** matched result was ingested at that same commit (none without a commit, not from
+     several), or the stamp's `commit` when the stamp decides and its `rev` is the current block
+     rev. Any other row — several commits, a result without a commit, a stamp without `rev` or
+     `commit`, any state but `passing` — has none. The impact query compares it with the diff's
+     head (R-IMP-5); it is what clears the `suspect` flag of a requirement re-verified there.
   A **`partial`** aggregate (some linked tests passed, none failed, some have no result) is never
   a pass: it is not evidence, and it adds `partial` to whatever the stamp decides. The last
   reason names the evidence that decided, `results` or `stamp`. Each linked test's `result` is its
@@ -2873,17 +2881,37 @@ answers `unavailable`.
 - **R-IMP-5 Hit.** `{ref, title, tier, candidate?, score?, status?, suspect?, reasons[],
   pending?[]}`, one per requirement at its strongest tier, with the reasons of every tier that
   reached it with certainty, sorted by tier and text, at most four then `+<n>`. `status` is the
-  coverage state (R-REQ-12a). `suspect` is set when the state is `suspect`, or when it is
-  `passing` and the diff changes a traced edge directly (tier 1) or through a call (tier 2) —
-  this is how suspect covers transitive changes. `pending` lists the open items whose unapplied
-  Spec Delta modifies the requirement.
+  coverage state (R-REQ-12a). `pending` lists the open items whose unapplied Spec Delta modifies
+  the requirement. `suspect` means **changed and not re-verified** (`GIT-US-0148`):
+  1. state `suspect` → set;
+  2. state `passing`, and the diff changes a traced edge directly (tier 1) or through a call
+     (tier 2) — this is how suspect covers transitive changes — → set, **unless** the row's
+     verified-at `commit` (R-REQ-12a rule 6) is the diff's **head commit**: every linked test
+     passed in results ingested at head, or `verified.commit` is head with `verified.rev` equal to
+     the current block rev;
+  3. any other state → never set: `failing` wins (a linked test that failed at head makes the
+     hit `failing`, which `--fail-on failing` catches), and `untested` or a tier-3 candidate is
+     not a verified requirement to begin with.
+
+  A pending `MODIFIED` Spec Delta clears nothing by itself: with one, the requirement is still
+  suspect until its linked tests pass at head, exactly as without one — the delta records that
+  the behavior changes on purpose, the re-run proves the code does what the new text says.
+  The **head commit** is `head` resolved to its commit when `head` is a revision. For the working
+  tree it is `HEAD` — the commit `gintrack spec ingest` records by default — **only while the
+  working tree differs from `HEAD` in backlog files at most** (a project's `.pmngr/` folder: a
+  status move, a comment, a `verified:` stamp not committed yet); any other uncommitted or
+  untracked, non-ignored file means tests may have run on code no commit holds, so there is no
+  head commit and every touched passing requirement stays suspect until the change is committed
+  and the tests are re-run and ingested. Results ingested without a commit never count. The rule
+  reads no clock: the same diff, history, working tree and ingested results give the same flags
+  (R-IMP-7).
 - **R-IMP-6 Result.** `{base, head?, files, symbols, tiers: {tier, status, hits, truncated?,
   message?}[], hits}`. A tier's `status` is `ok`, `unavailable` (no Pando, or Pando unreachable,
   unauthorized or timing out: `pando.IsUnavailable`), `error` (Pando's tool failed, e.g. a project
   not indexed) or `skipped` (not asked for); tier 1 always answers when the query does. Hits are
   sorted by tier, then spec and number.
-- **R-IMP-7 Determinism.** Tiers 1 and 2 are deterministic: the same diff, index and Pando answer
-  give a byte-identical result (golden test). No timestamp or map order reaches it.
+- **R-IMP-7 Determinism.** Tiers 1 and 2 are deterministic: the same diff, index, ingested
+  results and Pando answer give a byte-identical result (golden tests). No timestamp or map order reaches it.
 - **R-IMP-8 Report ranking** (`GIT-US-0120`). The report agents read (`impact.report`, docs/07
   §6.7, rendered by `core.RenderImpactReport` for MCP, CLI and HTTP alike) ranks the hits:
   `failing` first, then suspect, then by tier — tier-3 candidates last, highest `score` first —

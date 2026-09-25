@@ -61,6 +61,9 @@ type RequirementResult struct {
 	// Latest is the newest ingest time of the matched results (UTC); zero
 	// when nothing matched. It dates the evidence for coverage (GIT-US-0116).
 	Latest time.Time `json:"-"`
+	// Uncommitted is set when some matched result records no commit: the
+	// evidence cannot be placed at one commit (GIT-US-0148).
+	Uncommitted bool `json:"-"`
 }
 
 // ResultSet indexes test results by file for matching. Only results mapped
@@ -139,6 +142,8 @@ func (s *ResultSet) MatchRequirement(tr core.TracedRequirement) RequirementResul
 				lt.Results = append(lt.Results, r.ID)
 				if r.Commit != "" {
 					commits[r.Commit] = true
+				} else {
+					out.Uncommitted = true
 				}
 				if r.At.After(out.Latest) {
 					out.Latest = r.At

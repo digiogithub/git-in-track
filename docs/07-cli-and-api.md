@@ -1935,7 +1935,12 @@ $ echo $?
 **`--fail-on`** is evaluated over **every** hit of the result, not only the page the budget let
 through, so a small `--budget` never hides an offender. `suspect` matches the `suspect`
 coverage state and also the `suspect` flag the impact query raises on a passing requirement
-whose traced code the diff changes directly or transitively. Tier-3 semantic candidates never
+whose traced code the diff changes directly or transitively — unless its linked tests passed in
+results ingested at the diff's head commit, or its `verified:` stamp names that commit on the
+current text (docs/03 R-IMP-5). So a change to traced code clears the gate once the tests are
+re-run at head and recorded with `gintrack spec ingest`, whose default `--commit` is the
+checkout's `HEAD`; with a working-tree head the tree must not differ from `HEAD` outside the
+backlog folders. Tier-3 semantic candidates never
 trip the gate: they are neighbors, not traces. The report is always printed first, on stdout;
 the offenders follow on stderr, one per line (`<ref>  <state>  <title>`), then the error line.
 
@@ -5163,7 +5168,7 @@ installs one per repository; a browser-only session installs none, where both fa
 
 | Method | Params | Result |
 |---|---|---|
-| `coverage.list` | `{project?, spec?, refs?: string[], status?: ("untested" \| "passing" \| "failing" \| "suspect")[]}` | `{coverage: {ref, status, reasons?: string[], tests?: {test, result}[]}[], total}` |
+| `coverage.list` | `{project?, spec?, refs?: string[], status?: ("untested" \| "passing" \| "failing" \| "suspect")[]}` | `{coverage: {ref, status, reasons?: string[], tests?: {test, result}[], commit?}[], total}` |
 | `requirement.stamp` | `{refs?: string[], spec?, by, rev?}` | `{stamped: {ref, verified: {rev, commit, at, by}}[], unstamped: {ref, reason}[], writes}` |
 
 A coverage row is deliberately compact — about 40 tokens with one linked test, plus about 15 per

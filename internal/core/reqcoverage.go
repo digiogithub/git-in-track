@@ -63,6 +63,13 @@ type CoverageRow struct {
 	Status  CoverageStatus `json:"status"`
 	Reasons []string       `json:"reasons,omitempty"`
 	Tests   []CoverageTest `json:"tests,omitempty"`
+	// Commit is the one full commit id at which a passing row's evidence
+	// verified the current text: the commit every matched result was
+	// ingested at, or the stamp's commit when the stamp's rev is the current
+	// block rev. Empty for any other row. The impact query compares it with
+	// the diff's head to clear the suspect flag of a re-verified requirement
+	// (docs/03 R-REQ-12a rule 6, R-IMP-5).
+	Commit string `json:"commit,omitempty"`
 }
 
 // StampEvidence is what a coverage host offers a stamp writer for one
