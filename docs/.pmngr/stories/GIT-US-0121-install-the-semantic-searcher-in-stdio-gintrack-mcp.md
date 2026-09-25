@@ -2,7 +2,7 @@
 id: GIT-US-0121
 type: story
 title: Install the semantic searcher in stdio gintrack mcp
-status: in_review
+status: done
 priority: high
 parent: GIT-EP-0026
 milestone: GIT-M-0015
@@ -10,7 +10,8 @@ author: claude
 labels: [mcp, cli, agent-ok]
 estimate: 2
 created: 2026-09-24T12:11:03Z
-updated: 2026-09-24T12:24:14Z
+updated: 2026-09-25T11:15:00Z
+closed: 2026-09-25T11:15:00Z
 ---
 
 ## Description

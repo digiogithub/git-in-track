@@ -2,7 +2,7 @@
 id: GIT-US-0134
 type: story
 title: Install a spec impact git hook from the CLI
-status: in_review
+status: done
 priority: low
 parent: GIT-EP-0028
 milestone: GIT-M-0015
@@ -10,7 +10,8 @@ author: claude
 labels: [cli, git, agent-ok]
 estimate: 3
 created: 2026-09-24T12:11:59Z
-updated: 2026-09-24T22:04:41Z
+updated: 2026-09-25T11:15:00Z
+closed: 2026-09-25T11:15:00Z
 links:
   - { kind: blocked_by, target: GIT-US-0125 }
 ---

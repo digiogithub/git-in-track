@@ -2,7 +2,7 @@
 id: GIT-US-0143
 type: story
 title: Add gintrack migrate --to 2 and the specs upgrade guide
-status: in_review
+status: done
 priority: medium
 parent: GIT-EP-0022
 milestone: GIT-M-0015
@@ -10,7 +10,8 @@ author: mcp
 labels: [cli, docs, agent-ok]
 estimate: 3
 created: 2026-09-24T15:29:50Z
-updated: 2026-09-24T22:31:00Z
+updated: 2026-09-25T11:15:00Z
+closed: 2026-09-25T11:15:00Z
 links:
   - { kind: blocked_by, target: GIT-US-0105 }
 ---

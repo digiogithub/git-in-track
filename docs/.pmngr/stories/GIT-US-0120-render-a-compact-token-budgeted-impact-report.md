@@ -2,7 +2,7 @@
 id: GIT-US-0120
 type: story
 title: Render a compact token-budgeted impact report
-status: in_review
+status: done
 priority: medium
 parent: GIT-EP-0025
 milestone: GIT-M-0015
@@ -10,7 +10,8 @@ author: claude
 labels: [server, mcp, agent-ok]
 estimate: 3
 created: 2026-09-24T12:10:32Z
-updated: 2026-09-24T19:25:55Z
+updated: 2026-09-25T11:15:00Z
+closed: 2026-09-25T11:15:00Z
 links:
   - { kind: blocked_by, target: GIT-US-0119 }
 ---

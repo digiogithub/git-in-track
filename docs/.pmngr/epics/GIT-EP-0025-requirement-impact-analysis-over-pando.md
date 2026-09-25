@@ -2,13 +2,14 @@
 id: GIT-EP-0025
 type: epic
 title: Requirement impact analysis over Pando
-status: backlog
+status: in_progress
 priority: high
 milestone: GIT-M-0015
 author: claude
 labels: [server, mcp]
 created: 2026-09-24T12:08:11Z
-updated: 2026-09-24T12:08:11Z
+updated: 2026-09-25T11:15:00Z
+started: 2026-09-25T11:15:00Z
 links:
   - { kind: relates_to, target: GIT-T-0238 }
 ---

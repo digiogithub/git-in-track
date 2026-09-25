@@ -2,14 +2,17 @@
 id: GIT-US-0158
 type: story
 title: Reach traced code through changed package-level declarations
-status: backlog
+status: in_progress
 priority: medium
 parent: GIT-EP-0025
+milestone: GIT-M-0015
+assignees: [claude]
 author: mcp
 labels: [core, agent-ok]
 estimate: 3
 created: 2026-09-24T23:18:51Z
-updated: 2026-09-24T23:18:51Z
+updated: 2026-09-25T11:15:00Z
+started: 2026-09-25T11:15:00Z
 ---
 
 ## Description

@@ -2,7 +2,7 @@
 id: GIT-US-0105
 type: story
 title: Implement the spec item type and requirement blocks in the core
-status: in_review
+status: done
 priority: critical
 parent: GIT-EP-0022
 milestone: GIT-M-0015
@@ -10,7 +10,8 @@ author: claude
 labels: [core, wasm]
 estimate: 8
 created: 2026-09-24T12:09:05Z
-updated: 2026-09-24T15:28:04Z
+updated: 2026-09-25T11:15:00Z
+closed: 2026-09-25T11:15:00Z
 links:
   - { kind: blocked_by, target: GIT-US-0104 }
 ---

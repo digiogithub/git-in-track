@@ -2,7 +2,7 @@
 id: GIT-US-0149
 type: story
 title: List branches and recent commits for the impact view pickers
-status: in_review
+status: done
 priority: medium
 parent: GIT-EP-0027
 milestone: GIT-M-0015
@@ -10,7 +10,8 @@ author: mcp
 labels: [server, web, git, agent-ok]
 estimate: 3
 created: 2026-09-24T21:55:53Z
-updated: 2026-09-24T22:53:32Z
+updated: 2026-09-25T11:15:00Z
+closed: 2026-09-25T11:15:00Z
 ---
 
 ## Description

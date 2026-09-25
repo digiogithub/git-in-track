@@ -2,14 +2,15 @@
 id: GIT-T-0238
 type: task
 title: Review the spec-driven development overview before planning Phase 11
-status: in_review
+status: done
 priority: high
 assignees: [team]
 author: mcp
 labels: [docs, core, mcp]
 created: 2026-09-24T11:49:18Z
-updated: 2026-09-24T12:13:56Z
+updated: 2026-09-25T11:15:00Z
 started: 2026-09-24T12:13:51Z
+closed: 2026-09-25T11:15:00Z
 ---
 
 ## Description
@@ -31,7 +32,7 @@ No milestone, epic or story exists yet. They are created only after this task is
 - [x] The reviewer answers the open questions in §7 of the overview (granularity, code anchors, requirement lifecycle, grammar strictness, first-cut scope, who implements E1, naming), as a comment on this task or as edits to the overview.
 - [x] The reviewer approves, trims or reshapes the epic list in §4.
 - [x] The agent turns the validated overview into the Phase 11 milestone (GIT-M-0015) with its epics and stories through the MCP tools, and links them back here.
-- [ ] ADR-037 is drafted as the first story of E1, because the data-model change is a human-only area.
+- [x] ADR-037 is drafted as the first story of E1, because the data-model change is a human-only area.
 
 ## Notes
 

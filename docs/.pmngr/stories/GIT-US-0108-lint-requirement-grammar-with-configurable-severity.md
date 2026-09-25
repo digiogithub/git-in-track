@@ -2,7 +2,7 @@
 id: GIT-US-0108
 type: story
 title: Lint requirement grammar with configurable severity
-status: in_review
+status: done
 priority: medium
 parent: GIT-EP-0023
 milestone: GIT-M-0015
@@ -10,7 +10,8 @@ author: claude
 labels: [core, wasm, agent-ok]
 estimate: 5
 created: 2026-09-24T12:09:24Z
-updated: 2026-09-24T17:28:47Z
+updated: 2026-09-25T11:15:00Z
+closed: 2026-09-25T11:15:00Z
 links:
   - { kind: blocked_by, target: GIT-US-0105 }
 ---

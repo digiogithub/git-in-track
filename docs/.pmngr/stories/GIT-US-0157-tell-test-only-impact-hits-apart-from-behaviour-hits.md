@@ -2,14 +2,17 @@
 id: GIT-US-0157
 type: story
 title: Tell test-only impact hits apart from behaviour hits
-status: backlog
+status: in_progress
 priority: medium
 parent: GIT-EP-0025
+milestone: GIT-M-0015
+assignees: [claude]
 author: mcp
 labels: [core, mcp, agent-ok]
 estimate: 3
 created: 2026-09-24T23:18:50Z
-updated: 2026-09-24T23:18:50Z
+updated: 2026-09-25T11:15:00Z
+started: 2026-09-25T11:15:00Z
 ---
 
 ## Description

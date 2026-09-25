@@ -2,7 +2,7 @@
 id: GIT-US-0124
 type: story
 title: Add spec_impact, verify_requirement and trace_requirement MCP tools
-status: in_review
+status: done
 priority: high
 parent: GIT-EP-0026
 milestone: GIT-M-0015
@@ -10,7 +10,8 @@ author: claude
 labels: [mcp, agent-ok]
 estimate: 5
 created: 2026-09-24T12:11:03Z
-updated: 2026-09-24T19:40:18Z
+updated: 2026-09-25T11:15:00Z
+closed: 2026-09-25T11:15:00Z
 links:
   - { kind: blocked_by, target: GIT-US-0116 }
   - { kind: blocked_by, target: GIT-US-0120 }

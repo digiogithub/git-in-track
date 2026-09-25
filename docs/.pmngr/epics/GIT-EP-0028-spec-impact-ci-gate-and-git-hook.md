@@ -2,13 +2,14 @@
 id: GIT-EP-0028
 type: epic
 title: Spec impact CI gate and git hook
-status: backlog
+status: done
 priority: medium
 milestone: GIT-M-0015
 author: claude
 labels: [ci, cli]
 created: 2026-09-24T12:08:29Z
-updated: 2026-09-24T12:08:29Z
+updated: 2026-09-25T11:15:00Z
+closed: 2026-09-25T11:15:00Z
 links:
   - { kind: relates_to, target: GIT-T-0238 }
 ---
@@ -19,9 +20,9 @@ Rerun the impact query deterministically outside the agent: `gintrack spec impac
 
 ## Acceptance Criteria
 
-- [ ] A PR that makes a traced requirement failing or suspect fails the check with a readable report.
-- [ ] The git hook can be installed and removed from the CLI.
-- [ ] Every story of this epic is done.
+- [x] A PR that makes a traced requirement failing or suspect fails the check with a readable report.
+- [x] The git hook can be installed and removed from the CLI.
+- [x] Every story of this epic is done.
 
 ## Notes
 

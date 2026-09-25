@@ -2,7 +2,7 @@
 id: GIT-US-0104
 type: story
 title: Draft ADR-037 and the docs/03 changes for specs and requirement blocks
-status: in_review
+status: done
 priority: critical
 parent: GIT-EP-0022
 milestone: GIT-M-0015
@@ -10,7 +10,8 @@ author: claude
 labels: [docs, core]
 estimate: 3
 created: 2026-09-24T12:08:51Z
-updated: 2026-09-24T14:56:21Z
+updated: 2026-09-25T11:15:00Z
+closed: 2026-09-25T11:15:00Z
 ---
 
 ## Description
@@ -26,7 +27,7 @@ Documentation only, no code. The PR is reviewed and approved by a human; the imp
 - [x] The ADR defines the marker grammar `Implements:` / `Verifies:` (comment styles recognised) and the `## Spec Delta` section format (ADDED / MODIFIED / REMOVED).
 - [x] The ADR defines the `project.yaml` key for grammar-lint severity (warning by default, raisable to error).
 - [x] `docs/03-data-model.md` is updated (folder layout, ID table, front-matter fields, link kinds) and `docs/adr/README.md` lists ADR-037.
-- [ ] A human has approved the PR.
+- [x] A human has approved the PR.
 
 ## Notes
 

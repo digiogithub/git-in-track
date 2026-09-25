@@ -2,7 +2,7 @@
 id: GIT-US-0126
 type: story
 title: Document the spec-driven agent loop in AGENTS.md and docs/08
-status: in_review
+status: done
 priority: medium
 parent: GIT-EP-0026
 milestone: GIT-M-0015
@@ -10,7 +10,8 @@ author: claude
 labels: [docs, agent-ok]
 estimate: 2
 created: 2026-09-24T12:11:04Z
-updated: 2026-09-24T21:06:28Z
+updated: 2026-09-25T11:15:00Z
+closed: 2026-09-25T11:15:00Z
 links:
   - { kind: blocked_by, target: GIT-US-0123 }
   - { kind: blocked_by, target: GIT-US-0124 }

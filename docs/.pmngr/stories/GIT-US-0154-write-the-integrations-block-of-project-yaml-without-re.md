@@ -2,13 +2,14 @@
 id: GIT-US-0154
 type: story
 title: Write the integrations block of project.yaml without re-encoding the file
-status: in_review
+status: done
 priority: medium
 author: mcp
 labels: [core, agent-ok]
 estimate: 2
 created: 2026-09-24T22:32:35Z
-updated: 2026-09-24T22:43:24Z
+updated: 2026-09-25T11:15:00Z
+closed: 2026-09-25T11:15:00Z
 ---
 
 ## Description

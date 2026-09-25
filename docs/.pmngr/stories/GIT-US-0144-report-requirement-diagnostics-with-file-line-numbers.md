@@ -2,7 +2,7 @@
 id: GIT-US-0144
 type: story
 title: Report requirement diagnostics with file line numbers
-status: in_review
+status: done
 priority: low
 parent: GIT-EP-0022
 milestone: GIT-M-0015
@@ -10,7 +10,8 @@ author: mcp
 labels: [core, good-first-issue, agent-ok]
 estimate: 1
 created: 2026-09-24T15:29:50Z
-updated: 2026-09-24T22:23:26Z
+updated: 2026-09-25T11:15:00Z
+closed: 2026-09-25T11:15:00Z
 links:
   - { kind: blocked_by, target: GIT-US-0105 }
 ---
@@ -23,9 +24,9 @@ Blocked by GIT-US-0105.
 
 ## Acceptance Criteria
 
-- [ ] Every `E-REQ-*`, `W-REQ-*` and requirement-level link diagnostic carries a line number relative to the file, offset by the front matter.
-- [ ] Golden tests assert the file line for a spec with multi-line front matter.
-- [ ] `make test` and `make wasm` pass.
+- [x] Every `E-REQ-*`, `W-REQ-*` and requirement-level link diagnostic carries a line number relative to the file, offset by the front matter.
+- [x] Golden tests assert the file line for a spec with multi-line front matter.
+- [x] `make test` and `make wasm` pass.
 
 ## Notes
 

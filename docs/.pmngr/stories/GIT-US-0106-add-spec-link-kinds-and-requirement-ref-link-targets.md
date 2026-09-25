@@ -2,7 +2,7 @@
 id: GIT-US-0106
 type: story
 title: Add spec link kinds and requirement-ref link targets
-status: in_review
+status: done
 priority: high
 parent: GIT-EP-0022
 milestone: GIT-M-0015
@@ -10,7 +10,8 @@ author: claude
 labels: [core]
 estimate: 5
 created: 2026-09-24T12:09:05Z
-updated: 2026-09-24T17:23:41Z
+updated: 2026-09-25T11:15:00Z
+closed: 2026-09-25T11:15:00Z
 links:
   - { kind: blocked_by, target: GIT-US-0104 }
   - { kind: blocked_by, target: GIT-US-0105 }

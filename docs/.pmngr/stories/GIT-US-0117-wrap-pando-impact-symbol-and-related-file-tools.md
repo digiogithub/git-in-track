@@ -2,7 +2,7 @@
 id: GIT-US-0117
 type: story
 title: Wrap Pando impact, symbol and related-file tools
-status: in_review
+status: done
 priority: high
 parent: GIT-EP-0025
 milestone: GIT-M-0015
@@ -10,7 +10,8 @@ author: claude
 labels: [server, agent-ok]
 estimate: 3
 created: 2026-09-24T12:10:32Z
-updated: 2026-09-24T15:27:38Z
+updated: 2026-09-25T11:15:00Z
+closed: 2026-09-25T11:15:00Z
 ---
 
 ## Description
