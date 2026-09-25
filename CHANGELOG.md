@@ -79,6 +79,12 @@ because a commit list cannot express them.
   untraced registrar, Go declarations used outside their package, unmarked code without Pando,
   test and multi-marker granularity — and where to put `Implements:` and `Verifies:` markers so
   impact stays useful, with the spec impact benchmark linked as evidence.
+- **Spec impact benchmark re-run with Pando tiers 2 and 3** (`GIT-US-0161`,
+  docs/research/2026-09-25-spec-impact-benchmark.md §9). The same PR set ran against a Pando
+  instance that had indexed the repository. Tier 2 is deterministic, but its own 22 hits are
+  5 % behaviour (45 % counting test evidence), and it raises the worst report from 716 to 1,393
+  tokens (5.9× the folder read). Tier 3 delivered no candidate. The benchmark records why, and
+  proposes the follow-ups.
 
 ### Fixed
 
