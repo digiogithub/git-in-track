@@ -64,6 +64,8 @@ project's knowledge base (KB). The backlog lives in a `.pmngr/` subfolder of it.
         ACME-T-0108-wire-callback-route.md
       milestones/
         ACME-M-0003-public-beta.md
+      specs/                         # ADR-037 (section 21)
+        ACME-SP-0003-sso-sessions.md
       comments/
         ACME-US-0042/
           20260901T104512Z-jose.md
@@ -73,6 +75,7 @@ project's knowledge base (KB). The backlog lives in a `.pmngr/` subfolder of it.
           sso-sequence.png
           vendor-quote.pdf
       index.json                     # OPTIONAL derived cache, git-ignored by default
+      verify.json                    # OPTIONAL derived verification cache (section 21.6), git-ignored
 ```
 
 Rules:
@@ -83,13 +86,15 @@ Rules:
   [§3.5](#35-multiple-projects-in-one-repository)).
 - **R-LOC-2** `project.yaml` MUST exist for the folder to be recognised as a project backlog. Its
   presence is the discovery marker used by `gintrack` and by the web app's folder picker.
-- **R-LOC-3** The five item folders (`epics/`, `stories/`, `tasks/`, `milestones/`, `comments/`) are
+- **R-LOC-3** The item folders (`epics/`, `stories/`, `tasks/`, `milestones/`, `comments/`, and
+  `specs/` once [ADR-037](./adr/ADR-037-specs-with-requirement-blocks.md) is implemented) are
   created lazily. A missing folder is equivalent to an empty one and MUST NOT be an error.
 - **R-LOC-4** Item folders MUST be flat except `comments/`, which has exactly one level of
-  subfolders keyed by item ID. Nested subfolders under `epics/`, `stories/`, `tasks/`, or
-  `milestones/` are ignored by the indexer and reported by `gintrack doctor` as `W-LAYOUT-NESTED`.
+  subfolders keyed by item ID. Nested subfolders under `epics/`, `stories/`, `tasks/`,
+  `milestones/` or `specs/` are ignored by the indexer and reported by `gintrack doctor` as `W-LAYOUT-NESTED`.
 - **R-LOC-5** `index.json` is derived. The default `.gitignore` snippet emitted by `gintrack init`
-  ignores it inside project repositories. (In the *team* repository the equivalent snapshots under
+  ignores it inside project repositories, together with the verification cache `verify.json`
+  ([§21.6](#216-verification-and-coverage)). (In the *team* repository the equivalent snapshots under
   `.pmngr/index/` ARE committed — that is the one deliberate exception, specified in doc 04.)
 - **R-LOC-6** Any file under `.pmngr/` that is not `project.yaml`, not under `attachments/`, and
   does not end in `.md` is ignored with warning `W-LAYOUT-STRAY`.
@@ -133,6 +138,10 @@ When a tool does create one, it writes exactly this and nothing else:
   .gitignore                # `index.json` (R-LOC-5)
   epics/  stories/  tasks/  milestones/  comments/  attachments/
 ```
+
+A tool creates a backlog at `schema: 1` even when it supports specs; the project moves to
+`schema: 2` only when its first spec construct is written ([§21.10](#2110-schema-version-2),
+ADR-037).
 
 - **R-NEW-1** The key MUST match the grammar of [§3.3](#33-identifiers) before anything is written.
 - **R-NEW-2** A folder that already holds a `project.yaml` MUST be refused, never overwritten.
@@ -191,7 +200,7 @@ Keys whose value is null/empty MUST be omitted rather than written as `null` or 
 id, type, title, status, priority, parent, epic, milestone, sprint,
 assignees, author, labels, estimate, effort, spent,
 created, updated, started, closed, due,
-links, blocks, depends_on, external, attachments, custom, inbox, deleted
+links, blocks, depends_on, external, attachments, custom, inbox, requirements, deleted
 ```
 
 Comments use the same order with their own keys in the region they belong to:
@@ -204,7 +213,9 @@ relations, then the blocks. Diffs of unrelated changes touch different regions o
 repository ([§12.5](#125-external-references), [ADR-031](./adr/ADR-031-external-references.md)) —
 and `inbox` sits at the end, next to `deleted`, because like `deleted` it is lifecycle state that
 only a minority of files carry ([§6.4](#64-the-triage-category-and-the-inbox),
-[ADR-033](./adr/ADR-033-inbox-is-a-reserved-triage-status-category.md)).
+[ADR-033](./adr/ADR-033-inbox-is-a-reserved-triage-status-category.md)). `requirements` (spec files
+only, [§21](#21-specs-and-requirement-blocks)) sits just before `deleted` for the same reason, and
+because it is the largest block a file can carry.
 
 ### 3.3 Identifiers
 
@@ -212,8 +223,11 @@ only a minority of files carry ([§6.4](#64-the-triage-category-and-the-inbox),
 <ID> ::= <KEY> "-" <TYPECODE> "-" <NUMBER>
 
 <KEY>      ::= [A-Z][A-Z0-9]{1,9}          # from project.yaml `key`
-<TYPECODE> ::= "EP" | "US" | "T" | "M"
+<TYPECODE> ::= "EP" | "US" | "T" | "M" | "SP"   # "SP" added by ADR-037
 <NUMBER>   ::= [0-9]{4,}                    # zero-padded to at least 4 digits
+
+<REQREF>   ::= <KEY> "-SP-" <NUMBER> ".R" <RNUM>   # a requirement block, ADR-037
+<RNUM>     ::= [1-9][0-9]*                  # no padding, no leading zero
 ```
 
 Examples: `ACME-EP-0001`, `ACME-US-0042`, `ACME-T-0107`, `ACME-M-0003`, and after 9999 items
@@ -226,6 +240,10 @@ Examples: `ACME-EP-0001`, `ACME-US-0042`, `ACME-T-0107`, `ACME-M-0003`, and afte
   contiguity: gaps are normal (deleted items, renumbering, aborted creations).
 - **R-ID-4** Comments have no ID of their own; they are addressed as
   `<ITEM-ID>#<comment-file-stem>` (see [§11](#11-comments)).
+- **R-ID-5** A requirement is not an item and has no file: it is addressed by the scoped ref
+  `<SPEC-ID>.R<n>` (`ACME-SP-0003.R2`), permanent and never reused, allocated `max + 1` within its
+  spec ([§21.3](#213-requirement-ids)). `R<n>` has exactly one spelling: `R02` and `r2` are
+  `E-ID-GRAMMAR`.
 
 ### 3.4 File naming and slugs
 
@@ -307,10 +325,10 @@ Handles are declared in the team repository's `team.yaml` (doc 04, §3.2) and MA
 
 | Field | Allowed values |
 |---|---|
-| `type` | `epic`, `story`, `task`, `milestone`, `comment` (the `board`, `sprint` and `retro` types exist only in the team repo, and are specified in [doc 04](./04-team-repository.md) §§5, 8 and 9; all three round-trip through the same byte-stable emitter as an item, so an edit to one field is a one-line diff). A sprint's stored `state` is `planned`, `active` or `closed`; the `draft`/`upcoming`/`current`/`completed` status a reader sees is derived from its dates and is never a stored value ([ADR-034](./adr/ADR-034-sprint-status-is-derived-from-dates.md)) |
+| `type` | `epic`, `story`, `task`, `milestone`, `comment`, `spec` ([§21](#21-specs-and-requirement-blocks)) (the `board`, `sprint` and `retro` types exist only in the team repo, and are specified in [doc 04](./04-team-repository.md) §§5, 8 and 9; all three round-trip through the same byte-stable emitter as an item, so an edit to one field is a one-line diff). A sprint's stored `state` is `planned`, `active` or `closed`; the `draft`/`upcoming`/`current`/`completed` status a reader sees is derived from its dates and is never a stored value ([ADR-034](./adr/ADR-034-sprint-status-is-derived-from-dates.md)) |
 | `priority` | `critical`, `high`, `medium`, `low` |
 | `status` | any `id` declared in `project.yaml:workflow.statuses` |
-| relation kind | `blocks`, `blocked_by`, `relates_to`, `duplicates`, `duplicated_by` |
+| relation kind | `blocks`, `blocked_by`, `relates_to`, `duplicates`, `duplicated_by`; added by ADR-037: `implements`, `implemented_by`, `modifies`, `modified_by`, `supersedes`, `superseded_by` ([§12.1](#121-the-links-field)) |
 | `estimate` | number (story points), see [§8.3](#83-estimates-and-effort) |
 
 ---
@@ -510,7 +528,7 @@ The only non-Markdown file in `.pmngr/`. Plain YAML, no front matter.
 
 | Key | Type | Req. | Default | Notes |
 |---|---|---|---|---|
-| `schema` | integer | yes | `1` | Data-model version. Unknown/higher → refuse to write, allow read-only. |
+| `schema` | integer | yes | `1` | Data-model version. Unknown/higher → refuse to write, allow read-only. `2` once the project holds a spec construct ([§21.10](#2110-schema-version-2), ADR-037). |
 | `key` | string `[A-Z][A-Z0-9]{1,9}` | yes | — | ID prefix. Immutable in practice (see `--rekey`). |
 | `name` | string | yes | — | Human name, e.g. `ACME Platform`. |
 | `description` | string | no | — | One paragraph; shown in project pickers. |
@@ -527,6 +545,7 @@ The only non-Markdown file in `.pmngr/`. Plain YAML, no front matter.
 | `team` | mapping | no | — | Back-pointer to the team repo (`repo`, `key`). |
 | `links` | mapping | no | — | Host info for building blob URLs (`host: github\|gitlab\|gitea\|bitbucket`, `web_url`). |
 | `integrations` | mapping | no | — | External trackers this backlog mirrors ([§6.5](#65-integrations)). Credentials never appear here. |
+| `specs` | mapping | no | `{lint: {severity: warning}}` | Spec settings; today only `lint`, the requirement-grammar severity `off\|warning\|error` ([§21.9](#219-grammar-lint-and-specslint), ADR-037). |
 
 `docs` sub-keys: `path` (relative to repo root, informational — the real path is where the file
 was found), `wikilinks` (bool, default `true`), `mermaid` (bool, default `true`), `math` (bool,
@@ -658,13 +677,18 @@ integrations:
     push_comments: manual
     kb_sync: manual
     kb_sync_direction: push
+
+specs:                    # ADR-037 (section 21.9)
+  lint:
+    severity: warning     # off | warning | error
 ```
 
 ### 6.3 Validation rules for `project.yaml`
 
 - `E-PROJ-MISSING` — `.pmngr/` exists but `project.yaml` does not.
 - `E-PROJ-KEY` — `key` absent or not matching `[A-Z][A-Z0-9]{1,9}`.
-- `E-PROJ-SCHEMA` — `schema` missing, or greater than the supported version (read-only fallback).
+- `E-PROJ-SCHEMA` — `schema` missing, or greater than the supported version (read-only fallback;
+  enforced on writes from the release that introduces specs, R-SCHEMA-2-4).
 - `E-PROJ-STATUS-DUP` — duplicate status `id`.
 - `E-PROJ-STATUS-CATEGORY` — a status has an unknown `category`.
 - `E-PROJ-INITIAL` — `workflow.initial` names a status that does not exist.
@@ -680,6 +704,8 @@ integrations:
 - `E-PROJ-INTEGRATION` — an `integrations.<system>` block is present but unusable: a `url` that is
   not an absolute `http`/`https` URL, an empty `project`, an unknown mode, or a `field_map` key that
   is not a git-in-track field ([§6.5](#65-integrations)).
+- `E-PROJ-SPECS` — `specs.lint` (scalar shorthand), `specs.lint.severity` or a `specs.lint.rules`
+  value is not `off`/`warning`/`error`, or `rules` names an unknown lint rule ([§21.9](#219-grammar-lint-and-specslint)).
 
 ### 6.4 The `triage` category and the inbox
 
@@ -1300,6 +1326,12 @@ links:
 | `relates_to` | `relates_to` | symmetric, no scheduling meaning |
 | `duplicates` | `duplicated_by` | source SHOULD be closed as `cancelled` |
 | `duplicated_by` | `duplicates` | |
+| `implements` | `implemented_by` | story/task → requirement or spec: the work realises it (ADR-037) |
+| `implemented_by` | `implements` | |
+| `modifies` | `modified_by` | story/task → requirement or spec: the work changes an existing requirement (ADR-037) |
+| `modified_by` | `modifies` | |
+| `supersedes` | `superseded_by` | requirement → requirement, spec → spec: the source replaces the target (ADR-037) |
+| `superseded_by` | `supersedes` | |
 
 - **R-LINK-1** Links are stored on **one side only** by whoever creates them. The indexer computes
   the inverse in memory. Writing both sides is allowed but produces redundant, conflict-prone edits;
@@ -1311,6 +1343,14 @@ links:
   mutual dependency sometimes exists mid-refactor). `parent` cycles are errors.
 - **R-LINK-5** `parent` and `milestone` are *not* links; they are dedicated fields because they are
   hierarchical and are indexed differently.
+- **R-LINK-6** *(ADR-037.)* `target` MAY also be a requirement ref, qualified or not:
+  `<link-target> ::= [<KEY> "/"] (<ID> | <REQREF>)`. A missing spec or block is `W-REF-DANGLING`.
+  `implements`/`modifies` (and inverses) need a spec or requirement target, `supersedes`/
+  `superseded_by` need a target of the source's own kind (requirement ↔ requirement, spec ↔ spec);
+  any other combination is `E-LINK-TARGET-TYPE`. Requirement-level relations are stored in
+  `requirements.R<n>.links` ([§21.4](#214-the-requirements-map)), same `{kind, target}` shape,
+  restricted to `supersedes`, `superseded_by` and `relates_to` (R-REQ-13). Using any of the new
+  kinds or a spec/requirement target requires `schema: 2` ([§21.10](#2110-schema-version-2)).
 
 ### 12.2 Convenience aliases
 
@@ -1331,6 +1371,10 @@ Closes: ACME-T-0106
 
 `gintrack` does not parse git history in Phase 1–3. Phase 6 may add a "mentions" panel built from
 `git log --grep`. Nothing in the data model depends on it.
+
+Source code points at *requirements* (not items) with `// Implements: ACME-SP-0003.R2` and
+`// Verifies: ACME-SP-0003.R2` comment markers, defined by ADR-037 and specified in
+[§21.7](#217-in-code-markers). They are read by the native trace engine, never by `internal/core`.
 
 ### 12.4 Cross-project references
 
@@ -1576,6 +1620,7 @@ The documentation folder is an Obsidian-like vault. `[[…]]` wikilinks work in 
 | `[[ACME-US-0042\|the SSO story]]` | Same, with custom link text |
 | `[[ACME-US-0042#20260901T104512Z-jose]]` | A specific comment |
 | `[[WEB/WEB-US-0031]]` | Cross-project item (soft; see §12.4) |
+| `[[ACME-SP-0003.R2]]` | A requirement block: ref, title and status; anchor `#acme-sp-0003-r2` (§21.3) |
 | `[[architecture/sso-overview#Session revocation]]` | Heading anchor inside a KB page |
 
 - **R-WIKI-1** A target matching the ID grammar is resolved as an item; otherwise as a KB page.
@@ -1789,6 +1834,12 @@ normative and specified in doc 04 §6; what follows is the local, richer form.
   separate structure (bleve index natively; a small inverted index in WASM).
 - **R-IDX-3** Staleness is detected by (path, size, mtime) triples natively and by File System Access
   `getFile().lastModified` in the browser; on mismatch the file is re-parsed.
+- **R-IDX-4** *(ADR-037.)* Spec items appear in `items[]` like any other type, and each
+  requirement block adds one row to a separate `requirements[]` array: `ref`, `spec`, `title`,
+  `status`, `category`, `rev` (block rev), `trace` and `verified` as stored, and the computed
+  inverse links. The title comes from the block heading: the one exception to R-IDX-2, because a
+  requirement has no front matter of its own. Coverage state (`untested`/`passing`/`failing`/`suspect`) is **not** part of this
+  file; it needs the verification cache and git history (§21.6), which the index does not read.
 
 ---
 
@@ -1839,6 +1890,32 @@ Severity: **E** = error (blocks writes to the affected item; `doctor` exits non-
 | `W-INBOX-CATEGORY` | W | An `inbox` block on an item whose status is not in the `triage` category |
 | `W-INBOX-DUP-DEAD` | W | `inbox.duplicate_of` points at an unknown item |
 
+Added by [ADR-037](./adr/ADR-037-specs-with-requirement-blocks.md), not yet emitted
+([§21](#21-specs-and-requirement-blocks)):
+
+| Code | Sev | Condition |
+|---|---|---|
+| `E-REQ-FOREIGN` | E | A requirement heading in a spec names another spec's ref |
+| `E-REQ-DUPLICATE` | E | Two blocks in one spec claim the same `R<n>` |
+| `E-REQ-STATUS` | E | `requirements.R<n>.status` is a status of the `triage` category (an unknown status is `E-STATUS-UNKNOWN`) |
+| `E-REQ-FIELD` | E | A `requirements:` key is not `R<n>`, or `trace`/`verified`/`links` has the wrong shape (bad trace ref, `verified.rev` not a rev, `commit` not hex, `at` not a timestamp, a `links` kind other than `supersedes`/`superseded_by`/`relates_to`) |
+| `E-SCHEMA-FEATURE` | E | A spec construct in a `schema: 1` project ([§21.10](#2110-schema-version-2)); `doctor --fix` raises `schema` to 2 |
+| `E-LINK-TARGET-TYPE` | E | A link kind used with a target of the wrong type (R-LINK-6) |
+| `E-DELTA-OP` | E | A `## Spec Delta` heading has an unknown operation or is malformed |
+| `E-DELTA-TARGET` | E | `ADDED` names a requirement, or `MODIFIED`/`REMOVED` names a spec |
+| `E-DELTA-REASON` | E | `REMOVED` without a `Reason:` line |
+| `E-PROJ-SPECS` | E | Invalid `specs.lint` configuration ([§6.3](#63-validation-rules-for-projectyaml)) |
+| `W-REQ-SEPARATOR` | W | Requirement heading uses ` - `, ` -- ` or ` – ` instead of ` — ` |
+| `W-REQ-HEADING` | W | A level-3 heading under `## Requirements` that is not a requirement heading |
+| `W-REQ-NO-ENTRY` | W | A block with no `requirements:` entry, or an entry with no `status` |
+| `W-REQ-ORPHAN-ENTRY` | W | A `requirements:` key with no block |
+| `W-DELTA-DANGLING` | W | A Spec Delta targets an unknown spec or block |
+| `LINT-REQ-*` | W, configurable | Requirement grammar ([§21.9](#219-grammar-lint-and-specslint)); `off`, `warning` or `error` under `specs.lint` |
+
+`W-MARKER-SYNTAX`, `W-MARKER-DANGLING` and `W-TRACE-BROKEN` (a `trace:` path or symbol that no
+longer exists) are emitted by the native trace engine, which reads source code; `internal/core`
+cannot, and does not.
+
 The `E-TEAM-*` / `W-TEAM-*` codes belong to `team.yaml` and are catalogued in
 [`04-team-repository.md`](./04-team-repository.md) §3.5. They share this catalog's namespace and
 the same severity rules: `internal/core` emits both from one `Diagnostic` type.
@@ -1874,6 +1951,7 @@ docs/.pmngr/index.json                        # snapshot, if present
 docs/.pmngr/stories/*.md                      # all stories
 docs/.pmngr/stories/ACME-US-004*.md           # ID range
 docs/.pmngr/{stories,tasks}/*.md              # work items only, no epics/milestones
+docs/.pmngr/specs/*.md                        # specs and their requirement blocks (ADR-037)
 docs/.pmngr/comments/ACME-US-0042/*.md        # one item's discussion
 docs/.pmngr/attachments/ACME-US-0042/*        # its binaries (do not read; list only)
 ```
@@ -1932,6 +2010,7 @@ internal/core/schema/
   story.schema.json
   task.schema.json
   milestone.schema.json
+  spec.schema.json           # ADR-037
   comment.schema.json
   index.schema.json          # the local derived index (§15)
   common.defs.json           # shared $defs: id, handle, timestamp, date, link, label
@@ -1949,8 +2028,12 @@ Outline of the shared definitions:
 {
   "$id": "https://git-in-track.dev/schema/common.defs.json",
   "$defs": {
-    "id":        { "type": "string", "pattern": "^[A-Z][A-Z0-9]{1,9}-(EP|US|T|M)-[0-9]{4,}$" },
-    "qualifiedId": { "type": "string", "pattern": "^([A-Z][A-Z0-9]{1,9}/)?[A-Z][A-Z0-9]{1,9}-(EP|US|T|M)-[0-9]{4,}$" },
+    "id":        { "type": "string", "pattern": "^[A-Z][A-Z0-9]{1,9}-(EP|US|T|M|SP)-[0-9]{4,}$" },
+    "qualifiedId": { "type": "string", "pattern": "^([A-Z][A-Z0-9]{1,9}/)?[A-Z][A-Z0-9]{1,9}-(EP|US|T|M|SP)-[0-9]{4,}$" },
+    "reqRef":    { "type": "string", "pattern": "^([A-Z][A-Z0-9]{1,9}/)?[A-Z][A-Z0-9]{1,9}-SP-[0-9]{4,}\\.R[1-9][0-9]*$" },
+    "linkTarget": { "anyOf": [ { "$ref": "#/$defs/qualifiedId" }, { "$ref": "#/$defs/reqRef" } ] },
+    "rev":       { "type": "string", "pattern": "^sha256:[0-9a-f]{16}$" },
+    "traceRef":  { "type": "string", "pattern": "^(?!/)(?!.*(^|/)\\.\\.(/|$))[^#]+(#.+)?$" },
     "handle":    { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,31}$" },
     "statusId":  { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,31}$" },
     "label":     { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,31}$" },
@@ -1962,8 +2045,10 @@ Outline of the shared definitions:
       "required": ["kind", "target"],
       "additionalProperties": false,
       "properties": {
-        "kind":   { "enum": ["blocks", "blocked_by", "relates_to", "duplicates", "duplicated_by"] },
-        "target": { "$ref": "common.defs.json#/$defs/qualifiedId" },
+        "kind":   { "enum": ["blocks", "blocked_by", "relates_to", "duplicates", "duplicated_by",
+                             "implements", "implemented_by", "modifies", "modified_by",
+                             "supersedes", "superseded_by"] },
+        "target": { "$ref": "common.defs.json#/$defs/linkTarget" },
         "note":   { "type": "string", "maxLength": 200 }
       }
     },
@@ -1989,10 +2074,42 @@ Outline of the shared definitions:
         "source":        { "type": "string", "maxLength": 64 },
         "received":      { "$ref": "common.defs.json#/$defs/timestamp" }
       }
+    },
+    "requirement": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "status": { "$ref": "common.defs.json#/$defs/statusId" },
+        "trace": {
+          "type": "object", "additionalProperties": true,
+          "properties": {
+            "code":  { "type": "array", "items": { "$ref": "common.defs.json#/$defs/traceRef" } },
+            "tests": { "type": "array", "items": { "$ref": "common.defs.json#/$defs/traceRef" } }
+          }
+        },
+        "verified": {
+          "type": "object", "additionalProperties": true,
+          "required": ["rev", "commit", "at", "by"],
+          "properties": {
+            "rev":    { "$ref": "common.defs.json#/$defs/rev" },
+            "commit": { "type": "string", "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$" },
+            "at":     { "$ref": "common.defs.json#/$defs/timestamp" },
+            "by":     { "$ref": "common.defs.json#/$defs/handle" }
+          }
+        },
+        "links": { "type": "array", "items": { "$ref": "common.defs.json#/$defs/link" } }
+      }
     }
   }
 }
 ```
+
+`reqRef`, `linkTarget`, `rev`, `traceRef` and `requirement` are added by
+[ADR-037](./adr/ADR-037-specs-with-requirement-blocks.md), together with `SP` in `id` and the six
+new link kinds. `requirement` is open like `inbox`, for the same reason: unknown keys inside an
+entry are preserved (R-FMT-6). Which link kinds may sit in a requirement's `links`, and which target
+type each kind accepts, depend on the source and cannot be expressed here; the Go validator reports
+them as `E-LINK-TARGET-TYPE`.
 
 `external` and `inbox` are the only two `$defs` whose value objects are not closed the same way:
 `external` is `additionalProperties: false` because the shape is fixed, while `inbox` is open
@@ -2072,6 +2189,43 @@ its `id` is the external system's *comment* identifier, not the issue's:
 reference from an item reference, and nothing should: the shape is identical, and which artifact an
 entry names is decided by the file it sits in.
 
+Outline of `spec.schema.json` (ADR-037). It has no planning fields — a spec is a living
+description, not scheduled work — and it is the only schema with `requirements`:
+
+```jsonc
+{
+  "$id": "https://git-in-track.dev/schema/spec.schema.json",
+  "type": "object",
+  "required": ["id", "type", "title", "status", "created", "updated"],
+  "properties": {
+    "id":        { "pattern": "^[A-Z][A-Z0-9]{1,9}-SP-[0-9]{4,}$" },
+    "type":      { "const": "spec" },
+    "title":     { "type": "string", "minLength": 1, "maxLength": 200 },
+    "status":    { "$ref": "common.defs.json#/$defs/statusId" },
+    "priority":  { "$ref": "common.defs.json#/$defs/priority" },
+    "assignees": { "type": "array", "items": { "$ref": "common.defs.json#/$defs/handle" } },
+    "author":    { "$ref": "common.defs.json#/$defs/handle" },
+    "labels":    { "type": "array", "items": { "$ref": "common.defs.json#/$defs/label" } },
+    "created":   { "$ref": "common.defs.json#/$defs/timestamp" },
+    "updated":   { "$ref": "common.defs.json#/$defs/timestamp" },
+    "started":   { "$ref": "common.defs.json#/$defs/timestamp" },
+    "closed":    { "$ref": "common.defs.json#/$defs/timestamp" },
+    "links":     { "type": "array", "items": { "$ref": "common.defs.json#/$defs/link" } },
+    "external":  { "type": "array", "items": { "$ref": "common.defs.json#/$defs/external" } },
+    "attachments": { "type": "array", "items": { "type": "string" } },
+    "custom":    { "type": "object" },
+    "requirements": {
+      "type": "object",
+      "propertyNames": { "pattern": "^R[1-9][0-9]*$" },
+      "additionalProperties": { "$ref": "common.defs.json#/$defs/requirement" }
+    },
+    "deleted":   { "type": "boolean" }
+  },
+  "patternProperties": { "^x-": true },
+  "additionalProperties": false
+}
+```
+
 Note that `status` values, label membership, and custom-field types cannot be expressed in a static
 schema (they depend on `project.yaml`); those checks are performed by the Go validator after schema
 validation, and produce the `E-STATUS-UNKNOWN`, `W-LABEL-UNDECLARED`, and `E-CF-TYPE` diagnostics.
@@ -2083,12 +2237,23 @@ validation, and produce the `E-STATUS-UNKNOWN`, `W-LABEL-UNDECLARED`, and `E-CF-
 - **R-EVO-1** `project.yaml:schema` is the version of the whole `.pmngr/` layout. Items do not carry
   their own version.
 - **R-EVO-2** A client reading a higher `schema` opens the project **read-only** and says why.
-- **R-EVO-3** Additive changes (new optional field) do not bump `schema`. Renames, removals, and
-  changes in file layout do.
+  Writes are refused by the vault from the release that introduces specs onward; binaries up to
+  2.0.1 only report `E-PROJ-SCHEMA` ([§21.10](#2110-schema-version-2), R-SCHEMA-2-4).
+- **R-EVO-3** Additive changes that a previous version ignores or round-trips (a new optional
+  field, R-EVO-5) do not bump `schema`. Renames, removals, changes in file layout, **and additive
+  changes that a previous version's validator rejects** (a new value in a closed enum such as the
+  link kinds, a wider ID or link-target grammar) do: the older client must see one unknown schema
+  and fall back read-only (R-EVO-2) rather than fail file by file.
 - **R-EVO-4** `gintrack migrate` performs a version bump in one commit, with a dry-run mode and a
   printed diff summary.
 - **R-EVO-5** Unknown keys are always preserved on rewrite, which makes forward-compatible round
   trips safe for tools built by others.
+- **R-EVO-6** *(ADR-037.)* The spec layer of
+  [ADR-037](./adr/ADR-037-specs-with-requirement-blocks.md) bumps `schema` to **2** under R-EVO-3:
+  its new link kinds and requirement-ref targets would otherwise be rejected by older binaries as
+  `E-ENUM` / `E-ID-GRAMMAR`, story by story. The bump is per project and on first use — the first
+  write that introduces a spec construct also sets `schema: 2` — and needs no content migration
+  ([§21.10](#2110-schema-version-2)). Projects without specs stay at `schema: 1`.
 
 ---
 
@@ -2103,3 +2268,323 @@ validation, and produce the `E-STATUS-UNKNOWN`, `W-LABEL-UNDECLARED`, and `E-CF-
 | Phase 4 | `rev`-based conflict detection surfaced in the sync UI; `--renumber` after merges |
 | Phase 5 | MCP surface of §17.4, `AGENTS.md` generation |
 | Phase 6 | Metrics derived from `category`, dates and estimates as they stood at each point in the **git history of the item files** — burndown, cumulative flow, cycle time, lead time, throughput. No new field, no stored time series: see [ADR-017](./adr/ADR-017-metrics-history-from-git-not-a-stored-time-series.md) and [doc 04 §12](./04-team-repository.md). |
+| Phase 11 | Specs and requirement blocks, requirement IDs and revs, the `requirements:` map, the spec link kinds, markers, Spec Delta and `specs.lint` — [§21](#21-specs-and-requirement-blocks), [ADR-037](./adr/ADR-037-specs-with-requirement-blocks.md). |
+
+---
+
+## 21. Specs and requirement blocks
+
+> **Status: accepted** by [ADR-037](./adr/ADR-037-specs-with-requirement-blocks.md) (2026-09-24),
+> not yet implemented: the implementation story is `GIT-US-0105`. This section is the normative
+> format; the ADR records the reasoning, the consequences and the alternatives rejected. Using specs raises the project to `schema: 2` ([§21.10](#2110-schema-version-2)).
+
+**Path:** `.pmngr/specs/<KEY>-SP-<NNNN>-<slug>.md`
+
+A spec describes one **capability**. Its requirements are **blocks in its body**, not files, but
+each requirement behaves as a separate unit everywhere: its own ID, status, rev, trace,
+verification stamp, row in lists, search and coverage, MCP address and search anchor.
+
+### 21.1 Front matter and body
+
+| Field | Type | Req. | Notes |
+|---|---|---|---|
+| `id` | ID (`SP`) | yes | allocated per §4.1; `id_allocation.counters.spec` is its hint |
+| `type` | `spec` | yes | |
+| `title` | string (1..200) | yes | the capability, e.g. `Item ID allocation` |
+| `status` | status id | yes | the project workflow, like every item |
+| `priority`, `assignees` (owners), `author`, `labels` | as elsewhere | no | |
+| `created`, `updated`, `started`, `closed` | timestamps | as elsewhere | |
+| `links`, `external`, `attachments`, `custom`, `deleted` | as elsewhere | no | |
+| `requirements` | mapping `R<n>` → entry | no | [§21.4](#214-the-requirements-map) |
+
+A spec has **no** `parent`, `epic`, `milestone`, `sprint`, `estimate`, `effort`, `spent`, `due` or
+`inbox`: it is a living description, not scheduled work. Planning happens on the stories that
+`implements` or `modifies` it. A spec is **not an inbox target**: it never takes a
+`triage`-category status, and the inbox tools never create or triage one.
+
+Body conventions:
+
+```
+## Purpose        what the capability is for
+## Scope          what it covers and what it does not
+## Glossary       optional; terms the requirements use
+## Requirements   the requirement blocks, in any order
+## Notes          optional
+```
+
+Complete example:
+
+```markdown
+---
+id: ACME-SP-0003
+type: spec
+title: Item ID allocation
+status: done
+assignees: [jose]
+author: jose
+labels: [backend]
+created: 2026-09-24T12:00:00Z
+updated: 2026-10-01T09:12:00Z
+requirements:
+  R1:
+    status: done
+  R2:
+    status: in_progress
+    trace:
+      code: [internal/core/allocator.go#NextID]
+      tests: [internal/core/allocator_test.go#TestNextID/stale_counter]
+    verified: {rev: "sha256:4e1b9c0d7a3f2e61", commit: 9c1f0a2e5b7d4c3e8f1a6b2d9e0c7f4a3b5d8e21, at: 2026-10-01T09:12:00Z, by: claude}
+---
+
+## Purpose
+
+Give every item a short, permanent, human-speakable id without a coordination service.
+
+## Requirements
+
+### ACME-SP-0003.R1 — IDs are never reused
+
+The allocator SHALL NOT assign a number that any existing, deleted or reserved item of the same
+type holds.
+
+#### Scenario: a deleted item keeps its number
+- **WHEN** `ACME-T-0107` is marked `deleted: true`
+- **THEN** no later task is allocated `ACME-T-0107`
+
+### ACME-SP-0003.R2 — Allocate the next ID by index scan
+
+WHEN an item of type T is created, the allocator SHALL assign `max(existing numbers of T) + 1`.
+
+#### Scenario: a stale counter hint is ignored
+- **WHEN** `id_allocation.counters.task` is 12 and the scan finds 108
+- **THEN** the next task is `ACME-T-0109`
+```
+
+### 21.2 Requirement blocks
+
+```
+<req-heading> ::= "### " <REQREF> " — " <title>        # U+2014 EM DASH; title 1..200 chars
+```
+
+- **R-REQ-1** A requirement heading is a level-3 ATX heading at column 0, outside a fenced code
+  block. Its ref MUST name the spec it is in (`E-REQ-FOREIGN`). ` – `, ` - ` and ` -- ` are accepted
+  on read as `W-REQ-SEPARATOR`; writers emit the em dash and never rewrite a body only to fix it.
+  Any other level-3 heading under `## Requirements` is `W-REQ-HEADING`.
+- **R-REQ-2** The first paragraph after the heading is the **statement**: an EARS pattern
+  (`The <system> SHALL …`, `WHEN …`, `WHILE …`, `IF … THEN …`, `WHERE …`) or a `SHALL` sentence.
+  It is followed by zero or more `#### Scenario: <name>` sub-blocks listing `**GIVEN**` (optional),
+  `**WHEN**`, `**AND**` and `**THEN**` steps. The grammar is linted ([§21.9](#219-grammar-lint-and-specslint)),
+  never a parse gate.
+- **R-REQ-3 Block extent.** On the canonical body (R-REV-1 applied, front matter removed), a block
+  starts at the first byte of its heading line and ends just before the next line, outside a fenced
+  code block, that is an ATX heading of level 1–3, or at the end of the body. `####` and deeper
+  headings belong to the block; setext headings are not boundaries.
+
+### 21.3 Requirement IDs
+
+- **R-REQ-4** A requirement is addressed as `<SPEC-ID>.R<n>` (R-ID-5). The number is permanent:
+  never renumbered, never reused, never reassigned, including after removal. Gaps are normal.
+- **R-REQ-5 Allocation.** The next number is `max + 1` over every block heading **and** every
+  `requirements:` key of that spec **and** every ref to that spec in the project index (link
+  targets, Spec Delta headings). Two blocks with one number are `E-REQ-DUPLICATE`.
+- **R-REQ-6 Removal and moves.** Removing a requirement moves its status to a `cancelled`-category
+  status and keeps block and number. Moving one to another spec allocates a new ref there, records
+  `supersedes` from the new to the old ref in the new entry's `links`, and removes the old one.
+- **R-REQ-7 Anchor.** A block's anchor is its ref lower-cased with `.` replaced by `-`
+  (`#acme-sp-0003-r2`). Search hits, the web app and wikilinks ([§14.1](#141-syntax)) resolve to it.
+
+### 21.4 The `requirements:` map
+
+| Key | Type | Notes |
+|---|---|---|
+| `status` | status id | project workflow; a `triage`-category status is `E-REQ-STATUS`; absent reads as `workflow.initial` (`W-REQ-NO-ENTRY`) |
+| `trace.code` | list of `<path>[#<symbol>]` | code that realises the requirement and cannot carry a marker |
+| `trace.tests` | list of `<path>[#<symbol>]` | tests that verify it when a marker is impractical |
+| `verified` | mapping | the durable verification stamp, written only when implementing work reaches `done` or by `gintrack spec verify --commit` (R-REQ-11a); ordinary runs go to the local cache (R-REQ-11) |
+| `verified.rev` | block rev | the text that was verified ([§21.5](#215-block-rev-and-requirement-rev)) |
+| `verified.commit` | full hex commit id | the commit at which every linked test passed (the git commit id in a Jujutsu repository) |
+| `verified.at` | timestamp | UTC RFC 3339, R-TIME-1; when the recorded run happened, not when the stamp was written |
+| `verified.by` | handle | who ran the recorded verification |
+| `links` | list of `{kind, target}` | same shape as item `links`; only `supersedes`, `superseded_by`, `relates_to` (R-REQ-13) |
+
+- **R-REQ-8** Trace paths are relative to the **repository root**, `/`-separated, with no `..`. A
+  path without `#symbol` means the whole file. A symbol is the language's identifier path
+  (`NextID`, `Store.Put`, `TestNextID/stale_counter`; for TS/JS the function name or the
+  `describe > it` path).
+- **R-REQ-9** A key with no block is `W-REQ-ORPHAN-ENTRY` (and keeps its number reserved); a block
+  with no key is `W-REQ-NO-ENTRY`. Keys are emitted in numeric order (`R2` before `R10`); inside an
+  entry the order is `status, trace, verified, links`, then unknown keys sorted. Unknown keys at any
+  level of an entry are preserved (R-FMT-6).
+- **R-REQ-10** `status` says where the requirement is in its life. Whether it is tested and holding
+  is the computed coverage state of [§21.6](#216-verification-and-coverage), which is never stored.
+- **R-REQ-13 Requirement links.** `requirements.R<n>.links` holds relations whose source is that
+  requirement, as `{kind, target}` entries shaped like item links (§12.1). `supersedes` and
+  `superseded_by` MUST target a requirement ref (optionally `<KEY>/`-qualified); `relates_to` MAY
+  target a requirement ref, a spec or any item. Any other kind is `E-REQ-FIELD`; a wrong target
+  type is `E-LINK-TARGET-TYPE`. Links are stored on one side only (R-LINK-1).
+
+### 21.5 Block rev and requirement rev
+
+Two hashes per requirement, both `"sha256:" + lowercase_hex(sha256(x))[0:16]` like R-REV-1:
+
+- **R-REQ-REV-1 Block rev** — `x` is the block extent (R-REQ-3) with trailing blank lines removed
+  and exactly one `\n` appended. It covers the heading, statement and scenarios and nothing else.
+  It is what `verified.rev` records and what suspect compares. Editing another block, front matter,
+  or the blank lines between blocks does not change it.
+- **R-REQ-REV-2 Requirement rev** — `x` is the same bytes followed by the canonical JSON (UTF-8,
+  sorted keys, no insignificant whitespace) of the requirement's map entry, `{}` when absent. It is
+  the **write token** of a single requirement: every requirement read returns it, every requirement
+  write quotes it, and a mismatch fails with `stale_revision` exactly as §5 specifies, `conflicts[]`
+  naming `text`, `title`, `status`, `trace`, `verified` or `links`. A write to one requirement never
+  invalidates another requirement's rev.
+- **R-REQ-REV-3** The file `rev` (§5) is unchanged; spec-level writes quote it. Neither requirement
+  hash is ever stored, except the block rev as the value of `verified.rev`.
+
+### 21.6 Verification and coverage
+
+- **R-REQ-11 Verification cache.** Every `gintrack spec verify` run and MCP `verify_requirement`
+  call records its results in a local, derived **verification cache** and writes nothing into the
+  spec. One entry per requirement per run holds `ref`, `rev` (the block rev tested), `commit` (full
+  hex id of `HEAD`), `tests` (the test ids run: `Verifies:` markers ∪ `trace.tests`), `result`
+  (`pass`|`fail`), `at` (UTC RFC 3339) and `by`. A run is `pass` only if every linked test passed
+  and the traced files are unchanged in the working tree relative to `commit`; a run on a dirty
+  tree is not recorded. The cache lives beside the index cache — `<docs>/.pmngr/verify.json`
+  natively, git-ignored (R-LOC-5); the same IndexedDB database as the WASM index in the browser,
+  where it is normally empty because tests cannot run there. It is never committed, never the
+  source of truth, and may be deleted at any time (R-IDX-1).
+- **R-REQ-11a Durable stamp.** `verified` is the only state written back into a spec by running
+  something, and only (a) when a story or task that `implements` or `modifies` the requirement
+  moves to a `done`-category status — the same write that applies its Spec Delta (§21.8) copies
+  `rev`, `commit`, `at`, `by` from the most recent `pass` cache entry whose `rev` equals the
+  requirement's current (post-apply) block rev; with no such entry no stamp is written, the move
+  is not refused, and the result lists the unstamped requirements — or (b) by
+  `gintrack spec verify --commit`, intended for CI on `main`, which stamps every requirement whose
+  run passed (one write per spec, quoting requirement revs; the caller commits). A `fail` never
+  overwrites a stamp. A hand-written stamp means what its author says.
+- **R-REQ-12 Coverage.** The coverage state — `untested`, `passing`, `failing`, `suspect` — is
+  **computed, never stored**, from the cache first and the stamp as the durable baseline. The
+  evidence is the most recent cache entry whose `rev` equals the current block rev and whose `at`
+  is later than `verified.at`, else the stamp. A `fail` entry → `failing`; `pass` evidence →
+  `passing`, or `suspect` if a traced file or symbol changed between its `commit` and `HEAD`,
+  directly or transitively (Pando); a stamp whose `rev` differs from the current block rev, with
+  no newer matching entry → `suspect`; neither → `untested`. **An empty cache falls back to the
+  stamp**, so each requirement shows its last durable state. No file carries a `suspect`,
+  `coverage` or test-result key; the marker scan is a derived cache too.
+
+### 21.7 In-code markers
+
+```
+<marker-line> ::= <ws>* <opener> <ws>* ("Implements" | "Verifies") ":" <ws>+ <mref>
+                  (<ws>* "," <ws>* <mref>)* <ws>* [","] <ws>* [<closer>] <ws>* EOL
+<mref>        ::= [<KEY> "/"] <REQREF>
+<opener>      ::= "//" | "#" | "--" | "/*" | "/**" | "*" | "<!--" | ""
+<closer>      ::= "*/" | "-->"
+```
+
+| Comment syntax | File types |
+|---|---|
+| `//`, `/* */` (`*` or nothing on a continuation line) | `.go .ts .tsx .js .jsx .mjs .cjs .java .kt .swift .c .h .cc .cpp .hpp .cs .rs .scala .dart .php .css .scss .vue .svelte` |
+| `#` | `.py .rb .sh .bash .zsh .pl .r .yaml .yml .toml .tf`, `Makefile`, `Dockerfile` |
+| `--` | `.sql .lua` |
+| `<!-- -->` (nothing on a continuation line) | `.md .html .htm .xml .svg .vue .svelte` |
+
+- **R-MARK-1 Match rule.** A line is a marker only if the whole line matches `<marker-line>` for a
+  comment syntax of its file type: the opener is the first non-whitespace text (a trailing comment
+  after code is not a marker; the empty opener is valid only inside an already open block
+  comment), the keyword is case-sensitive and directly followed by `:`, and after it come one or
+  more complete, comma-separated requirement refs followed by nothing but whitespace, one optional
+  trailing comma and the comment closer. A line whose opener and keyword match but whose ref list
+  does not is `W-MARKER-SYNTAX` and contributes nothing. File types outside the table, everything
+  under `.pmngr/`, and fenced code blocks in Markdown are not scanned. A marker inside a string
+  literal is not a marker (the Go scanner uses the Go lexer; other languages the line rule).
+- **R-MARK-2** A marker in the comment block directly before a declaration attaches to it; inside a
+  declaration's body, to the enclosing declaration; before the first declaration, or in a file type
+  without declarations, to the whole file.
+- **R-MARK-3** `Implements:` adds code to the requirement's trace, `Verifies:` adds tests. Markers
+  and `trace:` entries are **unioned**; neither overrides the other.
+- **R-MARK-4** Markers name requirements only; a bare spec ID makes the line malformed
+  (`W-MARKER-SYNTAX`), an unknown ref is `W-MARKER-DANGLING`. Markers are scanned by the native
+  trace engine, never by `internal/core`. Adding a file type or comment syntax to the table is an
+  additive scanner change, not a data-model change.
+
+### 21.8 `## Spec Delta`
+
+A story or task proposes changes to a living spec in a `## Spec Delta` section of its own body. The
+spec changes only when the story reaches a `done`-category status.
+
+```
+<delta-heading> ::= "### " ("ADDED" <ws> <SPEC-ID> | ("MODIFIED" | "REMOVED") <ws> <REQREF>) " — " <title>
+```
+
+- **R-DELTA-1** `ADDED <SPEC-ID>` carries a complete new block without a number; an optional
+  `Supersedes: <REQREF>` line directly under the heading makes it a move (R-REQ-6). On apply the
+  number is allocated, the block is appended to the spec, and the heading in the story is rewritten
+  to `### ADDED <REQREF> — …`.
+- **R-DELTA-2** `MODIFIED <REQREF>` carries the complete replacement text; applying it changes the
+  block rev, so an existing stamp becomes suspect until re-verified.
+- **R-DELTA-3** `REMOVED <REQREF>` carries a mandatory `Reason:` line; applying it moves the
+  requirement to the first `cancelled`-category status and keeps the block.
+- **R-DELTA-4** Until applied, each `MODIFIED`/`REMOVED` target is indexed as a `modifies` relation
+  of the story; after applying, the story carries `implements`/`modifies` links in front matter.
+- **R-DELTA-5** Diagnostics: `E-DELTA-OP`, `E-DELTA-TARGET`, `E-DELTA-REASON`, `W-DELTA-DANGLING`
+  ([§16](#16-validation-rules-consolidated)); added and replacement blocks are linted like any block.
+
+### 21.9 Grammar lint and `specs.lint`
+
+```yaml
+specs:
+  lint:
+    severity: warning        # off | warning (default) | error
+    rules:                   # optional per-rule override, same three values
+      LINT-REQ-VAGUE: error
+      LINT-REQ-SCENARIO: off
+    vague_words: [fast, quickly, user-friendly, easy, as appropriate, as needed, etc, robust]
+```
+
+| Rule | Checks |
+|---|---|
+| `LINT-REQ-STATEMENT` | the statement is an EARS pattern or contains `SHALL` |
+| `LINT-REQ-SCENARIO` | at least one `#### Scenario:` |
+| `LINT-REQ-WHEN-THEN` | each scenario has a `**WHEN**` and then a `**THEN**` |
+| `LINT-REQ-VAGUE` | a word of `vague_words` (whole word, case-insensitive) in the statement or a scenario |
+| `LINT-REQ-MULTI` | more than one `SHALL` in the statement |
+
+- **R-LINT-1** Findings carry the requirement ref, the rule and a line. At `off` the rule does not
+  run and reports nothing; at `warning` findings never block anything; at `error` they are validation errors of the spec (writes through the API and MCP
+  are refused, `gintrack doctor` exits non-zero).
+- **R-LINT-2** `vague_words`, when present, replaces the built-in list. A per-rule value wins over
+  `severity` in both directions. `specs.lint: <value>` (a scalar) is shorthand for
+  `specs.lint: {severity: <value>}`. A value other than `off`, `warning`, `error`, or an unknown
+  rule, is `E-PROJ-SPECS`.
+- **R-LINT-3** The linter lives in `internal/core` and runs in the browser through WASM, so
+  authoring and lint work in browser-only mode; impact and coverage, which need git and test
+  results, answer `unavailable` there.
+
+### 21.10 Schema version 2
+
+- **R-SCHEMA-2-1** A project that contains a **spec construct** MUST declare `schema: 2`. Spec
+  constructs are: a file under `specs/`; a link, item-level or in `requirements.R<n>.links`, of
+  kind `implements`, `implemented_by`, `modifies`, `modified_by`, `supersedes` or
+  `superseded_by`; a link target that is an `SP` ID or a requirement ref. `## Spec Delta`
+  sections, requirement wikilinks, in-code markers and the `specs:` key are not spec constructs:
+  older binaries read them as prose, a broken wikilink, a comment, or a preserved unknown key.
+- **R-SCHEMA-2-2** A binary that supports ADR-037 reads and writes `schema: 1` and `schema: 2`,
+  and still creates new projects at `schema: 1` (§2.2). In a `schema: 1` project each spec
+  construct is `E-SCHEMA-FEATURE` on its file; the project stays writable and the construct is
+  still indexed.
+- **R-SCHEMA-2-3 Upgrade on first use.** The first write through the vault (web app, CLI, MCP or
+  WASM) that introduces a spec construct into a `schema: 1` project also rewrites that line of
+  `project.yaml` to `schema: 2` in the same write (committed together under commit-on-save), quoting
+  the file `rev` of `project.yaml` as usual, and reports `schemaUpgraded: 2` in its result. Nothing
+  is upgraded on open, on read, or on a write without a spec construct. `gintrack doctor --fix`
+  performs the same one-line edit for constructs written by hand. No other file changes, so no
+  `gintrack migrate` step is needed (R-EVO-4), and no `gintrack spec init` step is required;
+  there is no downgrade. A reviewer who sees the one-line `schema` change in a spec PR traces it
+  to the `schemaUpgraded: 2` the author's tool reported.
+- **R-SCHEMA-2-4 Older binaries.** A binary whose supported schema is `1` reports `E-PROJ-SCHEMA`
+  on a `schema: 2` project and opens it read-only (R-EVO-2), ignoring `specs/`. Released binaries
+  up to 2.0.1 emit the diagnostic but do not gate writes on it and may still write. The write gate
+  — every vault write refused on a missing or newer `schema` — ships in the same release that
+  introduces specs (`GIT-US-0105`), with no 2.0.2 backport, and that release's upgrade note says
+  every writing binary, web build and CI job must be upgraded before a project's first spec
+  construct.
