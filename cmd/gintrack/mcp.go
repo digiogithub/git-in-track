@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/digiogithub/git-in-track/internal/config"
+	"github.com/digiogithub/git-in-track/internal/core"
 	"github.com/digiogithub/git-in-track/internal/core/osfs"
 	"github.com/digiogithub/git-in-track/internal/gitops"
 	"github.com/digiogithub/git-in-track/internal/mcp"
@@ -242,6 +243,16 @@ func mcpRepos(res *config.Resolution, extra []string) ([]config.Repo, error) {
 // path guard confines paths to, and their vaults are what the watcher keeps
 // current.
 func mountWorkspace(repos []config.Repo, version string) (*corevault.Workspace, []mcpMount, error) {
+	return mountWorkspaceOver(repos, version, nil)
+}
+
+// mountWorkspaceOver is mountWorkspace with every repository's file system
+// passed through wrap first, when wrap is not nil. `gintrack spec verify`
+// without --commit wraps each one in an in-memory overlay, so the stamp write
+// path runs for real and nothing reaches the disk.
+func mountWorkspaceOver(
+	repos []config.Repo, version string, wrap func(core.FS) core.FS,
+) (*corevault.Workspace, []mcpMount, error) {
 	space := corevault.NewWorkspace()
 	space.SetVersion(version)
 	mounts := make([]mcpMount, 0, len(repos))
@@ -251,7 +262,11 @@ func mountWorkspace(repos []config.Repo, version string) (*corevault.Workspace, 
 			return nil, nil, fmt.Errorf("open %s: %w", repo.ID, err)
 		}
 		docs := declaredDocsFolders(repo)
-		v, err := corevault.OpenWithDocs(fsys, filepath.Base(filepath.Clean(repo.Path)), docs)
+		var files core.FS = fsys
+		if wrap != nil {
+			files = wrap(fsys)
+		}
+		v, err := corevault.OpenWithDocs(files, filepath.Base(filepath.Clean(repo.Path)), docs)
 		if err != nil {
 			return nil, nil, fmt.Errorf("index %s: %w", repo.ID, err)
 		}

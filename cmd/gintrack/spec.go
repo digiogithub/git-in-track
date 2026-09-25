@@ -14,9 +14,10 @@ import (
 )
 
 // This file is the `gintrack spec` command family (docs/07 section 4.19).
-// Only `spec ingest` exists so far (GIT-US-0115); GIT-US-0125 adds lint,
-// impact, coverage, verify and trace. The commands stay thin: parsing,
-// mapping, matching and the cache live in internal/trace.
+// `spec ingest` (GIT-US-0115) lives here; lint, impact, coverage, verify and
+// trace (GIT-US-0125) live in the spec_*.go files beside it. The commands stay
+// thin: parsing, mapping, matching and the cache live in internal/trace, and
+// the queries are the vault methods the MCP tools call.
 
 func newSpecCommand(flags *globalFlags) *cobra.Command {
 	cmd := &cobra.Command{
@@ -24,7 +25,14 @@ func newSpecCommand(flags *globalFlags) *cobra.Command {
 		Short: "Work with specs and their requirements",
 		Args:  noArgs,
 	}
-	cmd.AddCommand(newSpecIngestCommand(flags))
+	cmd.AddCommand(
+		newSpecIngestCommand(flags),
+		newSpecLintCommand(flags),
+		newSpecImpactCommand(flags),
+		newSpecCoverageCommand(flags),
+		newSpecVerifyCommand(flags),
+		newSpecTraceCommand(flags),
+	)
 	return cmd
 }
 

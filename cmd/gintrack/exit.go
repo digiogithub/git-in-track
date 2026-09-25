@@ -19,6 +19,11 @@ const (
 	exitNotFound   = 4
 	exitConflict   = 5
 	exitGit        = 6
+	// exitGate is `gintrack spec impact --fail-on`: the report was produced,
+	// and a hit has one of the listed coverage states. It is distinct from
+	// every error code so that a CI gate can tell "the check failed" from "the
+	// check could not run".
+	exitGate = 7
 )
 
 // exitError is an error carrying the exit code the process should end with.
