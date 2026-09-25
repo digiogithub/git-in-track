@@ -70,11 +70,17 @@ type codeIndexView struct {
 // workspace holding several clones never collapses them into one project.
 func (s *searchState) codeProjects() []codeProject {
 	s.mu.RLock()
-	configured := strings.TrimSpace(s.settings.ProjectID)
+	configured := s.settings.ProjectID
 	s.mu.RUnlock()
+	return codeProjectsOf(configured, s.repos)
+}
 
+// codeProjectsOf lists the code projects of the ready mounts of repos, the
+// first one named by a configured project id when there is one.
+func codeProjectsOf(configured string, repos *registry) []codeProject {
+	configured = strings.TrimSpace(configured)
 	var out []codeProject
-	for _, m := range s.repos.ready() {
+	for _, m := range repos.ready() {
 		id := codeProjectID(m)
 		if len(out) == 0 && configured != "" {
 			id = pando.SanitizeProjectID(configured)

@@ -147,29 +147,7 @@ func (s *searchState) rebuild() {
 		_ = old.Close()
 	}
 
-	var client pandoAPI
-	if strings.TrimSpace(settings.MCPURL) != "" {
-		c, err := pando.New(pando.Options{
-			MCPURL:      settings.MCPURL,
-			Token:       settings.MCPToken,
-			RESTURL:     settings.RESTURL,
-			RESTToken:   settings.RESTToken,
-			ProjectID:   s.projectID(),
-			AllowRemote: settings.AllowRemote,
-		})
-		if err != nil {
-			// A refused endpoint is a configuration problem, not a request
-			// failure: say so once, here, and stay on the core index.
-			s.log.Warn("semantic search is off: the Pando endpoint was refused", "error", err)
-		} else {
-			client = c
-		}
-	}
-
-	var searcher *pandoSearcher
-	if client != nil {
-		searcher = &pandoSearcher{client: client, repos: s.repos, log: s.log, projects: s.codeProjects()}
-	}
+	client, searcher := newPandoSearcher(settings, s.repos, s.log)
 	s.mu.Lock()
 	s.client, s.searcher = client, searcher
 	s.mu.Unlock()
@@ -184,6 +162,39 @@ func (s *searchState) rebuild() {
 	}
 }
 
+// newPandoSearcher builds the Pando client and the semantic searcher of a
+// workspace from the `search.pando` settings. It is the one construction path
+// of semantic search: the companion's rebuild and the stdio MCP server
+// (InstallSemanticSearch) both go through it, so the two hosts can never
+// disagree about what "Pando is configured" means (GIT-US-0121).
+//
+// Both results are nil when no MCP URL is configured or the configured one is
+// refused; a refusal is logged once, here, and the host stays on the core
+// index.
+func newPandoSearcher(settings config.SearchPando, repos *registry, log *slog.Logger) (pandoAPI, *pandoSearcher) {
+	if strings.TrimSpace(settings.MCPURL) == "" {
+		return nil, nil
+	}
+	c, err := pando.New(pando.Options{
+		MCPURL:      settings.MCPURL,
+		Token:       settings.MCPToken,
+		RESTURL:     settings.RESTURL,
+		RESTToken:   settings.RESTToken,
+		ProjectID:   pandoProjectID(settings.ProjectID, repos),
+		AllowRemote: settings.AllowRemote,
+	})
+	if err != nil {
+		// A refused endpoint is a configuration problem, not a request
+		// failure: say so once, here, and stay on the core index.
+		log.Warn("semantic search is off: the Pando endpoint was refused", "error", err)
+		return nil, nil
+	}
+	return c, &pandoSearcher{
+		client: c, repos: repos, log: log,
+		projects: codeProjectsOf(settings.ProjectID, repos),
+	}
+}
+
 // projectID is the Pando code project the semantic surface talks to.
 //
 // An empty `search.pando.projectId` is not "no project": docs/07 section 4 and
@@ -193,12 +204,18 @@ func (s *searchState) rebuild() {
 // turned into ErrNotConfigured at the first SearchCode call (GIT-T-0142).
 func (s *searchState) projectID() string {
 	s.mu.RLock()
-	configured := strings.TrimSpace(s.settings.ProjectID)
+	configured := s.settings.ProjectID
 	s.mu.RUnlock()
-	if configured != "" {
+	return pandoProjectID(configured, s.repos)
+}
+
+// pandoProjectID is the Pando code project of a workspace: the configured one,
+// or the one derived from its first ready mount when none is configured.
+func pandoProjectID(configured string, repos *registry) string {
+	if configured = strings.TrimSpace(configured); configured != "" {
 		return configured
 	}
-	return derivedProjectID(s.repos)
+	return derivedProjectID(repos)
 }
 
 // derivedProjectID is the project id of the repository the workspace is built
