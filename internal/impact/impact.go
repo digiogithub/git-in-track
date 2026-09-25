@@ -413,11 +413,7 @@ func (r *Resolver) transitive(ctx context.Context, q core.ImpactQuery, symbols [
 		out, err := client.ImpactAnalysis(ctx, r.opts.ProjectID, []string{name},
 			pando.ImpactOptions{Depth: depth, Limit: limit})
 		if err != nil {
-			tier.Message = err.Error()
-			tier.Status = core.ImpactTierError
-			if pando.IsUnavailable(err) || errors.Is(err, context.DeadlineExceeded) {
-				tier.Status = core.ImpactTierUnavailable
-			}
+			tier.Status, tier.Message = pandoFailure(err)
 			tier.Truncated = false
 			return tier
 		}
@@ -438,6 +434,22 @@ func (r *Resolver) transitive(ctx context.Context, q core.ImpactQuery, symbols [
 		col.add(f.ref, core.ImpactTierTransitive, f.reason, true)
 	}
 	return tier
+}
+
+// pandoFailure is the status and message of a tier whose Pando call failed.
+// A Pando that cannot answer is `unavailable` with a short, fixed reason
+// (pando.Reason): the error's own text can quote a Pando cache id or an
+// address, and two runs against one index must give byte-identical reports
+// (GIT-US-0164). Any other failure is an `error` that says what it was.
+func pandoFailure(err error) (status core.ImpactTierStatus, message string) {
+	if pando.IsUnavailable(err) || errors.Is(err, context.DeadlineExceeded) {
+		reason := pando.Reason(err)
+		if reason == "" {
+			reason = "Pando did not answer in time"
+		}
+		return core.ImpactTierUnavailable, reason
+	}
+	return core.ImpactTierError, err.Error()
 }
 
 // repoPath turns a Pando file path, relative to the indexed project root —
@@ -515,11 +527,7 @@ func (r *Resolver) semantic(ctx context.Context, ix *core.Index, q core.ImpactQu
 	}
 	hits, err := searcher.SearchSemantic(ctx, vault.SemanticQuery{Q: text, Limit: limit, Kind: core.SearchKindRequirement})
 	if err != nil {
-		tier.Message = err.Error()
-		tier.Status = core.ImpactTierError
-		if pando.IsUnavailable(err) || errors.Is(err, context.DeadlineExceeded) {
-			tier.Status = core.ImpactTierUnavailable
-		}
+		tier.Status, tier.Message = pandoFailure(err)
 		return tier, nil
 	}
 	var out []semanticHit

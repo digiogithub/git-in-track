@@ -236,7 +236,7 @@ func (r *toolResult) decodeInto(into any) (ok bool, err error) {
 	if len(r.metadata) > 0 {
 		if err := json.Unmarshal(r.metadata, into); err != nil {
 			return false, fmt.Errorf("%w: %s returned metadata this client cannot read: %w",
-				ErrUnreachable, r.tool, err)
+				ErrUnreadable, r.tool, err)
 		}
 		return true, nil
 	}
