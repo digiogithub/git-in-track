@@ -6,7 +6,7 @@
     {
       "tier": 1,
       "status": "ok",
-      "hits": 6
+      "hits": 7
     },
     {
       "tier": 2,
@@ -24,6 +24,7 @@
       "ref": "ACME-SP-0002.R3",
       "title": "Reject an id whose key is not the project's",
       "tier": 1,
+      "kind": "behaviour",
       "status": "failing",
       "reasons": [
         "file:internal/core/ids.go",
@@ -34,6 +35,7 @@
       "ref": "ACME-SP-0001.R1",
       "title": "Allocate the next id by scanning the folder",
       "tier": 1,
+      "kind": "behaviour",
       "status": "passing",
       "suspect": true,
       "reasons": [
@@ -44,6 +46,7 @@
       "ref": "ACME-SP-0001.R2",
       "title": "Zero-pad ids to four digits",
       "tier": 1,
+      "kind": "behaviour",
       "status": "passing",
       "suspect": true,
       "reasons": [
@@ -55,6 +58,7 @@
       "ref": "ACME-SP-0002.R7",
       "title": "Never renumber an existing item",
       "tier": 1,
+      "kind": "behaviour",
       "status": "suspect",
       "suspect": true,
       "reasons": [
@@ -65,6 +69,7 @@
       "ref": "ACME-SP-0003.R1",
       "title": "Write the item file atomically",
       "tier": 1,
+      "kind": "behaviour",
       "status": "passing",
       "suspect": true,
       "reasons": [
@@ -79,6 +84,7 @@
       "ref": "ACME-SP-0003.R4",
       "title": "Refuse a write whose rev is stale",
       "tier": 2,
+      "kind": "behaviour",
       "status": "passing",
       "suspect": true,
       "reasons": [
@@ -86,9 +92,21 @@
       ]
     },
     {
+      "ref": "ACME-SP-0001.R3",
+      "title": "Never reuse a number freed by a deletion",
+      "tier": 1,
+      "kind": "test-only",
+      "status": "passing",
+      "suspect": true,
+      "reasons": [
+        "symbol:internal/core/allocator_test.go#TestNextID/gap"
+      ]
+    },
+    {
       "ref": "ACME-SP-0001.R4",
       "title": "Reserve numbers for drafts",
       "tier": 1,
+      "kind": "behaviour",
       "status": "untested",
       "reasons": [
         "delta:ACME-US-0042"
@@ -101,6 +119,7 @@
       "ref": "ACME-SP-0004.R2",
       "title": "Show the new id in the create dialog",
       "tier": 2,
+      "kind": "behaviour",
       "status": "untested",
       "reasons": [
         "call:web/src/components/CreateDialog.tsx#submit calls NextID d2"
@@ -110,6 +129,7 @@
       "ref": "ACME-SP-0005.R1",
       "title": "Answer create_story with the allocated id",
       "tier": 2,
+      "kind": "behaviour",
       "reasons": [
         "call:internal/mcp/tools.go#createStory calls NextID d2"
       ]
@@ -145,7 +165,7 @@
       ]
     }
   ],
-  "total": 12,
+  "total": 13,
   "budget": 1500,
-  "tokens": 775
+  "tokens": 901
 }

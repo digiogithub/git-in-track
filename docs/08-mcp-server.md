@@ -1115,8 +1115,8 @@ same bytes. Input: `base` (default `HEAD`), `head` (empty or `"worktree"` is the
 `story` (its Spec Delta and `implements`/`modifies` links are direct hits, and it routes the call
 to its repository), `title`, `project` (routes the call when no story is named), `tiers`,
 `budget`, `cursor` and `format` (`json` or `text`). It ranks the
-requirements a diff affects — failing, then suspect, then tier (semantic candidates last), then
-ref — and cuts them at a `budget` in tokens (default 1500, estimated as `ceil(bytes / 3)` of the
+requirements a diff affects — failing, then suspect, then the rest; within each, behaviour hits
+before `test-only` hits before semantic candidates; then tier, then ref — and cuts them at a `budget` in tokens (default 1500, estimated as `ceil(bytes / 3)` of the
 compact JSON, so the estimate errs high). The per-tier status is always kept; the cut hits are
 counted in `truncated` and fetched with `nextCursor`, the same filter-bound `{offset,
 fingerprint}` cursor as section 3 principle 4: pass it back as `cursor` with the query
@@ -1130,8 +1130,8 @@ the `text` form:
   "budget": 300, "tokens": 282 }
 ```
 
-whose `text` reads, one line per requirement (ref, tier, status, suspect flag, clipped title,
-first reason and how many more):
+whose `text` reads, one line per requirement (ref, tier, status, suspect flag, the `test-only`
+word on a test-only hit, clipped title, first reason and how many more):
 
 ```text
 impact main..worktree: 6 files, 9 symbols, 12 hits, showing 1-5
@@ -1145,7 +1145,15 @@ truncated: 7, cursor: eyJvIjo1LCJmIjoiYTRlYjdmNzkifQ
 ```
 
 The whole report of that PR is ≈ 775 tokens as JSON and ≈ 475 as text — within the 1.5k success
-criterion of the spec-driven milestone. A tier that could not run takes one short line
+criterion of the spec-driven milestone.
+
+Every tier-1 and tier-2 hit carries a `kind` (`GIT-US-0157`, doc 03 R-IMP-5): `behaviour` when a
+reason reaches the requirement through its code (an `Implements:` marker or a `trace.code`
+entry, directly or through a call) or through the story's links or Spec Delta, `test-only` when
+every reason reaches it through a test that verifies it (a `Verifies:` marker or a
+`trace.tests` entry). A `test-only` hit says "a test of this requirement changed", not "its
+behaviour changed": read the behaviour hits first, and a `test-only` one only to check that the
+test still asserts what the requirement states. A tier-3 candidate has no `kind`. A tier that could not run takes one short line
 (`3 unavailable (Pando is not configured)`), and the `json` form carries `tiers` and the ranked
 `hits` in the shape of doc 03 §21.11 R-IMP-5 instead of `text`.
 

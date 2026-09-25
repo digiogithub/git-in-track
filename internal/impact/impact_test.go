@@ -852,3 +852,61 @@ func TestImpactSeamsMayReenterTheVault(t *testing.T) {
 		})
 	}
 }
+
+// TestImpactKind pins the hit kinds of GIT-US-0157: a hit is test-only when
+// every certain reason reaches the requirement through a test that verifies
+// it, behaviour as soon as one reaches it through its code or the story, and
+// a tier-3 candidate has no kind.
+func TestImpactKind(t *testing.T) {
+	changedTest := strings.Replace(fxTests, "func TestNextID(t *testing.T) {}", "func TestNextID(t *testing.T) { t.Log(1) }", 1)
+	testCaller := &fakeGraph{callers: map[string][]pando.ImpactCaller{
+		"NextID": {{Name: "TestFormat", FilePath: "src/alloc_test.go", StartLine: lineOf(fxTests, "func TestFormat"), Depth: 1}},
+	}}
+	for _, tc := range []struct {
+		name  string
+		setup func(f *fixture)
+		graph CallGraph
+		sem   vault.SemanticSearcher
+		story core.ItemID
+		want  map[string]core.ImpactKind
+	}{
+		{"only a verifying test changed", func(f *fixture) {
+			f.write("src/alloc.go", fxAlloc)
+			f.write("src/alloc_test.go", changedTest)
+		}, nil, nil, "", map[string]core.ImpactKind{"ACME-SP-0001.R1": core.ImpactKindTestOnly}},
+		{"the code and its test changed", func(f *fixture) {
+			f.write("src/alloc_test.go", changedTest)
+		}, nil, nil, "", map[string]core.ImpactKind{"ACME-SP-0001.R1": core.ImpactKindBehaviour}},
+		{"a call reaches a requirement only through its test", func(*fixture) {},
+			testCaller, nil, "", map[string]core.ImpactKind{
+				"ACME-SP-0001.R1": core.ImpactKindBehaviour,
+				"ACME-SP-0001.R2": core.ImpactKindTestOnly,
+			}},
+		{"a story's delta and a candidate", func(f *fixture) {
+			f.write("src/alloc.go", fxAlloc)
+			f.write("src/alloc_test.go", changedTest)
+		}, nil, fixtureSemantic(), "ACME-US-0001", map[string]core.ImpactKind{
+			"ACME-SP-0001.R1": core.ImpactKindTestOnly,
+			"ACME-SP-0001.R3": "",
+			"ACME-SP-0001.R4": core.ImpactKindBehaviour,
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			tc.setup(f)
+			res := f.impact(f.resolver(tc.graph, tc.sem), core.ImpactQuery{Base: f.base, Story: tc.story})
+			got := map[string]core.ImpactKind{}
+			for _, h := range res.Hits {
+				got[h.Ref.String()] = h.Kind
+			}
+			if len(got) != len(tc.want) {
+				t.Fatalf("hits = %+v, want %v", res.Hits, tc.want)
+			}
+			for ref, kind := range tc.want {
+				if k, ok := got[ref]; !ok || k != kind {
+					t.Errorf("%s kind = %q (present %v), want %q", ref, k, ok, kind)
+				}
+			}
+		})
+	}
+}

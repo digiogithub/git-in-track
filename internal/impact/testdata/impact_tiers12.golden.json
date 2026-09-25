@@ -24,6 +24,7 @@
       "ref": "ACME-SP-0001.R1",
       "title": "Allocate by scan",
       "tier": 1,
+      "kind": "behaviour",
       "status": "suspect",
       "suspect": true,
       "reasons": [
@@ -34,6 +35,7 @@
       "ref": "ACME-SP-0001.R4",
       "title": "Reserve numbers",
       "tier": 1,
+      "kind": "behaviour",
       "status": "untested",
       "reasons": [
         "delta:ACME-US-0001"
@@ -46,6 +48,7 @@
       "ref": "ACME-SP-0001.R2",
       "title": "Format ids",
       "tier": 2,
+      "kind": "behaviour",
       "status": "passing",
       "suspect": true,
       "reasons": [

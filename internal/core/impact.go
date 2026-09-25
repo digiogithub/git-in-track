@@ -93,6 +93,22 @@ type ImpactTier struct {
 	Message string `json:"message,omitempty"`
 }
 
+// ImpactKind says what a certain (tier 1 or 2) hit's diff changed: the code
+// behind the requirement, or only a test that verifies it (GIT-US-0157).
+type ImpactKind string
+
+// The hit kinds.
+const (
+	// ImpactKindBehaviour: at least one reason reaches the requirement
+	// through its code — an Implements: marker or a trace.code entry, directly
+	// or through a call — or the story names it in its links or Spec Delta.
+	ImpactKindBehaviour ImpactKind = "behaviour"
+	// ImpactKindTestOnly: every reason reaches the requirement through a test
+	// that verifies it — a Verifies: marker or a trace.tests entry. The tests
+	// changed; what the requirement states may not have.
+	ImpactKindTestOnly ImpactKind = "test-only"
+)
+
 // ImpactHit is one requirement a diff affects. A requirement reached by
 // several tiers is one hit, at its strongest (lowest) tier, listing the
 // reasons of every tier that reached it with certainty.
@@ -100,6 +116,9 @@ type ImpactHit struct {
 	Ref   RequirementRef `json:"ref"`
 	Title string         `json:"title"`
 	Tier  int            `json:"tier"`
+	// Kind is behaviour or test-only on a tier-1 or tier-2 hit; empty on a
+	// tier-3 candidate, which is not a trace.
+	Kind ImpactKind `json:"kind,omitempty"`
 	// Candidate marks a tier-3 hit: a semantic neighbor, not a trace.
 	Candidate bool `json:"candidate,omitempty"`
 	// Score is the semantic score of a candidate, rounded to three decimals.

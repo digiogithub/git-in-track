@@ -118,13 +118,36 @@ type collector struct {
 }
 
 type hitState struct {
-	tier    int
-	score   float64
-	touched bool // a code or test edge the diff changes, directly or through a call
-	reasons [4][]string
+	tier      int
+	score     float64
+	touched   bool // a code or test edge the diff changes, directly or through a call
+	behaviour bool // a reason reached the requirement through its code or the story
+	tested    bool // a reason reached it through a test that verifies it
+	reasons   [4][]string
 }
 
-func (c *collector) add(ref core.RequirementRef, tier int, reason string, touched bool) *hitState {
+// kind is the hit's ImpactKind: behaviour as soon as one reason is, test-only
+// when every certain reason came through a verifying test, empty for a
+// candidate.
+func (h *hitState) kind() core.ImpactKind {
+	switch {
+	case h.behaviour:
+		return core.ImpactKindBehaviour
+	case h.tested:
+		return core.ImpactKindTestOnly
+	}
+	return ""
+}
+
+// roleKind is the kind a trace edge's role gives a reason reaching it.
+func roleKind(role core.TraceRole) core.ImpactKind {
+	if role == core.TraceRoleTest {
+		return core.ImpactKindTestOnly
+	}
+	return core.ImpactKindBehaviour
+}
+
+func (c *collector) add(ref core.RequirementRef, tier int, reason string, touched bool, kind core.ImpactKind) *hitState {
 	h, ok := c.hits[ref]
 	if !ok {
 		h = &hitState{tier: tier}
@@ -134,6 +157,8 @@ func (c *collector) add(ref core.RequirementRef, tier int, reason string, touche
 		h.tier = tier
 	}
 	h.touched = h.touched || touched
+	h.behaviour = h.behaviour || kind == core.ImpactKindBehaviour
+	h.tested = h.tested || kind == core.ImpactKindTestOnly
 	for _, r := range h.reasons[tier] {
 		if r == reason {
 			return h
@@ -191,7 +216,7 @@ func (r *Resolver) Impact(ctx context.Context, ix *core.Index, q core.ImpactQuer
 	if q.Wants(core.ImpactTierDirect) {
 		tiers[0].Status = core.ImpactTierOK
 		for _, h := range touching {
-			col.add(h.Ref, core.ImpactTierDirect, h.Reason+":"+h.TraceRef(), true)
+			col.add(h.Ref, core.ImpactTierDirect, h.Reason+":"+h.TraceRef(), true, roleKind(h.Role))
 		}
 		storyHits(ix, q.Story, col)
 	}
@@ -211,7 +236,7 @@ func (r *Resolver) Impact(ctx context.Context, ix *core.Index, q core.ImpactQuer
 		if _, certain := col.hits[s.ref]; certain {
 			continue // never merged into the certainty of tiers 1 and 2
 		}
-		h := col.add(s.ref, core.ImpactTierSemantic, "semantic", false)
+		h := col.add(s.ref, core.ImpactTierSemantic, "semantic", false, "")
 		h.score = s.score
 	}
 
@@ -311,7 +336,7 @@ func storyHits(ix *core.Index, story core.ItemID, col *collector) {
 		if l.Pending {
 			reason = "delta:" + string(story)
 		}
-		col.add(ref, core.ImpactTierDirect, reason, false)
+		col.add(ref, core.ImpactTierDirect, reason, false, core.ImpactKindBehaviour)
 	}
 }
 
@@ -404,6 +429,7 @@ func (r *Resolver) transitive(ctx context.Context, q core.ImpactQuery, symbols [
 	type pending struct {
 		ref    core.RequirementRef
 		reason string
+		kind   core.ImpactKind
 	}
 	var found []pending
 	lines := newLineMapper(tree)
@@ -426,12 +452,12 @@ func (r *Resolver) transitive(ctx context.Context, q core.ImpactQuery, symbols [
 			sym := lines.symbolAt(p, c.StartLine)
 			for _, e := range graph.ForSymbol(p, sym) {
 				reason := "call:" + e.TraceRef() + " calls " + name + " d" + strconv.Itoa(max(c.Depth, 1))
-				found = append(found, pending{ref: e.Ref, reason: reason})
+				found = append(found, pending{ref: e.Ref, reason: reason, kind: roleKind(e.Role)})
 			}
 		}
 	}
 	for _, f := range found {
-		col.add(f.ref, core.ImpactTierTransitive, f.reason, true)
+		col.add(f.ref, core.ImpactTierTransitive, f.reason, true, f.kind)
 	}
 	return tier
 }
@@ -620,7 +646,7 @@ func (r *Resolver) render(ctx context.Context, ix *core.Index, col *collector, h
 	out := make([]core.ImpactHit, 0, len(refs))
 	for i, ref := range refs {
 		st := col.hits[ref]
-		h := core.ImpactHit{Ref: ref, Title: views[i].Title, Tier: st.tier}
+		h := core.ImpactHit{Ref: ref, Title: views[i].Title, Tier: st.tier, Kind: st.kind()}
 		if st.tier == core.ImpactTierSemantic {
 			h.Candidate = true
 			h.Score = st.score
