@@ -866,3 +866,140 @@ describe('BrowserProvider — what a tab cannot do (GIT-EP-0012, GIT-EP-0015)', 
     await expect(provider.reindexSearch()).rejects.toMatchObject({ code: 'not_supported' });
   });
 });
+
+// --------------------------------------------------------------------- specs
+
+describe('BrowserProvider specs (GIT-US-0127)', () => {
+  beforeEach(async () => {
+    clearVaultRegistry();
+    await clearHandleRecords();
+  });
+
+  const spec: Item = {
+    id: 'ACME-SP-0001',
+    type: 'spec',
+    title: 'Checkout',
+    body: '',
+    path: 'docs/.pmngr/specs/ACME-SP-0001-checkout.md',
+    rev: 'sha256:00000000000000s1',
+  };
+  const requirement = {
+    ref: 'ACME-SP-0001.R1',
+    spec: 'ACME-SP-0001',
+    path: spec.path,
+    anchor: 'acme-sp-0001-r1',
+    line: 3,
+    title: 'Trim input',
+    status: 'backlog',
+    rev: 'sha256:00000000000000r1',
+    blockRev: 'sha256:00000000000000b1',
+  };
+
+  it('reads specs and requirements through the WASM core', async () => {
+    const { provider, call } = await mount({
+      'item.list': () => ({ items: [spec], total: 1 }),
+      'item.get': () => spec,
+      'requirement.list': () => ({ requirements: [requirement], total: 1 }),
+      'requirement.get': () => ({ requirement, specRev: spec.rev }),
+    });
+
+    await expect(provider.listSpecs('ACME', { status: 'draft' })).resolves.toMatchObject({
+      total: 1,
+    });
+    expect(call).toHaveBeenCalledWith('item.list', {
+      status: 'draft',
+      project: 'ACME',
+      type: 'spec',
+    });
+    await expect(provider.getSpec('ACME', 'ACME-SP-0001')).resolves.toMatchObject({
+      id: 'ACME-SP-0001',
+    });
+    await expect(provider.getSpec('OTHER', 'ACME-SP-0001')).rejects.toMatchObject({
+      code: 'not_found',
+    });
+
+    await expect(
+      provider.listRequirements('ACME', { spec: 'ACME-SP-0001', text: true }),
+    ).resolves.toEqual({ requirements: [requirement], total: 1 });
+    expect(call).toHaveBeenCalledWith('requirement.list', {
+      spec: 'ACME-SP-0001',
+      text: true,
+      project: 'ACME',
+    });
+    await expect(provider.getRequirement('ACME', 'ACME-SP-0001.R1')).resolves.toEqual({
+      requirement,
+      specRev: spec.rev,
+    });
+  });
+
+  it('persists a requirement write and announces the spec', async () => {
+    const written = {
+      path: spec.path,
+      text: '---\nid: ACME-SP-0001\n---\n### ACME-SP-0001.R1 — Trim\n',
+    };
+    const { provider, vault, events, call } = await mount({
+      'requirement.update': () => ({
+        requirement: { ...requirement, title: 'Trim', rev: 'sha256:00000000000000r2' },
+        specRev: 'sha256:00000000000000s2',
+        writes: { written: [written], removed: [] },
+      }),
+    });
+
+    const result = await provider.updateRequirement(
+      'ACME',
+      'ACME-SP-0001.R1',
+      { title: 'Trim' },
+      requirement.rev,
+    );
+
+    expect(call).toHaveBeenCalledWith('requirement.update', {
+      ref: 'ACME-SP-0001.R1',
+      patch: { title: 'Trim' },
+      rev: requirement.rev,
+    });
+    expect(result).toEqual({
+      requirement: expect.objectContaining({ title: 'Trim', rev: 'sha256:00000000000000r2' }),
+      specRev: 'sha256:00000000000000s2',
+    });
+    expect(result).not.toHaveProperty('writes');
+    expect(vault.snapshot()[spec.path]).toContain('Trim');
+    expect(events.at(-1)).toEqual({ kind: 'items', repoId: 'repo-1', ids: ['ACME-SP-0001'] });
+  });
+
+  it('maps a stale requirement rev onto stale_revision', async () => {
+    const { provider } = await mount({
+      'requirement.update': () => {
+        throw coreError('stale_revision', 'ACME-SP-0001.R1 changed');
+      },
+    });
+
+    await expect(
+      provider.updateRequirement('ACME', 'ACME-SP-0001.R1', { status: 'todo' }, 'sha256:stale'),
+    ).rejects.toMatchObject({ code: 'stale_revision' });
+  });
+
+  it('answers trace, coverage and impact with unavailable without calling the core', async () => {
+    const { provider, call } = await mount();
+    const before = call.mock.calls.length;
+
+    for (const pending of [
+      provider.traceRequirement('ACME', 'ACME-SP-0001.R1'),
+      provider.listCoverage('ACME'),
+      provider.queryImpact('ACME', { base: 'main' }),
+      provider.getImpactReport('ACME', { budget: 500 }),
+    ]) {
+      await expect(pending).rejects.toMatchObject({ name: 'ProviderError', code: 'unavailable' });
+    }
+    expect(call.mock.calls.length).toBe(before);
+  });
+
+  it('maps an unavailable core answer onto the unavailable code', async () => {
+    const { provider } = await mount({
+      'requirement.list': () => {
+        throw coreError('unavailable', 'no backend');
+      },
+    });
+
+    await expect(provider.listRequirements('ACME')).rejects.toMatchObject({ code: 'unavailable' });
+  });
+});

@@ -825,10 +825,35 @@ export interface DataProvider {
   deleteAgentThread(threadId: string, options?: AgentRequestOptions): Promise<void>;
   cancelAgentRun(threadId: string, options?: AgentRequestOptions): Promise<void>;
 
+  // specs and requirements (GIT-US-0127, ADR-037) — all three providers
+  // Reads and writes go through the WASM core in browser-only mode and through
+  // /api/v1/projects/{key}/specs on the companion (docs/07 §5.5).
+  listSpecs(project: string, filter?: SpecFilter): Promise<ItemPage>;
+  getSpec(project: string, id: string): Promise<Item>;
+  listRequirements(project: string, filter?: RequirementFilter): Promise<RequirementList>;
+  getRequirement(project: string, ref: string): Promise<RequirementRead>; // {requirement, specRev}
+  createRequirement(project: string, draft: RequirementDraft): Promise<RequirementWriteResult>;
+  // `rev` is the requirement rev, never the blockRev.
+  updateRequirement(project: string, ref: string, patch: RequirementPatch, rev: string)
+    : Promise<RequirementWriteResult>;
+  // Derived answers: `unavailable` in browser-only mode, without a worker call.
+  traceRequirement(project: string, ref: string): Promise<TracedRequirement>;
+  listCoverage(project: string, filter?: CoverageFilter): Promise<CoverageList>;
+  queryImpact(project: string, query?: ImpactQuery): Promise<ImpactResult>;
+  getImpactReport(project: string, query?: ImpactReportQuery): Promise<ImpactReport>;
+
   // events
   subscribe(handler: (e: ChangeEvent) => void): Unsubscribe;
 }
 ```
+
+A requirement write is announced as an `items` change carrying the **spec** id, and so is a
+spec edited on disk (the watcher's `item.changed`), so a spec, requirement, coverage or impact
+view refetches on the spec id. `unavailable` is a `ProviderErrorCode` of its own: the runtime
+has no tracer, test results or git history for the answer — browser-only mode for trace,
+coverage and impact, and the companion for impact on a repository without history. A view
+renders it as a state with a hint to run the companion, never as an error. The spec screens that
+consume these members arrive with GIT-US-0128 to GIT-US-0131.
 
 `Capabilities` is what the UI branches on — never `kind`:
 

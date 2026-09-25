@@ -2154,7 +2154,7 @@ Catalog of `code` values: `unauthorized`, `forbidden`, `not_found`, `invalid_req
 `team_project_exists`, `team_project_referenced`, `tunnel_requires_token`, `tunnel_failed`,
 `git_dirty`,
 `git_auth_failed`,
-`git_conflict`, `index_unavailable`, `rate_limited`, `not_implemented`, `internal`,
+`git_conflict`, `index_unavailable`, `unavailable`, `rate_limited`, `not_implemented`, `internal`,
 and the CORS proxy's own: `cors_proxy_disabled`, `cors_proxy_forbidden`,
 `cors_proxy_bad_target`, `cors_proxy_host_not_allowed`, `cors_proxy_target_blocked`,
 `cors_proxy_too_large`, `cors_proxy_upstream_failed` (see the CORS proxy under §5.2),
@@ -2207,6 +2207,12 @@ restart with a token, and the problem detail says so.
 
 `not_implemented` (HTTP 501) is what a route of a later phase answers: the path exists so
 that a client learns "not yet" from the code instead of guessing from a 404.
+
+`unavailable` (HTTP 503) means this session has no backend for the answer: requirement trace,
+coverage and impact need the marker scanner, the test-result cache and git history (§6.7), and
+impact is `unavailable` on a repository without history. Nothing is wrong with the request and a
+retry will not help; the web app shows the state with a hint instead of an error (GIT-US-0127).
+Browser-only mode answers the same code for the same calls without a request.
 
 ### 5.5 Endpoints
 
@@ -2487,6 +2493,50 @@ already declares a triage status is `409 inbox_already_enabled`; one whose workf
 ordinary status called `triage` is `409 triage_status_id_taken` and the file is left alone. The
 answer is `{project, writes}` with the new `configRev` as `ETag`, and the write is announced with
 `file.changed` plus a full `index.updated` and staged by commit-on-save like any other.
+
+#### Specs and requirements (GIT-US-0127)
+
+```http
+GET   /api/v1/projects/{key}/specs                          item filters of GET /items; type is spec
+GET   /api/v1/projects/{key}/specs/{spec}                   one spec; ETag = its file rev
+GET   /api/v1/projects/{key}/specs/requirements             every requirement of the project
+                                                            ?spec=&status=&q=&text=true&includeDeleted=true
+GET   /api/v1/projects/{key}/specs/{spec}/requirements      the requirements of one spec, same query
+POST  /api/v1/projects/{key}/specs/{spec}/requirements      {"title":…,"text"?,"status"?,"trace"?,"links"?}
+GET   /api/v1/projects/{key}/specs/{spec}/requirements/{req}        ETag = the requirement rev
+PATCH /api/v1/projects/{key}/specs/{spec}/requirements/{req}        If-Match: <requirement rev>
+GET   /api/v1/projects/{key}/specs/{spec}/requirements/{req}/trace  the computed trace
+GET   /api/v1/projects/{key}/specs/coverage                 ?spec=&ref=&status=   one row per requirement
+GET   /api/v1/projects/{key}/specs/{spec}/coverage          the same, for one spec
+GET   /api/v1/projects/{key}/specs/impact                   ?base=&head=&story=&title=&tiers=&depth=&limit=
+GET   /api/v1/projects/{key}/specs/impact/report            the same query and ?budget=&cursor=&format=json|text
+```
+
+Every route is one method of the CoreApi contract (§6.7) — `item.list`/`item.get` for a spec,
+`requirement.list|get|create|update`, `trace.requirement`, `coverage.list`, `impact.query`,
+`impact.report` — against the repository that exposes `{key}`, and answers with the method's own
+result, so the companion serves what browser-only mode reads through the WASM core. They sit
+behind the bearer token like every other route. `{spec}` must be a spec id of `{key}`
+(`404 not_found` for another project's, `400 invalid_request` for an id that is not a spec);
+`{req}` is `R<n>` or the full `<SPEC-ID>.R<n>` ref of that spec. The lists set `X-Total-Count`;
+repeatable parameters (`status`, `ref`, `tiers`) also take comma-separated values.
+
+- **Requirement writes** take the **requirement rev** — never the `blockRev` — in `If-Match`,
+  which PATCH requires (`428 precondition_required` without it; `If-Match: *` is the unsafe
+  waiver). A rev that moved is `412 stale_revision` with `currentRev` and `conflicts[]`, exactly
+  as `requirement.update` reports it. The PATCH body is the sparse patch of §6.7, flat
+  (`{"status":"todo"}`) or nested (`{"patch":{…}}`). POST needs no rev and answers `201` with a
+  `Location`. Both answer `{requirement, specRev, schemaUpgraded?}` — the core result without its
+  write set — with the new requirement rev as `ETag`, announce the spec with `item.changed` and
+  `index.updated`, and are staged by commit-on-save like an item write.
+- **Trace, coverage and impact** are derived, never written. Without the backend they need they
+  answer `503 unavailable` (§5.4); impact does on a repository without git history, and its
+  tiers 2 and 3 report `unavailable` inside a `200` when Pando is missing. `base` defaults to
+  `HEAD` and no `head` is the working tree. An unknown revision, a tier outside 1–3, a depth or
+  limit out of range, a budget out of range or a foreign cursor is `400 invalid_request`.
+- **Refresh.** A spec edited on disk, or by any other writer, reaches the event stream as the
+  `file.changed` and `item.changed` (with the spec id) the watcher emits for any item, so an open
+  spec, requirement, coverage or impact view refetches on the spec id.
 
 #### Knowledge base
 
@@ -4992,7 +5042,9 @@ as a unit of its own. They are part of the `CoreApi` contract of `web/src/core-b
 browser-only mode reaches them through the WASM module's `gintrackCore.call` and a workspace
 routes them to the repository that owns the spec (by `ref`, or by `spec`). The MCP tools
 `list_requirements`, `create_requirement`, `update_requirement` and `get_item` on a requirement
-ref are shims over them (doc 08 §4.20); no REST route or web screen uses them yet.
+ref are shims over them (doc 08 §4.20), and so are the REST routes under
+`/projects/{key}/specs` (§5.5, `GIT-US-0127`), which also serve `trace.requirement`,
+`coverage.list`, `impact.query` and `impact.report`.
 
 | Method | Params | Result |
 |---|---|---|
