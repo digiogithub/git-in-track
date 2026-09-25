@@ -211,6 +211,18 @@ because a commit list cannot express them.
   `unavailable`. The coverage state is never stored. See
   [docs/03-data-model.md](docs/03-data-model.md) §21.6 and
   [docs/07-cli-and-api.md](docs/07-cli-and-api.md) §6.7.
+- **Requirement impact of a diff (`GIT-US-0119`).** The new native package `internal/impact`
+  resolves which requirements `base..head` (or the working tree) affects, in three tiers:
+  direct — markers and `trace:` entries in the changed files and symbols, plus the Spec Delta
+  and links of the story the diff is for; transitive — Pando's `code_impact_analysis` over the
+  changed symbols reaching a marked caller; semantic — Pando's requirement-block search,
+  flagged `candidate` with a score. Each hit carries its reasons, its coverage status and
+  `suspect`, which now also covers passing requirements a change reaches through a call, and
+  lists the open items whose Spec Delta modifies it. Tiers 1–2 are deterministic (a golden
+  test); without Pando tiers 2–3 report `unavailable` and tier 1 still answers. The new CoreApi
+  method `impact.query` reaches it; browser-only mode answers `unavailable`. See
+  [docs/03-data-model.md](docs/03-data-model.md) §21.11 and
+  [docs/07-cli-and-api.md](docs/07-cli-and-api.md) §6.7.
 
 ### Changed
 

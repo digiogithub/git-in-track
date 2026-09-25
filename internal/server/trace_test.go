@@ -3,6 +3,8 @@ package server
 import (
 	"strings"
 	"testing"
+
+	"github.com/digiogithub/git-in-track/internal/config"
 )
 
 // TestTraceSeamInstalled checks that the companion hands every repository a
@@ -28,6 +30,38 @@ func TestTraceSeamInstalled(t *testing.T) {
 		}
 		if out := m.vlt.Call("coverage.list", `{}`); !strings.Contains(out, `"ok":true`) {
 			t.Errorf("coverage.list on %s = %s", m.id, out)
+		}
+	}
+}
+
+// TestImpactSeamInstalled checks that a repository with git history gets an
+// impact resolver — tier 1 answers, and tiers 2 and 3 say `unavailable`
+// without Pando — while one without history has none.
+func TestImpactSeamInstalled(t *testing.T) {
+	t.Parallel()
+	s, _ := newGitServer(t, config.Git{})
+	for _, m := range s.repos.ready() {
+		if !m.vlt.ImpactAvailable() {
+			t.Fatalf("repository %s has no impact resolver", m.id)
+		}
+		out := m.vlt.Call("impact.query", `{"base":"HEAD"}`)
+		if !strings.Contains(out, `"ok":true`) ||
+			!strings.Contains(out, `{"tier":1,"status":"ok","hits":0}`) ||
+			!strings.Contains(out, `{"tier":2,"status":"unavailable"`) ||
+			!strings.Contains(out, `{"tier":3,"status":"unavailable"`) {
+			t.Errorf("impact.query on %s = %s", m.id, out)
+		}
+	}
+	plain, _ := newAPIServer(t)
+	for _, m := range plain.repos.ready() {
+		if _, hasGit := plain.git.backendFor(m.id); hasGit {
+			continue
+		}
+		if m.vlt.ImpactAvailable() {
+			t.Errorf("repository %s without git has an impact resolver", m.id)
+		}
+		if out := m.vlt.Call("impact.query", `{}`); !strings.Contains(out, `"unavailable"`) {
+			t.Errorf("impact.query without git = %s, want unavailable", out)
 		}
 	}
 }

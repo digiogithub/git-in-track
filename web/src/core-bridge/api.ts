@@ -591,6 +591,42 @@ export type CoverageRow = {
   tests?: { test: string; result: 'pass' | 'fail' | 'skip' | 'missing' }[];
 };
 
+/**
+ * One requirement a diff affects (doc 03 §21.11); derived, never stored.
+ * `tier` 1 is a direct trace, 2 a transitive call reaching a marked caller
+ * (Pando), 3 a semantic `candidate` with its `score`. `reasons` are short
+ * codes such as `symbol:<trace ref>`, `delta:<item>` or
+ * `call:<caller trace ref> calls <changed symbol> d<depth>`.
+ */
+export type ImpactHit = {
+  ref: string;
+  title: string;
+  tier: 1 | 2 | 3;
+  candidate?: boolean;
+  score?: number;
+  status?: CoverageRow['status'];
+  suspect?: boolean;
+  reasons: string[];
+  /** Open stories and tasks whose unapplied Spec Delta modifies it. */
+  pending?: string[];
+};
+
+/** The answer of `impact.query`: per-tier status and the deduplicated hits. */
+export type ImpactResult = {
+  base: string;
+  head?: string;
+  files: number;
+  symbols: number;
+  tiers: {
+    tier: 1 | 2 | 3;
+    status: 'ok' | 'unavailable' | 'error' | 'skipped';
+    hits: number;
+    truncated?: boolean;
+    message?: string;
+  }[];
+  hits: ImpactHit[];
+};
+
 /** What a stamp run wrote, and what it left alone and why. */
 export type StampReport = {
   stamped: { ref: string; verified: { rev: string; commit: string; at: string; by: string } }[];
@@ -2055,6 +2091,19 @@ export type CoreApi = {
   };
   /** Writes `verified` stamps from passing evidence (`spec verify --commit`); `unavailable` in the browser. */
   'requirement.stamp': { params: { refs?: string[]; spec?: string; by: string }; result: StampReport };
+  /** The requirements a diff affects, in three tiers (doc 03 §21.11); `unavailable` in the browser. */
+  'impact.query': {
+    params: {
+      base?: string;
+      head?: string;
+      story?: string;
+      title?: string;
+      tiers?: (1 | 2 | 3)[];
+      depth?: number;
+      limit?: number;
+    };
+    result: { impact: ImpactResult };
+  };
   'inbox.list': { params: InboxFilter | undefined; result: InboxPage };
   /**
    * One triage decision. Accepting clears triage and moves the item into the

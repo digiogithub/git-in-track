@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/digiogithub/git-in-track/internal/impact"
+	"github.com/digiogithub/git-in-track/internal/pando"
 	"github.com/digiogithub/git-in-track/internal/trace"
 	"github.com/digiogithub/git-in-track/internal/vault"
 )
@@ -19,12 +21,16 @@ const traceMaxAge = 30 * time.Second
 var (
 	_ vault.RequirementTracer   = (*trace.Engine)(nil)
 	_ vault.RequirementCoverage = (*trace.Coverage)(nil)
+	_ vault.RequirementImpact   = (*impact.Resolver)(nil)
+	_ impact.CallGraph          = (*pando.Client)(nil)
 )
 
 // installTraceSeams hands every mounted vault a requirement trace engine over
 // its repository's working tree, and a coverage backend over that engine, the
 // test-result cache `gintrack spec ingest` fills and the repository's git
-// history (GIT-US-0116). The engine scans lazily, on the first "trace.*" or
+// history (GIT-US-0116), and — where the repository has git history — an
+// impact resolver over the same engine and coverage, with Pando's call graph
+// and semantic search read at call time (GIT-US-0119). The engine scans lazily, on the first "trace.*" or
 // "coverage.*" call, so a companion that never asks pays nothing.
 func (s *Server) installTraceSeams(now func() time.Time) {
 	cacheDir := s.opts.SyncEngine.CacheDir
@@ -39,9 +45,48 @@ func (s *Server) installTraceSeams(now func() time.Time) {
 			evidence.Store = trace.NewResultStore(trace.DefaultResultCachePath(cacheDir, m.path))
 		}
 		var changes trace.ChangeLister
-		if backend, ok := s.git.backendFor(m.id); ok {
+		backend, hasGit := s.git.backendFor(m.id)
+		if hasGit {
 			changes = trace.GitChanges{Backend: backend}
 		}
-		m.vlt.SetRequirementCoverage(trace.NewCoverage(engine, evidence, changes))
+		coverage := trace.NewCoverage(engine, evidence, changes)
+		m.vlt.SetRequirementCoverage(coverage)
+		if !hasGit {
+			// No history, no diff: "impact.query" answers unavailable.
+			continue
+		}
+		m.vlt.SetRequirementImpact(impact.New(impact.Options{
+			Engine: engine, Differ: backend, Coverage: coverage,
+			ProjectID: codeProjectID(m),
+			CallGraph: s.impactCallGraph,
+			Semantic:  s.impactSemantic,
+		}))
 	}
+}
+
+// impactCallGraph is the Pando client tier 2 of the impact query calls, read
+// at call time because a settings change rebuilds the client. Nil when no
+// Pando is configured, or when the configured client cannot read the code
+// graph.
+func (s *Server) impactCallGraph() impact.CallGraph {
+	if s.search == nil {
+		return nil
+	}
+	if g, ok := s.search.pando().(impact.CallGraph); ok && g != nil {
+		return g
+	}
+	return nil
+}
+
+// impactSemantic is the semantic searcher tier 3 of the impact query asks
+// for requirement blocks, read at call time for the same reason. Nil when
+// semantic search is off.
+func (s *Server) impactSemantic() vault.SemanticSearcher {
+	if s.search == nil {
+		return nil
+	}
+	if p := s.search.semantic(); p != nil {
+		return p
+	}
+	return nil
 }

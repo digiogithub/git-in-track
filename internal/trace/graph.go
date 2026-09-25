@@ -533,3 +533,38 @@ func cloneEdges(es []core.TraceEdge) []core.TraceEdge {
 	}
 	return out
 }
+
+// ChangedSymbols returns the symbols one change touches on tree, sorted and
+// without the whole-file symbol "": the changed lines mapped with the
+// scanner's own spans, or Change.Symbols when set. A change with no lines (an
+// added file, a caller that knows none) touches every symbol the file
+// declares. A file tree cannot read (deleted) or whose language the scanner
+// does not know touches none. It is the input of impact tier 2 (GIT-US-0119).
+func ChangedSymbols(c core.TraceChange, tree fs.FS) []string {
+	p := cleanPath(c.Path)
+	symbols, _, whole := changedSymbols(c, p, tree)
+	if whole {
+		if tree == nil {
+			return nil
+		}
+		src, err := fs.ReadFile(tree, p)
+		if err != nil {
+			return nil
+		}
+		declared, ok := DeclaredSymbols(p, src)
+		if !ok {
+			return nil
+		}
+		symbols = declared
+	}
+	set := map[string]bool{}
+	out := []string{}
+	for _, s := range symbols {
+		if s != "" && !set[s] {
+			set[s] = true
+			out = append(out, s)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
