@@ -58,6 +58,13 @@ because a commit list cannot express them.
   restored and quoted.
 ### Added
 
+- **IndexedDB store for the browser verification cache** (`GIT-US-0150`, ADR-037 §7,
+  docs/03 R-REQ-11b, docs/05 §6). `web/src/cache/verify-cache.ts` persists the document of the
+  core's `MemVerifyCache` as one record per project in a new `verify-caches` store of the
+  `gintrack-cache` IndexedDB database (now version 2; the index snapshots survive the upgrade).
+  The document is kept as opaque text, and a missing, blocked or failing IndexedDB reads as an
+  empty cache. It is groundwork: browser-only mode still has no ingest and no coverage host, so
+  nothing records into it or reads from it yet.
 - **Spec templates and duplicate detection on create** (`GIT-US-0111`, docs/03 §21.1,
   docs/07). The core ships a spec template (`## Purpose`, `## Scope`, `## Glossary` and one
   example requirement block) and a requirement-block template in `internal/core/templates/`,

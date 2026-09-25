@@ -1287,6 +1287,24 @@ type CoreResponse =
   when the fingerprint moved. A snapshot the core refuses is dropped, never
   retried: the vault still opens, just cold. Cold index target: 5k files in under
   3 s on a mid-range laptop; warm boot under 400 ms.
+- Verification cache (`GIT-US-0150`, ADR-037 §7, docs/03 R-REQ-11b): the
+  browser half of `core.VerifyCache` is `core.MemVerifyCache`, which holds the
+  `verify.json` document in the worker and leaves persistence to the host.
+  `web/src/cache/verify-cache.ts` is that persistence: one record per project of
+  a mounted repository (`{ key, vaultId, project, document, savedAt }`, key
+  `<vaultId>\u0000<projectKey>`) in the `verify-caches` store of the same
+  `gintrack-cache` database as the index snapshots, which moved to version 2 to
+  add it (`web/src/cache/cache-db.ts` owns the upgrade; a version-1 database
+  keeps its snapshots). The document is stored as the opaque text `Export()`
+  returned and handed back unparsed for `NewMemVerifyCache`: decoding, merging
+  and the "corrupt reads as empty" rule stay in the core. Every operation
+  swallows its failure — no IndexedDB, a blocked upgrade, a quota error — and
+  reads as an empty cache, because the store is derived data and never the
+  source of truth. **What it enables today:** nothing user-visible. Browser-only
+  mode has no test ingest and no coverage host (`listCoverage`, trace and impact
+  answer `unavailable`), so nothing records into the store or reads from it; it
+  is the groundwork a browser-side ingest or coverage reader will use so that
+  evidence recorded in a tab survives a reload.
 - Memory: Go's WASM runtime grows its heap monotonically. The worker is
   terminated and respawned when the index is dropped (repo unmounted) or after a
   configurable idle period, to release memory back to the browser.
