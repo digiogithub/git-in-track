@@ -2089,6 +2089,52 @@ unchanged; `gintrack` (or `gintrack.exe`) must be on the `PATH` that shell sees,
 repository; `2` for an unknown `--hook` or a `--project` that is not a key; `5` for a foreign
 hook (or a backup) in the way; `6` when the path is not inside a git working tree.
 
+### 4.22 `gintrack migrate --to <schema>`
+
+> **Implemented** by `GIT-US-0143` (docs/03 R-EVO-4, §21.10). Raises `project.yaml:schema`
+> explicitly, as its own reviewable change, before the first spec construct would raise it
+> implicitly (R-SCHEMA-2-3). The plan — the target check, the refusal of a downgrade and the
+> one-line rewrite — is `core.PlanSchemaMigration`, which reuses the `UpgradeProjectSchema` edit
+> the implicit upgrade and `doctor --fix` make. When and in which order to run it:
+> [14-upgrading-to-specs.md](./14-upgrading-to-specs.md).
+
+```bash
+gintrack migrate --to 2 --dry-run          # print the diff summary, write nothing
+gintrack migrate --to 2                    # the only project of the workspace
+gintrack migrate --to 2 --project ACME     # one project of a multi-project workspace
+gintrack migrate --to 2 --all --json       # every project of the workspace
+```
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--to <n>` | required | the target schema; this build accepts `1` to `core.SupportedSchema` (`2`) |
+| `--project <KEY>` | | migrate one project; required when the workspace holds more than one, unless `--all` |
+| `--all` | | migrate every project of the active workspace; exclusive with `--project` |
+| `--dry-run` | | plan and print everything, write nothing |
+| `--json` | | print `{to, dryRun?, changed, projects: [{key, repo, path, from, to, changed, removed?, added?}]}` |
+
+**What it writes.** The `schema:` line of each selected `project.yaml`, and nothing else: the
+value is replaced in place, so comments and formatting survive and the diff is one line
+(`- schema: 1` / `+ schema: 2`, printed per project). Only a file whose `schema` is not written
+as a plain top-level `schema: <n>` line falls back to a YAML node rewrite. No item, spec or
+other file changes — schema 2 needs no content migration (R-EVO-6). The command does not commit;
+review the diff and commit it on its own. Every project is planned before anything is written,
+and nothing is written unless every selected project can be migrated; the bytes of each file
+are checked unchanged immediately before it is written (the file-level `rev`).
+
+**Idempotent.** A project already at the target is reported `already at schema <n>, nothing to
+do` (`changed: false`) and exits `0`.
+
+**No downgrade.** A target below the declared schema is refused with the reason and nothing is
+written; so is a `project.yaml` that declares a schema newer than this build supports (upgrade
+gintrack instead) or none at all (add `schema: 1` by hand first). Undoing a premature upgrade
+means reverting its commit before any spec construct was written.
+
+**Exit codes**: `0` migrated, or nothing to do; `2` without `--to`, for a target this build
+cannot write (`--to 3`), for `--project` with `--all`, and when several projects need a
+selector; `3` for a downgrade, a newer schema or a missing one; `4` for an unknown `--project`
+or an empty workspace; `5` when a `project.yaml` changed between the plan and the write.
+
 ---
 
 ## 5. Local REST API

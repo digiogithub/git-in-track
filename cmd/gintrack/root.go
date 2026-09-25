@@ -98,6 +98,7 @@ Start with:
 		newInboxCommand(flags),
 		newSprintCommand(flags),
 		newDoctorCommand(flags),
+		newMigrateCommand(flags),
 		newConfigCommand(flags),
 		newYouTrackCommand(flags),
 		newAgentCommand(flags),

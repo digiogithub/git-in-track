@@ -288,6 +288,7 @@ Makefile, go.mod, .goreleaser.yaml, Dockerfile
 | [docs/10-development-guidelines.md](docs/10-development-guidelines.md) | Coding standards, testing, commit conventions, review process. |
 | [docs/11-roadmap.md](docs/11-roadmap.md) | Phases 0–6 with scope and exit criteria for each. |
 | [docs/12-release-readiness-1-0.md](docs/12-release-readiness-1-0.md) | Evidence for every 1.0 criterion: what is proven, what is partial, what is not done. |
+| [docs/14-upgrading-to-specs.md](docs/14-upgrading-to-specs.md) | Upgrading a project to specs (`schema: 2`): what to upgrade first, `gintrack migrate --to 2`, what older binaries do. |
 | [docs/20-agent-interface.md](docs/20-agent-interface.md) | The agent panel over Pando's AG-UI: setup, configuration on both sides, security posture. |
 | [docs/21-semantic-search.md](docs/21-semantic-search.md) | Semantic search with Pando: the two indexations over the repository's own files, how a hit resolves, and reindexing. |
 | [CHANGELOG.md](CHANGELOG.md) | Release notes, the compatibility promise, known limitations and operational notes. |
