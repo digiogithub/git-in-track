@@ -614,12 +614,15 @@ export type CoverageRow = {
  * `tier` 1 is a direct trace, 2 a transitive call reaching a marked caller
  * (Pando), 3 a semantic `candidate` with its `score`. `reasons` are short
  * codes such as `symbol:<trace ref>`, `delta:<item>` or
- * `call:<caller trace ref> calls <changed symbol> d<depth>`.
+ * `call:<caller trace ref> calls <changed symbol> d<depth>`. `kind` is set on
+ * tier 1 and 2: `behaviour` when the code behind the requirement changed,
+ * `test-only` when only a test that verifies it did (GIT-US-0157).
  */
 export type ImpactHit = {
   ref: string;
   title: string;
   tier: 1 | 2 | 3;
+  kind?: 'behaviour' | 'test-only';
   candidate?: boolean;
   score?: number;
   status?: CoverageRow['status'];

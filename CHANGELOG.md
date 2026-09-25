@@ -57,6 +57,16 @@ because a commit list cannot express them.
   tools no longer wrap the core cursor; their behaviour is unchanged. `list_requirements`
   and `spec_coverage` were checked and already bound every filter; their tests now cover
   each one (docs/07 §5.3 and §5.4, docs/08 §3, docs/05 §5).
+### Added
+
+- **Test-only impact hits** (`GIT-US-0157`, docs/03 R-IMP-5 and R-IMP-8, docs/07 §4.20,
+  docs/08 §4.21). Every tier-1 and tier-2 impact hit now carries a `kind`: `behaviour` when a
+  reason reaches the requirement through its code (`Implements:`, `trace.code`) or the story,
+  `test-only` when every reason reaches it through a test that verifies it (`Verifies:`,
+  `trace.tests`). The report ranks `test-only` hits below the behaviour hits of their class
+  (failing still first) and marks them `test-only` in the text form. `gintrack spec impact
+  --fail-on` accepts `behaviour` next to the states to leave `test-only` hits out of the gate;
+  the default gate is unchanged. The field is additive: a tier-3 candidate has no `kind`.
 
 ## [2.1.0] — 2026-09-25
 

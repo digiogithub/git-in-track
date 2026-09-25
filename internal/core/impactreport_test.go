@@ -110,14 +110,22 @@ func TestRankImpactHits(t *testing.T) {
 		{Ref: ref("A-SP-0004", 1), Tier: 2, Status: CoverageFailing},
 		{Ref: ref("A-SP-0001", 1), Tier: 1, Status: CoverageSuspect},
 		{Ref: ref("A-SP-0005", 1), Tier: 2},
+		{Ref: ref("A-SP-0006", 1), Tier: 1, Kind: ImpactKindTestOnly, Status: CoveragePassing, Suspect: true},
+		{Ref: ref("A-SP-0006", 2), Tier: 1, Kind: ImpactKindTestOnly, Status: CoverageFailing},
+		{Ref: ref("A-SP-0006", 3), Tier: 1, Kind: ImpactKindTestOnly},
+		{Ref: ref("A-SP-0007", 1), Tier: 2, Kind: ImpactKindBehaviour},
 	}
 	want := []string{
 		"A-SP-0004.R1", // failing
+		"A-SP-0006.R2", // failing, test-only: failing still comes first
 		"A-SP-0001.R1", // suspect, tier 1
 		"A-SP-0003.R1", // suspect, tier 2
+		"A-SP-0006.R1", // suspect, test-only after every behaviour suspect
 		"A-SP-0001.R9", // tier 1, numeric ref order
 		"A-SP-0001.R10",
 		"A-SP-0005.R1", // tier 2
+		"A-SP-0007.R1", // tier 2, behaviour
+		"A-SP-0006.R3", // test-only, after the behaviour hits of any tier
 		"A-SP-0002.R2", // candidate, best score
 		"A-SP-0002.R1", // candidate
 	}

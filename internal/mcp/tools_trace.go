@@ -146,7 +146,8 @@ func registerTraceTools(s *Server) {
 		Name:  "spec_impact",
 		Title: "Requirements a diff affects",
 		Description: "Report the requirements a diff affects, ranked failing, then suspect, then by tier, " +
-			"and cut at a token budget (default 1500): tier 1 is the direct trace (markers, trace: entries, " +
+			"with test-only hits (kind test-only: only a test that verifies the requirement changed) " +
+			"after the behaviour hits of their class, and cut at a token budget (default 1500): tier 1 is the direct trace (markers, trace: entries, " +
 			"the story's Spec Delta and links), tier 2 the transitive callers and tier 3 semantic " +
 			"candidates, both read from Pando. base defaults to HEAD; an empty head, or \"worktree\", is the " +
 			"working tree. A tier that cannot run is reported unavailable in tiers (json) or on the tiers " +

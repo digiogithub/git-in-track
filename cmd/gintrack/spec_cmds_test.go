@@ -57,6 +57,7 @@ func TestSpecCommandUsage(t *testing.T) {
 		{"impact unknown tier", []string{"spec", "impact", "--since", "HEAD", "--tiers", "1,4"}},
 		{"impact tier not a number", []string{"spec", "impact", "--since", "HEAD", "--tiers", "one"}},
 		{"impact unknown fail-on state", []string{"spec", "impact", "--since", "HEAD", "--fail-on", "failing,broken"}},
+		{"impact fail-on behaviour without a state", []string{"spec", "impact", "--since", "HEAD", "--fail-on", "behaviour"}},
 		{"coverage unknown status", []string{"spec", "coverage", "--status", "green"}},
 		{"coverage spec is a story", []string{"spec", "coverage", "--spec", "ACME-US-0001"}},
 		{"verify without refs", []string{"spec", "verify"}},
@@ -209,6 +210,52 @@ func TestSpecImpactFailOn(t *testing.T) {
 	t.Run("unknown revision", func(t *testing.T) {
 		if _, _, code := h.run("spec", "impact", "--since", "no-such-branch"); code != exitValidation {
 			t.Errorf("exit %d, want %d", code, exitValidation)
+		}
+	})
+}
+
+// TestSpecImpactFailOnBehaviour is the test-only filter of GIT-US-0157: a
+// diff that changes only a test verifying a failing requirement is a
+// test-only hit, which trips the default gate and not a gate restricted to
+// behaviour hits.
+func TestSpecImpactFailOnBehaviour(t *testing.T) {
+	h := newHarness(t)
+	root := gitSpecRepo(t, h)
+	ingest(t, h, root, r1Fails)
+	// Touch the stale_counter sub-test, which verifies ACME-SP-0001.R1.
+	src := filepath.Join(root, "src", "alloc_test.go")
+	data, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(src, []byte(strings.Replace(string(data), `t.Fatal("bad")`, `t.Fatal("bad id")`, 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("the text report marks the hit test-only", func(t *testing.T) {
+		out := h.mustRun("spec", "impact", "--since", "HEAD", "--tiers", "1")
+		if !strings.Contains(out, "ACME-SP-0001.R1 t1 failing test-only") {
+			t.Errorf("output lacks the test-only hit:\n%s", out)
+		}
+	})
+	t.Run("the default gate still trips on it", func(t *testing.T) {
+		stdout, stderr, code := h.run("spec", "impact", "--since", "HEAD", "--tiers", "1", "--fail-on", "failing,suspect", "--json")
+		if code != exitGate {
+			t.Fatalf("exit %d, want %d\n%s", code, exitGate, stderr)
+		}
+		got := decode[specImpactPayload](t, stdout)
+		if len(got.Offending) != 1 || got.Offending[0].Kind != core.ImpactKindTestOnly {
+			t.Errorf("offending = %+v, want the test-only R1", got.Offending)
+		}
+	})
+	t.Run("behaviour leaves it out", func(t *testing.T) {
+		stdout, stderr, code := h.run("spec", "impact", "--since", "HEAD", "--tiers", "1", "--fail-on", "failing,suspect,behaviour", "--json")
+		if code != exitOK {
+			t.Fatalf("exit %d, want 0\n%s", code, stderr)
+		}
+		got := decode[specImpactPayload](t, stdout)
+		if strings.Join(got.FailOn, ",") != "failing,suspect,behaviour" || len(got.Offending) != 0 || len(got.Report.Hits) != 1 {
+			t.Errorf("payload = %+v, want the hit reported and no offender", got)
 		}
 	})
 }

@@ -1933,7 +1933,7 @@ token-budgeted report of `GIT-US-0120` — the same renderer `spec_impact` and t
 | `--cursor <token>` | | `nextCursor` of the previous page, with the query unchanged |
 | `--format text\|json` | `text` | report form; `json` (or `--json`) prints `{report, failOn?, offending?}` with the report's tiers and ranked hits |
 | `--pretty` | off | indent the JSON output; without it the JSON is one compact line |
-| `--fail-on <states>` | | comma-separated coverage states — `untested`, `passing`, `failing`, `suspect` — that fail the run |
+| `--fail-on <states>` | | comma-separated coverage states — `untested`, `passing`, `failing`, `suspect` — that fail the run; add `behaviour` to leave `test-only` hits out of the gate |
 
 **JSON is compact by default.** Unlike the indented `--json` of the other commands,
 `spec impact --format json` (and `--json`) prints the payload as one line of compact JSON, because
@@ -1967,7 +1967,13 @@ current text (docs/03 R-IMP-5). So a change to traced code clears the gate once 
 re-run at head and recorded with `gintrack spec ingest`, whose default `--commit` is the
 checkout's `HEAD`; with a working-tree head the tree must not differ from `HEAD` outside the
 backlog folders. Tier-3 semantic candidates never
-trip the gate: they are neighbors, not traces. The report is always printed first, on stdout;
+trip the gate: they are neighbors, not traces. Every other hit is a `behaviour` or a `test-only`
+hit (doc 03 R-IMP-5, `GIT-US-0157`): `test-only` when only a test that verifies the requirement
+changed. The report ranks `test-only` hits below the behaviour hits of their class and marks them
+`test-only` in the text form. By default both kinds trip the gate — the default is unchanged;
+`behaviour` in the list (`--fail-on failing,suspect,behaviour`) leaves `test-only` hits out of
+it: they are still reported, never offending. `behaviour` needs at least one state next to it,
+and `--json` echoes it in `failOn` and gives each offender its `kind`. The report is always printed first, on stdout;
 the offenders follow on stderr, one per line (`<ref>  <state>  <title>`), then the error line.
 
 **Exit codes**: `0` when the report was produced and nothing tripped `--fail-on`; **`7`** when a
@@ -5432,7 +5438,7 @@ without history, installs none, where the method fails with `unavailable`.
 
 | Method | Params | Result |
 |---|---|---|
-| `impact.query` | `{base?, head?, story?, title?, tiers?: (1 \| 2 \| 3)[], depth?, limit?}` | `{impact: {base, head?, files, symbols, tiers: {tier, status, hits, truncated?, message?}[], hits: {ref, title, tier, candidate?, score?, status?, suspect?, reasons, pending?}[]}}` |
+| `impact.query` | `{base?, head?, story?, title?, tiers?: (1 \| 2 \| 3)[], depth?, limit?}` | `{impact: {base, head?, files, symbols, tiers: {tier, status, hits, truncated?, message?}[], hits: {ref, title, tier, kind?, candidate?, score?, status?, suspect?, reasons, pending?}[]}}` |
 
 `base` defaults to `HEAD` and an empty `head` is the working tree, so `{}` asks what the
 uncommitted changes affect. `status` of a tier is `ok`, `unavailable` (no Pando, or Pando not
@@ -5455,7 +5461,8 @@ one renderer the MCP tool `spec_impact` (`GIT-US-0124`), `gintrack spec impact`
 `budget` is in tokens (default 1500, at most 20000), estimated as `ceil(bytes / 3)` of the
 report's compact JSON. The `json` form (the default) carries `tiers` and the ranked `hits`; the
 `text` form carries `text`, one line per requirement, with the tier status in its second line.
-Hits are ranked failing, suspect, then tier (candidates last), then ref; the lowest-ranked are
+Hits are ranked failing, suspect, then the rest — within each, behaviour hits before `test-only`
+hits (doc 03 R-IMP-5) before candidates — then tier, then ref; the lowest-ranked are
 cut, `truncated` counts them and `nextCursor` — passed back as `cursor` with the query unchanged —
 fetches the rest. A cursor from another result, a budget out of range or an unknown `format` is
 `invalid_request`; browser-only mode answers `unavailable`.

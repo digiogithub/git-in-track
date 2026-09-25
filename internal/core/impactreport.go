@@ -54,10 +54,24 @@ func impactPriority(h ImpactHit) int {
 	}
 }
 
+// impactGroup orders the hits of one rank class: behaviour hits first, then
+// test-only hits (only a verifying test changed, GIT-US-0157), then tier-3
+// candidates, which are not traces at all.
+func impactGroup(h ImpactHit) int {
+	switch {
+	case h.Candidate:
+		return 2
+	case h.Kind == ImpactKindTestOnly:
+		return 1
+	default:
+		return 0
+	}
+}
+
 // RankImpactHits returns the hits in report order: failing first, then
-// suspect, then by tier (so tier-3 candidates come last), then — among
-// candidates — by score, highest first, and finally by requirement ref (spec,
-// then number). The order is total, so the same hits always rank the same way
+// suspect, then the rest; within each class behaviour hits, then test-only
+// hits, then tier-3 candidates; then by tier, then — among candidates — by
+// score, highest first, and finally by requirement ref (spec, then number). The order is total, so the same hits always rank the same way
 // and a cursor offset means the same thing on every call. The input is not
 // modified.
 func RankImpactHits(hits []ImpactHit) []ImpactHit {
@@ -66,6 +80,9 @@ func RankImpactHits(hits []ImpactHit) []ImpactHit {
 		a, b := out[i], out[j]
 		if pa, pb := impactPriority(a), impactPriority(b); pa != pb {
 			return pa < pb
+		}
+		if ga, gb := impactGroup(a), impactGroup(b); ga != gb {
+			return ga < gb
 		}
 		if a.Tier != b.Tier {
 			return a.Tier < b.Tier
@@ -150,7 +167,7 @@ const (
 //
 //	impact <base>..<head|worktree>: <files> files, <symbols> symbols, <total> hits[, showing a-b]
 //	tiers: 1 ok 7; 2 ok 3; 3 unavailable (<message>)
-//	<ref> t<tier>[~score] <status|-> [suspect] "<title>" <reason>[ +n]
+//	<ref> t<tier>[~score] <status|-> [suspect] [test-only] "<title>" <reason>[ +n]
 //	...
 //	truncated: <n>, cursor: <token>
 func impactText(r ImpactReport, tiers []ImpactTier, hits []ImpactHit) string {
@@ -205,6 +222,9 @@ func impactLine(h ImpactHit) string {
 	b.WriteString(" " + status)
 	if h.Suspect && h.Status != CoverageSuspect {
 		b.WriteString(" suspect")
+	}
+	if h.Kind == ImpactKindTestOnly {
+		b.WriteString(" " + string(ImpactKindTestOnly))
 	}
 	fmt.Fprintf(&b, " %q", clipText(h.Title, impactTitleWidth))
 	if len(h.Reasons) > 0 {

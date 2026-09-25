@@ -3015,9 +3015,16 @@ answers `unavailable`.
   story title, `title` and up to 12 changed symbol names. A hit becomes a `candidate` with a
   `score` (rounded to three decimals) and the reason `semantic`, only when tiers 1–2 did not
   reach the requirement: a candidate never adds to or overrides their certainty.
-- **R-IMP-5 Hit.** `{ref, title, tier, candidate?, score?, status?, suspect?, reasons[],
+- **R-IMP-5 Hit.** `{ref, title, tier, kind?, candidate?, score?, status?, suspect?, reasons[],
   pending?[]}`, one per requirement at its strongest tier, with the reasons of every tier that
-  reached it with certainty, sorted by tier and text, at most four then `+<n>`. `status` is the
+  reached it with certainty, sorted by tier and text, at most four then `+<n>`. `kind`
+  (`GIT-US-0157`) is set on every tier-1 and tier-2 hit and absent on a tier-3 candidate:
+  `behaviour` when at least one reason reaches the requirement through its **code** — an edge of
+  role `code` (an `Implements:` marker or a `trace.code` entry), directly or through a call — or
+  through the story's links or Spec Delta; `test-only` when every reason reaches it through an
+  edge of role `tests` (a `Verifies:` marker or a `trace.tests` entry): only a test that verifies
+  the requirement changed, or only such a test calls the changed code, so what the requirement
+  states may not have changed. `status` is the
   coverage state (R-REQ-12a). `pending` lists the open items whose unapplied Spec Delta modifies
   the requirement. `suspect` means **changed and not re-verified** (`GIT-US-0148`):
   1. state `suspect` → set;
@@ -3051,8 +3058,10 @@ answers `unavailable`.
   results and Pando answer give a byte-identical result (golden tests). No timestamp or map order reaches it.
 - **R-IMP-8 Report ranking** (`GIT-US-0120`). The report agents read (`impact.report`, docs/07
   §6.7, rendered by `core.RenderImpactReport` for MCP, CLI and HTTP alike) ranks the hits:
-  `failing` first, then suspect, then by tier — tier-3 candidates last, highest `score` first —
-  then by ref (spec, then number). The order is total, so a page offset always means the same
+  `failing` first, then suspect, then the rest; within each of those classes behaviour hits
+  first, then `test-only` hits, then tier-3 candidates (highest `score` first); then by tier,
+  then by ref (spec, then number). A failing `test-only` hit still ranks above every suspect
+  one: a failing test is failing whatever changed. The order is total, so a page offset always means the same
   hit.
 - **R-IMP-9 Token budget.** `budget` (tokens, default 1500, at most 20000) bounds a page in the
   asked form, `json` (the hits) or `text` (one line per hit). Tokens are estimated as
@@ -3060,7 +3069,8 @@ answers `unavailable`.
   bytes per token of English prose and the ~3–3.5 of JSON and paths. The page keeps the
   per-tier status and cuts the lowest-ranked hits, reporting `truncated: n` and `nextCursor`; it
   always carries at least one hit when any remain, so a walk advances. The typical-PR fixture
-  (12 hits over the three tiers) is ≈ 775 tokens as JSON and ≈ 475 as text (golden test).
+  (13 hits over the three tiers, one of them `test-only`) is ≈ 900 tokens as JSON and ≈ 520 as
+  text (golden test).
 - **R-IMP-10 Report cursor.** `nextCursor` is the opaque base64 `{o: offset, f: fingerprint}`
   of docs/08 §3 principle 4, the fingerprint hashing `base`, `head` and the ranked refs: it
   resumes exactly where the page stopped, with no gap or repeat, across a change of budget or
@@ -3070,8 +3080,9 @@ answers `unavailable`.
   ```text
   impact <base>..<head|worktree>: <files> files, <symbols> symbols, <total> hits[, showing a-b]
   tiers: 1 ok <n>; 2 ok <n>[ (partial)]; 3 unavailable (<message, clipped>)
-  <ref> t<tier>[~<score>] <status|-> [suspect] "<title, 40 runes>" <first reason, 60 runes>[ +<n>]
+  <ref> t<tier>[~<score>] <status|-> [suspect] [test-only] "<title, 40 runes>" <first reason, 60 runes>[ +<n>]
   truncated: <n>, cursor: <token>
   ```
 
-  `suspect` is printed after a status other than `suspect`; `+<n>` counts the other reasons.
+  `suspect` is printed after a status other than `suspect`; `test-only` marks a `test-only` hit
+  (a behaviour hit carries no word, the common case); `+<n>` counts the other reasons.

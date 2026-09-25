@@ -26,11 +26,24 @@ type specImpactFlags struct {
 	asJSON  bool
 }
 
+// failOnBehaviour is the --fail-on entry that restricts the gate to behaviour
+// hits: a test-only hit (only a verifying test changed, GIT-US-0157) is still
+// reported but never fails the run.
+const failOnBehaviour = "behaviour"
+
+// specImpactGate is what --fail-on asks for: the coverage states that trip the
+// gate, and whether test-only hits are left out of it.
+type specImpactGate struct {
+	states        []core.CoverageStatus
+	behaviourOnly bool
+}
+
 // specImpactOffender is one hit that tripped --fail-on.
 type specImpactOffender struct {
 	Ref     core.RequirementRef `json:"ref"`
 	Title   string              `json:"title"`
 	Tier    int                 `json:"tier"`
+	Kind    core.ImpactKind     `json:"kind,omitempty"`
 	Status  core.CoverageStatus `json:"status,omitempty"`
 	Suspect bool                `json:"suspect,omitempty"`
 }
@@ -54,7 +67,8 @@ callers and 3 semantic candidates. Tiers 2 and 3 read Pando; the command line
 has no Pando client, so they report unavailable and tier 1 still answers.
 
 The diff runs from --since to --head; without --head it ends at the working
-tree. The report is ranked failing, then suspect, then by tier, and cut at
+tree. The report is ranked failing, then suspect, then by tier (test-only hits
+after the behaviour hits of their class), and cut at
 --budget tokens; walk the rest with --cursor. The default output is the terse
 text report; --format json (or --json) prints the report's structured form as
 one line of compact JSON, the form the report's "tokens" estimate measures
@@ -65,7 +79,10 @@ result — not just the page shown — is in one of them, the report is still
 printed, the offending requirements are listed on stderr and the command exits
 7. "suspect" also matches a passing requirement whose traced code the diff
 changes. Tier-3 semantic candidates never trip it: they are neighbors, not
-traces.`,
+traces. Each hit is a behaviour hit (the code behind the requirement changed)
+or a test-only one (only a test that verifies it changed), and test-only hits
+rank below behaviour hits. By default both trip the gate; add "behaviour" to
+the list (--fail-on failing,suspect,behaviour) to leave test-only hits out.`,
 		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runSpecImpact(cmd, flags, local)
@@ -81,7 +98,7 @@ traces.`,
 	f.StringVar(&local.cursor, "cursor", "", "nextCursor of the previous page, with the query unchanged")
 	f.IntSliceVar(&local.tiers, "tiers", nil, "tiers to run, from 1, 2 and 3 (default all)")
 	f.StringVar(&local.format, "format", "", "report form: text (default) or json")
-	f.StringSliceVar(&local.failOn, "fail-on", nil, "exit 7 when a hit is in one of these states: untested, passing, failing, suspect")
+	f.StringSliceVar(&local.failOn, "fail-on", nil, "exit 7 when a hit is in one of these states: untested, passing, failing, suspect; add behaviour to leave test-only hits out")
 	f.BoolVar(&local.asJSON, "json", false, "print machine-readable JSON (compact; see --pretty)")
 	f.BoolVar(&local.pretty, "pretty", false, "indent the JSON output; the report's tokens estimate measures the compact form")
 	return cmd
@@ -89,36 +106,44 @@ traces.`,
 
 // checkSpecImpactFlags validates what the command line can decide on its own,
 // so a typo is a usage error (2) rather than a failed query.
-func checkSpecImpactFlags(local *specImpactFlags) ([]core.CoverageStatus, error) {
+func checkSpecImpactFlags(local *specImpactFlags) (specImpactGate, error) {
+	var gate specImpactGate
 	if strings.TrimSpace(local.since) == "" {
-		return nil, usagef("--since is required: the revision the diff starts from, e.g. origin/main")
+		return gate, usagef("--since is required: the revision the diff starts from, e.g. origin/main")
 	}
 	switch local.format {
 	case "", string(core.ImpactReportText), string(core.ImpactReportJSON):
 	default:
-		return nil, usagef("unknown --format %q: use text or json", local.format)
+		return gate, usagef("unknown --format %q: use text or json", local.format)
 	}
 	if local.budget < 0 || local.budget > core.MaxImpactBudget {
-		return nil, usagef("--budget %d is out of range: use 1 to %d", local.budget, core.MaxImpactBudget)
+		return gate, usagef("--budget %d is out of range: use 1 to %d", local.budget, core.MaxImpactBudget)
 	}
 	for _, t := range local.tiers {
 		if t < core.ImpactTierDirect || t > core.ImpactTierSemantic {
-			return nil, usagef("unknown tier %d in --tiers: use 1, 2 or 3", t)
+			return gate, usagef("unknown tier %d in --tiers: use 1, 2 or 3", t)
 		}
 	}
-	var failOn []core.CoverageStatus
 	for _, s := range local.failOn {
-		st := core.CoverageStatus(strings.TrimSpace(s))
-		if !st.Valid() {
-			return nil, usagef("unknown state %q in --fail-on: use untested, passing, failing or suspect", s)
+		s = strings.TrimSpace(s)
+		if s == failOnBehaviour {
+			gate.behaviourOnly = true
+			continue
 		}
-		failOn = append(failOn, st)
+		st := core.CoverageStatus(s)
+		if !st.Valid() {
+			return gate, usagef("unknown state %q in --fail-on: use untested, passing, failing or suspect, and behaviour to leave test-only hits out", s)
+		}
+		gate.states = append(gate.states, st)
 	}
-	return failOn, nil
+	if gate.behaviourOnly && len(gate.states) == 0 {
+		return gate, usagef("--fail-on behaviour needs at least one state: e.g. --fail-on failing,suspect,behaviour")
+	}
+	return gate, nil
 }
 
 func runSpecImpact(cmd *cobra.Command, flags *globalFlags, local *specImpactFlags) error {
-	failOn, err := checkSpecImpactFlags(local)
+	gate, err := checkSpecImpactFlags(local)
 	if err != nil {
 		return err
 	}
@@ -168,9 +193,12 @@ func runSpecImpact(cmd *cobra.Command, flags *globalFlags, local *specImpactFlag
 		return fmt.Errorf("render the impact report: %w", err)
 	}
 
-	payload := specImpactPayload{Report: report, Offending: impactOffenders(got.Impact.Hits, failOn)}
-	for _, st := range failOn {
+	payload := specImpactPayload{Report: report, Offending: impactOffenders(got.Impact.Hits, gate)}
+	for _, st := range gate.states {
 		payload.FailOn = append(payload.FailOn, string(st))
+	}
+	if gate.behaviourOnly {
+		payload.FailOn = append(payload.FailOn, failOnBehaviour)
 	}
 	p := flags.printer(cmd, jsonOut)
 	// The JSON is compact by default so that what is printed is what the
@@ -201,22 +229,23 @@ func runSpecImpact(cmd *cobra.Command, flags *globalFlags, local *specImpactFlag
 // report's rank order. "suspect" matches the suspect flag too, which the
 // impact query also raises on a passing requirement whose traced code the
 // diff changes. A tier-3 candidate is a semantic neighbor, not a trace, and
-// never trips the gate.
-func impactOffenders(hits []core.ImpactHit, failOn []core.CoverageStatus) []specImpactOffender {
-	if len(failOn) == 0 {
+// never trips the gate, and neither does a test-only hit when the gate is
+// restricted to behaviour hits.
+func impactOffenders(hits []core.ImpactHit, gate specImpactGate) []specImpactOffender {
+	if len(gate.states) == 0 {
 		return nil
 	}
 	want := map[core.CoverageStatus]bool{}
-	for _, st := range failOn {
+	for _, st := range gate.states {
 		want[st] = true
 	}
 	var out []specImpactOffender
 	for _, h := range core.RankImpactHits(hits) {
-		if h.Candidate {
+		if h.Candidate || (gate.behaviourOnly && h.Kind == core.ImpactKindTestOnly) {
 			continue
 		}
 		if want[h.Status] || (h.Suspect && want[core.CoverageSuspect]) {
-			out = append(out, specImpactOffender{Ref: h.Ref, Title: h.Title, Tier: h.Tier, Status: h.Status, Suspect: h.Suspect})
+			out = append(out, specImpactOffender{Ref: h.Ref, Title: h.Title, Tier: h.Tier, Kind: h.Kind, Status: h.Status, Suspect: h.Suspect})
 		}
 	}
 	return out
