@@ -321,7 +321,8 @@ Search itself is specified with `GIT-US-0082`. The contract the two indexations 
   the REST endpoint, the MCP `search_semantic` tool — reaches it through the `search.semantic`
   method. Both native hosts install it: `gintrack serve`, and the stdio `gintrack mcp` through
   the same constructor (`server.InstallSemanticSearch`, GIT-US-0121), which searches but never
-  registers a code project. A session with no backend installed (every browser-only one, and a
+  registers a code project. The stdio server and the `gintrack spec` commands hand the same
+  client and searcher to impact tiers 2 and 3 (GIT-US-0147). A session with no backend installed (every browser-only one, and a
   native one with no `search.pando.mcpUrl`) answers `unavailable` rather than an empty result.
 
 ### 6.1 Code-graph wrappers

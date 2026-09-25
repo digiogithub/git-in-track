@@ -157,17 +157,18 @@ func runMCP(cmd *cobra.Command, build buildInfo, flags *globalFlags, local *mcpF
 		}
 		return nil
 	}
-	installMCPTraceSeams(mounts, res.Config.Git.Backend, res.Config.CacheDir(res.Path), logger)
+	// Semantic search goes through the same constructor `gintrack serve` uses,
+	// so search_semantic reaches Pando over stdio too; with no Pando configured
+	// it keeps answering `unavailable` (GIT-US-0121). The impact seam gets the
+	// same client and searcher, so spec_impact tiers 2 and 3 answer over stdio
+	// as they do over HTTP (GIT-US-0147).
+	semantic := installMCPSemantic(res.Config, space, mounts, logger)
+	defer func() { _ = semantic.Close() }()
+	installMCPTraceSeams(mounts, res.Config.Git.Backend, res.Config.CacheDir(res.Path), semantic, logger)
 
 	_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
 		"gintrack mcp %s: workspace %s, %d repositories, %d tools (%s)\n",
 		build.Version, res.Workspace, len(repos), len(srv.Tools()), writeMode(allowWrite))
-
-	// Semantic search goes through the same constructor `gintrack serve` uses,
-	// so search_semantic reaches Pando over stdio too; with no Pando configured
-	// it keeps answering `unavailable` (GIT-US-0121).
-	closeSemantic := installMCPSemantic(res.Config, space, mounts, logger)
-	defer func() { _ = closeSemantic() }()
 
 	ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -185,11 +186,16 @@ func runMCP(cmd *cobra.Command, build buildInfo, flags *globalFlags, local *mcpF
 // spec_impact answer over stdio exactly as they do over HTTP. The coverage
 // evidence is the test-result cache `gintrack spec ingest` fills under the
 // same cache directory. A repository git cannot open keeps trace and coverage
-// and answers the impact query `unavailable`. No Pando client is wired here,
-// so impact tiers 2 and 3 report unavailable while tier 1 answers.
-func installMCPTraceSeams(mounts []mcpMount, backend config.Backend, cacheDir string, log *slog.Logger) {
+// and answers the impact query `unavailable`. Impact tiers 2 and 3 read the
+// Pando client and semantic searcher of pandoHost at call time, the ones
+// installMCPSemantic built (GIT-US-0147); a nil host, or one with no Pando
+// configured, leaves them unavailable while tier 1 answers.
+func installMCPTraceSeams(mounts []mcpMount, backend config.Backend, cacheDir string, pandoHost *server.SemanticHost, log *slog.Logger) {
 	for _, m := range mounts {
-		seams := server.TraceSeams{Root: m.root, CacheDir: cacheDir, ProjectID: pando.SanitizeProjectID(m.root)}
+		seams := server.TraceSeams{
+			Root: m.root, CacheDir: cacheDir, ProjectID: pando.SanitizeProjectID(m.root),
+			CallGraph: pandoHost.CallGraph, Semantic: pandoHost.Semantic,
+		}
 		repo, err := gitops.Open(m.root, gitops.Options{Backend: gitops.Kind(backend)})
 		if err != nil {
 			log.Debug("repository has no readable git history; the impact query is unavailable",
@@ -203,9 +209,10 @@ func installMCPTraceSeams(mounts []mcpMount, backend config.Backend, cacheDir st
 
 // installMCPSemantic installs the Pando-backed semantic searcher on the
 // workspace from the `search.pando` section, with its tokens resolved the same
-// way `gintrack serve` resolves them. It returns the function that closes the
-// Pando session.
-func installMCPSemantic(cfg *config.Config, space *corevault.Workspace, mounts []mcpMount, log *slog.Logger) func() error {
+// way `gintrack serve` resolves them. It returns the host that hands the same
+// Pando client and searcher to the impact seam and closes the Pando session;
+// it is never nil.
+func installMCPSemantic(cfg *config.Config, space *corevault.Workspace, mounts []mcpMount, log *slog.Logger) *server.SemanticHost {
 	repos := make([]server.SemanticRepo, 0, len(mounts))
 	for _, m := range mounts {
 		repos = append(repos, server.SemanticRepo{

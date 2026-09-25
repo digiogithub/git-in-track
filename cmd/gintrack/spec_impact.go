@@ -122,6 +122,7 @@ func runSpecImpact(cmd *cobra.Command, flags *globalFlags, local *specImpactFlag
 	if err != nil {
 		return err
 	}
+	defer s.close()
 	if err := s.needsProject(local.project, local.story); err != nil {
 		return err
 	}
