@@ -54,6 +54,9 @@ type specIngestPayload struct {
 	Reports      []trace.IngestReport      `json:"reports"`
 	Stored       trace.MergeStats          `json:"stored"`
 	Requirements []trace.RequirementResult `json:"requirements"`
+	// Verify lists the verification caches (<docs>/.pmngr/verify.json) the
+	// ingest recorded entries in, one per project (GIT-US-0141).
+	Verify []trace.VerifyRecord `json:"verify"`
 }
 
 func newSpecIngestCommand(flags *globalFlags) *cobra.Command {
@@ -65,6 +68,12 @@ func newSpecIngestCommand(flags *globalFlags) *cobra.Command {
 requirement trace uses, and record the last result of each test in the local
 test-result cache. The cache is derived, per machine and outside the
 repository; nothing is written into a spec.
+
+Every requirement whose linked tests a report touched also gets an entry in
+its project's verification cache, <docs>/.pmngr/verify.json: the block rev
+of its text now, the commit, its linked tests with their results and the
+aggregate. It is derived and git-ignored; coverage, "spec verify --commit"
+and moving a story to done read it.
 
 Supported formats: go (go test -json), junit (JUnit XML) and vitest (the Vitest
 or Jest JSON reporter). The format is detected per file unless --format is
@@ -115,7 +124,10 @@ func runSpecIngest(cmd *cobra.Command, flags *globalFlags, local *specIngestFlag
 
 	resolver := trace.NewTestResolver(os.DirFS(root), root, local.base)
 	now := time.Now()
-	payload := specIngestPayload{Root: root, Commit: commit, Cache: cachePath, Requirements: []trace.RequirementResult{}}
+	payload := specIngestPayload{
+		Root: root, Commit: commit, Cache: cachePath,
+		Requirements: []trace.RequirementResult{}, Verify: []trace.VerifyRecord{},
+	}
 	var fresh []trace.TestResult
 	for _, name := range args {
 		got, raws, err := parseReportFile(cmd, name, format)
@@ -137,7 +149,7 @@ func runSpecIngest(cmd *cobra.Command, flags *globalFlags, local *specIngestFlag
 	if err != nil {
 		return fmt.Errorf("read the results: %w", err)
 	}
-	g, err := trace.RepositoryGraph(cmd.Context(), root)
+	fsys, ix, g, err := trace.RepositoryTrace(cmd.Context(), root)
 	if err != nil {
 		return fmt.Errorf("build the requirement trace of %s: %w", root, err)
 	}
@@ -146,6 +158,11 @@ func runSpecIngest(cmd *cobra.Command, flags *globalFlags, local *specIngestFlag
 			if len(rr.Tests) > 0 {
 				payload.Requirements = append(payload.Requirements, rr)
 			}
+		}
+		by := commentAuthor("", flags.config())
+		entries := trace.VerificationEntries(ix, g, all, fresh, by)
+		if payload.Verify, err = trace.RecordVerification(fsys, ix, entries); err != nil {
+			return fmt.Errorf("record the verification cache: %w", err)
 		}
 	}
 	return renderSpecIngest(cmd, flags, local, payload)
@@ -202,6 +219,14 @@ func renderSpecIngest(cmd *cobra.Command, flags *globalFlags, local *specIngestF
 	}
 	p.Printf("cache %s: %d added, %d replaced, %d total%s\n",
 		payload.Cache, payload.Stored.Added, payload.Stored.Replaced, payload.Stored.Total, rebuilt)
+	for _, v := range payload.Verify {
+		rebuilt := ""
+		if v.Rebuilt {
+			rebuilt = ", rebuilt from a corrupt file"
+		}
+		p.Printf("verification cache %s: %d added, %d replaced, %d total%s\n",
+			v.Path, v.Added, v.Replaced, v.Total, rebuilt)
+	}
 	for _, rr := range payload.Requirements {
 		passed := 0
 		for _, t := range rr.Tests {

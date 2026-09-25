@@ -99,7 +99,8 @@ func TestCreateProject(t *testing.T) {
 				}
 			}
 			ignore, ignoreErr := fs.ReadFile(ref.BacklogPath + "/.gitignore")
-			if ignoreErr != nil || !strings.Contains(string(ignore), "index.json") {
+			if ignoreErr != nil || !strings.Contains(string(ignore), "index.json\n") ||
+				!strings.Contains(string(ignore), "verify.json\n") {
 				t.Errorf(".gitignore = %q, %v", ignore, ignoreErr)
 			}
 

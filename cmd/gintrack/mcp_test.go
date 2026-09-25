@@ -413,7 +413,7 @@ func TestMCPInstallsTraceSeams(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	installMCPTraceSeams(mounts, "", t.TempDir(), nil, slog.New(slog.DiscardHandler))
+	installMCPTraceSeams(mounts, "", nil, slog.New(slog.DiscardHandler))
 	v := mounts[0].vlt
 	if !v.TraceAvailable() || !v.CoverageAvailable() || !v.ImpactAvailable() {
 		t.Fatalf("seams: trace %v, coverage %v, impact %v", v.TraceAvailable(), v.CoverageAvailable(), v.ImpactAvailable())
@@ -435,7 +435,7 @@ func TestMCPInstallsTraceSeams(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	installMCPTraceSeams(mounts, "", "", nil, slog.New(slog.DiscardHandler))
+	installMCPTraceSeams(mounts, "", nil, slog.New(slog.DiscardHandler))
 	if v := mounts[0].vlt; !v.TraceAvailable() || !v.CoverageAvailable() || v.ImpactAvailable() {
 		t.Errorf("without git: trace %v, coverage %v, impact %v, want true, true, false",
 			v.TraceAvailable(), v.CoverageAvailable(), v.ImpactAvailable())

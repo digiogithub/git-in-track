@@ -1169,7 +1169,8 @@ no longer resolve. That example is about 140 tokens.
 
 **`verify_requirement`** (write) takes `ref` and `rev` — the requirement rev, never `blockRev` —
 and writes the requirement's `verified` stamp through `requirement.stamp` under that rev. It runs
-no tests: the evidence is the latest results `gintrack spec ingest` recorded, and a stamp is
+no tests: the evidence is the latest results `gintrack spec ingest` recorded (its verification
+cache `<docs>/.pmngr/verify.json`, docs/03 R-REQ-11b), and a stamp is
 written only when **every** linked test passed at one commit on the text the requirement holds
 now (ADR-037 §7). The stamp records the block rev, the commit, the time of the run and the
 `--agent` name when the results name nobody:

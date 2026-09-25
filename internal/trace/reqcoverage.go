@@ -18,12 +18,13 @@ import (
 // vault's coverage backend (vault.RequirementCoverage); its method set matches
 // that interface without this package importing internal/vault.
 //
-// The evidence comes from an EvidenceSource. Today that is the test-result
-// cache of GIT-US-0115 (ResultEvidence), which records per test and not per
-// requirement, so it does not know which block rev was tested; the
-// verification cache verify.json of GIT-US-0141 is a per-requirement source
-// that does, and slots in behind the same interface. Nothing computed here is
-// ever written into a file.
+// The evidence comes from an EvidenceSource. The hosts install VerifyEvidence,
+// the per-requirement verification cache <docs>/.pmngr/verify.json of
+// GIT-US-0141, which records the block rev each run tested. ResultEvidence
+// reads the per-test result cache of GIT-US-0115 directly; it does not know
+// which text was tested, and is what `gintrack spec ingest` derives the
+// verify.json entries from. Nothing computed here is ever written into a
+// spec.
 
 // Evidence is what a verification source knows about one requirement's
 // linked tests.
@@ -45,10 +46,22 @@ type Evidence struct {
 	Tests []LinkedTestResult
 }
 
+// EvidenceQuery is what an EvidenceSource answers for.
+type EvidenceQuery struct {
+	// Index is the backlog index the requirements were read from.
+	Index *core.Index
+	// Graph is the requirement trace graph.
+	Graph *Graph
+	// Reqs are the requirements with their trace.
+	Reqs []core.TracedRequirement
+	// BlockRevs are their current block revs, in the same order.
+	BlockRevs []core.Rev
+}
+
 // EvidenceSource answers the evidence of a set of requirements, one entry per
 // requirement in the order given.
 type EvidenceSource interface {
-	Evidence(ctx context.Context, g *Graph, reqs []core.TracedRequirement) ([]Evidence, error)
+	Evidence(ctx context.Context, q EvidenceQuery) ([]Evidence, error)
 }
 
 // ResultEvidence is the test-result cache (ResultStore) as an evidence
@@ -58,7 +71,8 @@ type ResultEvidence struct {
 }
 
 // Evidence matches the cached results against each requirement's linked tests.
-func (r ResultEvidence) Evidence(_ context.Context, _ *Graph, reqs []core.TracedRequirement) ([]Evidence, error) {
+func (r ResultEvidence) Evidence(_ context.Context, q EvidenceQuery) ([]Evidence, error) {
+	reqs := q.Reqs
 	var results []TestResult
 	if r.Store != nil {
 		var err error
@@ -128,7 +142,7 @@ type Coverage struct {
 }
 
 // NewCoverage returns the coverage backend of one working tree. A nil
-// evidence source is an empty test-result cache; a nil change lister (a
+// evidence source is an empty cache; a nil change lister (a
 // repository without history) leaves code drift unchecked.
 func NewCoverage(engine *Engine, evidence EvidenceSource, changes ChangeLister) *Coverage {
 	if evidence == nil {
@@ -144,14 +158,16 @@ func (c *Coverage) traced(ctx context.Context, ix *core.Index, reqs []core.Requi
 		return nil, nil, err
 	}
 	traced := make([]core.TracedRequirement, 0, len(reqs))
+	revs := make([]core.Rev, 0, len(reqs))
 	for _, v := range reqs {
 		tr, ok := g.Requirement(v.Ref)
 		if !ok {
 			tr = core.TracedRequirement{Ref: v.Ref}
 		}
 		traced = append(traced, tr)
+		revs = append(revs, v.BlockRev)
 	}
-	evs, err := c.evidence.Evidence(ctx, g, traced)
+	evs, err := c.evidence.Evidence(ctx, EvidenceQuery{Index: ix, Graph: g, Reqs: traced, BlockRevs: revs})
 	if err != nil {
 		return nil, nil, fmt.Errorf("read the verification evidence: %w", err)
 	}

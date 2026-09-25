@@ -27,3 +27,7 @@ Thumbs.db
 # gintrack local state (never commit caches or tokens)
 .gintrack-cache/
 .pando*
+
+# Derived backlog caches, rebuilt from the files and test runs (docs/03 R-LOC-5)
+**/.pmngr/index.json
+**/.pmngr/verify.json

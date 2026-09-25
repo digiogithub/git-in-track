@@ -198,7 +198,7 @@ because a commit list cannot express them.
   no-op. `item.move` and `item.update` report `specDelta`, and `item.move` now reports
   `schemaUpgraded` too. A numbered `### ADDED <REQREF>` heading is now also valid on a reopened
   item that declares `implements` for it. `FileStore.DoneHook` is the seam the verification
-  stamp (`GIT-US-0116`) will use; no stamp is written yet.
+  stamp uses (`GIT-US-0141`).
 - **Requirement coverage and the verification stamp** (GIT-US-0116). The companion computes
   each requirement's coverage — `untested`, `failing`, `suspect` or `passing` — from the
   test-result cache of `gintrack spec ingest` and the `verified` stamp: `suspect` when the
@@ -344,6 +344,23 @@ because a commit list cannot express them.
   carries `currentRev` and `conflicts[]` in every provider. Specs page rows and coverage matrix
   row headers link here, with *Open in spec* kept as a secondary link. Browser-only mode reads and
   edits the block; trace and coverage show `unavailable`.
+- **Verification cache `verify.json` and the stamp on done** (`GIT-US-0141`, ADR-037 §7,
+  docs/03 R-REQ-11, R-REQ-11a (a), R-LOC-5). `gintrack spec ingest` now also records, for
+  every requirement a report touched, one entry in its project's `<docs>/.pmngr/verify.json`:
+  the block rev of its text now, the commit, its linked tests with their results, the
+  aggregate (`pass`, `fail`, `partial`), the time and `git.authorName`. The file is versioned,
+  derived and git-ignored; a missing or corrupt one reads as empty and is rebuilt by the next
+  ingest, never an error. Coverage, `requirement.stamp` (`gintrack spec verify --commit`, MCP
+  `verify_requirement`) and the done transition read their evidence from it — the newest entry
+  of the requirement's current block rev — and fall back to the `verified:` stamp when it has
+  none; the per-machine test-result cache stays the raw per-test input the entries are derived
+  from. Because an entry records the text it tested, fresh results now clear a `text` suspect.
+  Moving a story or a task to a `done`-category status now stamps `verified` on each
+  requirement it implements or modifies whose linked tests all passed at one commit on its
+  current (post-delta) text, in the same write as the move and its Spec Delta; the others are
+  listed in `specDelta.unstamped` with a reason, and the move is never refused for want of
+  evidence. The core type `core.VerifyCache` has a file store and an in-memory store whose
+  document a browser host can keep in IndexedDB.
 
 ### Changed
 
@@ -384,6 +401,12 @@ Before a project's first spec is created, upgrade **every** binary, web app buil
 that writes to it. Binaries up to and including 2.0.1 report `E-PROJ-SCHEMA` on a
 `schema: 2` project but do not refuse to write, and may rewrite files whose spec constructs
 they do not understand. A repository without spec constructs is unaffected.
+
+`gintrack spec ingest` now writes `<docs>/.pmngr/verify.json` inside the repository. Backlogs
+created by `gintrack init` from this build ignore it; an existing backlog should add
+`verify.json` (and `index.json`) to `.pmngr/.gitignore` or to the repository's `.gitignore`, or
+the file shows up as an untracked change. Coverage reads its evidence from that file, so re-run
+`gintrack spec ingest` once after upgrading; until then each requirement shows its stamp.
 
 ## [2.0.1] — 2026-09-18
 

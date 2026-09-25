@@ -314,6 +314,11 @@ the second review round).
   its cache is normally empty. The cache is per machine, never committed, never synced, and can be
   deleted at any time; deleting it loses only evidence that was never promoted to a stamp. Nothing
   in it may be required to read or write the repository (R-IDX-1).
+- (Amended by `GIT-US-0141`.) Since `gintrack spec verify` runs no tests (`GIT-US-0125`), the
+  cache is written by `gintrack spec ingest`: one entry per requirement a report touched,
+  derived from the per-machine test-result cache (the raw per-test input), against the block rev
+  of the text at ingest time. Every reader — coverage, the three stamp moments — takes its
+  evidence from this cache only; docs/03 R-REQ-11b and R-REQ-11c are the normative detail.
 
 **The durable stamp (`verified`, in the spec's front matter).** It is the **only state a tool
 writes back** into a spec as a result of running something, and it is written only:
