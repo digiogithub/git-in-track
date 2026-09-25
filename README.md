@@ -42,6 +42,15 @@ and no vendor that can take your backlog away.
   tables, task lists, footnotes, callouts, wikilinks and Mermaid diagrams.
 - **Agent-native.** An MCP server exposes the backlog as compact, paginated
   tools designed for LLM agents.
+- **Specs and spec-driven development.** `spec` items hold numbered
+  requirement blocks (`### ACME-SP-0003.R2 — …`); `// Implements:` and
+  `// Verifies:` markers in code tie them to code and tests, and
+  `gintrack spec impact` (or the `spec_impact` MCP tool) tells an agent or a CI
+  gate which requirements a diff affects and whether they still pass. See
+  [ADR-037](docs/adr/ADR-037-specs-with-requirement-blocks.md), the format in
+  [docs/03 §21](docs/03-data-model.md#21-specs-and-requirement-blocks), the CLI in
+  [docs/07 §4.19–4.20](docs/07-cli-and-api.md), and the agent loop in
+  [AGENTS.md](AGENTS.md#the-sdd-loop-specs-markers-and-impact).
 - **One core, two runtimes.** The same Go code powers the CLI and the browser
   WASM module, so behavior never drifts between them.
 

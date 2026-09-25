@@ -7,7 +7,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -67,6 +69,124 @@ func TestMCPListTools(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestMCPListToolsMatchesTheDocumentedCounts keeps the agent-facing docs honest
+// (GIT-US-0126): the numbers AGENTS.md and docs/08 §4 give for
+// `gintrack mcp --list-tools`, with and without --allow-write, must be the
+// numbers the binary prints, and every tool it prints must be named in both.
+func TestMCPListToolsMatchesTheDocumentedCounts(t *testing.T) {
+	h := newHarness(t)
+	h.register()
+	readOnly := strings.Fields(h.mustRun("mcp", "--list-tools", "--allow-write=false"))
+	all := strings.Fields(h.mustRun("mcp", "--list-tools", "--allow-write"))
+
+	agents := readDoc(t, "AGENTS.md")
+	mcpDoc := readDoc(t, filepath.Join("docs", "08-mcp-server.md"))
+
+	tests := []struct {
+		name    string
+		doc     string
+		pattern string
+		want    []int
+	}{
+		{
+			name:    "AGENTS.md connect-a-client counts",
+			doc:     agents,
+			pattern: "\\((\\d+) tools read-only, (\\d+) with `--allow-write`\\)",
+			want:    []int{len(readOnly), len(all)},
+		},
+		{
+			name:    "AGENTS.md tool list heading",
+			doc:     agents,
+			pattern: `The ([a-z-]+) tools, ([a-z-]+) read and ([a-z-]+) write:`,
+			want:    []int{len(all), len(readOnly), len(all) - len(readOnly)},
+		},
+		{
+			name:    "docs/08 section 4 total",
+			doc:     mcpDoc,
+			pattern: `([A-Za-z-]+) tools ship:`,
+			want:    []int{len(all)},
+		},
+		{
+			name: "docs/08 section 4 read and write split",
+			doc:  mcpDoc,
+			pattern: "([A-Za-z-]+) are read tools and ([a-z-]+) are write tools; " +
+				"`gintrack mcp --list-tools` prints ([a-z-]+), and with `--allow-write` ([a-z-]+)",
+			want: []int{len(readOnly), len(all) - len(readOnly), len(readOnly), len(all)},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := regexp.MustCompile(tt.pattern).FindStringSubmatch(tt.doc)
+			if m == nil {
+				t.Fatalf("no sentence matches %q", tt.pattern)
+			}
+			for i, want := range tt.want {
+				got, ok := documentedCount(m[i+1])
+				if !ok {
+					t.Fatalf("cannot read %q as a number", m[i+1])
+				}
+				if got != want {
+					t.Errorf("documented count %q = %d, `gintrack mcp --list-tools` gives %d", m[i+1], got, want)
+				}
+			}
+		})
+	}
+
+	for _, name := range all {
+		if !strings.Contains(agents, "`"+name+"`") {
+			t.Errorf("AGENTS.md does not name the tool %s", name)
+		}
+		if !strings.Contains(mcpDoc, "| `"+name+"`") {
+			t.Errorf("the docs/08 section 4 table has no row for %s", name)
+		}
+	}
+}
+
+// readDoc reads a repository document with its lines joined, so a sentence
+// wrapped across lines still matches a one-line pattern.
+func readDoc(t *testing.T, rel string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "..", rel))
+	if err != nil {
+		t.Fatalf("read %s: %v", rel, err)
+	}
+	return strings.Join(strings.Fields(string(data)), " ")
+}
+
+// documentedCount reads a count the docs spell as digits or as English words
+// ("thirteen", "thirty-two").
+func documentedCount(s string) (int, bool) {
+	if n, err := strconv.Atoi(s); err == nil {
+		return n, true
+	}
+	units := map[string]int{
+		"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
+		"eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13,
+		"fourteen": 14, "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18,
+		"nineteen": 19,
+	}
+	tens := map[string]int{
+		"twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60,
+	}
+	s = strings.ToLower(s)
+	if n, ok := units[s]; ok {
+		return n, true
+	}
+	head, tail, hyphen := strings.Cut(s, "-")
+	n, ok := tens[head]
+	if !ok {
+		return 0, false
+	}
+	if !hyphen {
+		return n, true
+	}
+	u, ok := units[tail]
+	if !ok || u > 9 {
+		return 0, false
+	}
+	return n + u, true
 }
 
 // TestMCPTakesWritesFromTheConfiguration covers the other half of the posture:
