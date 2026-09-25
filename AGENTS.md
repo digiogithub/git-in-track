@@ -110,6 +110,7 @@ make web         # runs wasm, then vite build -> web/dist
 make build       # go build with go:embed of web/dist -> bin/gintrack
 make test        # go test -race + Vitest
 make lint        # gofmt check, go vet, golangci-lint, ESLint, tsc, workflow YAML
+make spec-check  # requirement-impact gate: tests -> spec ingest -> spec impact (SPEC_BASE=origin/main)
 ```
 
 `make lint` never skips the Go linter: when the `golangci-lint` binary is
@@ -337,8 +338,9 @@ step 4 of the pick-up loop:
    go back to step 5, never around it.
 6. **PR.** Open it as in step 6 of the pick-up loop. Run
    `gintrack spec impact --since main --fail-on failing,suspect` first: exit
-   `7` means a hit is still failing or suspect, and the CI gate (`GIT-US-0133`,
-   not yet in `ci.yml`) will rerun exactly that command on the PR.
+   `7` means a hit is still failing or suspect, and the `spec-impact` job of
+   `ci.yml` reruns exactly that check on the PR (`make spec-check`, tiers 1–2,
+   `--since origin/<base>`; docs/09 §2).
 
 **Token economy.** The spec tools exist so you do not read spec files:
 

@@ -306,6 +306,15 @@ because a commit list cannot express them.
   README mentions specs. A new test checks the `gintrack mcp --list-tools` counts (13 read-only,
   32 with `--allow-write`) and every tool name against `AGENTS.md` and docs/08 §4, whose stale
   "twenty-seven" is corrected.
+- **Requirement-impact gate in CI** (`GIT-US-0133`, docs/09 §2). A new `spec-impact` job of
+  `ci.yml`, on pull requests only, runs `make spec-check`: the Go suite as `go test -json` and
+  Vitest with its JSON reporter, both written to `bin/spec-check/` (ignored), `gintrack spec
+  ingest` of the two reports, then `gintrack spec impact --since origin/<base> --tiers 1,2
+  --fail-on failing,suspect` against a throwaway configuration that registers only the checkout.
+  The compact report goes to the job summary; exit `7` fails the job with one `::error::`
+  annotation per offending requirement. There is no Pando in CI, so tier 2 reports
+  `unavailable` and tier 1 decides. `make spec-check SPEC_BASE=<ref>` runs the same gate
+  locally; a repository without specs passes it with 0 hits.
 
 ### Changed
 

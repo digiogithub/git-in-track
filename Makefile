@@ -33,7 +33,7 @@ GOLANGCI_LINT_VERSION ?= v2.13.2
 export CGO_ENABLED := 0
 
 .DEFAULT_GOAL := build
-.PHONY: help deps web wasm wasm-smoke build test test-go test-web lint lint-go lint-web lint-ci fmt run dev release-check release-snapshot clean
+.PHONY: help deps web wasm wasm-smoke build test test-go test-web lint lint-go lint-web lint-ci spec-check fmt run dev release-check release-snapshot clean
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -75,6 +75,13 @@ test-go: ## Go tests with the race detector and coverage
 
 test-web: ## Vitest unit tests
 	cd $(WEB_DIR) && npm run test -- --run
+
+# The requirement-impact gate (GIT-US-0133): tests with machine-readable output,
+# `gintrack spec ingest`, then `gintrack spec impact --fail-on failing,suspect`
+# against SPEC_BASE. Exit 7 means the gate tripped. Reports go to bin/spec-check.
+SPEC_BASE ?= origin/main
+spec-check: build ## Requirement-impact gate against SPEC_BASE (default origin/main), as CI runs it
+	GINTRACK=$(BIN_DIR)/$(BINARY) SPEC_BASE=$(SPEC_BASE) scripts/spec-check.sh
 
 lint: lint-go lint-web lint-ci ## Run every linter
 
