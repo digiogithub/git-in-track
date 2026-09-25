@@ -18,6 +18,10 @@ import (
 // RequirementTracer is the backend a host installs with
 // [Vault.SetRequirementTracer]. Both methods receive the vault's own index, so
 // the answer always reflects the backlog as the vault sees it.
+//
+// Both run without the vault mutex held (GIT-US-0163): an implementation may
+// call back into the vault, and may scan the working tree without blocking
+// other readers.
 type RequirementTracer interface {
 	// TraceRequirement returns the code, tests, work and broken trace:
 	// entries of one requirement.
@@ -45,13 +49,14 @@ func (v *Vault) requirementTracer() RequirementTracer {
 // TraceAvailable reports whether a trace backend is installed.
 func (v *Vault) TraceAvailable() bool { return v.requirementTracer() != nil }
 
-func (v *Vault) traceUnavailable() error {
+func traceUnavailable() error {
 	return failf("unavailable",
 		"the requirement trace is not available: this session has no marker scanner (browser-only mode)")
 }
 
-// traceRequirement answers "trace.requirement".
-func (v *Vault) traceRequirement(ctx context.Context, raw []byte) (any, error) {
+// traceRequirement answers "trace.requirement" with tracer over ix, without
+// the vault mutex (see seamCall).
+func traceRequirement(ctx context.Context, tracer RequirementTracer, ix *core.Index, raw []byte) (any, error) {
 	p, err := decodeParams[struct {
 		Ref string `json:"ref"`
 	}](raw)
@@ -62,33 +67,32 @@ func (v *Vault) traceRequirement(ctx context.Context, raw []byte) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	tracer := v.requirementTracer()
 	if tracer == nil {
-		return nil, v.traceUnavailable()
+		return nil, traceUnavailable()
 	}
-	if _, err := v.index.Requirement(ref); err != nil {
+	if _, err := ix.Requirement(ref); err != nil {
 		return nil, fmt.Errorf("trace %s: %w", ref, err)
 	}
-	tr, err := tracer.TraceRequirement(ctx, v.index, ref)
+	tr, err := tracer.TraceRequirement(ctx, ix, ref)
 	if err != nil {
 		return nil, fmt.Errorf("trace %s: %w", ref, err)
 	}
 	return map[string]any{"trace": tr}, nil
 }
 
-// traceTouching answers "trace.touching".
-func (v *Vault) traceTouching(ctx context.Context, raw []byte) (any, error) {
+// traceTouching answers "trace.touching" with tracer over ix, without the
+// vault mutex (see seamCall).
+func traceTouching(ctx context.Context, tracer RequirementTracer, ix *core.Index, raw []byte) (any, error) {
 	p, err := decodeParams[struct {
 		Changes []core.TraceChange `json:"changes"`
 	}](raw)
 	if err != nil {
 		return nil, err
 	}
-	tracer := v.requirementTracer()
 	if tracer == nil {
-		return nil, v.traceUnavailable()
+		return nil, traceUnavailable()
 	}
-	hits, err := tracer.TraceTouching(ctx, v.index, p.Changes)
+	hits, err := tracer.TraceTouching(ctx, ix, p.Changes)
 	if err != nil {
 		return nil, fmt.Errorf("trace touching: %w", err)
 	}

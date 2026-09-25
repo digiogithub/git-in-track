@@ -21,6 +21,13 @@ import (
 // [Vault.SetRequirementImpact]. It receives the vault's own index, so the
 // requirements, the Spec Deltas and the links it reads are the ones the vault
 // sees.
+//
+// Impact runs without the vault mutex held (GIT-US-0163), so an
+// implementation may call back into the vault — the Pando semantic searcher
+// resolves its hits through Requirement, Item and Page — and may wait on git
+// or the network without blocking other readers. It must treat the index as
+// shared: read it through its methods, never keep what they return past the
+// call.
 type RequirementImpact interface {
 	// Impact resolves the requirements a diff affects, in three tiers.
 	Impact(ctx context.Context, ix *core.Index, q core.ImpactQuery) (core.ImpactResult, error)
@@ -51,13 +58,15 @@ const (
 	impactMaxLimit = 50
 )
 
-// impactQuery answers "impact.query".
-func (v *Vault) impactQuery(ctx context.Context, raw []byte) (any, error) {
+// impactQuery answers "impact.query" with backend over ix. It runs without
+// the vault mutex (see seamCall): the resolver's Pando seams may call back
+// into the vault.
+func impactQuery(ctx context.Context, backend RequirementImpact, ix *core.Index, raw []byte) (any, error) {
 	q, err := decodeParams[core.ImpactQuery](raw)
 	if err != nil {
 		return nil, err
 	}
-	res, err := v.resolveImpact(ctx, q)
+	res, err := resolveImpact(ctx, backend, ix, q)
 	if err != nil {
 		return nil, err
 	}
@@ -76,7 +85,9 @@ type impactReportParams struct {
 // impactReport answers "impact.report": the compact, ranked, token-budgeted
 // report of GIT-US-0120 (docs/03 section 21.11, R-IMP-8 to R-IMP-10). It is
 // the one renderer the MCP tool, the CLI and the HTTP API share.
-func (v *Vault) impactReport(ctx context.Context, raw []byte) (any, error) {
+//
+// Like impactQuery, it runs without the vault mutex.
+func impactReport(ctx context.Context, backend RequirementImpact, ix *core.Index, raw []byte) (any, error) {
 	p, err := decodeParams[impactReportParams](raw)
 	if err != nil {
 		return nil, err
@@ -84,7 +95,7 @@ func (v *Vault) impactReport(ctx context.Context, raw []byte) (any, error) {
 	if err := checkReportPage(p.Budget, p.Format); err != nil {
 		return nil, err
 	}
-	res, err := v.resolveImpact(ctx, p.ImpactQuery)
+	res, err := resolveImpact(ctx, backend, ix, p.ImpactQuery)
 	if err != nil {
 		return nil, err
 	}
@@ -98,9 +109,9 @@ func (v *Vault) impactReport(ctx context.Context, raw []byte) (any, error) {
 	return map[string]any{"report": report}, nil
 }
 
-// resolveImpact validates an impact query and runs it on the installed
-// backend.
-func (v *Vault) resolveImpact(ctx context.Context, q core.ImpactQuery) (core.ImpactResult, error) {
+// resolveImpact validates an impact query and runs it on backend, the one
+// the host installed (nil when there is none), over ix.
+func resolveImpact(ctx context.Context, backend RequirementImpact, ix *core.Index, q core.ImpactQuery) (core.ImpactResult, error) {
 	q.Base = strings.TrimSpace(q.Base)
 	q.Head = strings.TrimSpace(q.Head)
 	if q.Base == "" {
@@ -117,17 +128,16 @@ func (v *Vault) resolveImpact(ctx context.Context, q core.ImpactQuery) (core.Imp
 	if q.Limit < 0 || q.Limit > impactMaxLimit {
 		return core.ImpactResult{}, failf("invalid_request", "limit %d is out of range: use 1 to %d", q.Limit, impactMaxLimit)
 	}
-	backend := v.requirementImpact()
 	if backend == nil {
 		return core.ImpactResult{}, failf("unavailable",
 			"the impact query is not available: this session cannot read git history or the code (browser-only mode, or a repository without git)")
 	}
 	if q.Story != "" {
-		if _, err := v.index.Item(q.Story); err != nil {
+		if _, err := ix.Item(q.Story); err != nil {
 			return core.ImpactResult{}, fmt.Errorf("impact of %s: %w", q.Story, err)
 		}
 	}
-	res, err := backend.Impact(ctx, v.index, q)
+	res, err := backend.Impact(ctx, ix, q)
 	if errors.Is(err, core.ErrUnknownRevision) {
 		return core.ImpactResult{}, failf("invalid_request", "%v", err)
 	}

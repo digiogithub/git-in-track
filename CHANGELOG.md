@@ -12,7 +12,19 @@ because a commit list cannot express them.
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- **Impact, trace and coverage reads no longer deadlock the vault** (`GIT-US-0163`, docs/02 §6).
+  `impact.query` and `impact.report` ran the impact resolver with the vault mutex held, and
+  tier 3's Pando semantic searcher resolves its hits back through the same vault, so with
+  Pando configured `gintrack spec impact` crashed with `all goroutines are asleep`, the MCP
+  `spec_impact` tool hung, and a `gintrack serve` request blocked every other reader of the
+  repository. Tier 2's `code_impact_analysis` calls also waited on the network under that
+  lock. The reads answered by a host-installed seam — `trace.requirement`, `trace.touching`,
+  `coverage.list`, `spec.context`, `impact.query` and `impact.report` — now take the mutex
+  only to refresh and capture the index, and release it before the seam runs. Verification
+  stamps (`requirement.stamp`, the done transition) still decide and write under the mutex,
+  and their evidence backend must not call back into the vault.
 
 ## [2.1.0] — 2026-09-25
 
