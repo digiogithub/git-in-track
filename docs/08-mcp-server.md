@@ -139,12 +139,16 @@ advertised yet; they arrive with sections 5 and 6.
    The default projection is `id, type, title, status, priority, assignees, labels, parent,
    updated, rev`.
 4. **Cursor pagination.** Lists return `nextCursor`, and only when there is a next page, so
-   a walk terminates without an extra empty call. `list_items` passes the core's own cursor
-   through untouched. The lists this package pages itself — search results and the
-   knowledge-base listing — use an opaque base64 `{offset, filter fingerprint}` token;
-   presenting one against a different query fails with `invalid_cursor` rather than
-   silently skipping or repeating results. The page size defaults to 20 and is capped at
-   100 whatever the client asks for.
+   a walk terminates without an extra empty call. Every cursor is an opaque token bound to
+   a fingerprint of **every filter and the sort** the call was made with; presenting one
+   against a different query — another `project`, `type`, `status`, `category`, `priority`,
+   `assignee`, `label`, `parent`, `milestone`, `text`, `updatedSince`, `sort` or `order`,
+   or another tool — fails with `invalid_cursor` rather than silently skipping or repeating
+   results. `limit` and `fields` are not part of the query and may change mid-walk. The
+   lists this package pages itself — search results and the knowledge-base listing — carry
+   `{offset, filter fingerprint}`; `list_items` and `list_inbox` carry the core's own cursor
+   (which the core binds only to the sort) wrapped with the filter fingerprint. The page
+   size defaults to 20 and is capped at 100 whatever the client asks for.
 5. **`rev` for safe updates.** Every item, comment and page a tool returns carries `rev`, a
    content hash computed at read time and never stored in a file. Every write tool
    **requires** it — `rev` is a required property of the input schema, so a client sees the
@@ -291,7 +295,9 @@ semantics the REST API and the web UI apply, because it is the same `item.list`.
 ```
 
 Walking the rest is the same call with `"cursor": "eyJvIjozLCJmIjoiYTkxYyJ9"` and every other
-argument unchanged. The page with no `nextCursor` is the last one.
+argument unchanged. The page with no `nextCursor` is the last one. Changing any filter, the
+`sort` or the `order` mid-walk is refused with `invalid_cursor`: start a new walk without a
+cursor instead.
 
 ### 4.2 `search_items`
 

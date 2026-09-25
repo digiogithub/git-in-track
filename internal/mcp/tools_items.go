@@ -228,11 +228,21 @@ func registerItemTools(s *Server) {
 
 // ---------------------------------------------------------------- handlers --
 
-// listItems answers a filtered, paginated query. The core owns the cursor: it
-// is passed through untouched, so a walk stays consistent with what the index
-// knows rather than with a snapshot this package took.
+// listItems answers a filtered, paginated query. The core owns the position of
+// the walk, so it stays consistent with what the index knows rather than with a
+// snapshot this package took; this handler binds that position to every filter
+// and to the sort, because the core cursor alone only remembers the sort.
 func listItems(ctx context.Context, s *Server, in ListItemsInput) (ItemPage, error) {
 	limit := boundedLimit(in.Limit)
+	// The page size and the projection are deliberately not part of the
+	// query: changing them mid-walk still continues the same result set.
+	filter := fingerprint("list_items", in.Project, in.Type, in.Status, in.Category,
+		in.Priority, in.Assignee, in.Label, in.Parent, in.Milestone, in.Text,
+		in.UpdatedSince, sortField(in.Sort), sortOrder(in.Order))
+	inner, err := unwrapCursor(in.Cursor, filter)
+	if err != nil {
+		return ItemPage{}, err
+	}
 	params := map[string]any{
 		"project":      in.Project,
 		"type":         in.Type,
@@ -248,7 +258,7 @@ func listItems(ctx context.Context, s *Server, in ListItemsInput) (ItemPage, err
 		"sort":         sortField(in.Sort),
 		"order":        sortOrder(in.Order),
 		"limit":        limit,
-		"cursor":       in.Cursor,
+		"cursor":       inner,
 	}
 	page, err := dispatch[struct {
 		Items      []core.Item `json:"items"`
@@ -258,7 +268,10 @@ func listItems(ctx context.Context, s *Server, in ListItemsInput) (ItemPage, err
 	if err != nil {
 		return ItemPage{}, err
 	}
-	out := ItemPage{Items: make([]Item, 0, len(page.Items)), Total: page.Total, NextCursor: page.NextCursor}
+	out := ItemPage{
+		Items: make([]Item, 0, len(page.Items)), Total: page.Total,
+		NextCursor: wrapCursor(page.NextCursor, filter),
+	}
 	for _, it := range page.Items {
 		// A list never returns bodies, however the projection is spelled: the
 		// bodies of a page of items are the bulk of a vault.

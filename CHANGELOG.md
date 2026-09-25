@@ -23,6 +23,14 @@ because a commit list cannot express them.
   a retry or an enqueue could be announced `started`, or even `done`, before `queued`, when
   a worker picked it up at once, leaving a client showing the job as queued. The sync
   engine now announces state changes in the order they happened.
+- **A `list_items` cursor is bound to its filters, not only to the sort** (`GIT-US-0155`).
+  The MCP `list_items` and `list_inbox` tools passed the core cursor through untouched, and
+  the core binds it to the sort alone, so a walk whose `status`, `type`, `label`,
+  `milestone` or any other filter changed mid-way was accepted and silently paged a
+  different result set. Both tools now wrap the core cursor with a fingerprint of every
+  filter plus the sort, and refuse a mismatch with `invalid_cursor`, as the search and
+  knowledge-base tools already did. `limit` and `fields` may still change mid-walk
+  (docs/08 §3, principle 4).
 - **Linking a YouTrack project no longer rewrites `project.yaml`** (`GIT-US-0154`). Saving the
   `integrations.youtrack` block re-encoded the whole file through yaml.v3, with the same damage
   `GIT-US-0153` fixed for id counters: alignment, blank lines and quoting went, and a flow-style

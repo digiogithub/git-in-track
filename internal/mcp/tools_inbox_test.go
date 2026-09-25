@@ -121,6 +121,35 @@ func TestListInbox(t *testing.T) {
 		}
 	})
 
+	t.Run("a cursor is bound to the filter it was issued for", func(t *testing.T) {
+		head := call[InboxPage](t, h, "list_inbox", map[string]any{"project": "INBX", "limit": 1})
+		if head.NextCursor == "" {
+			t.Fatal("a partial page came back without a cursor")
+		}
+		for name, extra := range map[string]map[string]any{
+			"status":   {"status": []string{"snoozed"}},
+			"type":     {"type": []string{"task"}},
+			"label":    {"label": []string{"bug"}},
+			"assignee": {"assignee": "alice"},
+			"text":     {"text": "invoice"},
+			"sort":     {"sort": "created"},
+		} {
+			args := map[string]any{"project": "INBX", "limit": 1, "cursor": head.NextCursor}
+			for k, v := range extra {
+				args[k] = v
+			}
+			if got := callFails(t, h, "list_inbox", args); got.Code != codeInvalidCursor {
+				t.Errorf("changed %s: code = %q, want %q", name, got.Code, codeInvalidCursor)
+			}
+		}
+		next := call[InboxPage](t, h, "list_inbox", map[string]any{
+			"project": "INBX", "limit": 1, "cursor": head.NextCursor,
+		})
+		if len(next.Items) != 1 || next.Items[0].ID == head.Items[0].ID {
+			t.Errorf("the unchanged walk did not continue: %+v then %+v", head.Items, next.Items)
+		}
+	})
+
 	t.Run("the result is marked as untrusted repository content", func(t *testing.T) {
 		res := rawCall(t, h, "list_inbox", map[string]any{"project": "INBX"})
 		if res.Meta[untrustedMeta] != untrustedValue {
