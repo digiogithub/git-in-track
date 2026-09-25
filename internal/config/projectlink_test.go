@@ -339,3 +339,76 @@ func TestLoadYouTrackLinkLandInInbox(t *testing.T) {
 		}
 	})
 }
+
+// hostileProjectYAML carries everything a whole-file re-encode rewrites:
+// aligned comments, blank lines, quoting, a folded scalar and a flow mapping
+// whose unquoted commas yaml.v3 already split into extra keys (GIT-US-0154).
+const hostileProjectYAML = `# The backlog of the ACME API.
+schema: 1
+key:  ACME                 # aligned by hand
+name: "ACME API"
+
+summary: >
+  A folded description
+  over two lines.
+
+labels:
+  - { name: core,     color: "#4f46e5", description: Shared Go core (model, parser, index) }
+  - { name: newcomer, color: '#16a34a', description: "Small, well-scoped" }
+`
+
+// TestSaveYouTrackLinkLeavesTheRestOfTheFileByteForByte is the regression test
+// of GIT-US-0154: the link write edits the integrations block and no other
+// byte, where it used to re-encode the whole file through yaml.v3.
+func TestSaveYouTrackLinkLeavesTheRestOfTheFileByteForByte(t *testing.T) {
+	t.Parallel()
+
+	link := YouTrackLink{
+		URL:      "https://yt.example.com/youtrack",
+		Project:  "ACME",
+		FieldMap: FieldMap{"status": {Field: "State"}},
+	}
+	const after = "\n# Rules no Go struct models.\nhouse_rules:\n  review:   two eyes\n"
+	cases := []struct {
+		name         string
+		prefix, tail string // bytes that must survive around the block
+		block        string // the integrations text of the input
+	}{
+		{
+			name:   "a new integrations section is appended",
+			prefix: hostileProjectYAML,
+		},
+		{
+			name:   "a new youtrack block joins an existing integrations section",
+			prefix: hostileProjectYAML + "integrations:\n  other:   { enabled: true }   # keep\n",
+			tail:   after,
+		},
+		{
+			name:   "an existing youtrack block is replaced",
+			prefix: hostileProjectYAML + "integrations:\n  # How this backlog reaches the tracker.\n",
+			block:  "  youtrack:\n    url: https://old.example.com\n    project: OLD\n    field_map:\n      status: Stage\n",
+			tail:   "  other:   { enabled: true }   # keep\n" + after,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			path := writeProject(t, tc.prefix+tc.block+tc.tail)
+			if _, err := SaveYouTrackLink(path, link); err != nil {
+				t.Fatalf("save: %v", err)
+			}
+			got := readProject(t, path)
+			if !strings.HasPrefix(got, tc.prefix) || !strings.HasSuffix(got, tc.tail) {
+				t.Fatalf("bytes outside the integrations block changed:\n%s", got)
+			}
+			reloaded, err := LoadYouTrackLink(path)
+			if err != nil || reloaded == nil {
+				t.Fatalf("reload: %v, %v", reloaded, err)
+			}
+			if reloaded.URL != link.URL || reloaded.Project != "ACME" ||
+				reloaded.FieldMap["status"].Field != "State" {
+				t.Errorf("reloaded link = %+v", reloaded)
+			}
+		})
+	}
+}

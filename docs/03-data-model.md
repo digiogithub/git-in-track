@@ -772,6 +772,11 @@ integrations:
 | `comment_template` | `text/template` | no | see R-INT-6 | The attribution line appended to a comment pushed upstream. |
 | `land_in_inbox` | boolean | no | `false` | Imported issues arrive in the project's triage queue instead of its backlog (R-INT-7, [§6.4](#64-the-triage-category-and-the-inbox), GIT-EP-0012). |
 
+A settings save rewrites only the lines of the `integrations.youtrack` block and leaves every
+other byte of `project.yaml` as written: comments, alignment, quoting and flow mappings elsewhere
+in the file are untouched. Only a shape it cannot splice (a flow-style `integrations`, say) falls
+back to re-encoding the YAML node tree, which keeps comments and key order but not spacing.
+
 `field_map` answers two different questions, and an entry says which one it is answering. Written as
 a plain string it renames a field: `status: State` tells the importer which custom field to read a
 status out of. Written as a block it also translates the values inside that field:
