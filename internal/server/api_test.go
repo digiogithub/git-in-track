@@ -162,6 +162,7 @@ func getItem(t *testing.T, s *Server, id string) (string, string) {
 	return item.Rev, item.Status
 }
 
+// Verifies: GIT-SP-0004.R5
 func TestItemListFiltersAndPaginates(t *testing.T) {
 	t.Parallel()
 
@@ -229,6 +230,24 @@ func TestItemListFiltersAndPaginates(t *testing.T) {
 		}
 		if first.Items[0].ID == second.Items[0].ID {
 			t.Errorf("the second page repeats %s", second.Items[0].ID)
+		}
+	})
+
+	t.Run("a cursor refuses a changed filter", func(t *testing.T) {
+		var first itemPageBody
+		decode(t, send(t, s, request{method: http.MethodGet, target: "/api/v1/items?limit=1&sort=id"}), http.StatusOK, &first)
+		if first.NextCursor == "" {
+			t.Fatal("the fixture does not produce a second page")
+		}
+		for _, changed := range []string{"status=todo", "type=story", "label=frontend", "q=checkout", "order=desc"} {
+			var doc problemBody
+			decode(t, send(t, s, request{
+				method: http.MethodGet,
+				target: "/api/v1/items?limit=1&sort=id&" + changed + "&cursor=" + first.NextCursor,
+			}), http.StatusBadRequest, &doc)
+			if doc.Code != "invalid_cursor" {
+				t.Errorf("%s: code = %q, want invalid_cursor", changed, doc.Code)
+			}
 		}
 	})
 

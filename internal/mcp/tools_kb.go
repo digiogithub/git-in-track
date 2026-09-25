@@ -4,6 +4,8 @@ import (
 	"context"
 	"sort"
 	"strings"
+
+	"github.com/digiogithub/git-in-track/internal/core"
 )
 
 // The knowledge-base tools. The backlog lives under `.pmngr/`; everything else
@@ -120,7 +122,7 @@ func listKBPages(ctx context.Context, s *Server, in ListKBPagesInput) (PageList,
 	sort.Slice(pages, func(i, j int) bool { return pages[i].Path < pages[j].Path })
 	pages = dedupePages(pages)
 
-	filter := fingerprint("list_kb_pages", in.Project, prefix)
+	filter := core.Fingerprint("list_kb_pages", in.Project, prefix)
 	offset, err := decodeCursor(in.Cursor, filter)
 	if err != nil {
 		return PageList{}, err
@@ -274,7 +276,7 @@ func searchKB(ctx context.Context, s *Server, in SearchKBInput) (HitPage, error)
 		}
 		pages = append(pages, h)
 	}
-	filter := fingerprint("search_kb", in.Query, in.Project)
+	filter := core.Fingerprint("search_kb", in.Query, in.Project)
 	offset, err := decodeCursor(in.Cursor, filter)
 	if err != nil {
 		return HitPage{}, err

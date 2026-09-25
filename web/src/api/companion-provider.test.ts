@@ -130,6 +130,21 @@ describe('CompanionProvider reads', () => {
     expect(page.items[0]).not.toHaveProperty('commentCount');
   });
 
+  it('reports a cursor refused for a changed filter as a validation failure', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(
+        response(
+          { code: 'invalid_cursor', detail: 'the cursor was issued for a different filter' },
+          { status: 400 },
+        ),
+      );
+
+    await expect(
+      provider(fetchImpl).listItems({ status: ['done'], cursor: 'eyJvIjoyfQ' }),
+    ).rejects.toMatchObject({ code: 'validation_failed' });
+  });
+
   it('falls back to X-Total-Count when the body carries no total', async () => {
     const fetchImpl = vi
       .fn()

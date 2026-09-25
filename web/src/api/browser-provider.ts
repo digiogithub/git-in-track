@@ -275,6 +275,9 @@ const CORE_ERROR_CODES: Record<string, ProviderError['code']> = {
   validation_failed: 'validation_failed',
   invalid_item: 'validation_failed',
   invalid_request: 'validation_failed',
+  // A list cursor presented with another filter or sort (GIT-US-0156): the
+  // caller restarts the walk rather than retrying it.
+  invalid_cursor: 'validation_failed',
   not_found: 'not_found',
   unknown_id: 'not_found',
   unknown_method: 'internal',

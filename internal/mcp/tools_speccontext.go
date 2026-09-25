@@ -184,7 +184,7 @@ func specCoverage(ctx context.Context, s *Server, in SpecCoverageInput) (Coverag
 		status = append(status, st)
 	}
 	limit := boundedLimit(in.Limit)
-	filter := fingerprint("spec_coverage", in.Project, in.Spec, status)
+	filter := core.Fingerprint("spec_coverage", in.Project, in.Spec, status)
 	offset, err := decodeCursor(in.Cursor, filter)
 	if err != nil {
 		return CoveragePage{}, err

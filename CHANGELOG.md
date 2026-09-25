@@ -44,6 +44,19 @@ because a commit list cannot express them.
   (docs/research/2026-09-25-spec-impact-benchmark.md). `--pretty` restores the indented output.
   This differs on purpose from the other commands' `--json`, which stays indented. Scripts that
   parse the JSON are unaffected; scripts that grep the indented lines need `--pretty`.
+- **REST, browser and MCP item cursors are bound to every filter** (`GIT-US-0156`).
+  `GET /api/v1/items`, `GET /api/v1/inbox` and the browser-only mode's `item.list` and
+  `inbox.list` accepted a cursor whose filter had changed mid-walk and silently paged a
+  different result set; only the MCP tools refused it. The binding now lives in the core
+  query itself: an item cursor carries a fingerprint of every filter clause next to the
+  sort, and a mismatch — or a cursor the server never issued — is refused with
+  `invalid_cursor`, which the REST API answers as `400` (it used to be `400
+  invalid_request` for a malformed cursor, and nothing for a changed filter). A relative
+  `updatedSince` such as `7d` is bound as spelled, and the snooze clock is not part of the
+  filter, so neither breaks a walk as time passes. The MCP `list_items` and `list_inbox`
+  tools no longer wrap the core cursor; their behaviour is unchanged. `list_requirements`
+  and `spec_coverage` were checked and already bound every filter; their tests now cover
+  each one (docs/07 §5.3 and §5.4, docs/08 §3, docs/05 §5).
 
 ## [2.1.0] — 2026-09-25
 

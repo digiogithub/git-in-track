@@ -129,7 +129,9 @@ func statusForCode(code string) int {
 		return http.StatusConflict
 	case "read_only", "forbidden":
 		return http.StatusForbidden
-	case codeInvalidRequest:
+	case codeInvalidRequest, vault.InvalidCursorCode:
+		// A cursor presented with another filter or sort is a malformed
+		// request: the client restarts the walk, it does not retry.
 		return http.StatusBadRequest
 	case codeUnauthorized:
 		return http.StatusUnauthorized

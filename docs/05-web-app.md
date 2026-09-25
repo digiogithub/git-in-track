@@ -1129,6 +1129,12 @@ Three layers, deliberately separated:
 ['git', 'status', repoId]
 ```
 
+The paged lists (backlog items, the inbox) are infinite queries whose key holds the
+whole filter, so changing a filter starts a new walk without a cursor rather than
+resuming the old one. That is required, not stylistic: in both modes the core binds a
+cursor to every filter and the sort and refuses it otherwise with `invalid_cursor`
+(doc 07 §5.3), which the providers surface as `validation_failed`.
+
 Defaults: `staleTime` 30 s in companion mode (the WS invalidates precisely) and
 5 s in browser-only mode; `gcTime` 15 min; `refetchOnWindowFocus` only for
 `['git','status']`. Mutations use `onMutate` optimistic updates plus rollback, and

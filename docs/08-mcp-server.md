@@ -145,10 +145,16 @@ advertised yet; they arrive with sections 5 and 6.
    `assignee`, `label`, `parent`, `milestone`, `text`, `updatedSince`, `sort` or `order`,
    or another tool — fails with `invalid_cursor` rather than silently skipping or repeating
    results. `limit` and `fields` are not part of the query and may change mid-walk. The
-   lists this package pages itself — search results and the knowledge-base listing — carry
-   `{offset, filter fingerprint}`; `list_items` and `list_inbox` carry the core's own cursor
-   (which the core binds only to the sort) wrapped with the filter fingerprint. The page
-   size defaults to 20 and is capped at 100 whatever the client asks for.
+   lists this package pages itself — search results, the knowledge-base listing,
+   `list_requirements` (`project`, `spec`, `status`, `text`) and `spec_coverage`
+   (`project`, `spec`, `status`) — carry `{offset, filter fingerprint}`; `list_items` and
+   `list_inbox` pass through the core's own cursor, which the core binds to every filter and
+   the sort itself (GIT-US-0156). That is why `GET /api/v1/items`, `GET /api/v1/inbox` and
+   the browser-only mode refuse a changed filter with the same `invalid_cursor`
+   (doc 07 §5.3): there is one binding, in `internal/core`, and one fingerprint function,
+   `core.Fingerprint`. A relative `updatedSince` such as `7d` is bound as spelled, so its
+   walk survives the clock. The page size defaults to 20 and is capped at 100 whatever the
+   client asks for.
 5. **`rev` for safe updates.** Every item, comment and page a tool returns carries `rev`, a
    content hash computed at read time and never stored in a file. Every write tool
    **requires** it — `rev` is a required property of the input schema, so a client sees the

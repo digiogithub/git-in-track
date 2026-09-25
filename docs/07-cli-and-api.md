@@ -2252,8 +2252,14 @@ bearer token this prevents drive-by localhost attacks from arbitrary web pages.
   Posting a comment creates a new file and therefore needs no `If-Match`; when one is sent it
   is honored against the *item's* revision, which is what the MCP surface requires of agents.
 - **Pagination** — `?limit=` (default 50, max 500) and `?offset=`, plus `X-Total-Count`.
-  Cursor pagination (`?cursor=`) is available on `/items` for large backlogs and is what
-  the MCP layer uses.
+  Cursor pagination (`?cursor=`) is available on `/items` and `/inbox` for large backlogs and
+  is what the MCP layer uses. A cursor is bound to every filter parameter and to the sort
+  that produced it (`sort`/`order`); `limit` and `fields` may change between pages. A
+  cursor presented with any other filter or sort — or one this server never issued — is
+  refused with `400 invalid_cursor`: restart the walk without a cursor. A relative
+  `updatedSince` such as `7d` is bound as spelled, so its walk survives the clock moving
+  between pages (GIT-US-0156). The browser-only mode answers the same `invalid_cursor`,
+  because both run the same core query.
 - **Sorting** — `?sort=updated,-priority`; a leading `-` reverses. Ordering is total and
   deterministic: the final tiebreaker is always `id` ascending.
 - **Filtering** — repeatable query params are OR within a field and AND across fields.
@@ -2308,6 +2314,7 @@ revision means the change had already been made by whoever wrote first.
 ```
 
 Catalog of `code` values: `unauthorized`, `forbidden`, `not_found`, `invalid_request`,
+`invalid_cursor`,
 `validation_failed`, `invalid_front_matter`, `precondition_required`, `stale_revision`,
 `conflict`, `duplicate_id`, `workflow_transition_denied`, `read_only`,
 `repo_not_registered`, `repo_not_cloned`, `wip_limit_exceeded`, `sprint_overlap`,
@@ -2330,6 +2337,12 @@ results (and those of `item.move`, `requirement.create` and `requirement.update`
 `"schemaUpgraded": 2` when the write introduced the first spec construct into a
 `schema: 1` project and raised `project.yaml` in the same write, which is then in `writes`
 (doc 03 §21.10). `gintrack item new --json` reports it the same way.
+
+`invalid_cursor` (HTTP 400) refuses a `cursor` of `/items` or `/inbox` that was issued for a
+different filter or sort, or never issued at all. Resuming it would skip or repeat items of
+another result set, so the client restarts the walk without a cursor; it is the code the MCP
+tools return for the same mistake. The token-budgeted spec reports keep `400 invalid_request`
+for a foreign cursor (§5.5).
 
 `wip_limit_exceeded` (HTTP 409) is a *refusal the caller may repeat*: a board's WIP limit is
 advisory (doc 04 R-COL-5), so the move is declined once with the column and the limit in `detail`,
@@ -3562,6 +3575,8 @@ X-Total-Count: 12
 
 Query parameters: `project`, `status` (repeatable), `type`, `label`, `assignee`,
 `q`/`text`, `sort`, `order`, `limit` (capped at 500), `cursor`, `fields`.
+`cursor` is bound to every other filter and the sort, exactly as on `/items` (§5.3):
+a changed one is `400 invalid_cursor`.
 `status` is the **triage** state — `pending`, `accepted`, `rejected`, `snoozed`,
 `duplicate` — and never a workflow status; anything else is `invalid_request`.
 `counts` and `pending` are computed over the **whole queue**, not the page, and a

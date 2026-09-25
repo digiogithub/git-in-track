@@ -975,7 +975,7 @@ func (v *Vault) itemList(ctx context.Context, raw []byte) (any, error) {
 	}
 	page, err := v.index.Items(ctx, filter)
 	if err != nil {
-		return nil, failf("invalid_request", "%v", err)
+		return nil, queryFailure(err)
 	}
 	items := page.Items
 	if items == nil {
@@ -989,6 +989,21 @@ func (v *Vault) itemList(ctx context.Context, raw []byte) (any, error) {
 		}
 	}
 	return itemPage{Items: items, NextCursor: page.NextCursor, Total: page.Total}, nil
+}
+
+// InvalidCursorCode refuses a cursor of item.list or inbox.list that was
+// issued for another filter or sort, or was never issued at all: resuming it
+// would skip or repeat items of a different result set (GIT-US-0156). It is
+// the code the MCP server has always returned for the same mistake.
+const InvalidCursorCode = "invalid_cursor"
+
+// queryFailure classifies a failure of the core's item query: a refused cursor
+// is invalid_cursor, anything else a malformed request.
+func queryFailure(err error) error {
+	if errors.Is(err, core.ErrInvalidCursor) {
+		return failf(InvalidCursorCode, "%v", err)
+	}
+	return failf("invalid_request", "%v", err)
 }
 
 // wantsBody reports whether a projection asks for the Markdown body.
@@ -1036,6 +1051,9 @@ func (v *Vault) filterOf(p itemFilterParams) (core.Filter, error) {
 			return core.Filter{}, failf("invalid_request", "updatedSince: %v", err)
 		}
 		f.UpdatedSince = ts
+		// A relative value resolves to a later instant on every page; the
+		// cursor is bound to the spelling instead.
+		f.UpdatedSinceSpec = p.UpdatedSince
 	}
 	return f, nil
 }

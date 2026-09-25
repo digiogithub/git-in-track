@@ -116,6 +116,7 @@ func submitToInbox(t *testing.T, s *Server, title string) (string, string) {
 	return created.ID, created.Rev
 }
 
+// Verifies: GIT-SP-0004.R5
 func TestInboxListing(t *testing.T) {
 	t.Parallel()
 
@@ -175,6 +176,20 @@ func TestInboxListing(t *testing.T) {
 		}), http.StatusOK, &second)
 		if len(second.Items) != 1 {
 			t.Fatalf("second page = %d items, want 1", len(second.Items))
+		}
+	})
+
+	t.Run("a cursor refuses a changed filter", func(t *testing.T) {
+		var first inboxPageBody
+		decode(t, send(t, s, request{method: http.MethodGet, target: "/api/v1/inbox?project=INBX&limit=2"}),
+			http.StatusOK, &first)
+		var doc problemBody
+		decode(t, send(t, s, request{
+			method: http.MethodGet,
+			target: "/api/v1/inbox?project=INBX&limit=2&status=rejected&cursor=" + first.NextCursor,
+		}), http.StatusBadRequest, &doc)
+		if doc.Code != "invalid_cursor" {
+			t.Fatalf("code = %q, want invalid_cursor", doc.Code)
 		}
 	})
 

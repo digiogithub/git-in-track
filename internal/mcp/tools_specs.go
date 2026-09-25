@@ -299,7 +299,7 @@ func getRequirement(ctx context.Context, s *Server, ref string, fields []string)
 // cursor bound to the filter.
 func listRequirements(ctx context.Context, s *Server, in ListRequirementsInput) (RequirementPage, error) {
 	limit := boundedLimit(in.Limit)
-	filter := fingerprint("list_requirements", in.Project, in.Spec, in.Status, in.Text)
+	filter := core.Fingerprint("list_requirements", in.Project, in.Spec, in.Status, in.Text)
 	offset, err := decodeCursor(in.Cursor, filter)
 	if err != nil {
 		return RequirementPage{}, err
