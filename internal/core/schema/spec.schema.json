@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://git-in-track.dev/schema/spec.schema.json",
+  "title": "git-in-track spec",
+  "description": "Front matter of a spec and its requirements: map (docs/03-data-model.md section 21, ADR-037).",
+  "type": "object",
+  "required": [
+    "id",
+    "type",
+    "title",
+    "status",
+    "created",
+    "updated"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9]{1,9}-SP-[0-9]{4,}$"
+    },
+    "type": {
+      "const": "spec"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "status": {
+      "$ref": "common.defs.json#/$defs/statusId"
+    },
+    "priority": {
+      "$ref": "common.defs.json#/$defs/priority"
+    },
+    "assignees": {
+      "type": "array",
+      "items": {
+        "$ref": "common.defs.json#/$defs/handle"
+      }
+    },
+    "author": {
+      "$ref": "common.defs.json#/$defs/handle"
+    },
+    "labels": {
+      "type": "array",
+      "items": {
+        "$ref": "common.defs.json#/$defs/label"
+      }
+    },
+    "created": {
+      "$ref": "common.defs.json#/$defs/timestamp"
+    },
+    "updated": {
+      "$ref": "common.defs.json#/$defs/timestamp"
+    },
+    "started": {
+      "$ref": "common.defs.json#/$defs/timestamp"
+    },
+    "closed": {
+      "$ref": "common.defs.json#/$defs/timestamp"
+    },
+    "links": {
+      "type": "array",
+      "items": {
+        "$ref": "common.defs.json#/$defs/link"
+      }
+    },
+    "blocks": {
+      "type": "array",
+      "items": {
+        "$ref": "common.defs.json#/$defs/linkTarget"
+      },
+      "description": "Shorthand for links of kind blocks, normalised into links on the next write (section 12.2)."
+    },
+    "depends_on": {
+      "type": "array",
+      "items": {
+        "$ref": "common.defs.json#/$defs/linkTarget"
+      },
+      "description": "Shorthand for links of kind blocked_by, normalised into links on the next write (section 12.2)."
+    },
+    "external": {
+      "type": "array",
+      "items": {
+        "$ref": "common.defs.json#/$defs/external"
+      }
+    },
+    "attachments": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "custom": {
+      "type": "object"
+    },
+    "requirements": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^R[1-9][0-9]*$"
+      },
+      "additionalProperties": {
+        "$ref": "common.defs.json#/$defs/requirement"
+      }
+    },
+    "deleted": {
+      "type": "boolean"
+    }
+  },
+  "patternProperties": {
+    "^x-": true
+  },
+  "additionalProperties": false
+}

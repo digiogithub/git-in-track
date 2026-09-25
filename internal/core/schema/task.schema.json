@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://git-in-track.dev/schema/task.schema.json",
+  "title": "git-in-track task",
+  "description": "Front matter of a task (docs/03-data-model.md section 9).",
+  "type": "object",
+  "required": [
+    "id",
+    "type",
+    "title",
+    "status",
+    "created",
+    "updated"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9]{1,9}-T-[0-9]{4,}$"
+    },
+    "type": {
+      "const": "task"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "status": {
+      "$ref": "common.defs.json#/$defs/statusId"
+    },
+    "priority": {
+      "$ref": "common.defs.json#/$defs/priority"
+    },
+    "parent": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9]{1,9}-(EP|US)-[0-9]{4,}$"
+    },
+    "epic": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9]{1,9}-EP-[0-9]{4,}$",
+      "deprecated": true,
+      "description": "Deprecated alias of parent, read and kept for files that use it."
+    },
+    "milestone": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9]{1,9}-M-[0-9]{4,}$"
+    },
+    "sprint": {
+      "type": "string",
+      "description": "Team sprint id <TEAMKEY>-S-<NNNN>, a soft reference resolved in the team repository."
+    },
+    "assignees": {
+      "type": "array",
+      "items": {
+        "$ref": "common.defs.json#/$defs/handle"
+      }
+    },
+    "author": {
+      "$ref": "common.defs.json#/$defs/handle"
+    },
+    "labels": {
+      "type": "array",
+      "items": {
+        "$ref": "common.defs.json#/$defs/label"
+      }
+    },
+    "estimate": {
+      "type": "number",
+      "minimum": 0
+    },
+    "effort": {
+      "type": "number",
+      "minimum": 0
+    },
+    "spent": {
+      "type": "number",
+      "minimum": 0
+    },
+    "created": {
+      "$ref": "common.defs.json#/$defs/timestamp"
+    },
+    "updated": {
+      "$ref": "common.defs.json#/$defs/timestamp"
+    },
+    "started": {
+      "$ref": "common.defs.json#/$defs/timestamp"
+    },
+    "closed": {
+      "$ref": "common.defs.json#/$defs/timestamp"
+    },
+    "due": {
+      "$ref": "common.defs.json#/$defs/date"
+    },
+    "links": {
+      "type": "array",
+      "items": {
+        "$ref": "common.defs.json#/$defs/link"
+      }
+    },
+    "blocks": {
+      "type": "array",
+      "items": {
+        "$ref": "common.defs.json#/$defs/linkTarget"
+      },
+      "description": "Shorthand for links of kind blocks, normalised into links on the next write (section 12.2)."
+    },
+    "depends_on": {
+      "type": "array",
+      "items": {
+        "$ref": "common.defs.json#/$defs/linkTarget"
+      },
+      "description": "Shorthand for links of kind blocked_by, normalised into links on the next write (section 12.2)."
+    },
+    "external": {
+      "type": "array",
+      "items": {
+        "$ref": "common.defs.json#/$defs/external"
+      }
+    },
+    "attachments": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "custom": {
+      "type": "object"
+    },
+    "inbox": {
+      "$ref": "common.defs.json#/$defs/inbox"
+    },
+    "deleted": {
+      "type": "boolean"
+    }
+  },
+  "patternProperties": {
+    "^x-": true
+  },
+  "additionalProperties": false
+}

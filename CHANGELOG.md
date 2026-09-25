@@ -58,6 +58,16 @@ because a commit list cannot express them.
   restored and quoted.
 ### Added
 
+- **JSON Schemas for every item type and `project.yaml`** (`GIT-US-0142`, docs/03 §18).
+  `internal/core/schema/` ships Draft 2020-12 schemas for epics, stories, tasks, milestones,
+  specs (including the `requirements:` map: `status`, `trace`, `verified`, `links`), comments
+  and `project.yaml`, plus the shared `common.defs.json`, all with `$id`s under
+  `https://git-in-track.dev/schema/`. They are embedded in the binary and the WASM build
+  (`core.JSONSchema`) for editor autocompletion and third-party tools; the Go validator stays
+  the authority. The computed-only link kinds `implemented_by` and `modified_by` are rejected
+  in files (R-LINK-8), and top-level `x-` keys are accepted (R-CF-4). A drift test fails when
+  the schemas and the Go model disagree on keys, enumerations, ID and trace grammars, or on
+  what the Go emitter writes.
 - **Spec items and requirement blocks in the core** (`GIT-US-0105`, ADR-037, docs/03 §21).
   A new item type `spec` (type code `SP`, folder `.pmngr/specs/`, counter
   `id_allocation.counters.spec`) whose requirements are `### <SPEC-ID>.R<n> — <title>` blocks
