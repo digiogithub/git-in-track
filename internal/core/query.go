@@ -131,6 +131,7 @@ func decodeCursor(s string) (cursor, error) {
 // Ordering is total: the requested keys first, the id last, so that two calls
 // with the same filter over the same index return the same order and a cursor
 // means the same thing on both.
+// Implements: GIT-SP-0004.R2, GIT-SP-0004.R3, GIT-SP-0004.R5
 func (ix *Index) Items(ctx context.Context, f Filter) (Page[Item], error) {
 	if err := checkCancelled(ctx); err != nil {
 		return Page[Item]{}, err

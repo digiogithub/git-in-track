@@ -109,6 +109,7 @@ func TestUntrustedContentIsMarked(t *testing.T) {
 	}
 }
 
+// Verifies: GIT-SP-0004.R1, GIT-SP-0004.R2, GIT-SP-0004.R6, GIT-SP-0004.R7
 func TestListItems(t *testing.T) {
 	h := newHarness(t, false)
 
@@ -373,6 +374,7 @@ func TestSearch(t *testing.T) {
 	})
 }
 
+// Verifies: GIT-SP-0004.R2, GIT-SP-0004.R3
 func TestKnowledgeBase(t *testing.T) {
 	h := newHarness(t, false)
 

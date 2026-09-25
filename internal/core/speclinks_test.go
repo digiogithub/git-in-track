@@ -8,6 +8,7 @@ import (
 	"testing"
 )
 
+// Verifies: GIT-SP-0003.R1, GIT-SP-0003.R2, GIT-SP-0003.R3
 func TestLinkKindValidAndInverse(t *testing.T) {
 	t.Parallel()
 
@@ -58,6 +59,7 @@ func TestLinkKindValidAndInverse(t *testing.T) {
 	}
 }
 
+// Verifies: GIT-SP-0003.R3, GIT-SP-0003.R4, GIT-SP-0003.R5
 func TestValidateSpecLinkTargets(t *testing.T) {
 	t.Parallel()
 	cfg := specConfig(t) // key TEST, schema 2
@@ -193,6 +195,7 @@ func TestStoreUpgradesSchemaOnFirstImplementsLink(t *testing.T) {
 	}
 }
 
+// Verifies: GIT-SP-0003.R3
 func TestStoreRefusesComputedOnlyLinks(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -268,6 +271,7 @@ func requirementLinkVault(t *testing.T) *Index {
 	return ix
 }
 
+// Verifies: GIT-SP-0003.R2
 func TestIndexResolvesRequirementLinks(t *testing.T) {
 	t.Parallel()
 	ix := requirementLinkVault(t)
@@ -308,6 +312,7 @@ func TestIndexResolvesRequirementLinks(t *testing.T) {
 	}
 }
 
+// Verifies: GIT-SP-0003.R7
 func TestIndexReportsDanglingRequirementTargets(t *testing.T) {
 	t.Parallel()
 	ix := requirementLinkVault(t)

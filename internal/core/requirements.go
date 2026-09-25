@@ -688,6 +688,7 @@ func RequirementDiagnostics(item *Item, cfg *ProjectConfig) []Diagnostic {
 }
 
 // validateRequirementEntry checks the values of one requirements: entry.
+// Implements: GIT-SP-0003.R6
 func validateRequirementEntry(d *diagSet, field string, e *Requirement, cfg *ProjectConfig) {
 	if e == nil {
 		return

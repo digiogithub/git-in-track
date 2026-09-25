@@ -185,6 +185,7 @@ func TestItemsSorting(t *testing.T) {
 	})
 }
 
+// Verifies: GIT-SP-0004.R2, GIT-SP-0004.R3, GIT-SP-0004.R5
 func TestItemsPagination(t *testing.T) {
 	ix, _ := buildFixtureIndex(t)
 	ctx := context.Background()

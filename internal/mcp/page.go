@@ -30,6 +30,7 @@ const (
 
 // boundedLimit clamps a requested page size into the documented range. Zero and
 // negative values mean "the default", not "everything".
+// Implements: GIT-SP-0004.R1
 func boundedLimit(requested int) int {
 	if requested <= 0 {
 		return defaultPageSize
@@ -77,6 +78,8 @@ func renderCursor(c cursor) string {
 
 // decodeCursor reads an offset token and checks it against the filter of the
 // current call. An empty token starts at offset zero.
+// Implements: GIT-SP-0004.R4
+
 func decodeCursor(token, filter string) (int, error) {
 	c, err := parseCursor(token, filter)
 	if err != nil || token == "" {
@@ -133,6 +136,8 @@ func parseCursor(token, filter string) (cursor, error) {
 // JSON rather than printed, so that ["a b"] and ["a", "b"] do not collide. It
 // is short on purpose: the cursor travels in every page of a walk, and eight
 // bytes are plenty to notice that the query changed.
+// Implements: GIT-SP-0004.R4
+
 func fingerprint(parts ...any) string {
 	raw, err := json.Marshal(parts)
 	if err != nil {
@@ -145,6 +150,7 @@ func fingerprint(parts ...any) string {
 // slice returns the requested page of items and the cursor for the next one.
 // It never returns a cursor for a page that ends the list, so an agent's walk
 // terminates without an extra empty call.
+// Implements: GIT-SP-0004.R2, GIT-SP-0004.R3
 func slice[T any](all []T, offset, limit int, filter string) (page []T, next string) {
 	if offset >= len(all) {
 		return nil, ""

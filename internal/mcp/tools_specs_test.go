@@ -126,6 +126,7 @@ func TestGetItemOnRequirementRef(t *testing.T) {
 	})
 }
 
+// Verifies: GIT-SP-0004.R3, GIT-SP-0004.R4, GIT-SP-0004.R6
 func TestListRequirements(t *testing.T) {
 	h := newHarness(t, true)
 	spec := specFixture(t, h)

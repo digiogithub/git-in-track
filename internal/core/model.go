@@ -136,6 +136,7 @@ const (
 // Valid reports whether k is one of the known relation kinds, including the
 // computed-only ones: a graph edge may carry any of them. Whether a file may
 // write k is Writable.
+// Implements: GIT-SP-0003.R1
 func (k LinkKind) Valid() bool {
 	switch k {
 	case LinkBlocks, LinkBlockedBy, LinkRelatesTo, LinkDuplicates, LinkDuplicatedBy:
@@ -148,6 +149,7 @@ func (k LinkKind) Valid() bool {
 // ComputedOnly reports whether k exists only as the index's inverse of a spec
 // link (R-LINK-8): implemented_by and modified_by. Spec links are one-sided and
 // are written on the story or task, never on the spec or requirement.
+// Implements: GIT-SP-0003.R3
 func (k LinkKind) ComputedOnly() bool {
 	return k == LinkImplementedBy || k == LinkModifiedBy
 }
@@ -168,6 +170,7 @@ func (k LinkKind) Spec() bool {
 }
 
 // Inverse returns the relation kind seen from the target item.
+// Implements: GIT-SP-0003.R2
 func (k LinkKind) Inverse() LinkKind {
 	switch k {
 	case LinkBlocks:
