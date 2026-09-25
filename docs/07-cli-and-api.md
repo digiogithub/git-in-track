@@ -4168,6 +4168,10 @@ Event types and `data` schemas:
 //   sync.job.progress   a coalesced count of how far a batch has got
 //   sync.job.done       it succeeded, or was cancelled (`state` says which)
 //   sync.job.failed     it exhausted its attempts or hit a terminal error
+//
+// The events of one job arrive in the order its state changed: a retried job
+// is announced `queued` before the worker that picks it up announces
+// `started`, even when the two happen at the same instant (GIT-US-0146).
 { "type":"sync.job.queued",
   "data": { "id":"job_000021", "kind":"youtrack.import", "key":"ACME",
             "state":"queued", "attempt":0, "processed":0, "total":20 } }

@@ -250,11 +250,39 @@ func TestSyncJobRetryFromTheDeadLetter(t *testing.T) {
 		failed <- struct{}{}
 		return fmt.Errorf("%w: the remote refused", syncengine.ErrTerminal)
 	})
+	// Subscribe before the job exists, so the stream is read from its start:
+	// the job's state flips to failed before its sync.job.failed event is
+	// published, so a client registered only after the state is observed
+	// could still receive that older event first.
+	client := newHubClient()
+	client.subscribe(syncJobTopics())
+	s.hub.register(client)
+
 	job, err := s.sync.engine.Enqueue(t.Context(), syncengine.Request{Kind: testJobKind})
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
-	waitForJobState(t, s, job.ID, syncengine.StateFailed)
+	nextJobEvent := func(what string) (string, syncJobEventData) {
+		t.Helper()
+		for {
+			select {
+			case ev := <-client.events:
+				data, ok := ev.Data.(syncJobEventData)
+				if !ok || data.ID != job.ID {
+					continue
+				}
+				return ev.Type, data
+			case <-time.After(5 * time.Second):
+				t.Fatalf("no event for %s: %s", job.ID, what)
+			}
+		}
+	}
+	// The first run is announced in order and ends in the dead letter.
+	for _, want := range []string{eventSyncJobQueued, eventSyncJobStarted, eventSyncJobFailed} {
+		if got, _ := nextJobEvent("the first run"); got != want {
+			t.Fatalf("the first run published %q, want %q", got, want)
+		}
+	}
 
 	var body syncJobsBody
 	decode(t, send(t, s, request{method: http.MethodGet, target: "/api/v1/sync/jobs?state=failed"}),
@@ -266,10 +294,6 @@ func TestSyncJobRetryFromTheDeadLetter(t *testing.T) {
 		t.Fatalf("a failed job carries its redacted error and its dead-letter flag: %+v", body.Jobs[0])
 	}
 
-	client := newHubClient()
-	client.subscribe(syncJobTopics())
-	s.hub.register(client)
-
 	var retried struct {
 		ID string `json:"id"`
 	}
@@ -280,18 +304,21 @@ func TestSyncJobRetryFromTheDeadLetter(t *testing.T) {
 	}
 	// The retry re-announces the job as queued with a fresh attempt budget; the
 	// engine then runs it again at once, which is why the assertion is on the
-	// event rather than on a second read of a moving target.
-	select {
-	case ev := <-client.events:
-		if ev.Type != eventSyncJobQueued {
-			t.Fatalf("the retry published %q, want %q", ev.Type, eventSyncJobQueued)
+	// event rather than on a second read of a moving target. The queued event
+	// comes first even when a worker picks the job up before the retry has
+	// announced it: the engine announces changes in the order they happened
+	// (GIT-US-0146).
+	typ, data := nextJobEvent("the retry")
+	if typ != eventSyncJobQueued {
+		t.Fatalf("the retry published %q, want %q", typ, eventSyncJobQueued)
+	}
+	if data.Attempt != 0 {
+		t.Fatalf("payload = %+v, want a fresh budget for %s", data, job.ID)
+	}
+	for _, want := range []string{eventSyncJobStarted, eventSyncJobFailed} {
+		if got, _ := nextJobEvent("the retried run"); got != want {
+			t.Fatalf("the retried run published %q, want %q", got, want)
 		}
-		data, ok := ev.Data.(syncJobEventData)
-		if !ok || data.ID != job.ID || data.Attempt != 0 {
-			t.Fatalf("payload = %+v, want a fresh budget for %s", ev.Data, job.ID)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("the retry published nothing")
 	}
 }
 
@@ -362,18 +389,4 @@ func TestSyncSettingsExposeTheEngine(t *testing.T) {
 			t.Fatal("a server with no configuration path must not claim the change was persisted")
 		}
 	})
-}
-
-// waitForJobState blocks until a job reaches a state, or the test times out.
-func waitForJobState(t *testing.T, s *Server, id string, want syncengine.State) {
-	t.Helper()
-
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if job, ok := s.sync.engine.Job(id); ok && job.State == want {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	t.Fatalf("job %s never reached %s", id, want)
 }

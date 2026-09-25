@@ -37,7 +37,14 @@ func openGoGit(path string, opts Options) (Backend, error) {
 		}
 		return nil, wrap("open", CodeNotARepository, err, "open %s", path)
 	}
-	return &goGitBackend{path: path, opts: opts, repo: repo}, nil
+	// Every call runs under the lock of the working tree it opened: the
+	// Repository is shared by every caller of this backend and is not safe for
+	// concurrent use (serial.go).
+	root := path
+	if wt, wtErr := repo.Worktree(); wtErr == nil {
+		root = wt.Filesystem.Root()
+	}
+	return serialize(&goGitBackend{path: path, opts: opts, repo: repo}, root), nil
 }
 
 // Name reports the backend name.
