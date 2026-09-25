@@ -1,8 +1,8 @@
 # ADR-038 — Spec templates are embedded, and a backlog may override them with files
 
-- **Status:** Proposed — 2026-09-25. The direction (embedded by default, extractable, a file on
-  disk wins) was decided by the human maintainer on 2026-09-25; every detail listed under
-  "Decision" is a proposal awaiting confirmation.
+- **Status:** Accepted — 2026-09-25, decided by the human maintainer: the direction (embedded
+  by default, extractable, a file on disk wins) and, after review of the proposal, the details
+  under "Decision" with one amendment (see "Decisions from review").
 - **Date:** 2026-09-25
 - **Phase:** 11 (Spec-driven development)
 - **Related:** [ADR-001](ADR-001-markdown-yaml-storage.md), [ADR-003](ADR-003-shared-go-core-wasm.md),
@@ -85,7 +85,8 @@ Forces:
    shown before the answer arrives or when it fails. The MCP tools start from the effective template
    when the caller brings no text: `create_spec` without `body` writes the spec template (its example
    block becomes `R1`, which the agent then rewrites with `update_requirement`), and
-   `create_requirement` without `text` writes the requirement template below the heading. The
+   `create_requirement` without `text` writes the requirement template below the heading. The CLI
+   does the same: `gintrack item new --type spec` without `--body` writes the spec template. The
    vault methods `item.create` and `requirement.create` themselves never inject a template: an
    empty body sent to them stays empty, so a person who deletes the prefilled text in the editor
    gets what they asked for.
@@ -124,6 +125,19 @@ Forces:
   reports `skipped` for a file that differs from the embedded copy, which is the cue to compare.
 - `create_spec` without a body now writes the template's example block as `R1`. An agent that
   wants an empty spec passes a body of its own.
+
+## Decisions from review (2026-09-25)
+
+The maintainer reviewed the proposal on 2026-09-25 and confirmed:
+
+- **MCP creates start from the templates** (decision 8): `create_spec` without `body` and
+  `create_requirement` without `text` fill in the effective template. Kept as proposed, with the
+  `R1` caveat under "Consequences".
+- **Location and sharing** (decisions 1 and 10): `<docs>/.pmngr/templates/`, committed with the
+  backlog. Kept as proposed.
+- **Amendment — the CLI matches MCP.** `gintrack item new --type spec` without `--body` also
+  writes the spec template in effect, rather than an empty body; decision 8 now says so.
+- Every other decision stands as proposed.
 
 ## Alternatives considered
 
