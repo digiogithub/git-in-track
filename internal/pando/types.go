@@ -109,3 +109,102 @@ type ReindexStats struct {
 	// or updated, not the size of the graph.
 	LinksIndexed int
 }
+
+// ImpactOptions are the optional parameters of code_impact_analysis. The zero
+// value asks for Pando's own defaults.
+type ImpactOptions struct {
+	// Depth is the maximum transitive caller depth; 0 leaves Pando's default
+	// of 2.
+	Depth int
+	// Limit caps the callers returned per analyzed symbol; 0 leaves Pando's
+	// default of 50.
+	Limit int
+}
+
+// ImpactResult is the outcome of ImpactAnalysis over one or more symbols.
+type ImpactResult struct {
+	// Callers are the symbols that call an analyzed symbol directly or
+	// transitively, grouped by analyzed symbol in the order they were asked
+	// for and, within one symbol, in Pando's order. A caller that depends on
+	// two analyzed symbols appears once for each.
+	Callers []ImpactCaller
+	// Truncated reports that Pando cut at least one symbol's caller list at
+	// Limit, so the impact set may be larger than Callers.
+	Truncated bool
+}
+
+// ImpactCaller is one symbol that depends on an analyzed symbol.
+type ImpactCaller struct {
+	// Symbol is the analyzed symbol this caller depends on, as it was passed
+	// to ImpactAnalysis.
+	Symbol     string
+	Name       string
+	NamePath   string
+	SymbolType string
+	// FilePath is relative to the indexed project root.
+	FilePath string
+	// StartLine and EndLine are the caller's line range. Pando reports only
+	// the start line today, so EndLine is 0 ("unknown") until it adds one.
+	StartLine int
+	EndLine   int
+	// Depth is the call distance: 1 for a direct caller.
+	Depth int
+}
+
+// FindSymbolOptions are the optional parameters of code_find_symbol.
+type FindSymbolOptions struct {
+	// RelativePath restricts the search to one file or directory of the
+	// project.
+	RelativePath string
+	// SymbolTypes and Languages filter the candidate set.
+	SymbolTypes []string
+	Languages   []string
+	// Substring enables partial name matching.
+	Substring bool
+	// Limit is the page size; 0 leaves Pando's default of 50.
+	Limit int
+	// Offset skips ranked results.
+	Offset int
+}
+
+// Symbol is one symbol definition returned by code_find_symbol.
+type Symbol struct {
+	Name       string
+	NamePath   string
+	SymbolType string
+	// FilePath is relative to the indexed project root.
+	FilePath string
+	// StartLine and EndLine are the definition's line range. EndLine is 0
+	// ("unknown") while Pando reports only the start line.
+	StartLine int
+	EndLine   int
+	Signature string
+	// Rank is the 1-based position in the whole result set, Offset included.
+	Rank int
+}
+
+// RelatedFilesOptions are the optional parameters of code_related_files.
+type RelatedFilesOptions struct {
+	// Limit caps the files returned; 0 leaves Pando's default of 20.
+	Limit int
+}
+
+// RelatedFilesResult is the outcome of RelatedFiles.
+type RelatedFilesResult struct {
+	// Files are ranked by Score, highest first, as Pando returned them.
+	Files []RelatedFile
+	// Truncated reports that Pando cut the list at Limit.
+	Truncated bool
+}
+
+// RelatedFile is one file coupled to the queried file in Pando's code graph.
+type RelatedFile struct {
+	// FilePath is relative to the indexed project root.
+	FilePath string
+	// Score blends import edges (weight 1.0) and call coupling (weight 0.8).
+	// It is comparable only with other files of the same query.
+	Score float64
+	// Reasons names the kinds of coupling found, for example "imports" or
+	// "calls".
+	Reasons []string
+}

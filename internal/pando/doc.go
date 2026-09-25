@@ -4,10 +4,10 @@
 //
 // It is the transport seam for the whole semantic-search epic. Everything above
 // it — the HTTP handlers, the MCP tools, the web client — sees Client, KBHit,
-// CodeHit, Project, ReindexStats and the sentinels in errors.go, and nothing
-// else. No MCP type appears in the exported surface, so when Pando grows the
-// REST search routes it is missing today the switch costs this package and
-// nothing above it.
+// CodeHit, Project, ReindexStats, the code-graph results and the sentinels in
+// errors.go, and nothing else. No MCP type appears in the exported surface,
+// so when Pando grows the REST search routes it is missing today the switch
+// costs this package and nothing above it.
 //
 // Like internal/youtrack and internal/gitops, this is a native-only package: it
 // speaks HTTP and therefore cannot live in internal/core, which is also
@@ -30,6 +30,15 @@
 // else. It is configured separately (RESTURL, RESTToken) and returns
 // ErrNotConfigured when it is not configured, because the REST surface needs a
 // different Pando process than the MCP one and may simply not be running.
+//
+// # The code graph
+//
+// ImpactAnalysis, FindSymbol and RelatedFiles wrap code_impact_analysis,
+// code_find_symbol and code_related_files, the tools that read the call and
+// import edges Pando builds while it indexes a code project. They exist for the
+// impact resolver; see graph.go and docs/21-semantic-search.md §6.1.
+// IsUnavailable tells a caller which failures mean "Pando cannot answer" and
+// should degrade to `unavailable`.
 //
 // # Why the two searches are called separately
 //

@@ -36,7 +36,10 @@ type recordedCall struct {
 
 // fakeToolNames are the tools this package calls. They are registered up
 // front; their behavior is swapped per test with setTool.
-var fakeToolNames = []string{toolKBSearch, toolCodeSearch, toolCodeProjects, toolCodeIndex}
+var fakeToolNames = []string{
+	toolKBSearch, toolCodeSearch, toolCodeProjects, toolCodeIndex,
+	toolCodeImpact, toolCodeSymbol, toolCodeRelated,
+}
 
 func newFakePando(t *testing.T, token string) *fakePando {
 	t.Helper()
