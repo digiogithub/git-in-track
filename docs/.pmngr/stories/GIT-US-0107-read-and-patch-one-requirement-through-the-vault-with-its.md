@@ -2,7 +2,7 @@
 id: GIT-US-0107
 type: story
 title: Read and patch one requirement through the vault with its block rev
-status: in_review
+status: done
 priority: high
 parent: GIT-EP-0023
 milestone: GIT-M-0015
@@ -10,7 +10,8 @@ author: claude
 labels: [core, wasm, agent-ok]
 estimate: 5
 created: 2026-09-24T12:09:24Z
-updated: 2026-09-24T15:55:01Z
+updated: 2026-09-25T11:15:00Z
+closed: 2026-09-25T11:15:00Z
 links:
   - { kind: blocked_by, target: GIT-US-0105 }
 ---

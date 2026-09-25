@@ -2,7 +2,7 @@
 id: GIT-US-0127
 type: story
 title: Serve specs, requirements, coverage and impact over HTTP
-status: in_review
+status: done
 priority: high
 parent: GIT-EP-0027
 milestone: GIT-M-0015
@@ -10,7 +10,8 @@ author: claude
 labels: [server, wasm, agent-ok]
 estimate: 5
 created: 2026-09-24T12:11:34Z
-updated: 2026-09-24T21:00:33Z
+updated: 2026-09-25T11:15:00Z
+closed: 2026-09-25T11:15:00Z
 links:
   - { kind: blocked_by, target: GIT-US-0107 }
   - { kind: blocked_by, target: GIT-US-0116 }

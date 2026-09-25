@@ -2,13 +2,16 @@
 id: GIT-US-0156
 type: story
 title: Bind HTTP, browser and spec-tool cursors to their filters
-status: todo
+status: in_progress
 priority: medium
+milestone: GIT-M-0015
+assignees: [claude]
 author: mcp
 labels: [server, web, mcp, agent-ok]
 estimate: 3
 created: 2026-09-24T23:06:50Z
-updated: 2026-09-24T23:06:50Z
+updated: 2026-09-25T11:15:00Z
+started: 2026-09-25T11:15:00Z
 ---
 
 ## Description

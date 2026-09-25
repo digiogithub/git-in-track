@@ -2,13 +2,14 @@
 id: GIT-US-0152
 type: story
 title: Never report a refused item patch as already applied
-status: in_review
+status: done
 priority: medium
 author: mcp
 labels: [core, mcp, agent-ok]
 estimate: 2
 created: 2026-09-24T22:12:47Z
-updated: 2026-09-24T22:37:52Z
+updated: 2026-09-25T11:15:00Z
+closed: 2026-09-25T11:15:00Z
 ---
 
 ## Description

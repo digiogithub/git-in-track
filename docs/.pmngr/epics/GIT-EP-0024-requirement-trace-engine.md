@@ -2,13 +2,14 @@
 id: GIT-EP-0024
 type: epic
 title: Requirement trace engine
-status: backlog
+status: done
 priority: high
 milestone: GIT-M-0015
 author: claude
 labels: [git, server, cli]
 created: 2026-09-24T12:08:04Z
-updated: 2026-09-24T12:08:04Z
+updated: 2026-09-25T11:15:00Z
+closed: 2026-09-25T11:15:00Z
 links:
   - { kind: relates_to, target: GIT-T-0238 }
 ---
@@ -21,10 +22,10 @@ All of this is native: it stays out of `internal/core` and `internal/vault` and 
 
 ## Acceptance Criteria
 
-- [ ] Changed files between two refs are available from all three git backends.
-- [ ] Every requirement has a deterministic trace (code and tests) and a coverage status.
-- [ ] Suspect is computed, never stored, from the block `rev` and changes since `verified.commit`.
-- [ ] Every story of this epic is done.
+- [x] Changed files between two refs are available from all three git backends.
+- [x] Every requirement has a deterministic trace (code and tests) and a coverage status.
+- [x] Suspect is computed, never stored, from the block `rev` and changes since `verified.commit`.
+- [x] Every story of this epic is done.
 
 ## Notes
 

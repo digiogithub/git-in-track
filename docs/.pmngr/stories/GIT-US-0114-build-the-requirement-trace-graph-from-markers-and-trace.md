@@ -2,7 +2,7 @@
 id: GIT-US-0114
 type: story
 title: Build the requirement trace graph from markers and trace entries
-status: in_review
+status: done
 priority: high
 parent: GIT-EP-0024
 milestone: GIT-M-0015
@@ -10,7 +10,8 @@ author: claude
 labels: [server, agent-ok]
 estimate: 3
 created: 2026-09-24T12:10:07Z
-updated: 2026-09-24T18:26:58Z
+updated: 2026-09-25T11:15:00Z
+closed: 2026-09-25T11:15:00Z
 links:
   - { kind: blocked_by, target: GIT-US-0106 }
   - { kind: blocked_by, target: GIT-US-0113 }

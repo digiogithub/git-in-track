@@ -2,13 +2,14 @@
 id: GIT-US-0153
 type: story
 title: Quote flow-style label descriptions when rewriting project.yaml
-status: in_review
+status: done
 priority: high
 author: mcp
 labels: [core, agent-ok]
 estimate: 2
 created: 2026-09-24T22:25:19Z
-updated: 2026-09-24T22:32:51Z
+updated: 2026-09-25T11:15:00Z
+closed: 2026-09-25T11:15:00Z
 ---
 
 ## Description

@@ -2,7 +2,7 @@
 id: GIT-US-0150
 type: story
 title: Persist the verification cache in IndexedDB in browser-only mode
-status: in_review
+status: done
 priority: low
 parent: GIT-EP-0027
 milestone: GIT-M-0015
@@ -10,7 +10,8 @@ author: mcp
 labels: [web, wasm, agent-ok]
 estimate: 2
 created: 2026-09-24T21:55:53Z
-updated: 2026-09-24T22:53:32Z
+updated: 2026-09-25T11:15:00Z
+closed: 2026-09-25T11:15:00Z
 ---
 
 ## Description

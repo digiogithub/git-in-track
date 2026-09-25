@@ -2,7 +2,7 @@
 id: GIT-US-0133
 type: story
 title: Gate pull requests on requirement impact in CI
-status: in_review
+status: done
 priority: medium
 parent: GIT-EP-0028
 milestone: GIT-M-0015
@@ -10,7 +10,8 @@ author: claude
 labels: [ci, cli, agent-ok]
 estimate: 3
 created: 2026-09-24T12:11:59Z
-updated: 2026-09-24T21:15:21Z
+updated: 2026-09-25T11:15:00Z
+closed: 2026-09-25T11:15:00Z
 links:
   - { kind: blocked_by, target: GIT-US-0115 }
   - { kind: blocked_by, target: GIT-US-0125 }

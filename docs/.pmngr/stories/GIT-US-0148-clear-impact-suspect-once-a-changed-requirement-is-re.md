@@ -2,7 +2,7 @@
 id: GIT-US-0148
 type: story
 title: Clear impact suspect once a changed requirement is re-verified at head
-status: in_review
+status: done
 priority: high
 parent: GIT-EP-0028
 milestone: GIT-M-0015
@@ -10,7 +10,8 @@ author: mcp
 labels: [core, ci, agent-ok]
 estimate: 3
 created: 2026-09-24T21:19:05Z
-updated: 2026-09-24T22:23:26Z
+updated: 2026-09-25T11:15:00Z
+closed: 2026-09-25T11:15:00Z
 ---
 
 ## Description
@@ -21,14 +22,14 @@ Found in GIT-US-0133 (PR #54). The limitation is recorded in docs/09.
 
 ## Acceptance Criteria
 
-- [ ] A requirement touched by the diff is **not** suspect when any of these holds:
+- [x] A requirement touched by the diff is **not** suspect when any of these holds:
   - its linked tests all passed in results ingested at the diff's head (same commit, or the working tree when head is the worktree);
   - its `verified.commit` is the head commit and `verified.rev` matches the block rev;
   - the diff carries a MODIFIED Spec Delta for it and its linked tests pass at head.
-- [ ] It stays suspect when its tests were not re-run at head, or when they fail (failing wins).
-- [ ] `coverage.list` and `impact` agree on these rules, as documented in docs/03 §21.6 and §21.11.
-- [ ] Golden and table tests cover each case. `make spec-check` on a fixture PR that edits traced code and re-runs the tests passes the gate.
-- [ ] The known limitation is removed from docs/09.
+- [x] It stays suspect when its tests were not re-run at head, or when they fail (failing wins).
+- [x] `coverage.list` and `impact` agree on these rules, as documented in docs/03 §21.6 and §21.11.
+- [x] Golden and table tests cover each case. `make spec-check` on a fixture PR that edits traced code and re-runs the tests passes the gate.
+- [x] The known limitation is removed from docs/09.
 
 ## Notes
 

@@ -2,7 +2,7 @@
 id: GIT-US-0137
 type: story
 title: Benchmark agent tokens for spec impact against reading specs
-status: in_review
+status: done
 priority: medium
 parent: GIT-EP-0029
 milestone: GIT-M-0015
@@ -10,7 +10,8 @@ author: claude
 labels: [docs, agent-ok]
 estimate: 3
 created: 2026-09-24T12:12:00Z
-updated: 2026-09-24T23:17:00Z
+updated: 2026-09-25T11:15:00Z
+closed: 2026-09-25T11:15:00Z
 links:
   - { kind: blocked_by, target: GIT-US-0124 }
   - { kind: blocked_by, target: GIT-US-0135 }

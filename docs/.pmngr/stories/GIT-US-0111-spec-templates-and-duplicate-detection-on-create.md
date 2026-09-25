@@ -2,7 +2,7 @@
 id: GIT-US-0111
 type: story
 title: Spec templates and duplicate detection on create
-status: in_review
+status: done
 priority: low
 parent: GIT-EP-0023
 milestone: GIT-M-0015
@@ -10,7 +10,8 @@ author: claude
 labels: [core, server, agent-ok]
 estimate: 3
 created: 2026-09-24T12:09:37Z
-updated: 2026-09-24T22:42:22Z
+updated: 2026-09-25T11:15:00Z
+closed: 2026-09-25T11:15:00Z
 links:
   - { kind: blocked_by, target: GIT-US-0107 }
   - { kind: blocked_by, target: GIT-US-0108 }

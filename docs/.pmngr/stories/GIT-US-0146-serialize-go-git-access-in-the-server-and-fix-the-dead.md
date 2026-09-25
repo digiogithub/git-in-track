@@ -2,13 +2,14 @@
 id: GIT-US-0146
 type: story
 title: Serialize go-git access in the server and fix the dead-letter retry flake
-status: in_review
+status: done
 priority: high
 author: mcp
 labels: [server, git, agent-ok]
 estimate: 3
 created: 2026-09-24T20:23:59Z
-updated: 2026-09-24T22:23:26Z
+updated: 2026-09-25T11:15:00Z
+closed: 2026-09-25T11:15:00Z
 ---
 
 ## Description
@@ -19,9 +20,9 @@ Separately, `internal/server` `TestSyncJobRetryFromTheDeadLetter` fails intermit
 
 ## Acceptance Criteria
 
-- [ ] Every go-git use of a repository in `internal/server` is serialized, either with the Committer's lock or with one shared per-repository guard. A test that sends concurrent requests passes under `-race`.
-- [ ] `TestSyncJobRetryFromTheDeadLetter` waits for events rather than relying on their order, or the ordering bug in the code is fixed.
-- [ ] `go test -race -count=50 ./internal/server/ -run 'Sync|Git'` passes under concurrent load.
+- [x] Every go-git use of a repository in `internal/server` is serialized, either with the Committer's lock or with one shared per-repository guard. A test that sends concurrent requests passes under `-race`.
+- [x] `TestSyncJobRetryFromTheDeadLetter` waits for events rather than relying on their order, or the ordering bug in the code is fixed.
+- [x] `go test -race -count=50 ./internal/server/ -run 'Sync|Git'` passes under concurrent load.
 
 ## Notes
 

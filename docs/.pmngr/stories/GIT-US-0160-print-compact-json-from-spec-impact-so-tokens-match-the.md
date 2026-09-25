@@ -2,14 +2,17 @@
 id: GIT-US-0160
 type: story
 title: Print compact JSON from spec impact so tokens match the report
-status: backlog
+status: in_progress
 priority: low
 parent: GIT-EP-0026
+milestone: GIT-M-0015
+assignees: [claude]
 author: mcp
 labels: [cli, agent-ok, good-first-issue]
 estimate: 1
 created: 2026-09-24T23:18:51Z
-updated: 2026-09-24T23:18:51Z
+updated: 2026-09-25T11:15:00Z
+started: 2026-09-25T11:15:00Z
 ---
 
 ## Description

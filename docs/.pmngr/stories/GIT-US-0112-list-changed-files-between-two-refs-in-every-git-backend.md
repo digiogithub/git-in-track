@@ -2,7 +2,7 @@
 id: GIT-US-0112
 type: story
 title: List changed files between two refs in every git backend
-status: in_review
+status: done
 priority: high
 parent: GIT-EP-0024
 milestone: GIT-M-0015
@@ -10,7 +10,8 @@ author: claude
 labels: [git, agent-ok]
 estimate: 5
 created: 2026-09-24T12:10:07Z
-updated: 2026-09-24T12:36:02Z
+updated: 2026-09-25T11:15:00Z
+closed: 2026-09-25T11:15:00Z
 ---
 
 ## Description

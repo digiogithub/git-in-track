@@ -2,7 +2,7 @@
 id: GIT-US-0118
 type: story
 title: Index requirement blocks in Pando with block anchors
-status: in_review
+status: done
 priority: high
 parent: GIT-EP-0025
 milestone: GIT-M-0015
@@ -10,7 +10,8 @@ author: claude
 labels: [server, agent-ok]
 estimate: 5
 created: 2026-09-24T12:10:32Z
-updated: 2026-09-24T18:41:30Z
+updated: 2026-09-25T11:15:00Z
+closed: 2026-09-25T11:15:00Z
 links:
   - { kind: blocked_by, target: GIT-US-0105 }
 ---
@@ -23,7 +24,7 @@ Pando's code index skips dot-directories, so it never sees `docs/.pmngr/specs/`;
 
 ## Acceptance Criteria
 
-- [ ] The reindex job (per repository and global) sends one derived document per requirement block, keyed by its ref, carrying spec title, statement and scenarios; stale documents are deleted when a block is removed or its `rev` changes.
+- [x] The reindex job (per repository and global) sends one derived document per requirement block, keyed by its ref, carrying spec title, statement and scenarios; stale documents are deleted when a block is removed or its `rev` changes.
 - [x] `search_semantic` and workspace search return requirement hits as their own rows with `ref`, spec ID and anchor (`#git-sp-nnnn-r<n>` or the anchor ADR-037 defines).
 - [x] Nothing is ever written back to `docs/.pmngr/specs/` from Pando.
 - [x] Tests with a fake Pando client; docs for semantic search and ADR-036 follow-up note updated.

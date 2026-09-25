@@ -2,13 +2,14 @@
 id: GIT-EP-0027
 type: epic
 title: Specs in the web app with coverage matrix and impact view
-status: backlog
+status: done
 priority: high
 milestone: GIT-M-0015
 author: claude
 labels: [web, server, wasm]
 created: 2026-09-24T12:08:24Z
-updated: 2026-09-24T12:08:24Z
+updated: 2026-09-25T11:15:00Z
+closed: 2026-09-25T11:15:00Z
 links:
   - { kind: relates_to, target: GIT-T-0238 }
 ---
@@ -19,9 +20,9 @@ Give humans the same view agents get. A spec HTTP API (companion) and CoreApi me
 
 ## Acceptance Criteria
 
-- [ ] The coverage matrix ships in this milestone.
-- [ ] Browser-only mode keeps authoring and lint; coverage and impact show `unavailable`.
-- [ ] Every story of this epic is done.
+- [x] The coverage matrix ships in this milestone.
+- [x] Browser-only mode keeps authoring and lint; coverage and impact show `unavailable`.
+- [x] Every story of this epic is done.
 
 ## Notes
 

@@ -2,13 +2,14 @@
 id: GIT-EP-0022
 type: epic
 title: Spec data model
-status: backlog
+status: done
 priority: critical
 milestone: GIT-M-0015
 author: claude
 labels: [core, docs]
 created: 2026-09-24T12:07:52Z
-updated: 2026-09-24T12:07:52Z
+updated: 2026-09-25T11:15:00Z
+closed: 2026-09-25T11:15:00Z
 links:
   - { kind: relates_to, target: GIT-T-0238 }
 ---
@@ -21,9 +22,9 @@ Human-only area until 1.0 (on-disk formats): done by an agent under human superv
 
 ## Acceptance Criteria
 
-- [ ] ADR-037 is accepted and docs/03-data-model.md describes specs, requirement blocks, the `requirements:` map and the new link kinds.
-- [ ] The core parses, validates, indexes and allocates specs and requirement IDs; `make wasm` passes.
-- [ ] Every story of this epic is done.
+- [x] ADR-037 is accepted and docs/03-data-model.md describes specs, requirement blocks, the `requirements:` map and the new link kinds.
+- [x] The core parses, validates, indexes and allocates specs and requirement IDs; `make wasm` passes.
+- [x] Every story of this epic is done.
 
 ## Notes
 

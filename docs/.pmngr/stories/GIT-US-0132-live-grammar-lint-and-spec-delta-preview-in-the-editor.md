@@ -2,7 +2,7 @@
 id: GIT-US-0132
 type: story
 title: Live grammar lint and Spec Delta preview in the editor
-status: in_review
+status: done
 priority: medium
 parent: GIT-EP-0027
 milestone: GIT-M-0015
@@ -10,7 +10,8 @@ author: claude
 labels: [web, wasm, agent-ok]
 estimate: 3
 created: 2026-09-24T12:11:35Z
-updated: 2026-09-24T22:09:57Z
+updated: 2026-09-25T11:15:00Z
+closed: 2026-09-25T11:15:00Z
 links:
   - { kind: blocked_by, target: GIT-US-0108 }
   - { kind: blocked_by, target: GIT-US-0109 }

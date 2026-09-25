@@ -2,7 +2,7 @@
 id: GIT-US-0130
 type: story
 title: Requirement coverage matrix
-status: in_review
+status: done
 priority: high
 parent: GIT-EP-0027
 milestone: GIT-M-0015
@@ -10,7 +10,8 @@ author: claude
 labels: [web, agent-ok]
 estimate: 5
 created: 2026-09-24T12:11:34Z
-updated: 2026-09-24T21:34:34Z
+updated: 2026-09-25T11:15:00Z
+closed: 2026-09-25T11:15:00Z
 links:
   - { kind: blocked_by, target: GIT-US-0116 }
   - { kind: blocked_by, target: GIT-US-0127 }

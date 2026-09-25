@@ -2,7 +2,7 @@
 id: GIT-US-0142
 type: story
 title: Ship JSON Schema files for every item type including spec
-status: in_review
+status: done
 priority: medium
 parent: GIT-EP-0022
 milestone: GIT-M-0015
@@ -10,7 +10,8 @@ author: mcp
 labels: [core, docs, agent-ok]
 estimate: 3
 created: 2026-09-24T15:29:50Z
-updated: 2026-09-24T22:25:03Z
+updated: 2026-09-25T11:15:00Z
+closed: 2026-09-25T11:15:00Z
 links:
   - { kind: blocked_by, target: GIT-US-0105 }
   - { kind: blocked_by, target: GIT-US-0106 }

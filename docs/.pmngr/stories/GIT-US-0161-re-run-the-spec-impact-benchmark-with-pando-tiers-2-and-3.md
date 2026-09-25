@@ -2,14 +2,15 @@
 id: GIT-US-0161
 type: story
 title: Re-run the spec impact benchmark with Pando tiers 2 and 3
-status: backlog
+status: todo
 priority: low
 parent: GIT-EP-0029
+milestone: GIT-M-0015
 author: mcp
 labels: [docs, agent-ok]
 estimate: 2
 created: 2026-09-24T23:18:51Z
-updated: 2026-09-24T23:18:51Z
+updated: 2026-09-25T11:15:00Z
 ---
 
 ## Description

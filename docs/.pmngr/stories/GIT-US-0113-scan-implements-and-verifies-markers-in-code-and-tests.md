@@ -2,7 +2,7 @@
 id: GIT-US-0113
 type: story
 title: Scan Implements and Verifies markers in code and tests
-status: in_review
+status: done
 priority: high
 parent: GIT-EP-0024
 milestone: GIT-M-0015
@@ -10,7 +10,8 @@ author: claude
 labels: [server, cli, agent-ok]
 estimate: 5
 created: 2026-09-24T12:10:07Z
-updated: 2026-09-24T15:44:32Z
+updated: 2026-09-25T11:15:00Z
+closed: 2026-09-25T11:15:00Z
 links:
   - { kind: blocked_by, target: GIT-US-0105 }
 ---

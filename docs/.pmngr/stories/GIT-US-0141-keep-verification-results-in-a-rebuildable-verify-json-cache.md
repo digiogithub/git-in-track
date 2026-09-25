@@ -2,7 +2,7 @@
 id: GIT-US-0141
 type: story
 title: Keep verification results in a rebuildable verify.json cache
-status: in_review
+status: done
 priority: high
 parent: GIT-EP-0024
 milestone: GIT-M-0015
@@ -10,7 +10,8 @@ author: mcp
 labels: [core, cli, wasm, agent-ok]
 estimate: 3
 created: 2026-09-24T15:29:49Z
-updated: 2026-09-24T22:23:26Z
+updated: 2026-09-25T11:15:00Z
+closed: 2026-09-25T11:15:00Z
 links:
   - { kind: blocked_by, target: GIT-US-0105 }
 ---
@@ -23,12 +24,12 @@ Blocked by GIT-US-0105. Feeds GIT-US-0116.
 
 ## Acceptance Criteria
 
-- [ ] The cache format stores, per requirement: block rev, commit, test ids, result and time. It is versioned and fully rebuildable. It is never read as the source of truth.
-- [ ] Native store at `<docs>/.pmngr/verify.json` and a browser store in IndexedDB. Both sit behind a core interface, so `internal/core` stays WASM-clean.
-- [ ] Coverage reads the cache first and falls back to the `verified:` stamp when the cache is empty, as ADR-037 §7 requires.
-- [ ] The `.gitignore` snippet from `gintrack init` ignores `verify.json` (and `index.json`, if missing). This repository's `.gitignore` is updated to match.
-- [ ] Tests cover a missing cache, a corrupt cache (rebuilt, never fatal) and precedence over the stamp. `make test`, `make lint` and `make wasm` pass.
-- [ ] docs/03 R-LOC-5 and §21 are updated.
+- [x] The cache format stores, per requirement: block rev, commit, test ids, result and time. It is versioned and fully rebuildable. It is never read as the source of truth.
+- [x] Native store at `<docs>/.pmngr/verify.json` and a browser store in IndexedDB. Both sit behind a core interface, so `internal/core` stays WASM-clean.
+- [x] Coverage reads the cache first and falls back to the `verified:` stamp when the cache is empty, as ADR-037 §7 requires.
+- [x] The `.gitignore` snippet from `gintrack init` ignores `verify.json` (and `index.json`, if missing). This repository's `.gitignore` is updated to match.
+- [x] Tests cover a missing cache, a corrupt cache (rebuilt, never fatal) and precedence over the stamp. `make test`, `make lint` and `make wasm` pass.
+- [x] docs/03 R-LOC-5 and §21 are updated.
 
 ## Notes
 

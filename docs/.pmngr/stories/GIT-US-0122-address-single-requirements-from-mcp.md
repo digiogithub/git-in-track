@@ -2,7 +2,7 @@
 id: GIT-US-0122
 type: story
 title: Address single requirements from MCP
-status: in_review
+status: done
 priority: high
 parent: GIT-EP-0026
 milestone: GIT-M-0015
@@ -10,7 +10,8 @@ author: claude
 labels: [mcp, agent-ok]
 estimate: 5
 created: 2026-09-24T12:11:03Z
-updated: 2026-09-24T17:37:59Z
+updated: 2026-09-25T11:15:00Z
+closed: 2026-09-25T11:15:00Z
 links:
   - { kind: blocked_by, target: GIT-US-0107 }
 ---
