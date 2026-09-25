@@ -13,6 +13,7 @@ import { validateNewItemSearch } from '@/features/editor/search';
 import { validateInboxSearch } from '@/features/inbox/search';
 import { KbViewer } from '@/features/kb/KbViewer';
 import { SettingsPage } from '@/features/settings/SettingsPage';
+import { validateMatrixSearch } from '@/features/specs/matrix';
 import { validateSpecSearch } from '@/features/specs/search';
 import { SyncPanel } from '@/features/sync/SyncPanel';
 import { AddRepositoryPage } from '@/features/workspace/AddRepositoryPage';
@@ -112,14 +113,29 @@ const milestonesRoute = createRoute({
 /**
  * Specs and their requirements, one row per requirement (story GIT-US-0128,
  * ADR-037). The status and coverage filters live in the search params. The
- * requirement detail, coverage matrix and impact views arrive later as
- * `specs/...` children (GIT-US-0129 to GIT-US-0131).
+ * requirement detail and impact views arrive later as `specs/...` routes
+ * (GIT-US-0129, GIT-US-0131).
  */
 const specsRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: 'specs',
   validateSearch: validateSpecSearch,
   component: lazyRouteComponent(() => import('@/features/specs/SpecsPage'), 'SpecsPage'),
+});
+
+/**
+ * The requirement coverage matrix (story GIT-US-0130): requirements × tests,
+ * `?spec=&status=` in the URL. A sibling of `specs` rather than a child, so
+ * the specs page needs no outlet. Lazy: most sessions never open it.
+ */
+const specsCoverageRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: 'specs/coverage',
+  validateSearch: validateMatrixSearch,
+  component: lazyRouteComponent(
+    () => import('@/features/specs/CoverageMatrix'),
+    'CoverageMatrixPage',
+  ),
 });
 
 const boardsRoute = createRoute({
@@ -209,6 +225,7 @@ export const routeTree = rootRoute.addChildren([
     epicsRoute,
     milestonesRoute,
     specsRoute,
+    specsCoverageRoute,
   ]),
   boardsRoute,
   boardRoute,

@@ -1,5 +1,5 @@
 import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
-import { ChevronDown, ChevronRight, Plus } from 'lucide-react';
+import { ChevronDown, ChevronRight, Grid3x3, Plus } from 'lucide-react';
 import { useCallback, useId, useMemo, useState } from 'react';
 
 import type { ProjectSummary } from '@/api/provider';
@@ -71,7 +71,8 @@ const chipOn = 'border-transparent bg-primary text-primary-foreground';
  * collapsible group and every requirement a row of its own, with its ref,
  * title, workflow status and computed coverage (ADR-037 decision 1).
  * Coverage is a companion answer; in browser-only mode every badge reads
- * `unavailable` and the rest of the page works unchanged.
+ * `unavailable` and the rest of the page works unchanged. The header links
+ * the coverage matrix (`specs/coverage`, GIT-US-0130).
  */
 export function SpecsPage() {
   const params = useParams({ strict: false });
@@ -133,9 +134,19 @@ export function SpecsPage() {
             Capabilities of <strong>{projectKey}</strong>, one row per requirement.
           </p>
         </div>
-        {writable ? (
-          <NewItemLink project={projectKey} type="spec" label="New spec" variant="bar" />
-        ) : null}
+        <div className="flex flex-wrap items-center gap-2">
+          <Link
+            to="/p/$project/specs/coverage"
+            params={{ project: projectKey }}
+            className="inline-flex h-9 items-center gap-1.5 rounded-md border border-input px-3 text-sm font-medium hover:bg-secondary"
+          >
+            <Grid3x3 aria-hidden="true" className="h-4 w-4" />
+            Coverage matrix
+          </Link>
+          {writable ? (
+            <NewItemLink project={projectKey} type="spec" label="New spec" variant="bar" />
+          ) : null}
+        </div>
       </header>
 
       <SpecFilters
