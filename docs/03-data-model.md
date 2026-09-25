@@ -2309,10 +2309,12 @@ validation, and produce the `E-STATUS-UNKNOWN`, `W-LABEL-UNDECLARED`, and `E-CF-
 > written `implemented_by`/`modified_by`, `W-REF-DANGLING` on a missing spec or block, and
 > requirement nodes in the link graph. `GIT-US-0107` implements single-requirement
 > reads and writes through the vault (`requirement.list|get|create|update`, docs/07 §6.7) under
-> the requirement rev of §21.5.
-> Not implemented yet: the MCP requirement tools, the grammar
-> lint of §21.9 (`GIT-US-0108`), `## Spec Delta` (§21.8), verification and coverage (§21.6), and
-> the marker scan (§21.7). This section is the normative format; the ADR records the reasoning,
+> the requirement rev of §21.5. `GIT-US-0122` exposes them over MCP (`list_requirements`,
+> `create_spec`, `create_requirement`, `update_requirement`, and `get_item` on a requirement
+> ref; docs/08 §4.20). `GIT-US-0113` implements the marker scan of §21.7 as the native package
+> `internal/trace` (no CLI or MCP surface yet).
+> Not implemented yet: the grammar lint of §21.9 (`GIT-US-0108`), `## Spec Delta` (§21.8), and
+> verification and coverage (§21.6). This section is the normative format; the ADR records the reasoning,
 > the consequences and the alternatives rejected. Using specs raises the project to `schema: 2`
 > ([§21.10](#2110-schema-version-2)).
 
@@ -2551,6 +2553,19 @@ Two hashes per requirement, both `"sha256:" + lowercase_hex(sha256(x))[0:16]` li
   (`W-MARKER-SYNTAX`), an unknown ref is `W-MARKER-DANGLING`. Markers are scanned by the native
   trace engine, never by `internal/core`. Adding a file type or comment syntax to the table is an
   additive scanner change, not a data-model change.
+- **Implementation note (`GIT-US-0113`).** The native scanner (`internal/trace`) walks the working tree
+  honoring `.gitignore` (nested files and `.git/info/exclude` included) and always skips `.git`,
+  `.jj`, `.hg`, `.svn`, `node_modules`, `vendor`, `dist`, `web/dist`, `.pmngr` and binary or
+  oversized (> 2 MiB) files. Each hit is `{path, line, kind, project?, ref, symbol?}`: one per ref,
+  `kind` `implements` or `verifies`, `project` the written `<KEY>/` qualifier, `symbol` in the
+  trace-ref form of §21.4 (`Func`, `Type.Method`, `TestX/sub_case`, `describe > it`) and absent for
+  the whole file. Go symbols come from `go/parser` (a file that does not parse attaches to the whole
+  file); TS/JS (`function`, arrow `const`, `class` and methods, `describe`/`it`/`test`) and Python
+  (`def`, `class`) from a line heuristic; every other type attaches to the whole file. The result
+  lives in memory, is rebuilt fully on demand or incrementally from a list of changed paths (a
+  changed `.gitignore` forces a full rebuild), and is never written to any file. A closer (`*/`,
+  `-->`) is accepted only on a line of the matching block comment, so `// Implements: … */` is
+  `W-MARKER-SYNTAX`.
 
 ### 21.8 `## Spec Delta`
 

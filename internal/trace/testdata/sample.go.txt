@@ -1,0 +1,46 @@
+// Package sample is a fixture.
+//
+// Implements: GIT-SP-0001.R1
+package sample
+
+import "testing"
+
+// Allocator allocates.
+// Implements: GIT-SP-0003.R2, GIT-SP-0003.R4
+type Allocator struct{}
+
+// Implements: GIT-SP-0003.R5
+
+// NextID has a detached marker above; it attaches to the file.
+func (a *Allocator) NextID() string {
+	// Implements: GIT-SP-0003.R6
+	x := "// Implements: GIT-SP-0009.R1"
+	y := `
+// Implements: GIT-SP-0009.R2
+`
+	_ = y
+	return x // Implements: GIT-SP-0009.R3
+}
+
+var (
+	// Implements: GIT-SP-0003.R7
+	limit = 3
+	other = 4
+)
+
+/*
+ * Verifies: GIT-SP-0003.R8
+ */
+func TestNextID(t *testing.T) {
+	t.Run("stale counter", func(t *testing.T) {
+		// Verifies: GIT-SP-0003.R2
+		_ = 1
+	})
+	/* Verifies: GIT-SP-0003.R9 */
+}
+
+// Implements: GIT-SP-0003
+// implements: GIT-SP-0003.R1
+// Implements : GIT-SP-0003.R1
+// Implements: GIT-SP-0003.R02
+// Implements: GIT-SP-0003.R1 and more

@@ -1,0 +1,14 @@
+# Implements: GIT-SP-0004.R1
+import os
+
+
+class Store:
+    # Implements: GIT-SP-0004.R2
+    @property
+    def path(self):
+        # Implements: GIT-SP-0004.R3
+        return os.sep
+
+# Verifies: GIT-SP-0004.R4
+def test_store():
+    assert Store().path  # Verifies: GIT-SP-0004.R9
