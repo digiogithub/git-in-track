@@ -20,7 +20,7 @@ import { bodyTemplate, editableItemTypes, isPristineTemplate } from '@/features/
 
 const selectClass = `${fieldClasses} h-9 px-2`;
 
-/** Create an epic, story, task or milestone and open its detail page. */
+/** Create an epic, story, task, milestone or spec and open its detail page. */
 export function NewItemPage() {
   const params = useParams({ strict: false });
   const projectKey = params.project ?? '';
@@ -62,6 +62,16 @@ export function NewItemPage() {
     setBody((current) => (isPristineTemplate(current) ? bodyTemplate(next) : current));
     if (next === 'epic' || next === 'milestone') {
       setValues((current) => ({ ...current, parent: null }));
+    }
+    if (next === 'spec') {
+      // A spec is not scheduled work (docs/03-data-model.md §21.1).
+      setValues((current) => ({
+        ...current,
+        parent: null,
+        milestone: null,
+        estimate: null,
+        due: null,
+      }));
     }
   };
 

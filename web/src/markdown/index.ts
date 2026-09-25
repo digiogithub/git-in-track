@@ -13,6 +13,7 @@ export {
   type MarkdownLinkRenderer,
   type ToggleTask,
 } from '@/markdown/context';
+export { requirementAnchor } from '@/markdown/headings';
 export { clearMarkdownCache, readFrontMatter, renderMarkdown } from '@/markdown/pipeline';
 export {
   basename,

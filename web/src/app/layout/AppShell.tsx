@@ -7,6 +7,7 @@ import {
   ChartLine,
   Eye,
   EyeOff,
+  FileCheck,
   LayoutDashboard,
   ListChecks,
   Lock,
@@ -330,6 +331,15 @@ function RepoNav({ rows }: { rows: RepoInfo[] }) {
                       >
                         <BookOpen aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
                         <span className="truncate">{project} docs</span>
+                      </Link>
+                      <Link
+                        to="/p/$project/specs"
+                        params={{ project }}
+                        className={cn(navLinkClass, 'py-1 text-[0.8125rem]')}
+                        activeProps={{ className: navLinkActiveClass }}
+                      >
+                        <FileCheck aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+                        <span className="truncate">{project} specs</span>
                       </Link>
                       {/* Renders nothing for a project without a triage status:
                           such a project has no inbox at all (ADR-033). */}

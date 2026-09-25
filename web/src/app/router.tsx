@@ -13,6 +13,7 @@ import { validateNewItemSearch } from '@/features/editor/search';
 import { validateInboxSearch } from '@/features/inbox/search';
 import { KbViewer } from '@/features/kb/KbViewer';
 import { SettingsPage } from '@/features/settings/SettingsPage';
+import { validateSpecSearch } from '@/features/specs/search';
 import { SyncPanel } from '@/features/sync/SyncPanel';
 import { AddRepositoryPage } from '@/features/workspace/AddRepositoryPage';
 import { WorkspaceHome } from '@/features/workspace/WorkspaceHome';
@@ -108,6 +109,19 @@ const milestonesRoute = createRoute({
   component: MilestoneList,
 });
 
+/**
+ * Specs and their requirements, one row per requirement (story GIT-US-0128,
+ * ADR-037). The status and coverage filters live in the search params. The
+ * requirement detail, coverage matrix and impact views arrive later as
+ * `specs/...` children (GIT-US-0129 to GIT-US-0131).
+ */
+const specsRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: 'specs',
+  validateSearch: validateSpecSearch,
+  component: lazyRouteComponent(() => import('@/features/specs/SpecsPage'), 'SpecsPage'),
+});
+
 const boardsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/boards',
@@ -194,6 +208,7 @@ export const routeTree = rootRoute.addChildren([
     inboxAcceptRoute,
     epicsRoute,
     milestonesRoute,
+    specsRoute,
   ]),
   boardsRoute,
   boardRoute,
