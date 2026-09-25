@@ -306,18 +306,26 @@ func LintSpec(spec ItemID, body string, cfg *SpecLintConfig) []LintFinding {
 // scenario, no vague words and a single SHALL. A rule at off does not run. The
 // findings are ordered by line, then rule.
 func LintRequirement(blk RequirementBlock, cfg *SpecLintConfig) []LintFinding {
-	lines := splitSpecLines(blk.Text)
+	return lintBlockText(blk.Ref, blk.Ref.String(), blk.Text, blk.Line, cfg)
+}
+
+// lintBlockText runs the grammar lint over the text of one block whose heading is
+// on body line headingLine. ref goes into the findings and name into their
+// messages, so that a Spec Delta block, which has no number until it is
+// applied, is linted by exactly the rules a spec block is (R-DELTA-5).
+func lintBlockText(ref RequirementRef, name, text string, headingLine int, cfg *SpecLintConfig) []LintFinding {
+	lines := splitSpecLines(text)
 	if len(lines) == 0 {
 		return nil
 	}
-	scan := scanBlockContent(lines[1:], blk.Line)
-	l := &linter{ref: blk.Ref, cfg: cfg}
+	scan := scanBlockContent(lines[1:], headingLine)
+	l := &linter{ref: ref, name: name, cfg: cfg}
 
 	if l.on(LintReqStatement) || l.on(LintReqMulti) {
-		l.statement(blk.Line, scan.statement)
+		l.statement(headingLine, scan.statement)
 	}
 	if l.on(LintReqScenario) && len(scan.scenarios) == 0 {
-		l.add(LintReqScenario, blk.Line, "%s has no \"#### Scenario:\": want at least one, with **WHEN** and **THEN** steps", blk.Ref)
+		l.add(LintReqScenario, headingLine, "%s has no \"#### Scenario:\": want at least one, with **WHEN** and **THEN** steps", l.name)
 	}
 	if l.on(LintReqWhenThen) {
 		for _, sc := range scan.scenarios {
@@ -358,8 +366,11 @@ func ruleOrder(c Code) int {
 // linter collects the findings of one block.
 type linter struct {
 	ref RequirementRef
-	cfg *SpecLintConfig
-	out []LintFinding
+	// name is how the messages call the block: the ref of a spec block, the
+	// operation and target of a Spec Delta block.
+	name string
+	cfg  *SpecLintConfig
+	out  []LintFinding
 }
 
 // on reports whether a rule runs.
@@ -402,7 +413,7 @@ func stripCode(s string) string {
 // statement applies LINT-REQ-STATEMENT and LINT-REQ-MULTI.
 func (l *linter) statement(headingLine int, stmt []numberedLine) {
 	if len(stmt) == 0 {
-		l.add(LintReqStatement, headingLine, "%s has no statement: want one EARS pattern or a SHALL sentence right after the heading", l.ref)
+		l.add(LintReqStatement, headingLine, "%s has no statement: want one EARS pattern or a SHALL sentence right after the heading", l.name)
 		return
 	}
 	first := stmt[0].line
@@ -423,17 +434,17 @@ func (l *linter) statement(headingLine int, stmt []numberedLine) {
 		switch {
 		case count == 0 && shallAnyCaseRE.MatchString(text):
 			l.add(LintReqStatement, first, "the statement of %s writes %q in lower case: EARS keywords are uppercase (SHALL)",
-				l.ref, shallAnyCaseRE.FindString(text))
+				l.name, shallAnyCaseRE.FindString(text))
 		case count == 0:
 			l.add(LintReqStatement, first, "the statement of %s has no SHALL: want one EARS pattern "+
 				"(The <system> SHALL …; WHEN/WHILE/WHERE <condition>, the <system> SHALL …; IF <condition>, THEN the <system> SHALL …) "+
-				"or a plain SHALL sentence", l.ref)
+				"or a plain SHALL sentence", l.name)
 		default:
 			l.earsShape(first, text)
 		}
 	}
 	if count > 1 && l.on(LintReqMulti) {
-		l.add(LintReqMulti, secondLine, "the statement of %s has %d SHALLs: one requirement per block", l.ref, count)
+		l.add(LintReqMulti, secondLine, "the statement of %s has %d SHALLs: one requirement per block", l.name, count)
 	}
 }
 
@@ -445,19 +456,19 @@ func (l *linter) earsShape(line int, text string) {
 	}
 	kw, upper := m[1], strings.ToUpper(m[1])
 	if kw != upper {
-		l.add(LintReqStatement, line, "the statement of %s opens with %q: EARS keywords are uppercase (%s)", l.ref, kw, upper)
+		l.add(LintReqStatement, line, "the statement of %s opens with %q: EARS keywords are uppercase (%s)", l.name, kw, upper)
 		return
 	}
 	shallAt := shallRE.FindStringIndex(text)[0]
 	head := text[:shallAt]
 	if upper == "IF" {
 		if !thenRE.MatchString(head) {
-			l.add(LintReqStatement, line, "the statement of %s opens with IF but has no THEN before SHALL: want IF <condition>, THEN the <system> SHALL …", l.ref)
+			l.add(LintReqStatement, line, "the statement of %s opens with IF but has no THEN before SHALL: want IF <condition>, THEN the <system> SHALL …", l.name)
 		}
 		return
 	}
 	if !strings.Contains(head, ",") {
-		l.add(LintReqStatement, line, "the statement of %s opens with %s but has no comma before SHALL: want %s <condition>, the <system> SHALL …", l.ref, upper, upper)
+		l.add(LintReqStatement, line, "the statement of %s opens with %s but has no comma before SHALL: want %s <condition>, the <system> SHALL …", l.name, upper, upper)
 	}
 }
 
@@ -516,7 +527,7 @@ func (l *linter) vague(ln numberedLine, words []string) {
 			continue
 		}
 		if containsWholeWord(text, w) {
-			l.add(LintReqVague, ln.line, "vague word %q in %s: state a measurable, observable condition instead", w, l.ref)
+			l.add(LintReqVague, ln.line, "vague word %q in %s: state a measurable, observable condition instead", w, l.name)
 		}
 	}
 }

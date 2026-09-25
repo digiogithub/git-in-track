@@ -1,0 +1,213 @@
+{
+  "operations": [
+    {
+      "op": "ADDED",
+      "spec": "ACME-SP-0003",
+      "title": "Reject a malformed reserved range",
+      "separator": "—",
+      "statement": "The allocator SHALL refuse a `reserved` range whose start is greater than its end.",
+      "scenarios": [
+        {
+          "name": "inverted range",
+          "line": 15,
+          "steps": [
+            "**WHEN** `reserved.task` is `[[249, 200]]`",
+            "**THEN** project validation reports an error naming the range"
+          ]
+        }
+      ],
+      "start": 224,
+      "end": 510,
+      "line": 11,
+      "text": "### ADDED ACME-SP-0003 — Reject a malformed reserved range\n\nThe allocator SHALL refuse a `reserved` range whose start is greater than its end.\n\n#### Scenario: inverted range\n- **WHEN** `reserved.task` is `[[249, 200]]`\n- **THEN** project validation reports an error naming the range\n\n"
+    },
+    {
+      "op": "ADDED",
+      "spec": "ACME-SP-0005",
+      "title": "Allocate spec numbers by index scan",
+      "separator": "—",
+      "supersedes": "ACME-SP-0003.R7",
+      "statement": "WHEN a spec is created, the allocator SHALL assign the next free number.",
+      "scenarios": [
+        {
+          "name": "a gap is kept",
+          "line": 24,
+          "steps": [
+            "**WHEN** the highest spec is `ACME-SP-0004`",
+            "**THEN** the next spec is `ACME-SP-0005`"
+          ]
+        }
+      ],
+      "start": 510,
+      "end": 795,
+      "line": 19,
+      "text": "### ADDED ACME-SP-0005 — Allocate spec numbers by index scan\nSupersedes: ACME-SP-0003.R7\n\nWHEN a spec is created, the allocator SHALL assign the next free number.\n\n#### Scenario: a gap is kept\n- **WHEN** the highest spec is `ACME-SP-0004`\n- **THEN** the next spec is `ACME-SP-0005`\n\n"
+    },
+    {
+      "op": "MODIFIED",
+      "spec": "ACME-SP-0003",
+      "ref": "ACME-SP-0003.R2",
+      "title": "Allocate the next ID by index scan",
+      "separator": "—",
+      "statement": "WHEN an item is created, the allocator shall assign the next number fast.",
+      "scenarios": [
+        {
+          "name": "a stale counter hint is ignored",
+          "line": 36,
+          "steps": [
+            "**WHEN** `id_allocation.counters.task` is 12 and the scan finds 108",
+            "**THEN** the next task is `ACME-T-0109`"
+          ]
+        }
+      ],
+      "start": 795,
+      "end": 1182,
+      "line": 28,
+      "text": "### MODIFIED ACME-SP-0003.R2 — Allocate the next ID by index scan\n\nWHEN an item is created, the allocator shall assign the next number fast.\n\n```markdown\n### MODIFIED ACME-SP-0003.R8 — inside a fence, not an operation\n```\n\n#### Scenario: a stale counter hint is ignored\n- **WHEN** `id_allocation.counters.task` is 12 and the scan finds 108\n- **THEN** the next task is `ACME-T-0109`\n\n"
+    },
+    {
+      "op": "REMOVED",
+      "spec": "ACME-SP-0003",
+      "ref": "ACME-SP-0003.R4",
+      "title": "Counters are authoritative",
+      "separator": "—",
+      "reason": "superseded by R2; counters are hints only.",
+      "start": 1182,
+      "end": 1294,
+      "line": 40,
+      "text": "### REMOVED ACME-SP-0003.R4 — Counters are authoritative\n\nReason: superseded by R2; counters are hints only.\n\n"
+    },
+    {
+      "op": "REMOVED",
+      "spec": "ACME-SP-0003",
+      "ref": "ACME-SP-0003.R5",
+      "title": "Counters are cached",
+      "separator": "—",
+      "start": 1294,
+      "end": 1366,
+      "line": 44,
+      "text": "### REMOVED ACME-SP-0003.R5 — Counters are cached\n\nNothing says why.\n\n"
+    },
+    {
+      "op": "MODIFIED",
+      "spec": "ACME-SP-0003",
+      "ref": "ACME-SP-0003.R6",
+      "title": "Hyphen separator",
+      "separator": "-",
+      "statement": "The allocator SHALL keep numbers.",
+      "scenarios": [
+        {
+          "name": "kept",
+          "line": 52,
+          "steps": [
+            "**WHEN** an item is deleted",
+            "**THEN** its number is not reused"
+          ]
+        }
+      ],
+      "start": 1366,
+      "end": 1537,
+      "line": 48,
+      "text": "### MODIFIED ACME-SP-0003.R6 - Hyphen separator\n\nThe allocator SHALL keep numbers.\n\n#### Scenario: kept\n- **WHEN** an item is deleted\n- **THEN** its number is not reused\n\n"
+    },
+    {
+      "op": "ADDED",
+      "spec": "ACME-SP-0003",
+      "ref": "ACME-SP-0003.R9",
+      "title": "Numbered before it is done",
+      "separator": "—",
+      "statement": "The allocator SHALL log every allocation.",
+      "scenarios": [
+        {
+          "name": "logged",
+          "line": 60,
+          "steps": [
+            "**WHEN** an id is allocated",
+            "**THEN** a log line names it"
+          ]
+        }
+      ],
+      "start": 1537,
+      "end": 1722,
+      "line": 56,
+      "text": "### ADDED ACME-SP-0003.R9 — Numbered before it is done\n\nThe allocator SHALL log every allocation.\n\n#### Scenario: logged\n- **WHEN** an id is allocated\n- **THEN** a log line names it\n\n"
+    },
+    {
+      "op": "ADDED",
+      "spec": "ACME-SP-0003",
+      "title": "Bad supersedes line",
+      "separator": "—",
+      "statement": "The allocator SHALL refuse a duplicate range.",
+      "scenarios": [
+        {
+          "name": "duplicate",
+          "line": 69,
+          "steps": [
+            "**WHEN** two ranges overlap",
+            "**THEN** validation reports both"
+          ]
+        }
+      ],
+      "start": 1722,
+      "end": 1933,
+      "line": 64,
+      "text": "### ADDED ACME-SP-0003 — Bad supersedes line\nSupersedes: the old rule\n\nThe allocator SHALL refuse a duplicate range.\n\n#### Scenario: duplicate\n- **WHEN** two ranges overlap\n- **THEN** validation reports both\n\n"
+    }
+  ],
+  "findings": [
+    {
+      "code": "E-DELTA-REASON",
+      "severity": "error",
+      "line": 44,
+      "ref": "ACME-SP-0003.R5",
+      "message": "REMOVED ACME-SP-0003.R5 has no \"Reason:\" line: say why the requirement goes"
+    },
+    {
+      "code": "W-REQ-SEPARATOR",
+      "severity": "warning",
+      "line": 48,
+      "ref": "ACME-SP-0003.R6",
+      "message": "Spec Delta heading of MODIFIED ACME-SP-0003.R6 uses \"-\" instead of \"—\""
+    },
+    {
+      "code": "E-DELTA-TARGET",
+      "severity": "error",
+      "line": 65,
+      "ref": "ACME-SP-0003",
+      "message": "Supersedes: \"the old rule\" is not a requirement ref: want \u003cSPEC-ID\u003e.R\u003cn\u003e"
+    },
+    {
+      "code": "E-DELTA-OP",
+      "severity": "error",
+      "line": 73,
+      "message": "Spec Delta heading \"### CHANGED ACME-SP-0003.R2 — Unknown operation\" has no operation: want \"### ADDED \u003cSPEC-ID\u003e — \u003ctitle\u003e\", \"### MODIFIED \u003cREQREF\u003e — \u003ctitle\u003e\" or \"### REMOVED \u003cREQREF\u003e — \u003ctitle\u003e\""
+    },
+    {
+      "code": "E-DELTA-TARGET",
+      "severity": "error",
+      "line": 75,
+      "ref": "ACME-SP-0003",
+      "message": "MODIFIED names the spec ACME-SP-0003: want the requirement it changes, \u003cSPEC-ID\u003e.R\u003cn\u003e"
+    },
+    {
+      "code": "E-ID-GRAMMAR",
+      "severity": "error",
+      "line": 77,
+      "ref": "ACME-SP-0003.R02",
+      "message": "\"ACME-SP-0003.R02\" is not a requirement ref: want \u003cKEY\u003e-SP-\u003cNNNN\u003e.R\u003cn\u003e with an unpadded R\u003cn\u003e"
+    },
+    {
+      "code": "E-DELTA-TARGET",
+      "severity": "error",
+      "line": 79,
+      "ref": "ACME-US-0001",
+      "message": "ADDED ACME-US-0001 names a story: a Spec Delta changes a spec or a requirement"
+    },
+    {
+      "code": "E-DELTA-OP",
+      "severity": "error",
+      "line": 81,
+      "message": "Spec Delta heading \"### MODIFIED ACME-SP-0003.R3\" has no \" — \u003ctitle\u003e\" after its target: want \"### ADDED \u003cSPEC-ID\u003e — \u003ctitle\u003e\", \"### MODIFIED \u003cREQREF\u003e — \u003ctitle\u003e\" or \"### REMOVED \u003cREQREF\u003e — \u003ctitle\u003e\""
+    }
+  ]
+}

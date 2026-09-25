@@ -45,6 +45,9 @@ type GraphLink struct {
 	To       ItemID   `json:"to"`
 	Note     string   `json:"note,omitempty"`
 	Computed bool     `json:"computed,omitempty"`
+	// Pending marks a modifies edge read from a story's or task's unapplied
+	// "## Spec Delta" (R-DELTA-4), not from its links, and its inverse.
+	Pending bool `json:"pending,omitempty"`
 }
 
 // Reference is one wikilink edge between two nodes. Resolved is false when the
@@ -115,6 +118,20 @@ func (g *Graph) addLink(from ItemID, l Link) {
 	g.out[from] = append(g.out[from], GraphLink{Kind: l.Kind, From: from, To: target, Note: l.Note})
 	g.in[target] = append(g.in[target], GraphLink{
 		Kind: l.Kind.Inverse(), From: target, To: from, Note: l.Note, Computed: true,
+	})
+}
+
+// addPendingLink records a relation proposed by an unapplied Spec Delta and its
+// computed inverse (R-DELTA-4). A declared link with the same kind and target
+// sorts first and wins the deduplication of finish.
+func (g *Graph) addPendingLink(from ItemID, l Link) {
+	target := ItemID(bareTarget(l.Target))
+	if from == "" || target == "" || !l.Kind.Valid() {
+		return
+	}
+	g.out[from] = append(g.out[from], GraphLink{Kind: l.Kind, From: from, To: target, Pending: true})
+	g.in[target] = append(g.in[target], GraphLink{
+		Kind: l.Kind.Inverse(), From: target, To: from, Computed: true, Pending: true,
 	})
 }
 
@@ -277,7 +294,10 @@ func sortLinks(in []GraphLink) []GraphLink {
 		if a.To != b.To {
 			return a.To < b.To
 		}
-		return !a.Computed && b.Computed
+		if a.Computed != b.Computed {
+			return !a.Computed
+		}
+		return !a.Pending && b.Pending
 	})
 	// The same relation may be declared on both sides, which yields a declared
 	// edge and a computed one; the declared edge sorts first and wins.

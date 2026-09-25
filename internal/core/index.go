@@ -333,10 +333,13 @@ type Index struct {
 	counts         map[ItemType]int
 	maxIDs         map[ProjectKey]map[ItemType]int
 	graph          *Graph
-	derivedDiags   []Diagnostic
-	diagnostics    []Diagnostic
-	stats          IndexStats
-	fingerprint    string
+	// deltas holds the parsed "## Spec Delta" of every story and task that
+	// has one (docs/03 section 21.8).
+	deltas       map[ItemID]SpecDelta
+	derivedDiags []Diagnostic
+	diagnostics  []Diagnostic
+	stats        IndexStats
+	fingerprint  string
 
 	// Now supplies the build timestamp. It defaults to time.Now and exists so
 	// that tests can pin a deterministic snapshot.
@@ -370,6 +373,7 @@ func (ix *Index) reset() {
 	ix.counts = make(map[ItemType]int)
 	ix.maxIDs = make(map[ProjectKey]map[ItemType]int)
 	ix.graph = newGraph()
+	ix.deltas = make(map[ItemID]SpecDelta)
 	ix.derivedDiags = nil
 	ix.diagnostics = nil
 }
@@ -1108,6 +1112,7 @@ func (ix *Index) rebuild() {
 	ix.children = make(map[ItemID][]ItemID)
 	ix.counts = make(map[ItemType]int)
 	ix.maxIDs = make(map[ProjectKey]map[ItemType]int)
+	ix.deltas = make(map[ItemID]SpecDelta)
 	ix.derivedDiags = nil
 	graph := newGraph()
 
@@ -1166,6 +1171,7 @@ func (ix *Index) rebuild() {
 			graph.addLink(it.ID, l)
 		}
 		addRequirementLinks(graph, it)
+		ix.addSpecDelta(graph, it)
 	}
 	ix.resolveReferences(graph)
 	graph.finish()

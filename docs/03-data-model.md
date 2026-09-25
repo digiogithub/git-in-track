@@ -1929,18 +1929,14 @@ every write and by the index (so by `gintrack doctor`):
 | `W-REQ-NO-ENTRY` | W | A block with no `requirements:` entry, or an entry with no `status` |
 | `W-REQ-ORPHAN-ENTRY` | W | A `requirements:` key with no block |
 | `E-PROJ-SPECS` | E | Invalid `specs.lint` configuration ([§6.3](#63-validation-rules-for-projectyaml)); since `GIT-US-0108` |
-| `LINT-REQ-*` | W, configurable | Requirement grammar ([§21.9](#219-grammar-lint-and-specslint)); `off`, `warning` or `error` under `specs.lint`; since `GIT-US-0108` |
+| `LINT-REQ-*` | W, configurable | Requirement grammar ([§21.9](#219-grammar-lint-and-specslint)); `off`, `warning` or `error` under `specs.lint`; since `GIT-US-0108`. Also run on the added and replacement blocks of a Spec Delta, as findings of the story or task |
+| `E-DELTA-OP` | E | A level-3 heading of a `## Spec Delta` has an unknown operation (the words are uppercase) or is malformed: no target, a target that is neither a spec nor a requirement, no separator or no title ([§21.8](#218--spec-delta)); since `GIT-US-0109` |
+| `E-DELTA-TARGET` | E | `ADDED` names a requirement while the item is not in a `done`-category status, `MODIFIED`/`REMOVED` names a spec, a heading names another item type, or a `Supersedes:` line is not a requirement ref; since `GIT-US-0109` |
+| `E-DELTA-REASON` | E | `REMOVED` without a `Reason:` line, or with an empty one; since `GIT-US-0109` |
+| `W-DELTA-DANGLING` | W | A Spec Delta operation or its `Supersedes:` line names a spec the index does not hold, or a requirement whose block its spec does not declare; emitted by the index; since `GIT-US-0109` |
 
-A misspelled requirement ref in a heading (`R02`, `r2`) is `E-ID-GRAMMAR`.
-
-Added by ADR-037, not yet emitted:
-
-| Code | Sev | Condition |
-|---|---|---|
-| `E-DELTA-OP` | E | A `## Spec Delta` heading has an unknown operation or is malformed |
-| `E-DELTA-TARGET` | E | `ADDED` names a requirement, or `MODIFIED`/`REMOVED` names a spec |
-| `E-DELTA-REASON` | E | `REMOVED` without a `Reason:` line |
-| `W-DELTA-DANGLING` | W | A Spec Delta targets an unknown spec or block |
+A misspelled requirement ref in a requirement or Spec Delta heading (`R02`, `r2`) is
+`E-ID-GRAMMAR`. A non-canonical separator in a Spec Delta heading is `W-REQ-SEPARATOR`.
 
 `W-MARKER-SYNTAX`, `W-MARKER-DANGLING` and `W-TRACE-BROKEN` (a `trace:` path or symbol that no
 longer exists) are emitted by the native trace engine, which reads source code; `internal/core`
@@ -2308,7 +2304,7 @@ validation, and produce the `E-STATUS-UNKNOWN`, `W-LABEL-UNDECLARED`, and `E-CF-
 > **partly implemented**. `GIT-US-0105` implements the core: the `spec` type and `SP` code, the
 > `specs/` folder, requirement refs, the block parser, the block rev and the requirement rev,
 > the `requirements:` map, the validation of §21.1–21.4 (including the requirement-level `links`
-> of R-REQ-13), `NextRequirementNumber` (R-REQ-5, without Spec Delta headings yet), and
+> of R-REQ-13), `NextRequirementNumber` (R-REQ-5), and
 > §21.10 in full: `schema: 2`, `E-SCHEMA-FEATURE`, the upgrade on first use and the write gate.
 > `GIT-US-0106` implements the six spec link kinds and requirement-ref link targets of §12.1
 > (R-LINK-6, R-LINK-7, R-LINK-8): validation, `E-LINK-TARGET-TYPE`, `E-LINK-COMPUTED-ONLY` on a
@@ -2323,8 +2319,11 @@ validation, and produce the `E-STATUS-UNKNOWN`, `W-LABEL-UNDECLARED`, and `E-CF-
 > and never stored; the vault methods `trace.requirement` and `trace.touching`, `unavailable` in
 > browser-only mode). `GIT-US-0108` implements the grammar lint of
 > §21.9 and the `specs.lint` key in the core (the web editor's live lint consumes it in a later
-> story).
-> Not implemented yet: `## Spec Delta` (§21.8), and verification and coverage (§21.6). This
+> story). `GIT-US-0109` implements the parsing and validation of `## Spec Delta` (§21.8, R-DELTA-1
+> to R-DELTA-5 up to applying): its diagnostics, the pending `modifies` relations and the refs it
+> reserves.
+> Not implemented yet: applying a Spec Delta when the story is done (§21.8, `GIT-US-0110`), and
+> verification and coverage (§21.6). This
 > section is the normative format; the ADR records the reasoning,
 > the consequences and the alternatives rejected. Using specs raises the project to `schema: 2`
 > ([§21.10](#2110-schema-version-2)).
@@ -2627,6 +2626,40 @@ spec changes only when the story reaches a `done`-category status.
   of the story; after applying, the story carries `implements`/`modifies` links in front matter.
 - **R-DELTA-5** Diagnostics: `E-DELTA-OP`, `E-DELTA-TARGET`, `E-DELTA-REASON`, `W-DELTA-DANGLING`
   ([§16](#16-validation-rules-consolidated)); added and replacement blocks are linted like any block.
+
+Reading a delta, precisely (implemented by `GIT-US-0109`, `ParseSpecDelta` and
+`SpecDeltaDiagnostics` in `internal/core`):
+
+- **R-DELTA-6 Where.** Only a story or a task carries a Spec Delta; in any other item the section is
+  prose. The section is the level-2 heading `## Spec Delta` (compared ignoring case) up to the next
+  level-1 or level-2 heading; there may be more than one. Every level-3 heading inside it, outside
+  a fenced code block, is an operation, and each operation extends as a requirement block does
+  (R-REQ-3), so `####` scenarios stay inside it. Text before the first operation is prose.
+- **R-DELTA-7 Heading.** The operation word is exactly `ADDED`, `MODIFIED` or `REMOVED`; one or
+  more blanks separate it from the target. The separator and title follow R-REQ-1: ` — ` is
+  canonical, ` – `, ` - ` and ` -- ` are read as `W-REQ-SEPARATOR`, and the title has 1..200
+  characters. A heading that breaks this is `E-DELTA-OP` and is not an operation, but it still ends
+  the operation above it.
+- **R-DELTA-8 Content.** `Supersedes:` is read only on the first non-blank line under an `ADDED`
+  heading; it is not part of the statement. `Reason:` is the first line of a `REMOVED` operation,
+  outside a fence, that starts with `Reason:`; its text must not be empty. The statement and the
+  scenarios of an `ADDED` or `MODIFIED` operation are read exactly as a spec block's (R-REQ-2) and
+  linted under `specs.lint` ([§21.9](#219-grammar-lint-and-specslint)); a finding is a diagnostic
+  of the story or task with field `body.<target>`, and at `error` it refuses the write to it.
+- **R-DELTA-9 Applied form.** `### ADDED <REQREF> — …` is what applying writes back (R-DELTA-1). It
+  is accepted on an item in a `done`-category status and is `E-DELTA-TARGET` on any other; with no
+  project configuration the check is skipped.
+- **R-DELTA-10 Index.** The index parses the delta of every story and task. While the item's status
+  is neither in the `done` nor in the `cancelled` category, each `MODIFIED`/`REMOVED` target is a
+  `modifies` edge of the item in the link graph, flagged `pending: true` (its computed
+  `modified_by` inverse too); a link the item declares with the same kind and target wins and is
+  not pending. A pending edge is never written to a file and is not a spec construct (R-SCHEMA-2-1).
+  `W-DELTA-DANGLING` is reported for a target spec the index does not hold or a block its spec does
+  not declare, and for the ref of a `Supersedes:` line likewise.
+- **R-DELTA-11 Reserved numbers.** Every requirement ref a delta names — a `MODIFIED` or `REMOVED`
+  target, the ref of an applied `ADDED`, a `Supersedes:` ref — counts as an inbound ref of its spec
+  for allocation (R-REQ-5), whatever the item's status. An unapplied `ADDED` holds no number: the
+  number is allocated when the delta is applied.
 
 ### 21.9 Grammar lint and `specs.lint`
 

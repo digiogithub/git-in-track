@@ -1,0 +1,12 @@
+# SpecDeltaDiagnostics(spec-delta-story.md) at status in_progress, default lint
+body error E-DELTA-OP: line 73 of the body: Spec Delta heading "### CHANGED ACME-SP-0003.R2 — Unknown operation" has no operation: want "### ADDED <SPEC-ID> — <title>", "### MODIFIED <REQREF> — <title>" or "### REMOVED <REQREF> — <title>"
+body error E-DELTA-OP: line 81 of the body: Spec Delta heading "### MODIFIED ACME-SP-0003.R3" has no " — <title>" after its target: want "### ADDED <SPEC-ID> — <title>", "### MODIFIED <REQREF> — <title>" or "### REMOVED <REQREF> — <title>"
+body.ACME-SP-0003.R5 error E-DELTA-REASON: line 44 of the body: REMOVED ACME-SP-0003.R5 has no "Reason:" line: say why the requirement goes
+body.ACME-SP-0003 error E-DELTA-TARGET: line 65 of the body: Supersedes: "the old rule" is not a requirement ref: want <SPEC-ID>.R<n>
+body.ACME-SP-0003 error E-DELTA-TARGET: line 75 of the body: MODIFIED names the spec ACME-SP-0003: want the requirement it changes, <SPEC-ID>.R<n>
+body.ACME-SP-0003.R9 error E-DELTA-TARGET: line 56 of the body: ADDED names the requirement ACME-SP-0003.R9: an added block gets its number when the story is done; write "### ADDED ACME-SP-0003 — <title>"
+body.ACME-US-0001 error E-DELTA-TARGET: line 79 of the body: ADDED ACME-US-0001 names a story: a Spec Delta changes a spec or a requirement
+body.ACME-SP-0003.R02 error E-ID-GRAMMAR: line 77 of the body: "ACME-SP-0003.R02" is not a requirement ref: want <KEY>-SP-<NNNN>.R<n> with an unpadded R<n>
+body.ACME-SP-0003.R2 warning LINT-REQ-STATEMENT: line 30 of the body: the statement of MODIFIED ACME-SP-0003.R2 writes "shall" in lower case: EARS keywords are uppercase (SHALL)
+body.ACME-SP-0003.R2 warning LINT-REQ-VAGUE: line 30 of the body: vague word "fast" in MODIFIED ACME-SP-0003.R2: state a measurable, observable condition instead
+body.ACME-SP-0003.R6 warning W-REQ-SEPARATOR: line 48 of the body: Spec Delta heading of MODIFIED ACME-SP-0003.R6 uses "-" instead of "—"

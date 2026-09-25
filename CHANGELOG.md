@@ -141,6 +141,17 @@ because a commit list cannot express them.
   installs it into each vault through the new `vault.RequirementTracer` seam, served as the
   CoreApi methods `trace.requirement` and `trace.touching`; browser-only mode answers
   `unavailable`. Nothing is written to any file.
+- **Spec Delta parser** (`GIT-US-0109`, ADR-037 §9, docs/03 §21.8). A story or task body may
+  carry a `## Spec Delta` section of `### ADDED <SPEC-ID> — …` (a new block, optionally with a
+  `Supersedes: <REQREF>` line), `### MODIFIED <REQREF> — …` (the replacement block) and
+  `### REMOVED <REQREF> — …` (with a mandatory `Reason:` line) operations. `internal/core`
+  parses them (`ParseSpecDelta`) and validates them before every write and in `gintrack
+  doctor`: `E-DELTA-OP`, `E-DELTA-TARGET`, `E-DELTA-REASON`, `W-DELTA-DANGLING` for a spec or
+  block the index does not hold, and the `LINT-REQ-*` grammar lint of every added and
+  replacement block under `specs.lint`. While the item is not done or cancelled, each
+  MODIFIED/REMOVED target is a pending `modifies` edge of the link graph (`pending: true`), and
+  every ref a delta names keeps its number reserved for requirement allocation. ADDED blocks
+  get no number yet; applying a delta when the story is done is `GIT-US-0110`.
 
 ### Changed
 
