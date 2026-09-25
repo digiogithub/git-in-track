@@ -600,7 +600,8 @@ func (ix *Index) KbTree() *TreeNode {
 
 // SearchHit is one result of Search.
 type SearchHit struct {
-	// Kind is "item", "page", or "file" for a document a semantic backend
+	// Kind is "item", "page", "requirement" for a requirement block (see
+	// SearchKindRequirement), or "file" for a document a semantic backend
 	// found inside the indexed tree that this index owns neither as an item
 	// nor as a page. A file hit carries a path and a snippet and nothing
 	// else, so a client can tell the three apart without guessing from which
@@ -629,7 +630,15 @@ type SearchHit struct {
 	// matched and were collapsed into this hit, so a thread that answers a
 	// query in five places does not fill the result list with one item.
 	MoreMatches int `json:"moreMatches,omitempty"`
+	// Spec and Status are set on a requirement hit only: the spec the block
+	// lives in and the requirement's status (docs/03 section 21).
+	Spec   ItemID `json:"spec,omitempty"`
+	Status Status `json:"status,omitempty"`
 }
+
+// SearchKindRequirement is the [SearchHit.Kind] of a requirement block, which
+// Index.SearchRequirements returns and the vault's search adds on request.
+const SearchKindRequirement = "requirement"
 
 // SearchMatchComment is the [SearchHit.Match] value of a hit whose fragment
 // came from a comment rather than from the item body.

@@ -44,6 +44,7 @@ export type CoreErrorCode =
   | 'validation_failed'
   | 'invalid_front_matter'
   | 'duplicate_id'
+  | 'precondition_required'
   | 'read_only';
 
 export type CoreResponse =

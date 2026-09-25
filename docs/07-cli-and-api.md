@@ -1949,7 +1949,8 @@ and the YouTrack connection's own: `youtrack_not_configured`,
 `read_only` also answers **every write** to a project whose `project.yaml` declares no `schema`
 or one newer than the build supports: the project is open read-only (doc 03 R-EVO-2, ADR-037
 §11). Reads keep working. The other side of the same rule: `item.create` and `item.update`
-results carry `"schemaUpgraded": 2` when the write introduced the first spec construct into a
+results (and those of `requirement.create` and `requirement.update`, §6.7) carry
+`"schemaUpgraded": 2` when the write introduced the first spec construct into a
 `schema: 1` project and raised `project.yaml` in the same write, which is then in `writes`
 (doc 03 §21.10). `gintrack item new --json` reports it the same way.
 
@@ -4762,6 +4763,70 @@ Bridge conventions:
   over `Store`/`Query`, and a shared golden-fixture test suite runs against both
   (`go test ./internal/core/...` natively and `GOOS=js GOARCH=wasm go test` under
   `wasmbrowsertest`).
+
+### 6.7 Requirement methods of the CoreApi contract
+
+`internal/vault` serves four methods that treat one requirement of a spec (ADR-037, doc 03 §21)
+as a unit of its own. They are part of the `CoreApi` contract of `web/src/core-bridge/api.ts`, so
+browser-only mode reaches them through the WASM module's `gintrackCore.call` and a workspace
+routes them to the repository that owns the spec (by `ref`, or by `spec`). No MCP tool, REST route
+or web screen uses them yet.
+
+| Method | Params | Result |
+|---|---|---|
+| `requirement.list` | `{project?, spec?, status?[], q?, text?, includeDeleted?}` | `{requirements: Requirement[], total}` — one row per requirement, sorted by spec and body order; `text`, `statement` and `scenarios` only with `text: true` |
+| `requirement.get` | `{ref}` | `{requirement: Requirement, specRev}` |
+| `requirement.create` | `{spec, title, text?, status?, trace?, links?}` | `{requirement, specRev, writes, schemaUpgraded?}` |
+| `requirement.update` | `{ref, patch, rev}` | `{requirement, specRev, writes, schemaUpgraded?}` |
+
+`ref` is `<SPEC-ID>.R<n>`, optionally `<KEY>/`-qualified. A `Requirement` carries `ref`, `spec`,
+`project`, `path`, `anchor`, `line`, `title`, `status` (`statusImplicit: true` when the entry has
+none and the workflow's initial status stands in), `text` (the block below its heading, without
+the blank lines around it), `statement`, `scenarios`, `trace`, `verified`, `links`, and **two
+hashes**:
+
+- **`rev` — the requirement rev** (doc 03 R-REQ-REV-2): the block bytes plus the canonical JSON of
+  the requirement's `requirements:` entry. It is the **write token**: `requirement.update` quotes
+  it, and nothing else. It changes on any change to the block or the entry, and on nothing else.
+- **`blockRev` — the block rev** (R-REQ-REV-1): the block bytes alone, the value a `verified.rev`
+  stamp records. A status or trace change leaves it alone; it is never accepted as a write token.
+- `specRev` is the spec's file rev (R-REV-1), for a spec-level `item.update` that follows.
+
+**`requirement.update`.** `patch` is sparse: `title` rewrites the heading (with the em dash),
+`text` replaces the block below it, and `status`, `trace`, `verified` and `links` change the
+requirement's entry; `unset` clears `trace`, `verified` or `links`. Nothing else in the file
+changes except `updated`, so no other requirement's `rev` moves. The rules:
+
+- `rev` is required; without it the call fails with `precondition_required` (R-REV-3b).
+  `rev: "*"` is the explicit, unsafe waiver.
+- A `rev` that is no longer the requirement's current rev fails with `stale_revision`, carrying
+  `currentRev` (the requirement rev now) and `conflicts[]` over `text` (named, never quoted),
+  `title`, `status`, `trace`, `verified` and `links`, judged against the file as it is now
+  (R-REV-3a). An empty `conflicts[]` means the change had already been made. A concurrent write to
+  **another** requirement of the same spec, or to the spec's own front matter, does not make the
+  rev stale.
+- A status change follows the project workflow exactly like `item.move`
+  (`workflow_transition_denied`), and the status is always materialized in the entry.
+- `text` may not contain a level 1–3 ATX heading outside a fence, nor leave a fence open (either
+  would end or swallow blocks); a title is one line of 1–200 characters. Both fail as
+  `validation_failed` (`E-REQ-FIELD`), like any other error-severity finding of the spec.
+
+**`requirement.create`** appends a block `### <REF> — <title>` after the last requirement block,
+else at the end of the `## Requirements` section, else in a new `## Requirements` section at the
+end of the body, and materializes the entry with `status` (default: `workflow.initial`). `R<n>` is
+max + 1 over the spec's block headings, its `requirements:` keys and every inbound ref in the
+project index (R-REQ-5), so a removed number is never handed out again. A create needs no rev.
+
+Both writes go through the same canonical serializer as `item.update` (front-matter key order,
+`requirements:` keys in numeric order, unknown keys preserved), refuse a project gated read-only
+(`read_only`, R-EVO-2) and report `schemaUpgraded` like `item.update` does, although a requirement
+write only ever touches a spec that already exists.
+
+**Search.** `search` with `requirements: true` adds one hit of `kind: "requirement"` per matching
+requirement, with `id` set to the ref, `path` to the spec's file, and `spec` and `status` set; it
+is off by default so a client that only opens items and pages never receives one. The web app's
+`search` params and `SearchHit` type do not declare it yet; the requirement screens (epic
+`GIT-EP-0027`) add it together with a way to open such a hit.
 
 ---
 

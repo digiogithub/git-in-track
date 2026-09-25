@@ -44,6 +44,18 @@ func (v *Vault) freshen(ctx context.Context, method string, raw []byte) core.Ind
 			return core.IndexDelta{}
 		}
 		paths = v.index.ItemPaths(core.ItemID(p.ID))
+	case "requirement.get":
+		p, err := decodeParams[struct {
+			Ref string `json:"ref"`
+		}](raw)
+		if err != nil {
+			return core.IndexDelta{}
+		}
+		ref, err := parseRequirementRef(p.Ref)
+		if err != nil {
+			return core.IndexDelta{}
+		}
+		paths = v.index.ItemPaths(ref.Spec)
 	case "kb.page":
 		p, err := decodeParams[struct {
 			Path string `json:"path"`

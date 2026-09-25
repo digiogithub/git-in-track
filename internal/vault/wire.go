@@ -377,6 +377,10 @@ type SearchHit struct {
 	MoreMatches int `json:"moreMatches,omitempty"`
 
 	Project string `json:"project,omitempty"`
+	// Spec and Status are set on a hit of kind "requirement" only: the spec
+	// the block lives in and the requirement's status.
+	Spec   string `json:"spec,omitempty"`
+	Status string `json:"status,omitempty"`
 	// VaultID names the repository the hit came from, so that a workspace-wide
 	// search can say which project — and which clone — answered.
 	VaultID string `json:"vaultId,omitempty"`

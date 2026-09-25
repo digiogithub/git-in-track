@@ -3,7 +3,8 @@
 - **Status:** Accepted — 2026-09-24, decided by the human maintainer after two review rounds, and
   amended by a third (see "Decisions from review"). Core implemented by `GIT-US-0105` (the `spec` type, requirement
   blocks and revs, the `requirements:` map, schema 2 and the write gate); the link kinds and
-  requirement-ref link targets of §5 by `GIT-US-0106`; lint, Spec Delta, verification and
+  requirement-ref link targets of §5 by `GIT-US-0106`; single-requirement reads and writes
+  through the vault under the requirement rev of §6 by `GIT-US-0107`; lint, Spec Delta, verification and
   markers follow in their own stories (docs/03 §21 banner).
 - **Date:** 2026-09-24
 - **Phase:** 11 (Spec-driven development)

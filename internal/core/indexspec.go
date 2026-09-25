@@ -3,6 +3,7 @@ package core
 import (
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // The spec half of the index (ADR-037, docs/03 section 21): the per-spec
@@ -126,4 +127,138 @@ func (ix *Index) hasRequirementBlock(cache map[ItemID]map[int]bool, spec *Item, 
 		cache[spec.ID] = nums
 	}
 	return nums[n]
+}
+
+// RequirementFilter narrows Index.Requirements. Every set field must match.
+type RequirementFilter struct {
+	Projects []ProjectKey
+	Spec     ItemID
+	Statuses []Status
+	// Text keeps the requirements whose ref, title or text contain every
+	// whitespace-separated term, case-insensitively.
+	Text string
+	// IncludeDeleted also lists the requirements of soft-deleted specs.
+	IncludeDeleted bool
+}
+
+// Requirements lists the requirements of every indexed spec that f admits, as
+// rows of their own (docs/03 section 21), sorted by spec id and then in body
+// order. Each carries its project, requirement rev and block rev.
+func (ix *Index) Requirements(f RequirementFilter) ([]RequirementView, error) {
+	ix.mu.RLock()
+	defer ix.mu.RUnlock()
+	projects := map[ProjectKey]bool{}
+	for _, p := range f.Projects {
+		projects[p] = true
+	}
+	statuses := map[Status]bool{}
+	for _, s := range f.Statuses {
+		statuses[s] = true
+	}
+	terms := strings.Fields(strings.ToLower(f.Text))
+	out := []RequirementView{}
+	for _, id := range sortedIDs(ix.byID) {
+		it := ix.byID[id]
+		if it.Type != TypeSpec || (it.Deleted && !f.IncludeDeleted) || (f.Spec != "" && it.ID != f.Spec) {
+			continue
+		}
+		project := ix.projectOf(it)
+		if len(projects) > 0 && !projects[project] {
+			continue
+		}
+		views, err := SpecRequirements(it, ix.configOf(it))
+		if err != nil {
+			return nil, err
+		}
+		for _, v := range views {
+			if len(statuses) > 0 && !statuses[v.Status] {
+				continue
+			}
+			if len(terms) > 0 && requirementScore(v, terms) == 0 {
+				continue
+			}
+			v.Project = project
+			out = append(out, v)
+		}
+	}
+	return out, nil
+}
+
+// Requirement returns one requirement of an indexed spec, with its text.
+func (ix *Index) Requirement(ref RequirementRef) (RequirementView, error) {
+	ix.mu.RLock()
+	defer ix.mu.RUnlock()
+	it, ok := ix.byID[ref.Spec]
+	if !ok {
+		return RequirementView{}, fmt.Errorf("%s: spec %s: %w", ref, ref.Spec, ErrItemNotFound)
+	}
+	v, err := FindRequirement(it, ref.Number, ix.configOf(it))
+	if err != nil {
+		return RequirementView{}, err
+	}
+	v.Project = ix.projectOf(it)
+	return v, nil
+}
+
+// requirementScore ranks a requirement against lower-cased search terms with
+// the weights Search uses for items: an exact ref outranks a title match,
+// which outranks a match in the text. Zero means some term did not match.
+func requirementScore(v RequirementView, terms []string) float64 {
+	ref := strings.ToLower(v.Ref.String())
+	title := strings.ToLower(v.Title)
+	text := strings.ToLower(v.Text)
+	score := 0.0
+	for _, t := range terms {
+		switch {
+		case ref == t:
+			score += scoreID
+		case strings.Contains(title, t):
+			score += scoreTitle
+		case strings.Contains(text, t) || strings.Contains(ref, t):
+			score += scoreBody
+		default:
+			return 0
+		}
+	}
+	return score
+}
+
+// SearchRequirements runs the substring search over requirement blocks: every
+// requirement of a live spec is a hit of its own, of kind "requirement", whose
+// id is the requirement ref and whose path is the spec's file (docs/03 section
+// 21). Hits are ranked like Search ranks items.
+func (ix *Index) SearchRequirements(q string, limit int) []SearchHit {
+	terms := strings.Fields(strings.ToLower(q))
+	if len(terms) == 0 {
+		return nil
+	}
+	if limit <= 0 {
+		limit = DefaultLimit
+	}
+	views, err := ix.Requirements(RequirementFilter{})
+	if err != nil {
+		return nil
+	}
+	var hits []SearchHit
+	for _, v := range views {
+		score := requirementScore(v, terms)
+		if score == 0 {
+			continue
+		}
+		hits = append(hits, SearchHit{
+			Kind: SearchKindRequirement, ID: ItemID(v.Ref.String()), Path: v.Path, Title: v.Title,
+			Project: v.Project, Score: score, Snippet: snippet(v.Text, terms[0]), Source: SearchSourceCore,
+			Spec: v.Spec, Status: v.Status,
+		})
+	}
+	sort.SliceStable(hits, func(i, j int) bool {
+		if hits[i].Score != hits[j].Score {
+			return hits[i].Score > hits[j].Score
+		}
+		return hits[i].ID < hits[j].ID
+	})
+	if len(hits) > limit {
+		hits = hits[:limit]
+	}
+	return hits
 }

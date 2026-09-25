@@ -11,6 +11,10 @@ type searchParams struct {
 	// Projects scopes the search to any of several project keys
 	// (GIT-US-0102). Empty, together with Project, searches every project.
 	Projects []string `json:"projects,omitempty"`
+	// Requirements adds one hit of kind "requirement" per matching requirement
+	// block (docs/03 section 21). Off by default, so a client that knows only
+	// items and pages never meets a kind it cannot open.
+	Requirements bool `json:"requirements,omitempty"`
 }
 
 // ScopeKeys folds the single-project and the multi-project spelling of a
