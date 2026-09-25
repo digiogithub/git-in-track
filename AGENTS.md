@@ -315,9 +315,22 @@ step 4 of the pick-up loop:
    Markers name requirement refs only (never a bare spec ID) and are unioned
    with the spec's `trace:` entries (§21.7). Use `#` or `--` where the language
    does.
+
+   Put `Implements:` on the narrowest function that carries the rule, not only
+   on the entry point that delegates to it, and on the wiring function when the
+   requirement is about wiring (a tool registered, a route added). Put
+   `Verifies:` on the sub-test (`t.Run`) that exercises the requirement.
+   Impact cannot see what markers do not reach: a removed call in an untraced
+   function (tier 1 maps lines to their enclosing symbol, tier 2 walks callers,
+   never callees), a Go `const`/`var`/`type` used outside its own package, or
+   an unmarked helper when Pando is absent. `docs/08-mcp-server.md` §10.8 lists
+   the blind spots, and `docs/research/2026-09-25-spec-impact-benchmark.md` is
+   the evidence.
 3. **Impact.** `spec_impact` with `base: "main"`, `head: "worktree"`, your
    `story`, and a `budget` (default 1500 tokens) lists every requirement the
-   diff affects, failing first, then suspect, each with why it was hit.
+   diff affects, failing first, then suspect, each with why it was hit. A hit of
+   `kind: test-only` means only a test that verifies the requirement changed;
+   read the behaviour hits first.
 4. **Resolve every failing or suspect hit**, one of three ways:
    - **fix the code** so it honours the requirement as written;
    - **change the requirement on purpose** by adding a `## Spec Delta` to the

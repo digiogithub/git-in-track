@@ -74,6 +74,12 @@ because a commit list cannot express them.
   Pando. The new reason is `decl:<trace ref> uses <name>`; the benchmark's `maxPageSize` miss now
   reaches `boundedLimit`.
 
+- **Impact blind spots and marker placement** (`GIT-US-0159`, docs/08 §10.8 and §4.21,
+  AGENTS.md). The docs now list what tiers 1–2 cannot see — callees such as a removed call in an
+  untraced registrar, Go declarations used outside their package, unmarked code without Pando,
+  test and multi-marker granularity — and where to put `Implements:` and `Verifies:` markers so
+  impact stays useful, with the spec impact benchmark linked as evidence.
+
 ### Fixed
 
 - **Removed lines touch the symbol they were removed from** (`GIT-US-0158`, docs/03 §21.7). A
