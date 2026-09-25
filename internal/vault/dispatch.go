@@ -314,7 +314,13 @@ func (w *Workspace) Dispatch(ctx context.Context, method string, raw []byte) (an
 	if err != nil {
 		return nil, err
 	}
-	return target.Vault.Dispatch(ctx, method, raw)
+	result, err := target.Vault.Dispatch(ctx, method, raw)
+	if err == nil && method == "requirement.create" {
+		// Near-duplicates of the new requirement, advisory and bounded
+		// (similar.go, GIT-US-0111): the semantic backend is the workspace's.
+		result = w.WithSimilarRequirements(ctx, result)
+	}
+	return result, err
 }
 
 // route picks the repository that answers a method.

@@ -201,6 +201,17 @@ type RequirementWriteResult struct {
 	SpecRev        string      `json:"specRev,omitempty" jsonschema:"New file rev of the spec"`
 	Changed        []string    `json:"changed,omitempty" jsonschema:"Vault-relative paths written by this call"`
 	SchemaUpgraded int         `json:"schemaUpgraded,omitempty" jsonschema:"Set when this write raised project.yaml's schema"`
+	// Similar is set by create_requirement only (GIT-US-0111).
+	Similar []SimilarRequirement `json:"similar,omitempty" jsonschema:"create_requirement only: existing requirements that read like the new one, best first; advisory, never blocking, and empty without Pando"`
+}
+
+// SimilarRequirement is one near-duplicate create_requirement reports: enough
+// to decide whether to keep the new block, without a read.
+type SimilarRequirement struct {
+	Ref    string  `json:"ref"`
+	Title  string  `json:"title"`
+	Status string  `json:"status,omitempty"`
+	Score  float64 `json:"score" jsonschema:"Semantic score on the backend's own scale; compare only within one list"`
 }
 
 // ---------------------------------------------------------------- registry --
@@ -233,7 +244,9 @@ func registerSpecTools(s *Server) {
 		Title: "Add a requirement to a spec",
 		Description: "Append one requirement block to a spec. Its number R<n> is allocated by the tool " +
 			"and never reused; never propose one. Needs no rev: it touches no requirement that exists. " +
-			"Returns the requirement's rev, the token a later update_requirement quotes.",
+			"Returns the requirement's rev, the token a later update_requirement quotes, and similar[]: " +
+			"up to three existing requirements that read like the new one (Pando only; advisory — " +
+			"review them and, if one is a duplicate, cancel the new block rather than keep both).",
 		Write:     true,
 		Untrusted: true,
 	}, createRequirement)
@@ -429,6 +442,7 @@ func requirementWrite(ctx context.Context, s *Server, tool, method string, param
 		SpecRev        string               `json:"specRev"`
 		Writes         writeSet             `json:"writes"`
 		SchemaUpgraded int                  `json:"schemaUpgraded"`
+		Similar        []SimilarRequirement `json:"similar"`
 	}](result)
 	if err != nil {
 		return RequirementWriteResult{}, err
@@ -445,6 +459,7 @@ func requirementWrite(ctx context.Context, s *Server, tool, method string, param
 		SpecRev:        payload.SpecRev,
 		Changed:        payload.Writes.paths(),
 		SchemaUpgraded: payload.SchemaUpgraded,
+		Similar:        payload.Similar,
 	}, nil
 }
 

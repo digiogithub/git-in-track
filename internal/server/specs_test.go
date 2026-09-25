@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/digiogithub/git-in-track/internal/config"
+	"github.com/digiogithub/git-in-track/internal/core"
+	"github.com/digiogithub/git-in-track/internal/vault"
 	"github.com/digiogithub/git-in-track/internal/watcher"
 )
 
@@ -533,4 +535,55 @@ func TestRequirementStaleConflicts(t *testing.T) {
 			}
 		})
 	}
+}
+
+// similarStub is a semantic backend that answers one near-duplicate.
+type similarStub struct{}
+
+func (similarStub) SearchSemantic(_ context.Context, q vault.SemanticQuery) ([]core.SearchHit, error) {
+	if q.Kind != core.SearchKindRequirement {
+		return nil, nil
+	}
+	return []core.SearchHit{{
+		Kind: core.SearchKindRequirement, ID: "DEMO-SP-0001.R1", Spec: "DEMO-SP-0001", Title: "Trim input",
+		Project: "DEMO", Score: 0.8, Source: core.SearchSourcePando,
+	}}, nil
+}
+
+func TestRequirementCreateSimilar(t *testing.T) {
+	t.Parallel()
+	target := specsBase + "/DEMO-SP-0001/requirements"
+	type createdBody struct {
+		Requirement requirementBody `json:"requirement"`
+		Similar     []struct {
+			Ref   string  `json:"ref"`
+			Score float64 `json:"score"`
+		} `json:"similar"`
+	}
+
+	t.Run("without Pando similar is empty", func(t *testing.T) {
+		t.Parallel()
+		s, _ := specServer(t)
+		rec := send(t, s, request{method: http.MethodPost, target: target,
+			body: map[string]any{"title": "Trim pasted input", "text": "The checkout SHALL trim pasted input."}})
+		var got createdBody
+		decode(t, rec, http.StatusCreated, &got)
+		if got.Similar == nil || len(got.Similar) != 0 {
+			t.Errorf("similar = %+v, want []", got.Similar)
+		}
+	})
+
+	t.Run("a semantic backend's near-duplicates come back", func(t *testing.T) {
+		t.Parallel()
+		s, _ := specServer(t)
+		s.repos.workspace().SetSemanticSearcher(similarStub{})
+		rec := send(t, s, request{method: http.MethodPost, target: target,
+			body: map[string]any{"title": "Trim pasted input", "text": "The checkout SHALL trim pasted input."}})
+		var got createdBody
+		decode(t, rec, http.StatusCreated, &got)
+		if got.Requirement.Ref != "DEMO-SP-0001.R3" || len(got.Similar) != 1 ||
+			got.Similar[0].Ref != "DEMO-SP-0001.R1" || got.Similar[0].Score != 0.8 {
+			t.Errorf("created = %+v", got)
+		}
+	})
 }

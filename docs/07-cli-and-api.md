@@ -5204,7 +5204,7 @@ ref are shims over them (doc 08 §4.20), and so are the REST routes under
 |---|---|---|
 | `requirement.list` | `{project?, spec?, status?[], q?, text?, includeDeleted?}` | `{requirements: Requirement[], total}` — one row per requirement, sorted by spec and body order; `text`, `statement` and `scenarios` only with `text: true` |
 | `requirement.get` | `{ref}` | `{requirement: Requirement, specRev}` |
-| `requirement.create` | `{spec, title, text?, status?, trace?, links?}` | `{requirement, specRev, writes, schemaUpgraded?}` |
+| `requirement.create` | `{spec, title, text?, status?, trace?, links?}` | `{requirement, specRev, writes, schemaUpgraded?, similar}` |
 | `requirement.update` | `{ref, patch, rev}` | `{requirement, specRev, writes, schemaUpgraded?}` |
 
 `ref` is `<SPEC-ID>.R<n>`, optionally `<KEY>/`-qualified. A `Requirement` carries `ref`, `spec`,
@@ -5246,6 +5246,20 @@ else at the end of the `## Requirements` section, else in a new `## Requirements
 end of the body, and materializes the entry with `status` (default: `workflow.initial`). `R<n>` is
 max + 1 over the spec's block headings, its `requirements:` keys and every inbound ref in the
 project index (R-REQ-5), so a removed number is never handed out again. A create needs no rev.
+
+**Duplicate detection (`similar`, GIT-US-0111).** After the block is written, the workspace asks
+the host-installed semantic searcher (`vault.SemanticSearcher`, the seam `search.semantic` uses)
+for requirement blocks close to the new one, and answers them as `similar`: an array of
+`{ref, title, spec, status?, project?, vaultId?, anchor?, score}`, best first. The query is the
+new requirement's title and statement (its block text when it has no statement), scoped to its
+project with `kind: "requirement"`. The new ref itself and non-requirement hits are dropped, one
+entry is kept per ref, a candidate is kept only when its score is positive and at least half of
+the best candidate's (scores are on the backend's own scale, docs/02 §8), and at most **3** are
+returned. The check is advisory and bounded: it never blocks or undoes the create, it waits at
+most **2 s** for the backend, and without a backend (browser-only mode, no Pando configured), on
+a backend error or on timeout `similar` is `[]` — never an error. `POST
+/api/v1/projects/{key}/specs/{spec}/requirements` answers the same `similar` array; the write
+event is published before the check runs.
 
 Both writes go through the same canonical serializer as `item.update` (front-matter key order,
 `requirements:` keys in numeric order, unknown keys preserved), refuse a project gated read-only

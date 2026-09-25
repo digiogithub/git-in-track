@@ -394,6 +394,13 @@ func (s *FileStore) Create(ctx context.Context, draft ItemDraft) (*Item, error) 
 		return nil, err
 	}
 
+	body := draft.Body
+	if draft.Type == TypeSpec {
+		// A spec started from the template names itself in its example
+		// requirement heading before it has an id (GIT-US-0111).
+		body = ExpandSpecIDPlaceholder(body, id)
+	}
+
 	now := s.now()
 	it := &Item{
 		ID:           id,
@@ -421,7 +428,7 @@ func (s *FileStore) Create(ctx context.Context, draft ItemDraft) (*Item, error) 
 		Inbox:        draft.Inbox.Clone(),
 		Requirements: draft.Requirements.Clone(),
 		Extra:        draft.Extra,
-		Body:         draft.Body,
+		Body:         body,
 		Path:         path.Join(s.backlog, dir, FileName(id, draft.Title)),
 	}
 	s.applyDefaults(it)

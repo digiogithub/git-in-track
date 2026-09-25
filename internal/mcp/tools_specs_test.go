@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/digiogithub/git-in-track/internal/core"
 )
 
 // specFixture creates a spec with three requirements through the tools and
@@ -374,4 +376,35 @@ func TestSpecToolsStateTheDataBoundary(t *testing.T) {
 	for name := range want {
 		t.Errorf("%s is not advertised with writes enabled", name)
 	}
+}
+
+func TestCreateRequirementSimilar(t *testing.T) {
+	h := newHarness(t, true)
+	spec := specFixture(t, h)
+
+	t.Run("without Pando there is no similar key", func(t *testing.T) {
+		got := call[RequirementWriteResult](t, h, "create_requirement", map[string]any{
+			"spec": spec, "title": "Trim pasted input", "text": "The checkout SHALL trim pasted input.",
+		})
+		if got.Similar != nil {
+			t.Errorf("similar = %+v", got.Similar)
+		}
+	})
+
+	t.Run("near-duplicates come back compactly", func(t *testing.T) {
+		backend := withSemantic(t, h, []core.SearchHit{
+			{Kind: core.SearchKindRequirement, ID: core.ItemID(spec + ".R1"), Spec: core.ItemID(spec),
+				Title: "Trim input", Status: "backlog", Project: "DEMO", Score: 0.9},
+		})
+		got := call[RequirementWriteResult](t, h, "create_requirement", map[string]any{
+			"spec": spec, "title": "Strip pasted whitespace", "text": "The checkout SHALL strip pasted whitespace.",
+		})
+		if len(got.Similar) != 1 || got.Similar[0].Ref != spec+".R1" || got.Similar[0].Score != 0.9 ||
+			got.Similar[0].Status != "backlog" {
+			t.Errorf("similar = %+v", got.Similar)
+		}
+		if backend.asked.Kind != core.SearchKindRequirement || !strings.Contains(backend.asked.Q, "Strip pasted whitespace") {
+			t.Errorf("asked = %+v", backend.asked)
+		}
+	})
 }
