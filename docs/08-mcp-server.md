@@ -1071,8 +1071,11 @@ Both writes answer with the requirement without its text — the agent just sent
 A stale `rev` is refused exactly like `update_item` (section 4.5): `stale_revision` with
 `currentRev` — the requirement rev now — the one-line `retry`, and `conflicts[]` over `text`
 (named, never quoted), `title`, `status`, `trace`, `verified` and `links`, judged against the file
-as it is now. An empty (absent) `conflicts` means your change is already there: stop. A missing
-`rev` is `precondition_required`; `"*"` is the explicit, unsafe waiver.
+as it is now. An empty (absent) `conflicts` means every field you proposed already holds its
+value — your change is already there: stop. A patch that cannot be judged against the current
+content (one the write would refuse anyway) names every field it carries, so it never reads as
+already applied. A missing `rev` is `precondition_required`; `"*"` is the explicit, unsafe
+waiver.
 
 ```json
 { "error": { "code": "stale_revision",

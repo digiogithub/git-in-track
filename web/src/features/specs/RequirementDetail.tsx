@@ -35,6 +35,20 @@ type Draft = { title: string; text: string; baseRev: string; baseTitle: string; 
 /** A save refused with `stale_revision`, kept until the user decides. */
 type Conflict = { error: ProviderError; patch: RequirementPatch };
 
+/**
+ * Whether a refused write had already happened: a `stale_revision` whose
+ * `conflicts` list is empty (or absent) means every field it proposed already
+ * holds its value on disk (docs/08 §4.5, GIT-US-0151). There is nothing left
+ * to save and nothing to merge — reload, never write again.
+ */
+function alreadyApplied(error: unknown): error is ProviderError {
+  return (
+    error instanceof ProviderError &&
+    error.code === 'stale_revision' &&
+    (error.conflicts ?? []).length === 0
+  );
+}
+
 const fieldLabels: Record<string, string> = {
   text: 'Statement and scenarios',
   title: 'Title',
@@ -51,7 +65,8 @@ const fieldLabels: Record<string, string> = {
  * suspect reasons, and the trace panel. Editing saves only this block through
  * `updateRequirement`, quoting the **requirement rev** (the write token, doc
  * 03 §21.5) — never the block rev a stamp records. A `stale_revision` shows
- * the per-field diff and lets the user reload theirs or save theirs-aware.
+ * the per-field diff and lets the user reload theirs or save theirs-aware;
+ * one with an empty `conflicts` list is already saved and just reloads.
  * Browser-only mode reads and edits the block; trace and coverage read
  * `unavailable`.
  */
@@ -139,6 +154,7 @@ export function RequirementDetail() {
               project={project}
               projectKey={projectKey}
               writable={writable}
+              onReload={() => void requirementQuery.refetch()}
             />
             <CoverageCard
               state={
@@ -229,6 +245,16 @@ function BlockCard({
           toast({ title: `Saved ${result.requirement.ref}` });
         },
         onError: (error) => {
+          if (alreadyApplied(error)) {
+            setDraft(null);
+            setConflict(null);
+            onReload();
+            toast({
+              title: 'Already saved',
+              description: `${requirement.ref} already holds this change.`,
+            });
+            return;
+          }
           if (error instanceof ProviderError && error.code === 'stale_revision') {
             setConflict({ error, patch });
             onReload();
@@ -429,11 +455,13 @@ function StatusCard({
   project,
   projectKey,
   writable,
+  onReload,
 }: {
   requirement: Requirement;
   project: ProjectSummary | undefined;
   projectKey: string;
   writable: boolean;
+  onReload: () => void;
 }) {
   const update = useUpdateRequirement(projectKey);
   const { toast } = useToast();
@@ -467,6 +495,14 @@ function StatusCard({
                   toast({ title: `Moved ${requirement.ref} to ${status}` });
                 },
                 onError: (error) => {
+                  if (alreadyApplied(error)) {
+                    onReload();
+                    toast({
+                      title: 'Already saved',
+                      description: `${requirement.ref} is already ${status}.`,
+                    });
+                    return;
+                  }
                   if (error instanceof ProviderError && error.code === 'stale_revision') {
                     toast({
                       variant: 'destructive',

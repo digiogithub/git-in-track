@@ -477,3 +477,60 @@ func TestSpecLiveRoutes(t *testing.T) {
 	decode(t, send(t, s, request{method: http.MethodPost, target: "/api/v1/projects/NOPE/specs/lint",
 		body: map[string]any{"type": "spec", "body": ""}}), http.StatusNotFound, &doc)
 }
+
+// TestRequirementStaleConflicts pins the conflicts a PATCH refused for a stale
+// rev reports: none when the change is already on disk, only the fields that
+// still differ otherwise (GIT-US-0151).
+func TestRequirementStaleConflicts(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name          string
+		first, second map[string]any
+		want          []string
+	}{
+		{
+			name:   "already applied",
+			first:  map[string]any{"title": "Trim everything", "status": "todo"},
+			second: map[string]any{"title": "Trim everything", "status": "todo"},
+		},
+		{
+			name:   "partial overlap",
+			first:  map[string]any{"title": "Trim everything", "status": "todo"},
+			second: map[string]any{"title": "Trim everything", "status": "in_progress"},
+			want:   []string{"status"},
+		},
+		{
+			name:   "real conflict",
+			first:  map[string]any{"title": "Trim everything"},
+			second: map[string]any{"title": "Trim nothing", "text": "The checkout SHALL NOT trim."},
+			want:   []string{"text", "title"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s, _ := specServer(t)
+			target := specsBase + "/DEMO-SP-0001/requirements/R1"
+			var base requirementResult
+			decode(t, send(t, s, request{method: http.MethodGet, target: target}), http.StatusOK, &base)
+			var wrote requirementResult
+			decode(t, send(t, s, request{method: http.MethodPatch, target: target,
+				header: map[string]string{"If-Match": base.Requirement.Rev}, body: tc.first}), http.StatusOK, &wrote)
+
+			var doc problemBody
+			decode(t, send(t, s, request{method: http.MethodPatch, target: target,
+				header: map[string]string{"If-Match": base.Requirement.Rev}, body: tc.second}),
+				http.StatusPreconditionFailed, &doc)
+			if doc.Code != "stale_revision" || doc.CurrentRev != wrote.Requirement.Rev {
+				t.Fatalf("problem = %+v", doc)
+			}
+			var got []string
+			for _, c := range doc.Conflicts {
+				got = append(got, c.Field)
+			}
+			if strings.Join(got, ",") != strings.Join(tc.want, ",") {
+				t.Errorf("conflicts = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

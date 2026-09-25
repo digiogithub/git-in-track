@@ -440,7 +440,10 @@ rewritten. A `stale_revision` keeps the draft and shows an alert with the **per-
 disk)* next to *Yours*; the core names `text` without quoting it, so the view reloads the
 requirement and fills in theirs once it holds the reported `currentRev`. *Reload theirs* drops the
 draft and shows the file; *Save mine over theirs* repeats the same patch quoting `currentRev`
-(never `*`); *Keep editing* closes the alert. `ProviderError` carries `currentRev` and
+(never `*`); *Keep editing* closes the alert. A `stale_revision` with an **empty** (absent)
+`conflicts[]` means the change is already on disk (GIT-US-0151): the view closes the editor,
+reloads and says *Already saved* instead of showing the alert — the status control does the
+same. `ProviderError` carries `currentRev` and
 `conflicts[]` for this in all three providers (§4). Nothing to edit is offered in a read-only
 workspace. **Browser-only mode:** the block, the status control and editing work over the WASM
 core; the trace panel reads *Trace unavailable* and coverage `unavailable`, each with the

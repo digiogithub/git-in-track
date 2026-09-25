@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"unicode/utf8"
 )
@@ -353,22 +354,28 @@ func applyRequirementPatch(it *Item, n int, patch RequirementPatch, cfg *Project
 // requirementConflicts reports the fields a refused requirement write would
 // still change, judged against the spec as it is on disk now (R-REV-3a). The
 // text is named, never quoted back, like an item body.
+//
+// The list is empty exactly when every field the patch proposes already holds
+// its value, which is what tells a caller its change is already there
+// (GIT-US-0151). A patch that cannot be applied to the current content — one
+// the store would refuse — has no field diff, so it names every field it
+// carries rather than reading as already applied.
 func requirementConflicts(current *Item, n int, patch RequirementPatch, cfg *ProjectConfig) []ConflictField {
 	if current == nil {
-		return nil
+		return patchConflicts(RequirementView{}, patch)
+	}
+	cur, err := FindRequirement(current, n, cfg)
+	if err != nil {
+		return patchConflicts(RequirementView{}, patch)
 	}
 	proposed := current.clone()
 	proposed.Requirements = current.Requirements.Clone()
 	if err := applyRequirementPatch(proposed, n, patch, cfg); err != nil {
-		return nil
-	}
-	cur, err := FindRequirement(current, n, cfg)
-	if err != nil {
-		return nil
+		return patchConflicts(cur, patch)
 	}
 	next, err := FindRequirement(proposed, n, cfg)
 	if err != nil {
-		return nil
+		return patchConflicts(cur, patch)
 	}
 	var out []ConflictField
 	add := func(field, c, p string) {
@@ -384,6 +391,53 @@ func requirementConflicts(current *Item, n int, patch RequirementPatch, cfg *Pro
 	add("trace", renderTrace(cur.Trace), renderTrace(next.Trace))
 	add("verified", renderVerification(cur.Verified), renderVerification(next.Verified))
 	add("links", renderLinks(cur.Links), renderLinks(next.Links))
+	return out
+}
+
+// patchConflicts names every field a patch carries, in the order
+// requirementConflicts reports them, with the current value beside the
+// proposed one. It is the report for a patch that could not be judged field by
+// field. The text is named, never quoted.
+func patchConflicts(cur RequirementView, patch RequirementPatch) []ConflictField {
+	var out []ConflictField
+	if patch.Text != nil {
+		out = append(out, ConflictField{Field: "text"})
+	}
+	if patch.Title != nil {
+		out = append(out, ConflictField{Field: "title", Current: cur.Title, Proposed: *patch.Title})
+	}
+	if patch.Status != nil {
+		out = append(out, ConflictField{Field: "status", Current: string(cur.Status), Proposed: string(*patch.Status)})
+	}
+	unset := func(field string) bool { return slices.Contains(patch.Unset, field) }
+	if patch.Trace != nil || unset("trace") {
+		proposed := ""
+		if patch.Trace != nil {
+			proposed = renderTrace(patch.Trace)
+		}
+		out = append(out, ConflictField{Field: "trace", Current: renderTrace(cur.Trace), Proposed: proposed})
+	}
+	if patch.Verified != nil || unset("verified") {
+		proposed := ""
+		if patch.Verified != nil {
+			proposed = renderVerification(patch.Verified)
+		}
+		out = append(out, ConflictField{Field: "verified", Current: renderVerification(cur.Verified), Proposed: proposed})
+	}
+	if patch.Links != nil || unset("links") {
+		proposed := ""
+		if patch.Links != nil {
+			proposed = renderLinks(*patch.Links)
+		}
+		out = append(out, ConflictField{Field: "links", Current: renderLinks(cur.Links), Proposed: proposed})
+	}
+	for _, field := range patch.Unset {
+		switch field {
+		case "trace", "verified", "links":
+		default:
+			out = append(out, ConflictField{Field: field})
+		}
+	}
 	return out
 }
 
