@@ -174,3 +174,17 @@ func (s *serialBackend) ResolvePath(ctx context.Context, req ResolveRequest) (Re
 	defer s.mu.Unlock()
 	return s.inner.ResolvePath(ctx, req) //nolint:wrapcheck // a transparent wrapper
 }
+
+// ChangedFiles implements Backend.
+func (s *serialBackend) ChangedFiles(ctx context.Context, from, to string) ([]FileChange, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.inner.ChangedFiles(ctx, from, to) //nolint:wrapcheck // a transparent wrapper
+}
+
+// Branches implements Backend.
+func (s *serialBackend) Branches(ctx context.Context) ([]Branch, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.inner.Branches(ctx) //nolint:wrapcheck // a transparent wrapper
+}
