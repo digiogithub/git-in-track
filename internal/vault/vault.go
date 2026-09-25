@@ -771,6 +771,7 @@ func (v *Vault) projectList() []projectSummary {
 			continue
 		}
 		_, writable := v.stores[p.Key]
+		writable = writable && p.Config.WriteGate() == nil
 		summary := projectSummary{
 			Key:         string(p.Key),
 			Name:        p.Name,
@@ -1049,6 +1050,7 @@ func (v *Vault) itemCreate(ctx context.Context, raw []byte) (any, error) {
 		}
 	}
 	v.fs.begin()
+	schemaBefore := store.Schema()
 	it, err := store.Create(ctx, draft)
 	if err != nil {
 		return nil, fmt.Errorf("create item: %w", err)
@@ -1057,7 +1059,7 @@ func (v *Vault) itemCreate(ctx context.Context, raw []byte) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"item": it, "writes": writes}, nil
+	return withSchemaUpgrade(map[string]any{"item": it, "writes": writes}, schemaBefore, store), nil
 }
 
 // itemUpdate applies a sparse patch under an optimistic lock.
@@ -1075,6 +1077,7 @@ func (v *Vault) itemUpdate(ctx context.Context, raw []byte) (any, error) {
 		return nil, err
 	}
 	v.fs.begin()
+	schemaBefore := store.Schema()
 	it, err := store.Update(ctx, core.ItemID(p.ID), p.Patch.patch(), core.Rev(p.Rev))
 	if err != nil {
 		return nil, fmt.Errorf("update %s: %w", p.ID, err)
@@ -1083,7 +1086,18 @@ func (v *Vault) itemUpdate(ctx context.Context, raw []byte) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"item": it, "writes": writes}, nil
+	return withSchemaUpgrade(map[string]any{"item": it, "writes": writes}, schemaBefore, store), nil
+}
+
+// withSchemaUpgrade adds `schemaUpgraded: <n>` to a write result when the write
+// raised the project's schema: the first spec construct written into a schema-1
+// project upgrades project.yaml in the same write, and every surface says so
+// (ADR-037 section 11, R-SCHEMA-2-3). project.yaml is then in the WriteSet.
+func withSchemaUpgrade(out map[string]any, before int, store *core.FileStore) map[string]any {
+	if after := store.Schema(); after > before {
+		out["schemaUpgraded"] = after
+	}
+	return out
 }
 
 // itemMove changes the status of an item, honoring the declared workflow.
@@ -1635,7 +1649,47 @@ func (v *Vault) storeFor(key core.ProjectKey) (*core.FileStore, error) {
 	if !ok {
 		return nil, failf("not_found", "project %q is not open for writing", key)
 	}
+	if err := v.writeGate(key); err != nil {
+		return nil, err
+	}
 	return store, nil
+}
+
+// writeGate refuses every write to a project whose project.yaml declares no
+// schema or one newer than core.SupportedSchema: the project is open read-only
+// (R-EVO-2, ADR-037 section 11).
+func (v *Vault) writeGate(key core.ProjectKey) error {
+	for _, p := range v.projects {
+		if p.Team || p.Key != key {
+			continue
+		}
+		if err := p.Config.WriteGate(); err != nil {
+			return &Error{Code: "read_only", Message: fmt.Sprintf("project %s: %v", key, err), Path: p.ConfigPath}
+		}
+	}
+	return nil
+}
+
+// writeGateForPath is writeGate for a file addressed by path: the project whose
+// documentation folder holds it, the longest match winning. A path no project
+// owns is not gated here; the caller refuses it on its own terms.
+func (v *Vault) writeGateForPath(p string) error {
+	clean := path.Clean(p)
+	best := -1
+	for i, ref := range v.projects {
+		if ref.Team {
+			continue
+		}
+		if ref.DocsPath == "." || strings.HasPrefix(clean, ref.DocsPath+"/") {
+			if best < 0 || len(ref.DocsPath) > len(v.projects[best].DocsPath) {
+				best = i
+			}
+		}
+	}
+	if best < 0 {
+		return nil
+	}
+	return v.writeGate(v.projects[best].Key)
 }
 
 // storeForItem returns the store that owns an item, taken from the project key

@@ -11,8 +11,18 @@ import (
 
 // SupportedSchema is the highest project.yaml schema version this build writes.
 // A file declaring a higher version is readable but MUST NOT be written back
-// (docs/03 section 6.1).
-const SupportedSchema = 1
+// (docs/03 section 6.1): the store refuses every write to it (WriteGate).
+// Schema 2 is the spec layer of ADR-037; this build reads and writes both 1
+// and 2.
+const SupportedSchema = 2
+
+// InitialSchema is the schema a new project is created at. It stays 1 even
+// though schema 2 is supported: a project pays the upgrade only when its first
+// spec construct is written (ADR-037 section 11, R-SCHEMA-2-2).
+const InitialSchema = 1
+
+// SpecSchema is the first schema that allows spec constructs (R-SCHEMA-2-1).
+const SpecSchema = 2
 
 // ProjectFileName is the discovery marker of a project backlog (R-LOC-2).
 const ProjectFileName = "project.yaml"

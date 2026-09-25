@@ -56,8 +56,9 @@ func decodeResult[T any](result any) (T, error) {
 // has to quote.
 func writeResultOf(result any) (WriteResult, error) {
 	payload, err := decodeResult[struct {
-		Item   core.Item `json:"item"`
-		Writes writeSet  `json:"writes"`
+		Item           core.Item `json:"item"`
+		Writes         writeSet  `json:"writes"`
+		SchemaUpgraded int       `json:"schemaUpgraded"`
 	}](result)
 	if err != nil {
 		return WriteResult{}, err
@@ -65,7 +66,8 @@ func writeResultOf(result any) (WriteResult, error) {
 	item := itemOf(payload.Item)
 	item.Body = ""
 	return WriteResult{
-		Item:    projectItem(item, append(append([]string{}, defaultItemFields...), "path", "links", "milestone")),
-		Changed: payload.Writes.paths(),
+		Item:           projectItem(item, append(append([]string{}, defaultItemFields...), "path", "links", "milestone")),
+		Changed:        payload.Writes.paths(),
+		SchemaUpgraded: payload.SchemaUpgraded,
 	}, nil
 }

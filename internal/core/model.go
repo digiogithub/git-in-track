@@ -32,13 +32,16 @@ const (
 	TypeStory     ItemType = "story"
 	TypeTask      ItemType = "task"
 	TypeMilestone ItemType = "milestone"
-	TypeComment   ItemType = "comment"
+	// TypeSpec is a living description of one capability whose requirements
+	// are addressable blocks of its body (ADR-037, docs/03 section 21).
+	TypeSpec    ItemType = "spec"
+	TypeComment ItemType = "comment"
 )
 
 // Valid reports whether t is one of the known item types.
 func (t ItemType) Valid() bool {
 	switch t {
-	case TypeEpic, TypeStory, TypeTask, TypeMilestone, TypeComment:
+	case TypeEpic, TypeStory, TypeTask, TypeMilestone, TypeSpec, TypeComment:
 		return true
 	default:
 		return false
@@ -47,7 +50,7 @@ func (t ItemType) Valid() bool {
 
 // ItemTypes lists every known item type in a stable order.
 func ItemTypes() []ItemType {
-	return []ItemType{TypeEpic, TypeStory, TypeTask, TypeMilestone, TypeComment}
+	return []ItemType{TypeEpic, TypeStory, TypeTask, TypeMilestone, TypeSpec, TypeComment}
 }
 
 // Status is the identifier of a workflow status declared in project.yaml.
@@ -423,8 +426,11 @@ type Item struct {
 	Attachments []string       `json:"attachments,omitempty" yaml:"attachments,omitempty"`
 	Custom      map[string]any `json:"custom,omitempty" yaml:"custom,omitempty"`
 	// Inbox is the triage block, present only on items sitting in the inbox.
-	Inbox   *ItemInbox `json:"inbox,omitempty" yaml:"inbox,omitempty"`
-	Deleted bool       `json:"deleted,omitempty" yaml:"deleted,omitempty"`
+	Inbox *ItemInbox `json:"inbox,omitempty" yaml:"inbox,omitempty"`
+	// Requirements is the per-requirement metadata of a spec, keyed by R<n>
+	// (docs/03 section 21.4). Only spec files carry it.
+	Requirements Requirements `json:"requirements,omitempty" yaml:"-"`
+	Deleted      bool         `json:"deleted,omitempty" yaml:"deleted,omitempty"`
 
 	// Extra holds every front-matter key this version does not know, including
 	// the "x-" keys reserved for third-party tools (R-CF-4). It is written back

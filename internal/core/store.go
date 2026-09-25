@@ -143,8 +143,11 @@ type ItemDraft struct {
 	Attachments []string       `json:"attachments,omitempty"`
 	Custom      map[string]any `json:"custom,omitempty"`
 	// Inbox is the triage block a submission arrives with.
-	Inbox *ItemInbox     `json:"inbox,omitempty"`
-	Extra map[string]any `json:"extra,omitempty"`
+	Inbox *ItemInbox `json:"inbox,omitempty"`
+	// Requirements is the requirements: map a new spec starts with (docs/03
+	// section 21.4). Only a spec may carry one.
+	Requirements Requirements   `json:"requirements,omitempty"`
+	Extra        map[string]any `json:"extra,omitempty"`
 
 	Body string `json:"body,omitempty"`
 
@@ -342,6 +345,9 @@ func (s *FileStore) Create(ctx context.Context, draft ItemDraft) (*Item, error) 
 	if err := ctx.Err(); err != nil {
 		return nil, wrapContext("create item", err)
 	}
+	if err := s.cfg.WriteGate(); err != nil {
+		return nil, fmt.Errorf("create item: %w", err)
+	}
 	if !draft.Type.Valid() || draft.Type == TypeComment {
 		return nil, fmt.Errorf("create item: %q is not a creatable item type", draft.Type)
 	}
@@ -378,38 +384,39 @@ func (s *FileStore) Create(ctx context.Context, draft ItemDraft) (*Item, error) 
 
 	now := s.now()
 	it := &Item{
-		ID:          id,
-		Type:        draft.Type,
-		Title:       strings.TrimSpace(draft.Title),
-		Status:      draft.Status,
-		Priority:    draft.Priority,
-		Parent:      draft.Parent,
-		Milestone:   draft.Milestone,
-		Sprint:      draft.Sprint,
-		Assignees:   draft.Assignees,
-		Author:      draft.Author,
-		Owner:       draft.Owner,
-		Labels:      draft.Labels,
-		Estimate:    draft.Estimate,
-		Effort:      draft.Effort,
-		Created:     now,
-		Updated:     now,
-		Start:       draft.Start,
-		Due:         draft.Due,
-		Links:       draft.Links,
-		External:    dedupeExternals(normalizeExternals(draft.External)),
-		Attachments: draft.Attachments,
-		Custom:      draft.Custom,
-		Inbox:       draft.Inbox.Clone(),
-		Extra:       draft.Extra,
-		Body:        draft.Body,
-		Path:        path.Join(s.backlog, dir, FileName(id, draft.Title)),
+		ID:           id,
+		Type:         draft.Type,
+		Title:        strings.TrimSpace(draft.Title),
+		Status:       draft.Status,
+		Priority:     draft.Priority,
+		Parent:       draft.Parent,
+		Milestone:    draft.Milestone,
+		Sprint:       draft.Sprint,
+		Assignees:    draft.Assignees,
+		Author:       draft.Author,
+		Owner:        draft.Owner,
+		Labels:       draft.Labels,
+		Estimate:     draft.Estimate,
+		Effort:       draft.Effort,
+		Created:      now,
+		Updated:      now,
+		Start:        draft.Start,
+		Due:          draft.Due,
+		Links:        draft.Links,
+		External:     dedupeExternals(normalizeExternals(draft.External)),
+		Attachments:  draft.Attachments,
+		Custom:       draft.Custom,
+		Inbox:        draft.Inbox.Clone(),
+		Requirements: draft.Requirements.Clone(),
+		Extra:        draft.Extra,
+		Body:         draft.Body,
+		Path:         path.Join(s.backlog, dir, FileName(id, draft.Title)),
 	}
 	s.applyDefaults(it)
 	if cat := s.cfg.CategoryOf(it.Status); cat == CategoryInProgress {
 		it.Started = now
 	}
-	if err := s.validate(it); err != nil {
+	if err := s.validateAndUpgrade(it, false); err != nil {
 		return nil, err
 	}
 	if err := s.writeItem(it, ""); err != nil {
@@ -446,6 +453,9 @@ func (s *FileStore) Update(ctx context.Context, id ItemID, patch ItemPatch, expe
 	if err := ctx.Err(); err != nil {
 		return nil, wrapContext("update", err)
 	}
+	if err := s.cfg.WriteGate(); err != nil {
+		return nil, fmt.Errorf("update %s: %w", id, err)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -454,6 +464,7 @@ func (s *FileStore) Update(ctx context.Context, id ItemID, patch ItemPatch, expe
 		return nil, err
 	}
 	oldPath := it.Path
+	hadSpecConstruct := HasSpecConstruct(it)
 	// A status change is a workflow transition wherever it is spelled, so a
 	// patch that carries one is validated exactly as Move validates it. That is
 	// what lets a caller change fields and status in a single conditional
@@ -474,7 +485,7 @@ func (s *FileStore) Update(ctx context.Context, id ItemID, patch ItemPatch, expe
 		s.stampTransition(it, from, it.Status, now)
 	}
 	s.retarget(it, oldPath)
-	if err := s.validate(it); err != nil {
+	if err := s.validateAndUpgrade(it, hadSpecConstruct); err != nil {
 		return nil, err
 	}
 	if err := s.writeItem(it, oldPath); err != nil {
@@ -493,6 +504,9 @@ func (s *FileStore) Delete(ctx context.Context, id ItemID, expected Rev) error {
 func (s *FileStore) DeleteWith(ctx context.Context, id ItemID, expected Rev, opts DeleteOptions) error {
 	if err := ctx.Err(); err != nil {
 		return wrapContext("delete", err)
+	}
+	if err := s.cfg.WriteGate(); err != nil {
+		return fmt.Errorf("delete %s: %w", id, err)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -522,6 +536,9 @@ func (s *FileStore) Move(ctx context.Context, id ItemID, status Status, expected
 func (s *FileStore) MoveWith(ctx context.Context, id ItemID, status Status, expected Rev, opts MoveOptions) (*Item, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, wrapContext("move", err)
+	}
+	if err := s.cfg.WriteGate(); err != nil {
+		return nil, fmt.Errorf("move %s: %w", id, err)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -633,10 +650,76 @@ func (s *FileStore) retarget(it *Item, oldPath string) {
 // validate rejects an invalid item before it reaches the disk. Warnings never
 // block a write; only error-severity diagnostics do (JoinDiagnostics).
 func (s *FileStore) validate(it *Item) error {
+	return s.validateWith(it, s.cfg)
+}
+
+// validateWith is validate against a given configuration.
+func (s *FileStore) validateWith(it *Item, cfg *ProjectConfig) error {
 	if !s.Validate {
 		return nil
 	}
-	return JoinDiagnostics(ValidateItem(it, s.cfg))
+	return JoinDiagnostics(ValidateItem(it, cfg))
+}
+
+// validateAndUpgrade validates an item about to be written and, when the write
+// introduces the first spec construct into a project below SpecSchema, raises
+// project.yaml to SpecSchema as part of the same write (ADR-037 section 11,
+// R-SCHEMA-2-3). had says whether the item already held a spec construct before
+// this write: an existing construct is never upgraded implicitly, it stays
+// E-SCHEMA-FEATURE until gintrack doctor --fix (R-SCHEMA-2-2).
+//
+// The item is validated as if the upgrade had happened, and project.yaml is
+// only touched once validation passed, so a refused write changes nothing.
+func (s *FileStore) validateAndUpgrade(it *Item, had bool) error {
+	upgrade := s.cfg != nil && s.cfg.Schema > 0 && s.cfg.Schema < SpecSchema && !had && HasSpecConstruct(it)
+	if !upgrade {
+		return s.validate(it)
+	}
+	upgraded := *s.cfg
+	upgraded.Schema = SpecSchema
+	if err := s.validateWith(it, &upgraded); err != nil {
+		return err
+	}
+	return s.upgradeSchema()
+}
+
+// upgradeSchema rewrites the schema line of project.yaml to SpecSchema and
+// updates the configuration the store holds, which is the one the vault
+// compares to report schemaUpgraded.
+func (s *FileStore) upgradeSchema() error {
+	p := path.Join(s.backlog, ProjectFileName)
+	data, err := s.fs.ReadFile(p)
+	switch {
+	case errors.Is(err, ErrNotExist):
+		// A store mounted without a project.yaml (an importer's scratch
+		// backlog) has nothing on disk to raise.
+	case err != nil:
+		return fmt.Errorf("upgrade schema: read %s: %w", p, err)
+	default:
+		out, err := UpgradeProjectSchema(data, SpecSchema)
+		if err != nil {
+			return err
+		}
+		if out != nil {
+			if err := writeFileAtomic(s.fs, p, out); err != nil {
+				return fmt.Errorf("upgrade schema: %w", err)
+			}
+		}
+	}
+	s.cfg.Schema = SpecSchema
+	return nil
+}
+
+// Schema returns the schema of the project configuration the store writes
+// against. A caller compares it before and after a write to learn that the
+// write raised it (schemaUpgraded).
+func (s *FileStore) Schema() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cfg == nil {
+		return 0
+	}
+	return s.cfg.Schema
 }
 
 // writeItem serializes an item canonically and writes it atomically, removing
@@ -1024,6 +1107,9 @@ func (s *FileStore) ReadPage(ctx context.Context, project ProjectKey, p string) 
 func (s *FileStore) WritePage(ctx context.Context, project ProjectKey, p string, content []byte, expected Rev) (*KBPage, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, wrapContext("write page", err)
+	}
+	if err := s.cfg.WriteGate(); err != nil {
+		return nil, fmt.Errorf("write page %s: %w", p, err)
 	}
 	full, err := s.pagePath(project, p)
 	if err != nil {

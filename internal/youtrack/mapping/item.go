@@ -153,12 +153,14 @@ func mapType(issue youtrack.Issue, m FieldMap) (core.ItemType, []Warning) {
 		return core.TypeMilestone, warnings
 	}
 	if mapped, found := m.Types[normalizeKey(value.Text)]; found {
-		if !mapped.Valid() {
+		if !mapped.Valid() || mapped == core.TypeComment || mapped == core.TypeSpec {
+			// A spec is a living description with no planning fields, not
+			// tracked work (ADR-037 section 1): an issue never becomes one.
 			return m.DefaultType, append(warnings, Warning{
 				Field:    m.TypeField,
 				Value:    value.Text,
 				Fallback: string(m.DefaultType),
-				Reason:   fmt.Sprintf("the field map turns %q into %q, which is not a git-in-track item type", value.Text, mapped),
+				Reason:   fmt.Sprintf("the field map turns %q into %q, which is not an importable git-in-track item type", value.Text, mapped),
 			})
 		}
 		return mapped, warnings

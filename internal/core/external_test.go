@@ -386,7 +386,7 @@ func TestExternalCanonicalKeyOrder(t *testing.T) {
 		"estimate", "effort", "spent",
 		"created", "updated", "started", "closed", "start", "due",
 		"links", "blocks", "depends_on", "in_reply_to", "kind", "reactions",
-		"external", "attachments", "custom", "inbox", "deleted",
+		"external", "attachments", "custom", "inbox", "requirements", "deleted",
 	}
 	if !reflect.DeepEqual(canonicalKeyOrder, want) {
 		t.Errorf("canonicalKeyOrder = %v\nwant %v", canonicalKeyOrder, want)

@@ -19,7 +19,7 @@ import (
 // within a repeated field, exactly as the REST API and the web UI apply them.
 type ListItemsInput struct {
 	Project      string   `json:"project,omitempty" jsonschema:"Project key, for example ACME"`
-	Type         []string `json:"type,omitempty" jsonschema:"epic, story, task or milestone"`
+	Type         []string `json:"type,omitempty" jsonschema:"epic, story, task, milestone or spec"`
 	Status       []string `json:"status,omitempty" jsonschema:"Workflow statuses declared by the project"`
 	Category     []string `json:"category,omitempty" jsonschema:"Coarse status categories: todo, in_progress, done, cancelled"`
 	Priority     []string `json:"priority,omitempty" jsonschema:"critical, high, medium or low"`
@@ -118,6 +118,9 @@ type UpdateItemInput struct {
 type WriteResult struct {
 	Item    Item     `json:"item"`
 	Changed []string `json:"changed,omitempty" jsonschema:"Vault-relative paths written by this call"`
+	// SchemaUpgraded is set when this write raised project.yaml's schema: the
+	// first spec construct of a project upgrades it in the same write.
+	SchemaUpgraded int `json:"schemaUpgraded,omitempty" jsonschema:"Set when this write raised project.yaml's schema (the first spec construct upgrades it to 2 in the same write)"`
 }
 
 // AddCommentInput appends one comment to an item's thread. Comments are

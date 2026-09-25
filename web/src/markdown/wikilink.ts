@@ -16,7 +16,7 @@ import type {} from 'mdast-util-to-hast';
 import type { LinkResolution, ResolveLink, WikiTarget } from '@/markdown/types';
 
 /** `<KEY>-<TYPECODE>-<NUMBER>` — docs/03-data-model.md §3.3. */
-const ITEM_ID = /^([A-Z][A-Z0-9]{1,9})-(?:EP|US|T|M)-\d{4,}$/;
+const ITEM_ID = /^([A-Z][A-Z0-9]{1,9})-(?:EP|US|T|M|SP)-\d{4,}$/;
 const PROJECT_KEY = /^[A-Z][A-Z0-9]{1,9}$/;
 /** `[[target]]` and `![[target]]`; targets never span lines. */
 const WIKILINK = /(!?)\[\[([^\][\n]+)\]\]/g;

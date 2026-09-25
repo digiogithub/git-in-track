@@ -931,6 +931,7 @@ func cloneItem(it *Item) Item {
 	out.Links = append([]Link(nil), it.Links...)
 	out.External = cloneExternals(it.External)
 	out.Inbox = it.Inbox.Clone()
+	out.Requirements = it.Requirements.Clone()
 	out.Attachments = append([]string(nil), it.Attachments...)
 	out.Custom = cloneMap(it.Custom)
 	out.Extra = cloneMap(it.Extra)

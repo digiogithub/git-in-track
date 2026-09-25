@@ -108,6 +108,8 @@ func ValidateItem(item *Item, cfg *ProjectConfig) []Diagnostic {
 	validateCustom(d, item, cfg)
 	validateExternal(d, "external", item.External)
 	validateInbox(d, item, cfg)
+	validateSpec(d, item, cfg)
+	validateSchemaFeature(d, item, cfg)
 	orderDiagnostics(d.out)
 	return d.out
 }
@@ -149,7 +151,7 @@ func validateIdentity(d *diagSet, item *Item, cfg *ProjectConfig) {
 	if item.ID == "" {
 		d.errorf("id", CodeIDMissing, "missing")
 	} else if key, code, _, err := ParseItemID(string(item.ID)); err != nil {
-		d.errorf("id", CodeIDGrammar, "%q does not match <KEY>-<EP|US|T|M>-<NNNN>", item.ID)
+		d.errorf("id", CodeIDGrammar, "%q does not match <KEY>-<EP|US|T|M|SP>-<NNNN>", item.ID)
 	} else {
 		if cfg != nil && cfg.Key != "" && key != cfg.Key {
 			d.errorf("id", CodeIDKey, "project key %q does not match the project key %q", key, cfg.Key)
@@ -252,7 +254,7 @@ func validateHierarchy(d *diagSet, item *Item, cfg *ProjectConfig) {
 func validateReference(d *diagSet, cfg *ProjectConfig, field, raw string) (TypeCode, bool) {
 	key, code, _, err := ParseItemID(raw)
 	if err != nil {
-		d.errorf(field, CodeIDGrammar, "%q does not match <KEY>-<EP|US|T|M>-<NNNN>", raw)
+		d.errorf(field, CodeIDGrammar, "%q does not match <KEY>-<EP|US|T|M|SP>-<NNNN>", raw)
 		return "", false
 	}
 	if cfg != nil && cfg.Key != "" && key != cfg.Key {
@@ -294,7 +296,7 @@ func validateLinkTarget(d *diagSet, cfg *ProjectConfig, field, target string) {
 	}
 	key, _, _, err := ParseItemID(id)
 	if err != nil {
-		d.errorf(field, CodeIDGrammar, "%q does not match <KEY>-<EP|US|T|M>-<NNNN>", target)
+		d.errorf(field, CodeIDGrammar, "%q does not match <KEY>-<EP|US|T|M|SP>-<NNNN>", target)
 		return
 	}
 	if qualifier != "" {
@@ -682,7 +684,7 @@ func parentCodes(t ItemType) []TypeCode {
 		return []TypeCode{CodeEpic}
 	case TypeTask:
 		return []TypeCode{CodeStory, CodeEpic}
-	case TypeEpic, TypeMilestone, TypeComment:
+	case TypeEpic, TypeMilestone, TypeSpec, TypeComment:
 		return nil
 	default:
 		return nil

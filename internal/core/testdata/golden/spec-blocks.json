@@ -1,0 +1,72 @@
+{
+  "blocks": [
+    {
+      "ref": "ACME-SP-0003.R1",
+      "title": "IDs are never reused",
+      "separator": "—",
+      "statement": "The allocator SHALL NOT assign a number that any existing, deleted or reserved\nitem of the same type holds.",
+      "scenarios": [
+        {
+          "name": "a deleted item keeps its number",
+          "line": 12,
+          "steps": [
+            "**WHEN** `ACME-T-0107` is marked `deleted: true`",
+            "**THEN** no later task is allocated `ACME-T-0107`"
+          ]
+        }
+      ],
+      "start": 117,
+      "end": 424,
+      "line": 7,
+      "text": "### ACME-SP-0003.R1 — IDs are never reused\n\nThe allocator SHALL NOT assign a number that any existing, deleted or reserved\nitem of the same type holds.\n\n#### Scenario: a deleted item keeps its number\n- **WHEN** `ACME-T-0107` is marked `deleted: true`\n- **THEN** no later task is allocated `ACME-T-0107`\n\n\n",
+      "rev": "sha256:21283e50b59111e0"
+    },
+    {
+      "ref": "ACME-SP-0003.R2",
+      "title": "Allocate the next ID by index scan",
+      "separator": "-",
+      "statement": "WHEN an item of type T is created, the allocator SHALL assign `max(existing numbers of T) + 1`.",
+      "scenarios": [
+        {
+          "name": "a stale counter hint is ignored",
+          "line": 25,
+          "steps": [
+            "**WHEN** `id_allocation.counters.task` is 12 and the scan finds 108",
+            "**THEN** the next task is `ACME-T-0109`"
+          ]
+        }
+      ],
+      "start": 424,
+      "end": 816,
+      "line": 17,
+      "text": "### ACME-SP-0003.R2 - Allocate the next ID by index scan\n\nWHEN an item of type T is created, the allocator SHALL assign `max(existing numbers of T) + 1`.\n\n```markdown\n### ACME-SP-0003.R9 — not a heading, it is inside a fence\n```\n\n#### Scenario: a stale counter hint is ignored\n- **WHEN** `id_allocation.counters.task` is 12 and the scan finds 108\n- **THEN** the next task is `ACME-T-0109`\n\n",
+      "rev": "sha256:d60ebae987b62498"
+    },
+    {
+      "ref": "ACME-SP-0003.R10",
+      "title": "Counters are hints",
+      "separator": "—",
+      "statement": "The allocator SHALL treat `id_allocation.counters` as a hint only.",
+      "start": 861,
+      "end": 974,
+      "line": 33,
+      "text": "### ACME-SP-0003.R10 — Counters are hints\n\nThe allocator SHALL treat `id_allocation.counters` as a hint only.\n\n",
+      "rev": "sha256:9e9cb4e16f28e9cc"
+    }
+  ],
+  "findings": [
+    {
+      "code": "W-REQ-SEPARATOR",
+      "severity": "warning",
+      "line": 17,
+      "ref": "ACME-SP-0003.R2",
+      "message": "heading of ACME-SP-0003.R2 uses \"-\" instead of \"—\""
+    },
+    {
+      "code": "W-REQ-HEADING",
+      "severity": "warning",
+      "line": 29,
+      "message": "level-3 heading \"### Design notes\" is not a requirement heading: want \"### \u003cREQREF\u003e — \u003ctitle\u003e\""
+    }
+  ]
+}

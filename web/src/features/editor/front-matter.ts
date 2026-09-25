@@ -48,7 +48,7 @@ export const editableKeys = [
   'custom',
 ] as const;
 
-const idPattern = /^[A-Z][A-Z0-9]{1,9}-(EP|US|T|M)-\d{4,}$/;
+const idPattern = /^[A-Z][A-Z0-9]{1,9}-(EP|US|T|M|SP)-\d{4,}$/;
 const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 
 export function emptyValues(status = ''): FrontMatterValues {

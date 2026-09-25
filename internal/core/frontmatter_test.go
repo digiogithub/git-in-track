@@ -341,6 +341,12 @@ func TestSerializeItemGolden(t *testing.T) {
 			path:   "tasks/ACME-T-0301-someone-reported-a-broken-export.md",
 			golden: "inbox-item.md",
 		},
+		{
+			name:   "spec keeps its requirements map in canonical order",
+			source: "spec-item.md",
+			path:   "specs/ACME-SP-0003-item-id-allocation.md",
+			golden: "spec-item.md",
+		},
 	}
 
 	for _, tt := range tests {

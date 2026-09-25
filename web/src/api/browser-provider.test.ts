@@ -94,7 +94,7 @@ const project: ProjectSummary = {
   statuses: [{ id: 'todo', name: 'To Do', category: 'todo' }],
   labels: [],
   priorities: ['high'],
-  itemCounts: { epic: 0, story: 1, task: 0, milestone: 0, comment: 0 },
+  itemCounts: { epic: 0, story: 1, task: 0, milestone: 0, spec: 0, comment: 0 },
 };
 
 const story: Item = {

@@ -414,7 +414,7 @@ func runInboxAdd(cmd *cobra.Command, flags *globalFlags, local *inboxAddFlags) e
 		return usagef("--title is required: a submission needs a one-line summary")
 	}
 	typ := core.ItemType(strings.TrimSpace(local.typ))
-	if !typ.Valid() || typ == core.TypeComment {
+	if !typ.Valid() || typ == core.TypeComment || typ == core.TypeSpec {
 		return usagef("--type must be epic, story, task or milestone")
 	}
 	body, err := readBody(cmd, local.body)
@@ -567,7 +567,7 @@ func runInboxTriage(
 ) error {
 	id := strings.TrimSpace(raw)
 	if !core.ItemID(id).Valid() {
-		return failf(exitValidation, "%q is not an item id: want <KEY>-<EP|US|T|M>-<NNNN>", raw)
+		return failf(exitValidation, "%q is not an item id: want <KEY>-<EP|US|T|M|SP>-<NNNN>", raw)
 	}
 	space, err := openSpaceFor(flags)
 	if err != nil {

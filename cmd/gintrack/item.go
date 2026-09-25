@@ -105,7 +105,7 @@ func openItemVault(cmd *cobra.Command, flags *globalFlags) (*vault, error) {
 func resolveItem(v *vault, raw string) (core.ItemID, projectView, error) {
 	id := core.ItemID(strings.TrimSpace(raw))
 	if !id.Valid() {
-		return "", projectView{}, failf(exitValidation, "%q is not an item id: want <KEY>-<EP|US|T|M>-<NNNN>", raw)
+		return "", projectView{}, failf(exitValidation, "%q is not an item id: want <KEY>-<EP|US|T|M|SP>-<NNNN>", raw)
 	}
 	p, err := v.projectOf(id)
 	if err != nil {

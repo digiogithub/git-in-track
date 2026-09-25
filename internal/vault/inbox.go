@@ -445,6 +445,11 @@ func (v *Vault) writeDuplicateInverse(ctx context.Context, from, target core.Ite
 // forced into the project's triage status and stamped as a pending submission.
 // A project that declares no triage status has no inbox, and says so.
 func (v *Vault) inboxDraft(draft *core.ItemDraft, p *inboxDraftParams, cfg *core.ProjectConfig) error {
+	if draft.Type == core.TypeSpec {
+		// A spec describes a capability; it is never a submission waiting for
+		// triage (ADR-037 section 1).
+		return failf("invalid_request", "a spec is not an inbox target: create it directly")
+	}
 	triage := cfg.Workflow.TriageStatus()
 	if triage == "" {
 		return failf(NoTriageStatusCode,

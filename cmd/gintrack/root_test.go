@@ -28,7 +28,7 @@ func TestVersionCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("version: %v", err)
 	}
-	for _, want := range []string{"gintrack 1.2.3", "commit:   9f2c1ab", "built:    2026-09-01T10:22:41Z", "core:     schema v1"} {
+	for _, want := range []string{"gintrack 1.2.3", "commit:   9f2c1ab", "built:    2026-09-01T10:22:41Z", "core:     schema v2"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lost %q:\n%s", want, out)
 		}
@@ -46,7 +46,7 @@ func TestVersionCommandJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &payload); err != nil {
 		t.Fatalf("decode: %v\n%s", err, out)
 	}
-	if payload.Version != "1.2.3" || payload.Commit != "9f2c1ab" || payload.Schema != 1 {
+	if payload.Version != "1.2.3" || payload.Commit != "9f2c1ab" || payload.Schema != 2 {
 		t.Errorf("payload = %#v", payload)
 	}
 	if payload.Go == "" || payload.OS == "" || payload.Arch == "" {

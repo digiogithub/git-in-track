@@ -87,6 +87,9 @@ func (v *Vault) commentUpdate(ctx context.Context, raw []byte) (any, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("update comment %s: %w", rel, err)
 	}
+	if err := v.writeGateForPath(rel); err != nil {
+		return nil, err
+	}
 
 	current, err := v.fs.ReadFile(rel)
 	if err != nil {

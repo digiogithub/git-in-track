@@ -270,7 +270,7 @@ func TestItemTypesAndRevString(t *testing.T) {
 	t.Parallel()
 
 	types := ItemTypes()
-	if len(types) != 5 || types[0] != TypeEpic {
+	if len(types) != 6 || types[0] != TypeEpic || types[4] != TypeSpec {
 		t.Errorf("ItemTypes() = %v", types)
 	}
 	r := ComputeRev([]byte("x"))

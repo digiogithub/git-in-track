@@ -13,7 +13,7 @@
  *   types listed in `CoreApi`.
  */
 
-export type ItemType = 'epic' | 'story' | 'task' | 'milestone' | 'comment';
+export type ItemType = 'epic' | 'story' | 'task' | 'milestone' | 'spec' | 'comment';
 export type Priority = 'critical' | 'high' | 'medium' | 'low';
 export type LinkKind = 'blocks' | 'blocked_by' | 'relates_to' | 'duplicates';
 export type Severity = 'error' | 'warning' | 'info';

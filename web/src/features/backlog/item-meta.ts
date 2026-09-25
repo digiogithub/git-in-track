@@ -75,6 +75,7 @@ const typeNames: Record<ItemType, string> = {
   story: 'Story',
   task: 'Task',
   milestone: 'Milestone',
+  spec: 'Spec',
   comment: 'Comment',
 };
 

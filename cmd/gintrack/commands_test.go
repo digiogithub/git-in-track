@@ -417,6 +417,38 @@ func TestDoctorFixNormalizesFrontMatter(t *testing.T) {
 	}
 }
 
+func TestDoctorFixRaisesSchemaForAHandWrittenSpec(t *testing.T) {
+	h := newHarness(t)
+	h.register()
+
+	dir := filepath.Join(h.Repo, "docs", ".pmngr", "specs")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	spec := "---\nid: DEMO-SP-0001\ntype: spec\ntitle: Hand made\nstatus: todo\n" +
+		"created: 2026-01-01T00:00:00Z\nupdated: 2026-01-01T00:00:00Z\n" +
+		"requirements:\n  R1:\n    status: todo\n---\n\n## Requirements\n\n" +
+		"### DEMO-SP-0001.R1 — One\n\nThe system SHALL work.\n"
+	if err := os.WriteFile(filepath.Join(dir, "DEMO-SP-0001-hand-made.md"), []byte(spec), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, _, _ := h.run("doctor")
+	if !strings.Contains(stdout, "E-SCHEMA-FEATURE") {
+		t.Fatalf("doctor did not flag the spec in a schema-1 project:\n%s", stdout)
+	}
+	stdout, _, _ = h.run("doctor", "--fix")
+	if !strings.Contains(stdout, "schema raised to 2") {
+		t.Errorf("stdout = %q", stdout)
+	}
+	if yaml := h.readFile("docs/.pmngr/project.yaml"); !strings.Contains(yaml, "\nschema: 2\n") && !strings.HasPrefix(yaml, "schema: 2\n") {
+		t.Errorf("project.yaml was not raised:\n%s", yaml)
+	}
+	if stdout, _, _ := h.run("doctor"); strings.Contains(stdout, "E-SCHEMA-FEATURE") {
+		t.Errorf("the finding survived the fix:\n%s", stdout)
+	}
+}
+
 func TestConfigFileIsHonored(t *testing.T) {
 	h := newHarness(t)
 	other := filepath.Join(t.TempDir(), "elsewhere.yaml")

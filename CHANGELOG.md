@@ -56,6 +56,39 @@ because a commit list cannot express them.
   shape it cannot splice. `gintrack doctor` warns about such entries with
   `W-PROJ-LABEL-KEYS`, and this repository's `core` and `good-first-issue` descriptions are
   restored and quoted.
+### Added
+
+- **Spec items and requirement blocks in the core** (`GIT-US-0105`, ADR-037, docs/03 §21).
+  A new item type `spec` (type code `SP`, folder `.pmngr/specs/`, counter
+  `id_allocation.counters.spec`) whose requirements are `### <SPEC-ID>.R<n> — <title>` blocks
+  of its body. The core parses the blocks (statement, scenarios, byte range), computes each
+  block's **block rev** and **requirement rev**, models the `requirements:` front-matter map
+  (`status`, `trace`, `verified`, `links`, unknown keys preserved) in canonical order, allocates
+  the next `R<n>` as max + 1 over headings, map keys and inbound refs, and validates the
+  result: `E-REQ-FOREIGN`, `E-REQ-DUPLICATE`, `E-REQ-STATUS`, `E-REQ-FIELD`,
+  `E-LINK-TARGET-TYPE` (requirement-level links), `W-REQ-SEPARATOR`, `W-REQ-HEADING`,
+  `W-REQ-NO-ENTRY`, `W-REQ-ORPHAN-ENTRY`. `gintrack doctor` reports them. `gintrack item new
+  --type spec` creates one; the inbox and the YouTrack import never produce one.
+
+### Changed
+
+- **Project schema 2** (ADR-037 §11). This build reads and writes `schema: 1` and
+  `schema: 2`; new projects are still created at `schema: 1`. The first write through the
+  vault or the CLI that introduces a spec construct (a spec, or a link to one) into a
+  `schema: 1` project raises `project.yaml` to `schema: 2` in the same write and reports
+  `schemaUpgraded: 2` (API, MCP, `gintrack item new --json`). A spec construct written by hand
+  into a `schema: 1` project is `E-SCHEMA-FEATURE` until `gintrack doctor --fix` raises the
+  schema. `gintrack version` now reports `schema v2`.
+- **The schema write gate** (R-EVO-2). Every write to a project whose `project.yaml` declares
+  no `schema`, or one newer than the build supports, is refused with `read_only`; the project
+  stays readable. Binaries up to and including 2.0.1 do not have this gate.
+
+### Upgrade note
+
+Before a project's first spec is created, upgrade **every** binary, web app build and CI job
+that writes to it. Binaries up to and including 2.0.1 report `E-PROJ-SCHEMA` on a
+`schema: 2` project but do not refuse to write, and may rewrite files whose spec constructs
+they do not understand. A repository without spec constructs is unaffected.
 
 ## [2.0.1] — 2026-09-18
 

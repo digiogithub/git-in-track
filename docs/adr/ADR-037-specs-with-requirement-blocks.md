@@ -1,7 +1,9 @@
 # ADR-037 — Specs are items; requirements are addressable blocks inside them
 
 - **Status:** Accepted — 2026-09-24, decided by the human maintainer after two review rounds (see
-  "Decisions from review"). Not implemented yet: the implementation story is `GIT-US-0105`.
+  "Decisions from review"). Core implemented by `GIT-US-0105` (the `spec` type, requirement
+  blocks and revs, the `requirements:` map, schema 2 and the write gate); link kinds, lint,
+  Spec Delta, verification and markers follow in their own stories (docs/03 §21 banner).
 - **Date:** 2026-09-24
 - **Phase:** 11 (Spec-driven development)
 - **Related:** [ADR-001](ADR-001-markdown-yaml-storage.md), [ADR-003](ADR-003-shared-go-core-wasm.md),

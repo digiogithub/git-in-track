@@ -138,7 +138,8 @@ func createInboxItem(ctx context.Context, s *Server, in CreateInboxItemInput) (W
 	if itemType == "" {
 		itemType = core.TypeStory
 	}
-	if !itemType.Valid() || itemType == core.TypeComment {
+	// A spec is never an inbox target (ADR-037 section 1).
+	if !itemType.Valid() || itemType == core.TypeComment || itemType == core.TypeSpec {
 		return WriteResult{}, invalidField("type", "a submission is an epic, a story, a task or a milestone",
 			string(core.TypeStory))
 	}

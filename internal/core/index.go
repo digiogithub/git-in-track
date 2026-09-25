@@ -29,8 +29,8 @@ const (
 // (docs/02 section 7.1, step 6).
 type Warning = Diagnostic
 
-// itemFolders maps the four flat item folders of a backlog to the item type the
-// files in them must declare (R-LOC-3, R-LOC-4).
+// itemFolders maps the five flat item folders of a backlog to the item type the
+// files in them must declare (R-LOC-3, R-LOC-4). specs/ is ADR-037's.
 var itemFolders = []struct {
 	Dir  string
 	Type ItemType
@@ -39,6 +39,7 @@ var itemFolders = []struct {
 	{"stories", TypeStory},
 	{"tasks", TypeTask},
 	{"milestones", TypeMilestone},
+	{SpecsDirName, TypeSpec},
 }
 
 // commentsDirName is the one folder of a backlog with a level of subfolders.
@@ -1162,6 +1163,7 @@ func (ix *Index) rebuild() {
 	ix.graph = graph
 
 	ix.checkReferentialIntegrity()
+	ix.checkSpecs()
 	ix.checkCounters()
 	ix.collectDiagnostics()
 	ix.computeFingerprint()

@@ -10,7 +10,7 @@ import (
 // them under the team repository's own `.pmngr/` breaks the hard rule of
 // docs/04 section 1 — backlogs never leave their project repository — and is
 // reported as E-TEAM-BACKLOG-IN-TEAM-REPO.
-var teamBacklogDirs = []string{"epics", "stories", "tasks", "milestones", "comments"}
+var teamBacklogDirs = []string{"epics", "stories", "tasks", "milestones", SpecsDirName, "comments"}
 
 // TeamRef is a team repository discovered in a vault: where team.yaml is, where
 // the knowledge base lives, and what the file says.

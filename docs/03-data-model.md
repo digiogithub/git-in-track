@@ -86,8 +86,8 @@ Rules:
   [§3.5](#35-multiple-projects-in-one-repository)).
 - **R-LOC-2** `project.yaml` MUST exist for the folder to be recognised as a project backlog. Its
   presence is the discovery marker used by `gintrack` and by the web app's folder picker.
-- **R-LOC-3** The item folders (`epics/`, `stories/`, `tasks/`, `milestones/`, `comments/`, and
-  `specs/` once [ADR-037](./adr/ADR-037-specs-with-requirement-blocks.md) is implemented) are
+- **R-LOC-3** The item folders (`epics/`, `stories/`, `tasks/`, `milestones/`, `specs/`
+  ([ADR-037](./adr/ADR-037-specs-with-requirement-blocks.md)) and `comments/`) are
   created lazily. A missing folder is equivalent to an empty one and MUST NOT be an error.
 - **R-LOC-4** Item folders MUST be flat except `comments/`, which has exactly one level of
   subfolders keyed by item ID. Nested subfolders under `epics/`, `stories/`, `tasks/`,
@@ -136,7 +136,7 @@ When a tool does create one, it writes exactly this and nothing else:
 <docsFolder>/.pmngr/
   project.yaml              # schema 1, the key, the name, the default workflow of section 6.2
   .gitignore                # `index.json` (R-LOC-5)
-  epics/  stories/  tasks/  milestones/  comments/  attachments/
+  epics/  stories/  tasks/  milestones/  specs/  comments/  attachments/
 ```
 
 A tool creates a backlog at `schema: 1` even when it supports specs; the project moves to
@@ -1890,25 +1890,33 @@ Severity: **E** = error (blocks writes to the affected item; `doctor` exits non-
 | `W-INBOX-CATEGORY` | W | An `inbox` block on an item whose status is not in the `triage` category |
 | `W-INBOX-DUP-DEAD` | W | `inbox.duplicate_of` points at an unknown item |
 
-Added by [ADR-037](./adr/ADR-037-specs-with-requirement-blocks.md), not yet emitted
-([§21](#21-specs-and-requirement-blocks)):
+Added by [ADR-037](./adr/ADR-037-specs-with-requirement-blocks.md)
+([§21](#21-specs-and-requirement-blocks)). Emitted since `GIT-US-0105`, by the validator before
+every write and by the index (so by `gintrack doctor`):
 
 | Code | Sev | Condition |
 |---|---|---|
 | `E-REQ-FOREIGN` | E | A requirement heading in a spec names another spec's ref |
 | `E-REQ-DUPLICATE` | E | Two blocks in one spec claim the same `R<n>` |
-| `E-REQ-STATUS` | E | `requirements.R<n>.status` is a status of the `triage` category (an unknown status is `E-STATUS-UNKNOWN`) |
-| `E-REQ-FIELD` | E | A `requirements:` key is not `R<n>`, or `trace`/`verified`/`links` has the wrong shape (bad trace ref, `verified.rev` not a rev, `commit` not hex, `at` not a timestamp, a `links` kind other than `supersedes`/`superseded_by`/`relates_to`) |
+| `E-REQ-STATUS` | E | `requirements.R<n>.status` is a status of the `triage` category (an unknown status is `E-STATUS-UNKNOWN`); also a spec whose own status is in the `triage` category ([§21.1](#211-front-matter-and-body)) |
+| `E-REQ-FIELD` | E | A `requirements:` key is not `R<n>`, or `trace`/`verified`/`links` has the wrong shape (bad trace ref, `verified.rev` not a rev, `commit` not hex, `at` not a timestamp, a `links` kind other than `supersedes`/`superseded_by`/`relates_to`); also a `requirements:` map on an item that is not a spec |
 | `E-SCHEMA-FEATURE` | E | A spec construct in a `schema: 1` project ([§21.10](#2110-schema-version-2)); `doctor --fix` raises `schema` to 2 |
-| `E-LINK-TARGET-TYPE` | E | A link kind used with a target of the wrong type (R-LINK-6) |
+| `E-LINK-TARGET-TYPE` | E | A link kind used with a target of the wrong type (R-LINK-6). Emitted for requirement-level links (R-REQ-13) only until the item-level spec link kinds land (`GIT-US-0106`) |
+| `W-REQ-SEPARATOR` | W | Requirement heading uses ` - `, ` -- ` or ` – ` instead of ` — ` |
+| `W-REQ-HEADING` | W | A level-3 heading under `## Requirements` that is not a requirement heading, or a heading whose ref is well formed but whose separator or title is missing |
+| `W-REQ-NO-ENTRY` | W | A block with no `requirements:` entry, or an entry with no `status` |
+| `W-REQ-ORPHAN-ENTRY` | W | A `requirements:` key with no block |
+
+A misspelled requirement ref in a heading (`R02`, `r2`) is `E-ID-GRAMMAR`.
+
+Added by ADR-037, not yet emitted:
+
+| Code | Sev | Condition |
+|---|---|---|
 | `E-DELTA-OP` | E | A `## Spec Delta` heading has an unknown operation or is malformed |
 | `E-DELTA-TARGET` | E | `ADDED` names a requirement, or `MODIFIED`/`REMOVED` names a spec |
 | `E-DELTA-REASON` | E | `REMOVED` without a `Reason:` line |
 | `E-PROJ-SPECS` | E | Invalid `specs.lint` configuration ([§6.3](#63-validation-rules-for-projectyaml)) |
-| `W-REQ-SEPARATOR` | W | Requirement heading uses ` - `, ` -- ` or ` – ` instead of ` — ` |
-| `W-REQ-HEADING` | W | A level-3 heading under `## Requirements` that is not a requirement heading |
-| `W-REQ-NO-ENTRY` | W | A block with no `requirements:` entry, or an entry with no `status` |
-| `W-REQ-ORPHAN-ENTRY` | W | A `requirements:` key with no block |
 | `W-DELTA-DANGLING` | W | A Spec Delta targets an unknown spec or block |
 | `LINT-REQ-*` | W, configurable | Requirement grammar ([§21.9](#219-grammar-lint-and-specslint)); `off`, `warning` or `error` under `specs.lint` |
 
@@ -2275,8 +2283,17 @@ validation, and produce the `E-STATUS-UNKNOWN`, `W-LABEL-UNDECLARED`, and `E-CF-
 ## 21. Specs and requirement blocks
 
 > **Status: accepted** by [ADR-037](./adr/ADR-037-specs-with-requirement-blocks.md) (2026-09-24),
-> not yet implemented: the implementation story is `GIT-US-0105`. This section is the normative
-> format; the ADR records the reasoning, the consequences and the alternatives rejected. Using specs raises the project to `schema: 2` ([§21.10](#2110-schema-version-2)).
+> **partly implemented**. `GIT-US-0105` implements the core: the `spec` type and `SP` code, the
+> `specs/` folder, requirement refs, the block parser, the block rev and the requirement rev,
+> the `requirements:` map, the validation of §21.1–21.4 (including the requirement-level `links`
+> of R-REQ-13), `NextRequirementNumber` (R-REQ-5, without Spec Delta headings yet), and
+> §21.10 in full: `schema: 2`, `E-SCHEMA-FEATURE`, the upgrade on first use and the write gate.
+> Not implemented yet: the item-level link kinds and requirement-ref link targets of §12.1
+> (`GIT-US-0106`), requirement reads and writes through the vault (`GIT-US-0107`), the grammar
+> lint of §21.9 (`GIT-US-0108`), `## Spec Delta` (§21.8), verification and coverage (§21.6), and
+> the marker scan (§21.7). This section is the normative format; the ADR records the reasoning,
+> the consequences and the alternatives rejected. Using specs raises the project to `schema: 2`
+> ([§21.10](#2110-schema-version-2)).
 
 **Path:** `.pmngr/specs/<KEY>-SP-<NNNN>-<slug>.md`
 
@@ -2301,6 +2318,11 @@ A spec has **no** `parent`, `epic`, `milestone`, `sprint`, `estimate`, `effort`,
 `inbox`: it is a living description, not scheduled work. Planning happens on the stories that
 `implements` or `modifies` it. A spec is **not an inbox target**: it never takes a
 `triage`-category status, and the inbox tools never create or triage one.
+
+The validator reports a `parent` on a spec as `E-REF-PARENT-TYPE` ("a spec has no parent"), any
+other of those fields as `E-FIELD-TYPE`, and a spec in a `triage`-category status as
+`E-REQ-STATUS`, the code that already refuses a triage status on a requirement. A YouTrack field
+map that names `spec` as a target type is ignored with a warning: an issue never becomes a spec.
 
 Body conventions:
 

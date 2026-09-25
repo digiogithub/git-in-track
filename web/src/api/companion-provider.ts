@@ -513,7 +513,7 @@ function toTunnelStatus(body: unknown): TunnelStatus {
 
 // ------------------------------------------------------------------ mappers
 
-const ITEM_TYPES: ItemType[] = ['epic', 'story', 'task', 'milestone', 'comment'];
+const ITEM_TYPES: ItemType[] = ['epic', 'story', 'task', 'milestone', 'spec', 'comment'];
 const PRIORITIES: Priority[] = ['critical', 'high', 'medium', 'low'];
 
 function asItemType(value: unknown): ItemType | undefined {
@@ -878,6 +878,7 @@ function toItemCounts(value: unknown): Record<ItemType, number> {
     story: asNumber(record['stories']) ?? 0,
     task: asNumber(record['tasks']) ?? 0,
     milestone: asNumber(record['milestones']) ?? 0,
+    spec: asNumber(record['specs']) ?? 0,
     comment: asNumber(record['comments']) ?? 0,
   };
 }
