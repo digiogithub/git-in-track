@@ -194,9 +194,18 @@ func TestSpecDeltaDiagnosticsDependOnStatusAndType(t *testing.T) {
 		typ    ItemType
 		status Status
 		cfg    *ProjectConfig
+		links  []Link
 		want   []Code
 	}{
 		{name: "numbered ADDED before done", typ: TypeStory, status: "in_progress", cfg: deltaConfig(), want: []Code{CodeDeltaTarget}},
+		{
+			name: "numbered ADDED on a reopened story that implements it", typ: TypeStory, status: "in_progress", cfg: deltaConfig(),
+			links: []Link{{Kind: LinkImplements, Target: "ACME-SP-0003.R9"}},
+		},
+		{
+			name: "a relates_to link does not record the application", typ: TypeStory, status: "in_progress", cfg: deltaConfig(),
+			links: []Link{{Kind: LinkRelatesTo, Target: "ACME-SP-0003.R9"}}, want: []Code{CodeDeltaTarget},
+		},
 		{name: "numbered ADDED on a done task is the applied form", typ: TypeTask, status: "done", cfg: deltaConfig()},
 		{name: "no project configuration skips the status rule", typ: TypeStory, status: "todo"},
 		{name: "an epic's Spec Delta is prose", typ: TypeEpic, status: "todo", cfg: deltaConfig()},
@@ -204,7 +213,7 @@ func TestSpecDeltaDiagnosticsDependOnStatusAndType(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			it := &Item{ID: "ACME-US-0001", Type: tt.typ, Status: tt.status, Body: body}
+			it := &Item{ID: "ACME-US-0001", Type: tt.typ, Status: tt.status, Body: body, Links: tt.links}
 			var got []Code
 			for _, d := range SpecDeltaDiagnostics(it, tt.cfg) {
 				got = append(got, d.Code)

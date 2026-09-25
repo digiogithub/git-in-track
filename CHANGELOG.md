@@ -183,6 +183,22 @@ because a commit list cannot express them.
   on the same history, and the jj backend answers without snapshotting the working copy.
   It is the diff primitive the trace and impact work of GIT-EP-0024 builds on; nothing
   user-facing calls it yet. See [docs/06-git-sync.md](docs/06-git-sync.md) §7.4.
+- **Spec Delta applied on done** (`GIT-US-0110`, ADR-037 §9, docs/03 R-DELTA-12 to R-DELTA-16,
+  docs/07 §6.7). Moving a story or task into a `done`-category status — `item.move`,
+  `item.update` with a status, a board move — applies its `## Spec Delta` in the same write:
+  ADDED allocates `R<n>` past every reserved ref, appends the block with the initial status and
+  rewrites the story heading to `### ADDED <REQREF> — …`; MODIFIED replaces the block (its
+  `verified` stamp is left alone and goes suspect); REMOVED moves the requirement to the first
+  `cancelled`-category status and keeps block and number; `Supersedes:` records `supersedes` on
+  the new requirement and removes the old one. The story gains `implements` / `modifies` links.
+  The story and every spec are validated first and written as one staged transaction that rolls
+  back on a write failure; a missing spec or block, a requirement changed twice, a MODIFIED of a
+  removed requirement, a spec edited on disk meanwhile or a lint error refuses the whole move
+  (`conflict`, `stale_revision`, `validation_failed`) and changes nothing. Re-applying is a
+  no-op. `item.move` and `item.update` report `specDelta`, and `item.move` now reports
+  `schemaUpgraded` too. A numbered `### ADDED <REQREF>` heading is now also valid on a reopened
+  item that declares `implements` for it. `FileStore.DoneHook` is the seam the verification
+  stamp (`GIT-US-0116`) will use; no stamp is written yet.
 
 ### Changed
 

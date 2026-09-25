@@ -542,6 +542,11 @@ func (v *Vault) rediscover() (bool, error) {
 		if v.now != nil {
 			store.Clock = core.ClockFunc(v.now)
 		}
+		// Applying a Spec Delta allocates requirement numbers past every ref
+		// the index holds (R-REQ-5), exactly as requirement.create does.
+		store.RequirementRefs = func(spec core.ItemID) []core.RequirementRef {
+			return v.index.RequirementRefsTo(spec)
+		}
 		v.stores[p.Key] = store
 	}
 	return changed, nil
@@ -1093,7 +1098,7 @@ func (v *Vault) itemUpdate(ctx context.Context, raw []byte) (any, error) {
 	}
 	v.fs.begin()
 	schemaBefore := store.Schema()
-	it, err := store.Update(ctx, core.ItemID(p.ID), p.Patch.patch(), core.Rev(p.Rev))
+	it, applied, err := store.UpdateReport(ctx, core.ItemID(p.ID), p.Patch.patch(), core.Rev(p.Rev))
 	if err != nil {
 		return nil, fmt.Errorf("update %s: %w", p.ID, err)
 	}
@@ -1101,7 +1106,18 @@ func (v *Vault) itemUpdate(ctx context.Context, raw []byte) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return withSchemaUpgrade(map[string]any{"item": it, "writes": writes}, schemaBefore, store), nil
+	return withSchemaUpgrade(withSpecDelta(map[string]any{"item": it, "writes": writes}, applied), schemaBefore, store), nil
+}
+
+// withSpecDelta adds `specDelta` to the result of a write that moved a story
+// or a task into a done-category status and applied its Spec Delta: the refs
+// it created, the requirements it modified and removed, and the specs it wrote
+// (doc 03 R-DELTA-12, doc 07 section 6.7). The specs are in the WriteSet too.
+func withSpecDelta(out map[string]any, applied *core.DeltaApplication) map[string]any {
+	if applied != nil {
+		out["specDelta"] = applied
+	}
+	return out
 }
 
 // withSchemaUpgrade adds `schemaUpgraded: <n>` to a write result when the write
@@ -1130,7 +1146,8 @@ func (v *Vault) itemMove(ctx context.Context, raw []byte) (any, error) {
 		return nil, err
 	}
 	v.fs.begin()
-	it, err := store.Move(ctx, core.ItemID(p.ID), core.Status(p.Status), core.Rev(p.Rev))
+	schemaBefore := store.Schema()
+	it, applied, err := store.MoveReport(ctx, core.ItemID(p.ID), core.Status(p.Status), core.Rev(p.Rev), core.MoveOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("move %s: %w", p.ID, err)
 	}
@@ -1138,7 +1155,7 @@ func (v *Vault) itemMove(ctx context.Context, raw []byte) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"item": it, "writes": writes}, nil
+	return withSchemaUpgrade(withSpecDelta(map[string]any{"item": it, "writes": writes}, applied), schemaBefore, store), nil
 }
 
 // itemDelete soft-deletes an item, or removes the file when hard is set.
@@ -1837,6 +1854,7 @@ func classify(err error, out *Error) {
 	var transition *core.TransitionError
 	var parse *core.ParseError
 	var diag *core.DiagnosticError
+	var delta *core.SpecDeltaError
 	switch {
 	case errors.As(err, &stale):
 		out.Code = core.StaleRevisionCode
@@ -1845,6 +1863,9 @@ func classify(err error, out *Error) {
 		out.Conflicts = stale.Fields
 	case errors.As(err, &transition):
 		out.Code = core.TransitionDeniedCode
+	case errors.As(err, &delta):
+		out.Code = core.SpecDeltaConflictCode
+		out.Path = delta.Path
 	case errors.As(err, &parse):
 		out.Code = "invalid_front_matter"
 		out.Path = parse.Path
