@@ -58,18 +58,23 @@ type HitPage struct {
 	NextCursor string `json:"nextCursor,omitempty"`
 }
 
-// GetItemInput addresses one item.
+// GetItemInput addresses one item, or one requirement of a spec.
 type GetItemInput struct {
-	ID      string   `json:"id" jsonschema:"Permanent item id, for example ACME-US-0042"`
+	ID      string   `json:"id" jsonschema:"Permanent item id, for example ACME-US-0042, or a requirement ref such as ACME-SP-0003.R2"`
 	Include []string `json:"include,omitempty" jsonschema:"Extra sections to return: body, comments, children"`
 	Fields  []string `json:"fields,omitempty" jsonschema:"Front-matter fields to project; id and rev are always returned"`
 }
 
-// ItemResult is one item with the optional sections a read asked for.
+// ItemResult is one item with the optional sections a read asked for. A read
+// of a requirement ref (ACME-SP-0003.R2) answers with requirement and specRev
+// instead of item: only that block and its requirements: entry, never the
+// whole spec.
 type ItemResult struct {
-	Item     Item      `json:"item"`
-	Comments []Comment `json:"comments,omitempty"`
-	Children []Item    `json:"children,omitempty"`
+	Item        *Item        `json:"item,omitempty"`
+	Requirement *Requirement `json:"requirement,omitempty" jsonschema:"Set instead of item when id is a requirement ref"`
+	SpecRev     string       `json:"specRev,omitempty" jsonschema:"File rev of the spec holding the requirement, for a spec-level update_item"`
+	Comments    []Comment    `json:"comments,omitempty"`
+	Children    []Item       `json:"children,omitempty"`
 }
 
 // CreateItemInput is the draft of a new epic, story, task or milestone. The id
@@ -170,7 +175,11 @@ func registerItemTools(s *Server) {
 		Title: "Get one backlog item",
 		Description: "Read one item by id: front matter always, plus the Markdown body, the comment " +
 			"thread and the child items when include asks for them. The rev it returns is the token a " +
-			"later update_item, add_comment or move_on_board must quote.",
+			"later update_item, add_comment or move_on_board must quote. Given a requirement ref " +
+			"(ACME-SP-0003.R2) it returns only that requirement: its block text, its requirements: " +
+			"entry, rev (the requirement rev, which update_requirement quotes) and blockRev (the block " +
+			"fingerprint a verification stamp records, never a write token); include and the item " +
+			"fields do not apply, and fields projects the requirement instead.",
 		Untrusted: true,
 	}, getItem)
 
@@ -323,6 +332,9 @@ func getItem(ctx context.Context, s *Server, in GetItemInput) (ItemResult, error
 	if strings.TrimSpace(in.ID) == "" {
 		return ItemResult{}, invalidField("id", "get_item needs an item id", "ACME-US-0042")
 	}
+	if isRequirementRef(in.ID) {
+		return getRequirement(ctx, s, in.ID, in.Fields)
+	}
 	it, err := dispatch[core.Item](ctx, s, "item.get", map[string]any{"id": in.ID})
 	if err != nil {
 		return ItemResult{}, err
@@ -341,7 +353,8 @@ func getItem(ctx context.Context, s *Server, in GetItemInput) (ItemResult, error
 			fields = append(append([]string{}, defaultItemFields...), "body", "path", "links")
 		}
 	}
-	out := ItemResult{Item: projectItem(brief, fields)}
+	projected := projectItem(brief, fields)
+	out := ItemResult{Item: &projected}
 
 	if includes(in.Include, "comments") {
 		thread, err := dispatch[[]core.Comment](ctx, s, "comment.list", map[string]any{"id": in.ID})

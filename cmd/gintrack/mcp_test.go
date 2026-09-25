@@ -27,11 +27,12 @@ func TestMCPListTools(t *testing.T) {
 			args: []string{"mcp", "--list-tools"},
 			want: []string{
 				"list_items", "get_item", "search_items", "search_semantic",
-				"get_kb_page", "search_kb", "list_kb_pages",
+				"get_kb_page", "search_kb", "list_kb_pages", "list_requirements",
 			},
 			absent: []string{
 				"create_epic", "create_story", "create_task", "create_milestone",
 				"update_item", "add_comment", "move_on_board",
+				"create_spec", "create_requirement", "update_requirement",
 			},
 		},
 		{
@@ -40,6 +41,7 @@ func TestMCPListTools(t *testing.T) {
 			want: []string{
 				"create_epic", "create_story", "create_task", "create_milestone",
 				"update_item", "add_comment", "move_on_board", "list_items",
+				"create_spec", "create_requirement", "update_requirement",
 			},
 		},
 	}
@@ -156,8 +158,8 @@ func TestMCPOverStdio(t *testing.T) {
 		if err != nil {
 			t.Fatalf("tools/list: %v", err)
 		}
-		if len(listed.Tools) != 23 {
-			t.Errorf("tools = %d, want 23", len(listed.Tools))
+		if len(listed.Tools) != 27 {
+			t.Errorf("tools = %d, want 27", len(listed.Tools))
 		}
 		for _, tool := range listed.Tools {
 			if tool.InputSchema == nil || tool.OutputSchema == nil {

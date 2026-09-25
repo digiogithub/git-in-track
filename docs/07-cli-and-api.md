@@ -1196,10 +1196,10 @@ gintrack mcp 0.4.0: workspace work, 2 repositories, 8 tools (read-only)
 ```
 
 Nothing but JSON-RPC frames is written to stdout; the startup line and every log go to
-stderr. There are **twenty-three tools**: eight read-only — `list_items`, `search_items`,
-`search_semantic`, `get_item`, `list_inbox`, `list_kb_pages`, `get_kb_page` and `search_kb` —
-and fifteen writes. Without writes enabled the fifteen write tools are absent from `tools/list`, not
-merely refused.
+stderr. There are **twenty-seven tools**: nine read-only — `list_items`, `search_items`,
+`search_semantic`, `get_item`, `list_requirements`, `list_inbox`, `list_kb_pages`, `get_kb_page`
+and `search_kb` — and eighteen writes. Without writes enabled the eighteen write tools are absent
+from `tools/list`, not merely refused.
 
 Writes are enabled by `--allow-write` or by `mcp.allowWrite: true` in the configuration file
 (section 3.2). The flag wins when it is typed — `--allow-write=false` turns the write tools
@@ -1209,7 +1209,7 @@ what the companion's **Settings › Agent tools (MCP)** switch writes
 (`PATCH /api/v1/mcp/settings`, section 5.5), which is the way to enable writes without
 editing a file or teaching every agent runtime a flag.
 
-The **same twenty-three tools** are served over streamable HTTP at `POST /mcp` by
+The **same twenty-seven tools** are served over streamable HTTP at `POST /mcp` by
 `gintrack serve --mcp-http` (section 4.1), which is what to use when the companion is already
 running: one index and one watcher, shared with the web UI.
 
@@ -4769,8 +4769,9 @@ Bridge conventions:
 `internal/vault` serves four methods that treat one requirement of a spec (ADR-037, doc 03 §21)
 as a unit of its own. They are part of the `CoreApi` contract of `web/src/core-bridge/api.ts`, so
 browser-only mode reaches them through the WASM module's `gintrackCore.call` and a workspace
-routes them to the repository that owns the spec (by `ref`, or by `spec`). No MCP tool, REST route
-or web screen uses them yet.
+routes them to the repository that owns the spec (by `ref`, or by `spec`). The MCP tools
+`list_requirements`, `create_requirement`, `update_requirement` and `get_item` on a requirement
+ref are shims over them (doc 08 §4.20); no REST route or web screen uses them yet.
 
 | Method | Params | Result |
 |---|---|---|

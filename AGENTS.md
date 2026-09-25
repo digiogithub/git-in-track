@@ -228,10 +228,11 @@ use the same shape):
 Drop `--allow-write` for a read-only session; the write tools are then absent
 from `tools/list` rather than failing at call time. `--agent <name>` is the
 author recorded on comments you write. Verify with `gintrack mcp --list-tools`
-(8 tools read-only, 23 with `--allow-write`).
+(9 tools read-only, 27 with `--allow-write`).
 
-The twenty-three tools: `list_items`, `search_items`, `search_semantic`,
-`get_item`, `create_epic`, `create_story`, `create_task`, `create_milestone`,
+The twenty-seven tools: `list_items`, `search_items`, `search_semantic`,
+`get_item`, `list_requirements`, `create_epic`, `create_story`, `create_task`,
+`create_milestone`, `create_spec`, `create_requirement`, `update_requirement`,
 `update_item`, `add_comment`, `move_on_board`, `list_kb_pages`, `get_kb_page`,
 `search_kb`, `list_inbox`, `create_inbox_item`, `triage_inbox_item`, `close_sprint`,
 `transfer_sprint_items`, `import_youtrack_issues`, `push_comment_to_youtrack`,
@@ -242,6 +243,11 @@ the question is "which stories or pages are about X" and the wording of the
 question is not the wording of the item. It needs the Pando backend, and a
 session without one gets an `unavailable` error naming `search_items` as the
 fallback — never an empty list.
+
+Specs are read and written one requirement at a time: `list_requirements` for
+compact rows, `get_item` on a ref such as `GIT-SP-0003.R2` for one block, and
+`update_requirement` quoting that requirement's `rev` — never its `blockRev`,
+which is the verification fingerprint, not a write token.
 
 ### The pick-up loop
 
