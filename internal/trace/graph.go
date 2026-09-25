@@ -300,6 +300,18 @@ func (g *Graph) TouchingSince(prev *Graph, changes []core.TraceChange, tree fs.F
 			}
 		}
 	}
+	// A second pass, so a direct reason always wins over a declaration one:
+	// a changed package-level const, var or type reaches the traced functions
+	// of its package that use it (GIT-US-0158).
+	for _, c := range changes {
+		for _, r := range g.declTouches(c, tree) {
+			for _, e := range g.byPath[r.path] {
+				if e.Symbol == "" || symbolsOverlap(e.Symbol, r.symbol) {
+					hit(e, "decl", r.name)
+				}
+			}
+		}
+	}
 	sort.SliceStable(out, func(i, j int) bool {
 		a, b := out[i], out[j]
 		if a.Path != b.Path {
@@ -314,6 +326,27 @@ func (g *Graph) TouchingSince(prev *Graph, changes []core.TraceChange, tree fs.F
 		return a.Role < b.Role
 	})
 	return out
+}
+
+// declTouches returns the functions a change reaches through the
+// package-level declarations it changes: only for a Go file whose changed
+// lines are known — a whole-file change (an added file, a caller that knows no
+// lines) already touches every symbol of the file directly.
+func (g *Graph) declTouches(c core.TraceChange, tree fs.FS) []declRef {
+	p := cleanPath(c.Path)
+	if tree == nil || path.Ext(p) != ".go" {
+		return nil
+	}
+	symbols, _, whole := changedSymbols(c, p, tree)
+	if whole || len(symbols) == 0 {
+		return nil
+	}
+	src, err := fs.ReadFile(tree, p)
+	if err != nil {
+		return nil
+	}
+	pkg, names := changedDecls(p, src, symbols)
+	return declReferences(tree, p, pkg, names, func(q string) bool { return len(g.byPath[q]) > 0 })
 }
 
 // hasEdge reports whether the graph holds an edge with the same ref, role,
@@ -341,33 +374,87 @@ func changedSymbols(c core.TraceChange, p string, tree fs.FS) (symbols []string,
 		return nil, nil, true
 	}
 	lines = map[int]bool{}
-	var list []int
+	var list, query, deletions []int
+	queried := map[int]bool{}
+	ask := func(ln int) {
+		if ln >= 1 && !queried[ln] {
+			queried[ln] = true
+			query = append(query, ln)
+		}
+	}
 	for _, span := range c.Lines {
 		start, n := span.Start, span.Count
+		if n < 1 {
+			// A pure deletion between new-side lines start and start+1. Its
+			// marker line is the one it happened after, as before; its
+			// symbol is the one that encloses both neighbors (below).
+			deletions = append(deletions, start)
+			ask(start)
+			ask(start + 1)
+			lines[max(start, 1)] = true
+			continue
+		}
 		if start < 1 {
 			start = 1
-		}
-		if n < 1 {
-			n = 1 // a pure deletion touches the line it happened before
 		}
 		for ln := start; ln < start+n; ln++ {
 			if !lines[ln] {
 				lines[ln] = true
 				list = append(list, ln)
 			}
+			ask(ln)
 		}
 	}
-	at := SymbolsAt(p, src, list)
+	at := SymbolsAt(p, src, query)
 	set := map[string]bool{}
-
-	for _, ln := range list {
-		if s := at[ln]; !set[s] {
+	add := func(s string) {
+		if !set[s] {
 			set[s] = true
 			symbols = append(symbols, s)
 		}
 	}
+	for _, ln := range list {
+		add(at[ln])
+	}
+	// A removed line touches the symbol it was removed from (GIT-US-0158):
+	// the one enclosing the lines on both sides of the deletion. A deletion
+	// between two declarations — a whole function removed — touches neither
+	// neighbor; the markers it removed are reported as "removed".
+	for _, ln := range deletions {
+		if s := enclosingBoth(at[ln], at[ln+1]); s != "" {
+			add(s)
+		}
+	}
 	sort.Strings(symbols)
 	return symbols, lines, false
+}
+
+// nestingSeps are the separators of a symbol path whose parts nest — a
+// sub-test inside its test, an it inside its describe — unlike Type.Method,
+// whose methods are siblings.
+var nestingSeps = []string{"/", " > "}
+
+// enclosingBoth returns the innermost symbol that encloses both a and b:
+// a itself when they are equal, their common nesting prefix (TestX for
+// TestX/a and TestX/b), "" when nothing encloses both.
+func enclosingBoth(a, b string) string {
+	if a == b {
+		return a
+	}
+	if a == "" || b == "" {
+		return ""
+	}
+	for _, sep := range nestingSeps {
+		pa, pb := strings.Split(a, sep), strings.Split(b, sep)
+		n := 0
+		for n < len(pa) && n < len(pb) && pa[n] == pb[n] {
+			n++
+		}
+		if n > 0 {
+			return strings.Join(pa[:n], sep)
+		}
+	}
+	return ""
 }
 
 func markerLineChanged(e core.TraceEdge, lines map[int]bool) bool {

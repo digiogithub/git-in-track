@@ -910,3 +910,112 @@ func TestImpactKind(t *testing.T) {
 		})
 	}
 }
+
+// The two tier-1 misses of the spec impact benchmark (GIT-US-0137, PR #76),
+// replayed in a regression fixture (GIT-US-0158): S4 changed the package-level
+// constant maxPageSize, which no traced symbol spans, and P5 removed a call
+// line. The constant now reaches the traced function that uses it, and the
+// removed line touches the traced function it was removed from.
+const (
+	fxPagingSpecPath = "docs/.pmngr/specs/ACME-SP-0002-mcp-surface.md"
+	fxPagingSpec     = `---
+id: ACME-SP-0002
+type: spec
+title: MCP surface
+status: todo
+created: 2026-01-01T00:00:00Z
+updated: 2026-01-01T00:00:00Z
+requirements:
+  R1:
+    status: todo
+  R2:
+    status: todo
+---
+
+## Requirements
+
+### ACME-SP-0002.R1 — Cap the page size
+
+A list tool SHALL return at most 100 entries per page.
+
+### ACME-SP-0002.R2 — Register the requirement tools
+
+The server SHALL register the requirement tools.
+`
+	fxPage = `package mcp
+
+// Page-size bounds.
+const (
+	defaultPageSize = 20
+	maxPageSize     = 100
+)
+
+// Implements: ACME-SP-0002.R1
+func boundedLimit(requested int) int {
+	if requested <= 0 {
+		return defaultPageSize
+	}
+	if requested > maxPageSize {
+		return maxPageSize
+	}
+	return requested
+}
+
+func unrelated(maxPageSize int) int { return maxPageSize }
+`
+	fxTools = `package mcp
+
+// Implements: ACME-SP-0002.R2
+func registerTools(s *Server) {
+	registerItemTools(s)
+	registerSpecTools(s)
+	registerKBTools(s)
+}
+`
+)
+
+func TestImpactBenchmarkMisses(t *testing.T) {
+	f := newFixture(t)
+	f.write("src/alloc.go", fxAlloc)
+	f.write(fxPagingSpecPath, fxPagingSpec)
+	f.write("src/mcp/page.go", fxPage)
+	f.write("src/mcp/tools.go", fxTools)
+	base := f.commit("mcp surface")
+	if _, err := f.vlt.Reload(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	f.write("src/mcp/page.go", strings.Replace(fxPage, "maxPageSize     = 100", "maxPageSize     = 200", 1))
+	f.write("src/mcp/tools.go", strings.Replace(fxTools, "\tregisterSpecTools(s)\n", "", 1))
+
+	q := core.ImpactQuery{Base: base, Tiers: []int{1, 2}}
+	first := f.impact(f.resolver(nil, nil), q)
+	second := f.impact(f.resolver(nil, nil), q)
+	a, err := json.MarshalIndent(first, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := json.MarshalIndent(second, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(a, b) {
+		t.Fatalf("two runs differ:\n%s\n%s", a, b)
+	}
+	got := map[string]string{}
+	for _, h := range first.Hits {
+		got[h.Ref.String()] = strings.Join(h.Reasons, ", ")
+	}
+	want := map[string]string{
+		"ACME-SP-0002.R1": "decl:src/mcp/page.go#boundedLimit uses maxPageSize",
+		"ACME-SP-0002.R2": "symbol:src/mcp/tools.go#registerTools",
+	}
+	if len(got) != len(want) {
+		t.Errorf("hits = %v, want %v", got, want)
+	}
+	for ref, reasons := range want {
+		if got[ref] != reasons {
+			t.Errorf("%s reasons = %q, want %q", ref, got[ref], reasons)
+		}
+	}
+	checkGolden(t, "impact_benchmark_misses.golden.json", bytes.ReplaceAll(append(a, '\n'), []byte(base), []byte("<base>")))
+}

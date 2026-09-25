@@ -216,7 +216,11 @@ func (r *Resolver) Impact(ctx context.Context, ix *core.Index, q core.ImpactQuer
 	if q.Wants(core.ImpactTierDirect) {
 		tiers[0].Status = core.ImpactTierOK
 		for _, h := range touching {
-			col.add(h.Ref, core.ImpactTierDirect, h.Reason+":"+h.TraceRef(), true, roleKind(h.Role))
+			reason := h.Reason + ":" + h.TraceRef()
+			if h.Reason == "decl" && h.Changed != "" {
+				reason += " uses " + h.Changed
+			}
+			col.add(h.Ref, core.ImpactTierDirect, reason, true, roleKind(h.Role))
 		}
 		storyHits(ix, q.Story, col)
 	}

@@ -67,6 +67,19 @@ because a commit list cannot express them.
   (failing still first) and marks them `test-only` in the text form. `gintrack spec impact
   --fail-on` accepts `behaviour` next to the states to leave `test-only` hits out of the gate;
   the default gate is unchanged. The field is additive: a tier-3 candidate has no `kind`.
+- **Impact reaches traced code through package-level declarations** (`GIT-US-0158`, docs/03
+  §21.7 and R-IMP-2). A diff that changes a top-level Go `const`, `var` or `type` now touches
+  the traced functions of the same package that use it, found on the go/parser syntax tree with
+  block scopes (shadowing, selectors and struct keys never match), deterministically and without
+  Pando. The new reason is `decl:<trace ref> uses <name>`; the benchmark's `maxPageSize` miss now
+  reaches `boundedLimit`.
+
+### Fixed
+
+- **Removed lines touch the symbol they were removed from** (`GIT-US-0158`, docs/03 §21.7). A
+  pure deletion now touches the symbol enclosing both of its neighbors, so a removed line inside
+  a traced function (or a removed sub-test) touches it, and a whole function removed after a
+  traced one no longer touches the one before it.
 
 ## [2.1.0] — 2026-09-25
 
