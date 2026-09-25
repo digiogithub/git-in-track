@@ -53,7 +53,8 @@ type RequirementCode struct {
 }
 
 // Verification is the durable verification stamp of a requirement. Tools read
-// it; none writes it (ADR-037 section 7).
+// it; only verify_requirement writes it, from ingested evidence (ADR-037
+// section 7).
 type Verification struct {
 	Rev    string `json:"rev,omitempty" jsonschema:"Block rev that was verified"`
 	Commit string `json:"commit,omitempty"`
@@ -246,7 +247,7 @@ func registerSpecTools(s *Server) {
 			"requirement rev (rev, never blockRev) the read returned. A rev that is no longer current is " +
 			"refused with stale_revision, carrying currentRev and the fields still in conflict; an empty " +
 			"conflicts list means your change is already there. A status change follows the project " +
-			"workflow. The verification stamp is not writable here.",
+			"workflow. The verification stamp is not writable here: verify_requirement writes it.",
 		Write:     true,
 		Untrusted: true,
 	}, updateRequirement)

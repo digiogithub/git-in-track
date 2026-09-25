@@ -18,11 +18,12 @@ import (
 // `unavailable`.
 //
 // The stamp itself is written here, through the requirement write path and
-// under the requirement rev (docs/03 section 21.5), and only at the two
+// under the requirement rev (docs/03 section 21.5), and only at the
 // moments the ADR allows: when a story or task that implements or modifies
 // the requirement moves to a done-category status (GIT-US-0110 calls
 // stampVerified from inside that write), and on an explicit request, which is
-// what `gintrack spec verify --commit` sends (GIT-US-0125). Nothing else is
+// what `gintrack spec verify --commit` sends (GIT-US-0125) and, for one ref
+// under its requirement rev, the MCP verify_requirement (GIT-US-0124). Nothing else is
 // ever written: the coverage state, suspect included, is computed.
 
 // RequirementCoverage is the backend a host installs with
@@ -167,6 +168,20 @@ const (
 // The caller owns the transaction: it calls v.fs.begin before and v.commit
 // after, and holds the vault mutex throughout.
 func (v *Vault) stampVerified(ctx context.Context, refs []core.RequirementRef, by string) (StampReport, error) {
+	return v.stampVerifiedAt(ctx, refs, by, nil)
+}
+
+// stampVerifiedAt is stampVerified under the requirement revs a caller read
+// (GIT-US-0124, the MCP verify_requirement). A requirement named in expected
+// is stamped only if its requirement rev is still that one: when it moved,
+// the write fails with the core's StaleRevisionError — current rev and the
+// verified field in conflict — instead of being listed as stale, because the
+// caller asked for that one stamp and must re-read. A requirement whose
+// evidence allows no stamp is still reported unstamped whatever its rev: no
+// write was attempted, so there is nothing to lose.
+func (v *Vault) stampVerifiedAt(
+	ctx context.Context, refs []core.RequirementRef, by string, expected map[core.RequirementRef]core.Rev,
+) (StampReport, error) {
 	report := StampReport{Stamped: []StampedRequirement{}, Unstamped: []UnstampedRequirement{}}
 	provider := v.requirementCoverage()
 	if provider == nil {
@@ -210,10 +225,14 @@ func (v *Vault) stampVerified(ctx context.Context, refs []core.RequirementRef, b
 		if err != nil {
 			return StampReport{}, err
 		}
-		_, written, err := store.UpdateRequirement(ctx, view.Ref, core.RequirementPatch{Verified: &stamp}, view.Rev)
+		lock, pinned := expected[view.Ref]
+		if !pinned {
+			lock = view.Rev
+		}
+		_, written, err := store.UpdateRequirement(ctx, view.Ref, core.RequirementPatch{Verified: &stamp}, lock)
 		if err != nil {
 			var stale *core.StaleRevisionError
-			if errors.As(err, &stale) {
+			if errors.As(err, &stale) && !pinned {
 				report.Unstamped = append(report.Unstamped, UnstampedRequirement{Ref: view.Ref, Reason: stampReasonStale})
 				continue
 			}
@@ -258,12 +277,16 @@ func stampDecision(view core.RequirementView, ev core.StampEvidence) string {
 // requirementStamp answers "requirement.stamp": the explicit stamp request of
 // `gintrack spec verify --commit`. It names the requirements — refs, or every
 // requirement of a spec — and the handle recorded when the evidence does not
-// carry one.
+// carry one. With rev it stamps exactly one ref under that requirement rev,
+// which is what the MCP verify_requirement sends: a rev that is no longer
+// current fails with stale_revision rather than stamping text the caller
+// never read.
 func (v *Vault) requirementStamp(ctx context.Context, raw []byte) (any, error) {
 	p, err := decodeParams[struct {
 		Refs stringList `json:"refs,omitempty"`
 		Spec string     `json:"spec,omitempty"`
 		By   string     `json:"by"`
+		Rev  string     `json:"rev,omitempty"`
 	}](raw)
 	if err != nil {
 		return nil, err
@@ -295,8 +318,19 @@ func (v *Vault) requirementStamp(ctx context.Context, raw []byte) (any, error) {
 	if len(refs) == 0 {
 		return nil, failf("invalid_request", "requirement.stamp needs refs or a spec")
 	}
+	var expected map[core.RequirementRef]core.Rev
+	if rev := strings.TrimSpace(p.Rev); rev != "" {
+		if len(refs) != 1 || p.Spec != "" {
+			return nil, failf("invalid_request", "requirement.stamp with rev stamps exactly one ref, not %d", len(refs))
+		}
+		if rev == "*" {
+			return nil, failf("invalid_request",
+				"requirement.stamp takes the requirement rev of the text that was verified, never \"*\"")
+		}
+		expected = map[core.RequirementRef]core.Rev{refs[0]: core.Rev(rev)}
+	}
 	v.fs.begin()
-	report, err := v.stampVerified(ctx, refs, by)
+	report, err := v.stampVerifiedAt(ctx, refs, by, expected)
 	if err != nil {
 		_, _ = v.commit(ctx)
 		return nil, err

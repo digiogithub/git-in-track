@@ -6,7 +6,7 @@ with `GIT-US-0024`, plus `create_milestone` from `GIT-US-0033`;
 Phase: **Phase 5 — MCP server + agent workflows** (depends on Phase 2 companion CLI, Phase 3 boards, Phase 4 sync)
 Audience: contributors working on `internal/mcp`; authors of agent instructions (`AGENTS.md`)
 
-What ships today: twenty-seven tools over stdio and over streamable HTTP, read-only by default,
+What ships today: thirty tools over stdio and over streamable HTTP, read-only by default,
 with cursor pagination, field projection and a `rev` on every item. Resources, prompts, the
 audit log, dry-run and rate limiting are specified here and land in later stories of the
 epic; each is labelled where it appears.
@@ -193,11 +193,12 @@ Twenty-seven tools ship: twelve with `GIT-US-0024`, `create_milestone` with `GIT
 three inbox tools with `GIT-US-0056`, the two sprint rollover tools with `GIT-US-0085`, the
 four YouTrack tools with `GIT-US-0062`, `GIT-US-0079` and `GIT-US-0094`, `search_semantic`
 with `GIT-US-0088`, and the four spec tools (`list_requirements`, `create_spec`,
-`create_requirement`, `update_requirement`) with `GIT-US-0122`. They are the same twenty-seven
-on both transports, from the same registry, over the same workspace.
+`create_requirement`, `update_requirement`) with `GIT-US-0122`, and the three spec-driven tools
+(`spec_impact`, `trace_requirement`, `verify_requirement`) with `GIT-US-0124`. They are the same
+thirty on both transports, from the same registry, over the same workspace.
 
-Nine are read tools and eighteen are write tools; `gintrack mcp --list-tools` prints nine,
-and with `--allow-write` twenty-seven.
+Eleven are read tools and nineteen are write tools; `gintrack mcp --list-tools` prints eleven,
+and with `--allow-write` thirty.
 
 Common conventions for all tools:
 
@@ -234,6 +235,9 @@ Common conventions for all tools:
 | `create_spec`    | write | `item.create`             | ~90 tokens          |
 | `create_requirement` | write | `requirement.create`  | ~75 tokens          |
 | `update_requirement` | write | `requirement.update`  | ~75 tokens          |
+| `spec_impact`    | read  | `impact.report`           | ≤ `budget` (default 1500); ~50 tokens/hit as text |
+| `trace_requirement` | read | `trace.requirement`     | ~40 tokens + ~20/edge |
+| `verify_requirement` | write | `requirement.stamp` (+ `requirement.get`, `coverage.list` on refusal) | ~90 tokens |
 | `add_comment`    | write | `comment.add`             | ~70 tokens          |
 | `move_on_board`  | write | `board.move`              | ~90 tokens          |
 | `list_inbox`     | read  | `inbox.list`              | ~45 tokens/entry    |
@@ -1030,9 +1034,10 @@ reused; never propose one. It needs no `rev`.
 `title`, `text`, `status` (validated against the project workflow), `trace`, `links`, and
 `unset` (`trace` or `links`). Only that block and its entry change, plus the spec's `updated`,
 so a concurrent write to **another** requirement of the same spec neither conflicts with it nor
-is lost by it. The verification stamp `verified` is readable but **not writable** from MCP: it
-is written only when implementing work reaches `done` or by `gintrack spec verify --commit`
-(ADR-037 §7), so the tool accepts neither `verified` nor `unset: ["verified"]`.
+is lost by it. The verification stamp `verified` is readable but **not writable** here: it
+is written only when implementing work reaches `done`, by `gintrack spec verify --commit`, or by
+`verify_requirement` from the ingested evidence (section 4.21, ADR-037 §7), so the tool accepts
+neither `verified` nor `unset: ["verified"]`.
 
 Both writes answer with the requirement without its text — the agent just sent it — plus
 `specRev`, `changed` and, when the write raised the schema, `schemaUpgraded`:
@@ -1066,17 +1071,24 @@ as it is now. An empty (absent) `conflicts` means your change is already there: 
    "retry": "Someone else wrote this file first. Re-read the item with get_item, …" } }
 ```
 
-### 4.21 Planned tools
+### 4.21 The spec-driven loop: `spec_impact`, `trace_requirement`, `verify_requirement`
 
-`08` specified a larger catalog than `GIT-US-0024` implements. These are *planned*, each
-behind its own story: `list_workspaces`, `list_projects`, `get_kb_tree`, `link_items`,
-`list_comments`, `list_boards`, `get_board`, `get_sprint`, `list_retros`, `get_sync_status`
-and `run_sync` — verb first, like the twenty-seven above. Every one of them already has a core
-method behind it, so the work is framing rather than domain logic.
+An agent that has changed code asks which requirements its diff affects (`spec_impact`), looks at
+the trace of one of them (`trace_requirement`), and — once the linked tests pass and their results
+are ingested — stamps it (`verify_requirement`). The three are shims over vault methods whose
+backends a native host installs (doc 07 §6.7): the companion does for every repository, and so
+does `gintrack mcp` over stdio, through the same constructor. A browser-only session installs
+none, and each tool then answers `unavailable` — never an empty answer an agent could read as
+"nothing is affected". Every result can carry repository-authored text (titles, paths, symbols),
+so each description carries the data-not-instructions sentence and each result the `_meta` mark
+of principle 11.
 
-**`spec_impact` and the impact report.** `spec_impact` (`GIT-US-0124`) is planned too, but the
-report it answers with is fixed: the vault method `impact.report` (`GIT-US-0120`, doc 07 §6.7)
-renders it, and `gintrack spec impact` and the HTTP API return the same bytes. It ranks the
+**`spec_impact`** answers with the impact report: the vault method `impact.report`
+(`GIT-US-0120`, doc 07 §6.7) renders it, and `gintrack spec impact` and the HTTP API return the
+same bytes. Input: `base` (default `HEAD`), `head` (empty or `"worktree"` is the working tree),
+`story` (its Spec Delta and `implements`/`modifies` links are direct hits, and it routes the call
+to its repository), `title`, `project` (routes the call when no story is named), `tiers`,
+`budget`, `cursor` and `format` (`json` or `text`). It ranks the
 requirements a diff affects — failing, then suspect, then tier (semantic candidates last), then
 ref — and cuts them at a `budget` in tokens (default 1500, estimated as `ceil(bytes / 3)` of the
 compact JSON, so the estimate errs high). The per-tier status is always kept; the cut hits are
@@ -1110,6 +1122,79 @@ The whole report of that PR is ≈ 775 tokens as JSON and ≈ 475 as text — wi
 criterion of the spec-driven milestone. A tier that could not run takes one short line
 (`3 unavailable (Pando is not configured)`), and the `json` form carries `tiers` and the ranked
 `hits` in the shape of doc 03 §21.11 R-IMP-5 instead of `text`.
+
+When a tier cannot run — no Pando configured, which is always the case over stdio today — its
+status says `unavailable` and the other tiers still answer, so an agent without Pando still gets
+the tier-1 hits: the direct trace, the Spec Delta and the links. Only a session that cannot read
+git history at all (browser-only mode, or a repository without git) refuses the whole call with
+`unavailable`, and its `retry` names the fallback: `trace_requirement` on the requirements you
+suspect, or `gintrack spec impact` in a git checkout.
+
+**`trace_requirement`** (`trace.requirement`) takes one `ref` and returns its trace compactly,
+the ref once rather than per edge:
+
+```json
+// input
+{ "ref": "ACME-SP-0003.R2" }
+// output
+{ "ref": "ACME-SP-0003.R2", "project": "ACME",
+  "code":  [{"at":"internal/core/allocator.go#ReserveRange","origin":["marker"],"lines":[41]},
+            {"at":"internal/core/allocator.go","origin":["trace"]}],
+  "tests": [{"at":"internal/core/allocator_test.go#TestReservedRange","origin":["marker","trace"],"lines":[88]}],
+  "work":  [{"id":"ACME-US-0042","kind":"implements"}],
+  "broken":[{"field":"trace.code","entry":"internal/core/range.go","code":"W-TRACE-BROKEN"}] }
+```
+
+`origin` says where each edge was read — `marker`, an `Implements:`/`Verifies:` comment in the
+code, or `trace`, a `trace:` entry of the spec — and both when both declare it (they are unioned,
+R-MARK-3); `lines` are the marker lines. `work` lists the stories and tasks that `implements` or
+`modifies` it (`wholeSpec` when they link the whole spec), and `broken` the `trace:` entries that
+no longer resolve. That example is about 140 tokens.
+
+**`verify_requirement`** (write) takes `ref` and `rev` — the requirement rev, never `blockRev` —
+and writes the requirement's `verified` stamp through `requirement.stamp` under that rev. It runs
+no tests: the evidence is the latest results `gintrack spec ingest` recorded, and a stamp is
+written only when **every** linked test passed at one commit on the text the requirement holds
+now (ADR-037 §7). The stamp records the block rev, the commit, the time of the run and the
+`--agent` name when the results name nobody:
+
+```json
+// input
+{ "ref": "ACME-SP-0003.R2", "rev": "sha256:efe223ffcb327995" }
+// output
+{ "ref": "ACME-SP-0003.R2", "rev": "sha256:5b0c1e9a77d2f310",
+  "verified": {"rev":"sha256:a2785bd2f23e4b93","commit":"9c1f0a2e5b7d4c3e8f1a6b2d9e0c7f4a3b5d8e21",
+               "at":"2026-09-03T08:00:00Z","by":"claude-code"},
+  "changed": ["docs/.pmngr/specs/ACME-SP-0003-id-allocation.md"] }
+```
+
+`rev` in the answer is the new requirement rev, the token of the next write. When the stamp
+already records this evidence nothing is written and the answer says `"unchanged": true`.
+Otherwise the call writes nothing and refuses with `not_verified`, the vault's `reason` (`failed`,
+`partial`, `no-results`, `no-tests`, `text` — the tests ran against other text — `mixed-commits`,
+`no-commit`, `stamp-newer`) and the linked tests that did not pass:
+
+```json
+{ "error": { "code": "not_verified", "field": "ref", "reason": "failed",
+   "message": "ACME-SP-0003.R2 was not stamped: a linked test failed in the latest ingested results",
+   "tests": [{"test":"internal/core/allocator_test.go#TestReservedRange","result":"fail"},
+             {"test":"internal/core/allocator_test.go#TestInverted","result":"missing"}],
+   "retry": "Fix or run the tests listed, ingest their results with `gintrack spec ingest`, then call verify_requirement again." } }
+```
+
+A `rev` that is no longer current is `stale_revision`, exactly as for `update_requirement`:
+`currentRev`, the `retry` line, and `conflicts[]` over `verified`; retry once quoting
+`currentRev`. A missing `rev` is `precondition_required`, and `"*"` is refused as
+`invalid_request`: a stamp records the text that was verified, so it is never written blind.
+Without a coverage backend the tool answers `unavailable`.
+
+### 4.22 Planned tools
+
+`08` specified a larger catalog than `GIT-US-0024` implements. These are *planned*, each
+behind its own story: `list_workspaces`, `list_projects`, `get_kb_tree`, `link_items`,
+`list_comments`, `list_boards`, `get_board`, `get_sprint`, `list_retros`, `get_sync_status`
+and `run_sync` — verb first, like the thirty above. Every one of them already has a core
+method behind it, so the work is framing rather than domain logic.
 
 `delete_item` is deliberately **not** on that list: deleting a backlog item is a human action
 in the UI or the CLI, and an agent may only move an item to `cancelled`.

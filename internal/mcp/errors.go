@@ -36,6 +36,10 @@ const (
 	// read it is based on. It is the same refusal the REST API returns as 428
 	// for a mutation with no If-Match (docs/07 section 5.3).
 	codePreconditionRequired = "precondition_required"
+	// codeNotVerified is a verification stamp the ingested test results do
+	// not allow: a linked test failed, has no result, or ran against other
+	// text. Nothing was written (GIT-US-0124).
+	codeNotVerified = "not_verified"
 )
 
 // wildcardRev is the rev that deliberately skips the optimistic lock, spelled
@@ -69,6 +73,10 @@ type toolError struct {
 	// per code, not a paraphrase of the message.
 	Retry    string `json:"retry,omitempty"`
 	Expected any    `json:"expected,omitempty"`
+	// Reason and Tests explain a not_verified refusal: the vault's reason
+	// code, and the linked tests that did not pass.
+	Reason string       `json:"reason,omitempty"`
+	Tests  []VerifyTest `json:"tests,omitempty"`
 }
 
 // Error renders the failure as the compact JSON object the client receives.

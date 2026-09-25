@@ -173,3 +173,63 @@ func TestStampVerifiedWithoutHost(t *testing.T) {
 		t.Errorf("stampVerified = %+v", got)
 	}
 }
+
+// TestRequirementStampUnderRev covers the rev-pinned stamp the MCP
+// verify_requirement sends (GIT-US-0124): exactly one ref, never "*", and a
+// rev that moved is stale_revision with the verified field in conflict
+// rather than a quiet "stale" entry.
+func TestRequirementStampUnderRev(t *testing.T) {
+	t.Parallel()
+	t.Run("refusals", func(t *testing.T) {
+		t.Parallel()
+		v := specVault(t)
+		v.SetRequirementCoverage(&stubCoverage{commit: stubCommit})
+		for name, params := range map[string]map[string]any{
+			"two refs":  {"refs": []string{"DEMO-SP-0001.R1", "DEMO-SP-0001.R2"}, "rev": "sha256:1", "by": "ana"},
+			"a spec":    {"spec": "DEMO-SP-0001", "rev": "sha256:1", "by": "ana"},
+			"wildcard":  {"refs": []string{"DEMO-SP-0001.R1"}, "rev": "*", "by": "ana"},
+			"no refs":   {"rev": "sha256:1", "by": "ana"},
+			"no author": {"refs": []string{"DEMO-SP-0001.R1"}, "rev": "sha256:1"},
+		} {
+			if env := rawRequirementCall(t, v, "requirement.stamp", params); env.OK || env.Error.Code != "invalid_request" {
+				t.Errorf("%s: %+v, want invalid_request", name, env)
+			}
+		}
+	})
+	t.Run("a current rev stamps", func(t *testing.T) {
+		t.Parallel()
+		v := specVault(t)
+		v.SetRequirementCoverage(&stubCoverage{commit: stubCommit})
+		r1 := getRequirement(t, v, "DEMO-SP-0001.R1")
+		got := decode[stampWire](t, call(t, v, "requirement.stamp", map[string]any{
+			"refs": []string{"DEMO-SP-0001.R1"}, "rev": r1.Requirement.Rev, "by": "ana",
+		}))
+		if len(got.Stamped) != 1 || len(got.Writes.Written) != 1 {
+			t.Fatalf("stamp = %+v, want R1 stamped", got)
+		}
+	})
+	t.Run("a moved rev is stale_revision", func(t *testing.T) {
+		t.Parallel()
+		v := specVault(t)
+		v.SetRequirementCoverage(&stubCoverage{commit: stubCommit})
+		before := getRequirement(t, v, "DEMO-SP-0001.R1")
+		moved := decode[requirementResultWire](t, call(t, v, "requirement.update", map[string]any{
+			"ref": "DEMO-SP-0001.R1", "rev": before.Requirement.Rev, "patch": map[string]any{"title": "Renamed"},
+		}))
+		env := rawRequirementCall(t, v, "requirement.stamp", map[string]any{
+			"refs": []string{"DEMO-SP-0001.R1"}, "rev": before.Requirement.Rev, "by": "ana",
+		})
+		if env.OK || env.Error.Code != core.StaleRevisionCode {
+			t.Fatalf("stamp under a moved rev = %+v, want stale_revision", env)
+		}
+		if env.Error.CurrentRev != moved.Requirement.Rev {
+			t.Errorf("currentRev = %q, want %q", env.Error.CurrentRev, moved.Requirement.Rev)
+		}
+		if len(env.Error.Conflicts) != 1 || env.Error.Conflicts[0].Field != "verified" {
+			t.Errorf("conflicts = %+v, want the verified field", env.Error.Conflicts)
+		}
+		if after := getRequirement(t, v, "DEMO-SP-0001.R1"); after.Requirement.Rev != moved.Requirement.Rev {
+			t.Error("a stale stamp was written")
+		}
+	})
+}

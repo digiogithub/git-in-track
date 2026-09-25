@@ -11,7 +11,10 @@ import (
 
 	"github.com/digiogithub/git-in-track/internal/config"
 	"github.com/digiogithub/git-in-track/internal/core/osfs"
+	"github.com/digiogithub/git-in-track/internal/gitops"
 	"github.com/digiogithub/git-in-track/internal/mcp"
+	"github.com/digiogithub/git-in-track/internal/pando"
+	"github.com/digiogithub/git-in-track/internal/server"
 	corevault "github.com/digiogithub/git-in-track/internal/vault"
 )
 
@@ -33,19 +36,19 @@ func newMCPCommand(build buildInfo, flags *globalFlags) *cobra.Command {
 		Short: "Serve the backlog to AI agents over the Model Context Protocol",
 		Long: `Mcp speaks the Model Context Protocol over stdin and stdout, so that an agent
 runtime can spawn it as a tool server. It exposes the workspace's backlog and
-knowledge base as typed tools: twenty-seven of them with writes enabled, nine
+knowledge base as typed tools: thirty of them with writes enabled, eleven
 without.
 
-The nine read-only tools are list_items, search_items, search_semantic,
-get_item, list_requirements, list_inbox, list_kb_pages, get_kb_page and
-search_kb. search_semantic ranks by meaning rather than by substring and needs
+The eleven read-only tools are list_items, search_items, search_semantic,
+get_item, list_requirements, spec_impact, trace_requirement, list_inbox,
+list_kb_pages, get_kb_page and search_kb. search_semantic ranks by meaning rather than by substring and needs
 the Pando backend configured under "search.pando"; without one it refuses and
 names search_items as the fallback, so an empty answer is never mistaken for
 "nothing matches".
 
-The eighteen that need writes are create_epic, create_story, create_task,
+The nineteen that need writes are create_epic, create_story, create_task,
 create_milestone, create_spec, create_requirement, create_inbox_item,
-update_item, update_requirement, add_comment, move_on_board, triage_inbox_item,
+update_item, update_requirement, verify_requirement, add_comment, move_on_board, triage_inbox_item,
 close_sprint, transfer_sprint_items, import_youtrack_issues,
 push_comment_to_youtrack, publish_kb_page_to_youtrack and
 sync_kb_page_from_youtrack.
@@ -54,6 +57,12 @@ Specs are addressed one requirement at a time: list_requirements returns
 compact rows, get_item on a requirement ref (ACME-SP-0003.R2) returns only that
 block and its entry, and update_requirement quotes the requirement's own rev,
 so a write to one requirement never races another of the same spec.
+spec_impact reports the requirements a diff affects, trace_requirement the
+code, tests and work traced to one requirement, and verify_requirement stamps
+a requirement whose linked tests all passed in the results "gintrack spec
+ingest" recorded. The trace, coverage and impact backends are the companion's,
+installed here too; without Pando the impact report answers its first tier and
+reports the other two unavailable.
 
 Three of them are the inbox: list_inbox reads a project's triage queue,
 create_inbox_item files something into it and triage_inbox_item decides one
@@ -143,6 +152,7 @@ func runMCP(cmd *cobra.Command, build buildInfo, flags *globalFlags, local *mcpF
 		}
 		return nil
 	}
+	installMCPTraceSeams(mounts, res.Config.Git.Backend, res.Config.CacheDir(res.Path), logger)
 
 	_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
 		"gintrack mcp %s: workspace %s, %d repositories, %d tools (%s)\n",
@@ -156,6 +166,28 @@ func runMCP(cmd *cobra.Command, build buildInfo, flags *globalFlags, local *mcpF
 		return fmt.Errorf("serve MCP over stdio: %w", err)
 	}
 	return nil
+}
+
+// installMCPTraceSeams gives every mounted repository the requirement trace,
+// coverage and impact seams the companion installs (GIT-US-0124), through the
+// companion's own constructor, so trace_requirement, verify_requirement and
+// spec_impact answer over stdio exactly as they do over HTTP. The coverage
+// evidence is the test-result cache `gintrack spec ingest` fills under the
+// same cache directory. A repository git cannot open keeps trace and coverage
+// and answers the impact query `unavailable`. No Pando client is wired here,
+// so impact tiers 2 and 3 report unavailable while tier 1 answers.
+func installMCPTraceSeams(mounts []mcpMount, backend config.Backend, cacheDir string, log *slog.Logger) {
+	for _, m := range mounts {
+		seams := server.TraceSeams{Root: m.root, CacheDir: cacheDir, ProjectID: pando.SanitizeProjectID(m.root)}
+		repo, err := gitops.Open(m.root, gitops.Options{Backend: gitops.Kind(backend)})
+		if err != nil {
+			log.Debug("repository has no readable git history; the impact query is unavailable",
+				"repo", m.id, "reason", err)
+		} else {
+			seams.Git = repo
+		}
+		server.InstallTraceSeams(m.vlt, seams)
+	}
 }
 
 // writeMode renders the posture on the startup line.

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +13,8 @@ import (
 	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/digiogithub/git-in-track/internal/config"
 )
 
 func TestMCPListTools(t *testing.T) {
@@ -28,11 +31,12 @@ func TestMCPListTools(t *testing.T) {
 			want: []string{
 				"list_items", "get_item", "search_items", "search_semantic",
 				"get_kb_page", "search_kb", "list_kb_pages", "list_requirements",
+				"spec_impact", "trace_requirement",
 			},
 			absent: []string{
 				"create_epic", "create_story", "create_task", "create_milestone",
 				"update_item", "add_comment", "move_on_board",
-				"create_spec", "create_requirement", "update_requirement",
+				"create_spec", "create_requirement", "update_requirement", "verify_requirement",
 			},
 		},
 		{
@@ -41,7 +45,7 @@ func TestMCPListTools(t *testing.T) {
 			want: []string{
 				"create_epic", "create_story", "create_task", "create_milestone",
 				"update_item", "add_comment", "move_on_board", "list_items",
-				"create_spec", "create_requirement", "update_requirement",
+				"create_spec", "create_requirement", "update_requirement", "verify_requirement",
 			},
 		},
 	}
@@ -158,8 +162,8 @@ func TestMCPOverStdio(t *testing.T) {
 		if err != nil {
 			t.Fatalf("tools/list: %v", err)
 		}
-		if len(listed.Tools) != 27 {
-			t.Errorf("tools = %d, want 27", len(listed.Tools))
+		if len(listed.Tools) != 30 {
+			t.Errorf("tools = %d, want 30", len(listed.Tools))
 		}
 		for _, tool := range listed.Tools {
 			if tool.InputSchema == nil || tool.OutputSchema == nil {
@@ -221,6 +225,29 @@ func TestMCPOverStdio(t *testing.T) {
 		}
 	})
 
+	t.Run("the requirement seams are installed over stdio", func(t *testing.T) {
+		spec := callStdio[struct {
+			Item struct {
+				ID string `json:"id"`
+			} `json:"item"`
+		}](ctx, t, session, "create_spec", map[string]any{"project": "DEMO", "title": "Checkout addresses"})
+		req := callStdio[struct {
+			Requirement struct {
+				Ref string `json:"ref"`
+			} `json:"requirement"`
+		}](ctx, t, session, "create_requirement", map[string]any{
+			"spec": spec.Item.ID, "title": "Trim input", "text": "The checkout SHALL trim input.",
+		})
+		// Without the trace engine the stdio server would answer
+		// unavailable here, as a browser-only session does.
+		trace := callStdio[struct {
+			Ref string `json:"ref"`
+		}](ctx, t, session, "trace_requirement", map[string]any{"ref": req.Requirement.Ref})
+		if trace.Ref != req.Requirement.Ref {
+			t.Errorf("trace ref = %q, want %q", trace.Ref, req.Requirement.Ref)
+		}
+	})
+
 	t.Run("a traversal attempt is refused over the wire", func(t *testing.T) {
 		res, err := session.CallTool(ctx, &sdk.CallToolParams{
 			Name: "get_kb_page", Arguments: map[string]any{"path": "../../../../etc/passwd"},
@@ -244,6 +271,55 @@ func TestMCPOverStdio(t *testing.T) {
 			t.Errorf("code = %q, want forbidden_path", wrapper.Error.Code)
 		}
 	})
+}
+
+// TestMCPInstallsTraceSeams checks the wiring behind spec_impact over stdio:
+// a repository with git history gets the trace, coverage and impact seams
+// the companion installs, so the impact report answers with tier 1 while the
+// Pando tiers report unavailable; a repository git cannot open keeps trace
+// and coverage and answers the impact query unavailable.
+func TestMCPInstallsTraceSeams(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	withGit := t.TempDir()
+	copyTree(t, filepath.Join("..", "..", "testdata", "fixtures", fixtureName), withGit)
+	gitIn(t, withGit, "init", "--initial-branch=main")
+	identify(t, withGit)
+	gitIn(t, withGit, "add", "-A")
+	gitIn(t, withGit, "commit", "-m", "chore: seed")
+
+	space, mounts, err := mountWorkspace([]config.Repo{{ID: "demo", Path: withGit, Role: config.RoleProject}}, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	installMCPTraceSeams(mounts, "", t.TempDir(), slog.New(slog.DiscardHandler))
+	v := mounts[0].vlt
+	if !v.TraceAvailable() || !v.CoverageAvailable() || !v.ImpactAvailable() {
+		t.Fatalf("seams: trace %v, coverage %v, impact %v", v.TraceAvailable(), v.CoverageAvailable(), v.ImpactAvailable())
+	}
+	got, err := space.Dispatch(context.Background(), "impact.report", []byte(`{"project":"DEMO","base":"HEAD"}`))
+	if err != nil {
+		t.Fatalf("impact.report: %v", err)
+	}
+	raw, _ := json.Marshal(got)
+	for _, want := range []string{`"tier":1,"status":"ok"`, `"tier":2,"status":"unavailable"`} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("impact report lacks %s: %s", want, raw)
+		}
+	}
+
+	noGit := t.TempDir()
+	copyTree(t, filepath.Join("..", "..", "testdata", "fixtures", fixtureName), noGit)
+	_, mounts, err = mountWorkspace([]config.Repo{{ID: "demo", Path: noGit, Role: config.RoleProject}}, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	installMCPTraceSeams(mounts, "", "", slog.New(slog.DiscardHandler))
+	if v := mounts[0].vlt; !v.TraceAvailable() || !v.CoverageAvailable() || v.ImpactAvailable() {
+		t.Errorf("without git: trace %v, coverage %v, impact %v, want true, true, false",
+			v.TraceAvailable(), v.CoverageAvailable(), v.ImpactAvailable())
+	}
 }
 
 // buildGintrack compiles the binary the stdio test spawns.

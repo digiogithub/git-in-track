@@ -293,13 +293,14 @@ would be suspect the moment it was written.
 ### 7. Verification stamp, coverage state, and what is never stored
 
 Verification has two layers: a **local verification cache** that every run writes, and the
-**durable stamp** `verified` in the spec, written only at two well-defined moments (decided in
+**durable stamp** `verified` in the spec, written only at well-defined moments (two decided in
 the second review round).
 
 **The verification cache (derived, local, never the source of truth).**
 
-- Every `gintrack spec verify` run and every MCP `verify_requirement` call **records its result in
-  the cache and writes nothing into the spec**. One entry per requirement per run holds: `ref`,
+- Every `gintrack spec verify` run **records its result in the cache and writes nothing into the
+  spec**. (Amended by `GIT-US-0124`: the MCP `verify_requirement` runs no tests; it is the third
+  stamp moment below.) One entry per requirement per run holds: `ref`,
   `rev` (the block rev of §6 that was tested), `commit` (full hex id of `HEAD` when the tests ran),
   `tests` (the test ids that ran for it: the union of `Verifies:` markers and `trace.tests`),
   `result` (`pass` or `fail`), `at` (UTC RFC 3339) and `by` (the handle that ran it, needed to
@@ -329,6 +330,11 @@ writes back** into a spec as a result of running something, and it is written on
    records the cache entries, and writes a stamp for every requirement whose run is `pass`, one
    write per spec quoting its requirement revs (§6). Committing the result is the caller's step
    (the CI job commits it). A `fail` never overwrites an existing stamp.
+3. **By the MCP tool `verify_requirement`** (amendment, `GIT-US-0124`): for one requirement, under
+   the requirement rev the agent read, from the latest ingested results — only when every linked
+   test passed at one commit on the current block rev. Otherwise nothing is written and the tool
+   refuses with the failing or missing tests; a stale rev is `stale_revision`. An agent can then
+   record the evidence its passing tests produced without waiting for the story to reach `done`.
 
 A human may hand-write `verified`; it then means what the human says.
 

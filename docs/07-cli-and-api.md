@@ -1172,6 +1172,8 @@ close_sprint
 create_epic
 create_inbox_item
 create_milestone
+create_requirement
+create_spec
 create_story
 create_task
 get_item
@@ -1180,25 +1182,31 @@ import_youtrack_issues
 list_inbox
 list_items
 list_kb_pages
+list_requirements
 move_on_board
 publish_kb_page_to_youtrack
 push_comment_to_youtrack
 search_items
 search_kb
 search_semantic
+spec_impact
 sync_kb_page_from_youtrack
+trace_requirement
 transfer_sprint_items
 triage_inbox_item
 update_item
+update_requirement
+verify_requirement
 
 $ gintrack mcp --agent claude-code
-gintrack mcp 0.4.0: workspace work, 2 repositories, 8 tools (read-only)
+gintrack mcp 0.4.0: workspace work, 2 repositories, 11 tools (read-only)
 ```
 
 Nothing but JSON-RPC frames is written to stdout; the startup line and every log go to
-stderr. There are **twenty-seven tools**: nine read-only — `list_items`, `search_items`,
-`search_semantic`, `get_item`, `list_requirements`, `list_inbox`, `list_kb_pages`, `get_kb_page`
-and `search_kb` — and eighteen writes. Without writes enabled the eighteen write tools are absent
+stderr. There are **thirty tools**: eleven read-only — `list_items`, `search_items`,
+`search_semantic`, `get_item`, `list_requirements`, `spec_impact`, `trace_requirement`,
+`list_inbox`, `list_kb_pages`, `get_kb_page` and `search_kb` — and nineteen writes. Without writes
+enabled the nineteen write tools are absent
 from `tools/list`, not merely refused.
 
 Writes are enabled by `--allow-write` or by `mcp.allowWrite: true` in the configuration file
@@ -1209,7 +1217,7 @@ what the companion's **Settings › Agent tools (MCP)** switch writes
 (`PATCH /api/v1/mcp/settings`, section 5.5), which is the way to enable writes without
 editing a file or teaching every agent runtime a flag.
 
-The **same twenty-seven tools** are served over streamable HTTP at `POST /mcp` by
+The **same thirty tools** are served over streamable HTTP at `POST /mcp` by
 `gintrack serve --mcp-http` (section 4.1), which is what to use when the companion is already
 running: one index and one watcher, shared with the web UI.
 
@@ -4945,6 +4953,10 @@ graph of doc 03 §21.7. The graph needs the native marker scanner, so the vault 
 a host seam, `Vault.SetRequirementTracer` (`vault.RequirementTracer`, implemented by
 `internal/trace`'s `Engine`); the companion installs one per repository, and a browser-only
 session installs none, where both methods fail with `unavailable` — never an empty trace.
+`gintrack mcp` over stdio installs the same three seams of this section (trace, coverage,
+impact) through the companion's constructor, `server.InstallTraceSeams` (`GIT-US-0124`), reading
+test results from the cache directory `gintrack spec ingest` writes to; it wires no Pando, so its
+impact tiers 2 and 3 report `unavailable`.
 
 | Method | Params | Result |
 |---|---|---|
@@ -4968,7 +4980,7 @@ installs one per repository; a browser-only session installs none, where both fa
 | Method | Params | Result |
 |---|---|---|
 | `coverage.list` | `{project?, spec?, refs?: string[], status?: ("untested" \| "passing" \| "failing" \| "suspect")[]}` | `{coverage: {ref, status, reasons?: string[], tests?: {test, result}[]}[], total}` |
-| `requirement.stamp` | `{refs?: string[], spec?, by}` | `{stamped: {ref, verified: {rev, commit, at, by}}[], unstamped: {ref, reason}[], writes}` |
+| `requirement.stamp` | `{refs?: string[], spec?, by, rev?}` | `{stamped: {ref, verified: {rev, commit, at, by}}[], unstamped: {ref, reason}[], writes}` |
 
 A coverage row is deliberately compact — about 40 tokens with one linked test, plus about 15 per
 further test — because the MCP tools of `GIT-US-0123`/`GIT-US-0124` return it as is. `reasons` are
@@ -4979,7 +4991,11 @@ passed at one commit, through `UpdateRequirement` under the requirement rev, and
 other one in `unstamped` with its reason; `by` is recorded when the evidence names nobody. It
 never refuses a requirement and never writes anything but `verified`. The done-transition stamp
 of `GIT-US-0110` calls the same code from inside its own write. The coverage state itself is
-never written.
+never written. With `rev` (`GIT-US-0124`, the MCP `verify_requirement`) the call names exactly
+one ref — `invalid_request` otherwise, and for `rev: "*"` — and stamps it only under that
+requirement rev: a rev that moved fails with `stale_revision`, `currentRev` and a `verified`
+conflict, instead of being listed as `stale`. A requirement whose evidence allows no stamp is still
+listed in `unstamped`: nothing was written, so there was nothing to lock.
 
 **Requirement impact (`GIT-US-0119`).** One more method resolves the requirements a diff affects
 (doc 03 §21.11), through a third host seam, `Vault.SetRequirementImpact`

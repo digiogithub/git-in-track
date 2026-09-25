@@ -24,6 +24,7 @@ import (
 func registerTools(s *Server) {
 	registerItemTools(s)
 	registerSpecTools(s)
+	registerTraceTools(s)
 	registerInboxTools(s)
 	registerBoardTools(s)
 	registerSprintTools(s)
