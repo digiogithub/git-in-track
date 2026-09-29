@@ -21,7 +21,6 @@ because a commit list cannot express them.
   `restUrl`, `restToken` or `projectId` is refused by key name; a missing `pando` binary
   resolves to off or unavailable, never an error. Setups with `mcpUrl` set behave as before.
   Nothing starts a Pando process yet.
-
 - **A supervisor for managed Pando instances** (`GIT-US-0173`, ADR-039). The new native-only
   package `internal/pando/supervisor` runs one `pando mcp-server` per repository under
   `<cacheDir>/pando/<key>/` with a generated 0600 `.pando.toml` and token, a free loopback port,
@@ -41,7 +40,7 @@ because a commit list cannot express them.
   `maxInstances` and, per `indexed[]` row, `managed: {optedIn, state, pid, port, version, since,
   crashes, error}`. The KB half of `POST /api/v1/search/reindex` restarts the instance (its
   `KBAutoImport` performs the full sync) and `kbNote` says so. `PATCH` of `mcpUrl`, `restUrl` or
-  `projectId` is refused while the mode is managed. External and off modes behave as before.
+  `projectId` is refused while the mode is managed. External mode behaves as before; explicit `mode: off` now disables Pando entirely, an `mcpUrl` included.
   The version floor is only `search.pando.managed.minVersion`; gintrack has no built-in one.
 
 ### Changed
