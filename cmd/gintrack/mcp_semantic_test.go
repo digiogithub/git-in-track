@@ -118,7 +118,8 @@ func toolErrorOf(t *testing.T, res *sdk.CallToolResult) (code, retry string) {
 
 // fakeSemanticPando is an in-process Pando MCP endpoint answering every tool
 // the semantic searcher calls with Pando's own "nothing found" text, and
-// code_impact_analysis — the call graph of impact tier 2 — with no callers.
+// code_impact_analysis and code_find_symbol — the call graph of impact tier
+// 2 — with no callers and no definitions.
 // It counts the calls of each tool.
 type fakeSemanticPando struct {
 	srv      *httptest.Server
@@ -133,11 +134,14 @@ func newFakeSemanticPando(t *testing.T) *fakeSemanticPando {
 	srv := sdk.NewServer(&sdk.Implementation{Name: "pando-fake", Version: "test"}, nil)
 	for _, name := range []string{
 		"kb_search_documents", "code_hybrid_search", "code_list_projects", "code_index_project",
-		"code_impact_analysis",
+		"code_impact_analysis", "code_find_symbol",
 	} {
 		text := "No documents found matching the query."
-		if name == "code_impact_analysis" {
+		switch name {
+		case "code_impact_analysis":
 			text = `{"symbol":"NextID","count":0,"truncated":false,"callers":[]}`
+		case "code_find_symbol":
+			text = "No symbols found matching the pattern."
 		}
 		srv.AddTool(
 			&sdk.Tool{Name: name, Description: name, InputSchema: map[string]any{"type": "object"}},

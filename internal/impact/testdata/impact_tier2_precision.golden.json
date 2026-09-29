@@ -1,0 +1,87 @@
+{
+  "base": "<base>",
+  "files": 3,
+  "symbols": 4,
+  "tiers": [
+    {
+      "tier": 1,
+      "status": "ok",
+      "hits": 4
+    },
+    {
+      "tier": 2,
+      "status": "ok",
+      "hits": 2
+    },
+    {
+      "tier": 3,
+      "status": "skipped",
+      "hits": 0
+    }
+  ],
+  "hits": [
+    {
+      "ref": "ACME-SP-0003.R1",
+      "title": "Known link kinds",
+      "tier": 1,
+      "kind": "behaviour",
+      "status": "untested",
+      "reasons": [
+        "symbol:src/links/kinds.go#LinkKind.Valid"
+      ]
+    },
+    {
+      "ref": "ACME-SP-0003.R3",
+      "title": "Quote the rev",
+      "tier": 1,
+      "kind": "test-only",
+      "status": "untested",
+      "reasons": [
+        "symbol:src/links/store_test.go#TestRevProtocol",
+        "call:src/links/store.go#UpdateRequirement calls conflicts d1"
+      ]
+    },
+    {
+      "ref": "ACME-SP-0003.R4",
+      "title": "Refuse a stale rev",
+      "tier": 1,
+      "kind": "test-only",
+      "status": "untested",
+      "reasons": [
+        "symbol:src/links/store_test.go#TestRevProtocol",
+        "call:src/links/store.go#UpdateRequirement calls conflicts d1"
+      ]
+    },
+    {
+      "ref": "ACME-SP-0003.R5",
+      "title": "Name the conflicts",
+      "tier": 1,
+      "kind": "behaviour",
+      "status": "untested",
+      "reasons": [
+        "symbol:src/links/store.go#conflicts",
+        "symbol:src/links/store_test.go#TestRevProtocol"
+      ]
+    },
+    {
+      "ref": "ACME-SP-0003.R6",
+      "title": "Fake writes",
+      "tier": 2,
+      "kind": "test-only",
+      "status": "untested",
+      "reasons": [
+        "call:src/links/store_test.go#fakeWrite calls conflicts d1"
+      ]
+    },
+    {
+      "ref": "ACME-SP-0003.R8",
+      "title": "Apply a patch",
+      "tier": 2,
+      "kind": "behaviour",
+      "status": "untested",
+      "reasons": [
+        "call:src/links/store.go#ApplyPatch calls conflicts d1"
+      ]
+    }
+  ]
+}

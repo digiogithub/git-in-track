@@ -77,6 +77,9 @@ func TestSpecImpactPandoTiers(t *testing.T) {
 			if tt.pando && fake.called("code_impact_analysis") == 0 {
 				t.Error("tier 2 never called code_impact_analysis on the configured Pando")
 			}
+			if tt.pando && fake.called("code_find_symbol") == 0 {
+				t.Error("tier 2 never pinned a changed name with code_find_symbol (GIT-US-0166)")
+			}
 		})
 	}
 }

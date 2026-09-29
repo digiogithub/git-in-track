@@ -382,7 +382,11 @@ edges Pando builds while it indexes a code project (`GIT-US-0117`, for the impac
 first consumer. Tier 2 calls `ImpactAnalysis` once per changed symbol (its simple name, test
 files skipped, at most 25, depth 2 and 20 callers each by default, 10 s for the whole tier) on
 the repository's own project id (§0.1), and maps each caller's file and start line back to the
-traced symbols of the trace graph. Tier 3 sends one `search.semantic` query of kind
+traced symbols of the trace graph. Because `code_impact_analysis` resolves a callee by name, tier
+2 first pins each name with `FindSymbol` (`code_find_symbol`, `GIT-US-0166`) and skips a name that
+an unchanged definition shares; a failing pin turns pinning off, never the tier. A caller in a
+test file is test evidence, and a caller carrying several requirements does not turn a
+`test-only` hit into `behaviour` (docs/03 R-IMP-3). Tier 3 sends one `search.semantic` query of kind
 `requirement` (§2.1) built from the story title and the changed symbol names; its hits are
 `candidate`s with a score and never raise a tier-1 or tier-2 hit. Both read the client at call
 time, so a settings change applies to the next query. An `IsUnavailable` error, or no Pando at

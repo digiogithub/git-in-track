@@ -39,6 +39,9 @@ const (
 	maxQueryNames = 12
 	// maxReasons caps the reasons of one hit; the rest are counted in "+n".
 	maxReasons = 4
+	// maxDefinitions is the page of definitions tier 2 asks code_find_symbol
+	// for when it pins a name: enough to tell one from several.
+	maxDefinitions = 50
 )
 
 // Differ lists the files that changed between two revisions, or between a
@@ -59,6 +62,15 @@ type CommitLister interface {
 // one.
 type CallGraph interface {
 	ImpactAnalysis(ctx context.Context, projectID string, symbols []string, o pando.ImpactOptions) (pando.ImpactResult, error)
+}
+
+// SymbolFinder pins a name to its definitions (code_find_symbol);
+// *pando.Client is one. Pando resolves a callee by name, so a CallGraph that
+// is also a SymbolFinder lets tier 2 drop the callers of a name that an
+// unchanged definition shares (GIT-US-0166). Without one, every caller of
+// the name is kept.
+type SymbolFinder interface {
+	FindSymbol(ctx context.Context, projectID, name string, o pando.FindSymbolOptions) ([]pando.Symbol, error)
 }
 
 // Coverage computes the coverage rows of requirements; *trace.Coverage is
@@ -123,11 +135,20 @@ type hitState struct {
 	touched   bool // a code or test edge the diff changes, directly or through a call
 	behaviour bool // a reason reached the requirement through its code or the story
 	tested    bool // a reason reached it through a test that verifies it
+	shared    bool // a call reached it through a caller that carries several requirements
 	reasons   [4][]string
 }
 
+// kindShared is the kind of a tier-2 reason whose production caller carries
+// the code edges of several requirements (GIT-US-0166): the call says the
+// caller runs changed code, not which of its rules changed. It never
+// overrides a test-only verdict; alone, it is behaviour. It is never
+// rendered.
+const kindShared core.ImpactKind = "shared"
+
 // kind is the hit's ImpactKind: behaviour as soon as one reason is, test-only
-// when every certain reason came through a verifying test, empty for a
+// when every other certain reason came through a verifying test, behaviour
+// when the only reasons are calls from shared callers, empty for a
 // candidate.
 func (h *hitState) kind() core.ImpactKind {
 	switch {
@@ -135,6 +156,8 @@ func (h *hitState) kind() core.ImpactKind {
 		return core.ImpactKindBehaviour
 	case h.tested:
 		return core.ImpactKindTestOnly
+	case h.shared:
+		return core.ImpactKindBehaviour
 	}
 	return ""
 }
@@ -159,6 +182,7 @@ func (c *collector) add(ref core.RequirementRef, tier int, reason string, touche
 	h.touched = h.touched || touched
 	h.behaviour = h.behaviour || kind == core.ImpactKindBehaviour
 	h.tested = h.tested || kind == core.ImpactKindTestOnly
+	h.shared = h.shared || kind == kindShared
 	for _, r := range h.reasons[tier] {
 		if r == reason {
 			return h
@@ -390,7 +414,17 @@ func isTestPath(p string) bool {
 }
 
 // transitive runs tier 2: the callers of each changed symbol, mapped to the
-// traced symbols that enclose them.
+// traced symbols that enclose them. Three rules keep it precise
+// (GIT-US-0166, docs/03 R-IMP-3):
+//
+//   - a name that an unchanged definition shares is pinned first, when the
+//     client can (SymbolFinder), and its callers are not taken: Pando
+//     resolves callees by name, so they may call the other definition. A
+//     failing pin turns pinning off for the rest of the query;
+//   - a caller in a test file is test evidence (test-only), whatever marker
+//     it carries;
+//   - a production caller that carries the code edges of several
+//     requirements gives kindShared, which does not flip a test-only hit.
 func (r *Resolver) transitive(ctx context.Context, q core.ImpactQuery, symbols []changedSymbol,
 	graph *trace.Graph, tree fs.FS, col *collector,
 ) core.ImpactTier {
@@ -437,7 +471,24 @@ func (r *Resolver) transitive(ctx context.Context, q core.ImpactQuery, symbols [
 	}
 	var found []pending
 	lines := newLineMapper(tree)
+	finder, _ := client.(SymbolFinder)
+	changed := map[string]bool{}
+	for _, s := range symbols {
+		changed[s.path+"#"+s.symbol] = true
+	}
 	for _, name := range names {
+		if finder != nil {
+			defs, err := finder.FindSymbol(ctx, r.opts.ProjectID, name, pando.FindSymbolOptions{Limit: maxDefinitions})
+			switch {
+			case err != nil:
+				// A Pando without code_find_symbol still has callers: stop
+				// pinning and keep every caller, as without a finder. A Pando
+				// that cannot answer fails on the caller call below.
+				finder = nil
+			case sharedName(name, defs, changed, lines):
+				continue
+			}
+		}
 		// One call per symbol, so each caller is attributed to the symbol it
 		// was reached from.
 		out, err := client.ImpactAnalysis(ctx, r.opts.ProjectID, []string{name},
@@ -454,9 +505,18 @@ func (r *Resolver) transitive(ctx context.Context, q core.ImpactQuery, symbols [
 				continue
 			}
 			sym := lines.symbolAt(p, c.StartLine)
-			for _, e := range graph.ForSymbol(p, sym) {
+			edges := graph.ForSymbol(p, sym)
+			shared := codeRefs(edges) > 1
+			for _, e := range edges {
 				reason := "call:" + e.TraceRef() + " calls " + name + " d" + strconv.Itoa(max(c.Depth, 1))
-				found = append(found, pending{ref: e.Ref, reason: reason, kind: roleKind(e.Role)})
+				kind := roleKind(e.Role)
+				switch {
+				case isTestPath(p):
+					kind = core.ImpactKindTestOnly
+				case shared && kind == core.ImpactKindBehaviour:
+					kind = kindShared
+				}
+				found = append(found, pending{ref: e.Ref, reason: reason, kind: kind})
 			}
 		}
 	}
@@ -464,6 +524,50 @@ func (r *Resolver) transitive(ctx context.Context, q core.ImpactQuery, symbols [
 		col.add(f.ref, core.ImpactTierTransitive, f.reason, true, f.kind)
 	}
 	return tier
+}
+
+// sharedName reports whether a definition the diff did not change shares
+// name with a changed one: several callable definitions of that name, one of
+// which does not map (by file and start line) onto a changed symbol. Pando's
+// call edges cannot tell those definitions apart, so their callers are
+// dropped. A single definition, or several that all changed, is not shared.
+func sharedName(name string, defs []pando.Symbol, changed map[string]bool, lines *lineMapper) bool {
+	n, unchanged := 0, false
+	for _, d := range defs {
+		if d.Name != name || !callable(d.SymbolType) {
+			continue
+		}
+		n++
+		p, ok := repoPath(d.FilePath)
+		if !ok || !changed[p+"#"+lines.symbolAt(p, d.StartLine)] {
+			unchanged = true
+		}
+	}
+	return n > 1 && unchanged
+}
+
+// callable reports whether a code_find_symbol symbol type can be a callee:
+// every type but the ones that name data or a namespace. An unknown type
+// counts, so a name is never taken for unique because of a type Pando added.
+func callable(symbolType string) bool {
+	switch strings.ToLower(symbolType) {
+	case "field", "property", "variable", "constant", "struct", "interface", "type",
+		"enum", "module", "package", "namespace", "import":
+		return false
+	}
+	return true
+}
+
+// codeRefs counts the distinct requirements the code edges of a caller
+// carry.
+func codeRefs(edges []core.TraceEdge) int {
+	seen := map[core.RequirementRef]bool{}
+	for _, e := range edges {
+		if e.Role == core.TraceRoleCode {
+			seen[e.Ref] = true
+		}
+	}
+	return len(seen)
 }
 
 // pandoFailure is the status and message of a tier whose Pando call failed.
