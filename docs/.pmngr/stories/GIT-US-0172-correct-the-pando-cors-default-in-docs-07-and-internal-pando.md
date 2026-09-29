@@ -2,12 +2,15 @@
 id: GIT-US-0172
 type: story
 title: Correct the Pando CORS default in docs/07 and internal/pando
-status: backlog
+status: done
 priority: low
+assignees: [claude]
 author: mcp
 labels: [docs, server, agent-ok, good-first-issue]
 created: 2026-09-29T18:48:26Z
-updated: 2026-09-29T18:48:26Z
+updated: 2026-09-29T22:30:37Z
+started: 2026-09-29T22:21:52Z
+closed: 2026-09-29T22:30:37Z
 ---
 
 ## Description
@@ -16,10 +19,10 @@ docs/07 §3.3 and the package comment in `internal/pando/doc.go` say Pando's HTT
 
 ## Acceptance Criteria
 
-- [ ] docs/07 §3.3 and `internal/pando/doc.go` describe the empty default allow-list and the setting that widens it.
-- [ ] The minimum Pando version with the new default is stated, or the text says it is unknown.
-- [ ] `make lint` passes.
+- [x] docs/07 §3.3 and `internal/pando/doc.go` describe the empty default allow-list and the setting that widens it.
+- [x] The minimum Pando version with the new default is stated, or the text says it is unknown.
+- [x] `make lint` passes.
 
 ## Notes
 
-Found while researching ADR-039 (gintrack-managed Pando).
+Found while researching ADR-039 (gintrack-managed Pando). Fixed in PR #105: the setting is `MCPServer.HttpAllowedOrigins` (empty by default since Pando commit 13f01347b, first tag v0.715.6). ADR-039 still quotes the old wildcard claim as context; ADR text was left unchanged.
