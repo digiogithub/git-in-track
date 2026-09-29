@@ -1678,6 +1678,28 @@ Three things follow from Pando's side of the contract:
   the companion itself would refuse to change. The persona asks before writing; the flag is
   what enforces it.
 
+### 8.5.1 Reaching a managed Pando from an agent
+
+`gintrack mcp` never starts Pando and never proxies its tools (ADR-039): it stays the backlog
+and knowledge-base surface, and `search_semantic` and `spec_impact` tiers 2 and 3 only connect
+to an instance a running `gintrack serve` supervises, answering `unavailable` — "managed Pando
+is not running — start `gintrack serve`" — when there is none. An agent that wants Pando's own
+tools (code search, memory, browser) connects to Pando's MCP endpoint directly:
+
+```sh
+gintrack pando status --json --repo acme-api
+# instances[0].mcpUrl    -> http://127.0.0.1:40311/mcp
+# instances[0].tokenFile -> <cacheDir>/pando/<key>/token   (0600; read it, the status never prints it)
+```
+
+Point the client at `mcpUrl` with `Authorization: Bearer <contents of tokenFile>`. The port and
+token change when the instance restarts, so read them again rather than pinning them.
+
+**Warning:** that connection is Pando's own MCP server, not this one. It exposes Pando's write
+tools (memory, knowledge-base and code-index writes, file and browser tools), and none of the
+`--allow-write` guarantees of section 7.1 apply to it. Give it only to agents you would trust
+with those tools.
+
 ### 8.6 Verifying a connection
 
 ```bash

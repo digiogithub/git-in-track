@@ -162,7 +162,6 @@ of being started twice, and it is never stopped from here.
   Pando entirely even with an `mcpUrl` set (rule 1): no client is built, the backend is `core`,
   and semantic search answers `unavailable` naming `search.pando.mode: off`. Neither constructs
   an instance. Browser-only mode has no instance and answers `unavailable`.
-
 - **Turning a repository on or off (GIT-US-0177).** The opt-in is saved by
   `PUT /api/v1/search/managed/{repo}/opt-in` (docs/07): the request writes `repos[].semanticSearch`
   in the machine-local configuration file first, guarded so that a file another writer changed

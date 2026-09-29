@@ -2221,6 +2221,45 @@ or an empty workspace; `5` when a `project.yaml` changed between the plan and th
 
 ---
 
+### 4.23 `gintrack pando status|start|stop|restart|reset`
+
+The managed Pando instances of ADR-039: in managed mode `gintrack serve` supervises one Pando
+per repository with `semanticSearch: true`. `gintrack mcp` and `gintrack spec` (impact tiers 2
+and 3, `search_semantic`) never start one and never proxy Pando's tools: they read the
+instance's `state.json`, its 0600 token file, check that the pids are alive and that the port
+answers, and otherwise report `unavailable` with "managed Pando is not running — start
+`gintrack serve`". External and off modes are unchanged.
+
+```
+gintrack pando status [--repo <id>] [--json]
+gintrack pando start|stop|restart|reset [--repo <id>] [--companion-url <url>] [--token <t>] [--json]
+```
+
+`status` works without a server. It prints the effective mode and the rule that chose it, then
+for each project repository the `state`, `pid`, `port`, `version`, `mcpUrl` and `tokenFile`.
+**The token is never printed**; an agent reads it from `tokenFile`. A state file whose
+supervising `gintrack serve` (or whose Pando child) is gone is reported as `stopped (stale)`;
+an opted-in repository with no instance directory is `not running`, an opted-out one
+`disabled`. `--repo` with an unknown id exits `4`.
+
+The other four verbs act through the running `serve`: they `POST` to
+`/api/v1/search/managed/{repo}/{verb}` at `--companion-url` (default: the configured bind
+address and port, as `gintrack agent init`) with `--token` (default `server.token`). With no
+server they fail with exit `1` and "gintrack serve is not running at <url>"; nothing is
+started. Without `--repo` they act on every repository that opted in. The opt-in itself is not
+changed, so a repository stopped here comes back with the next `serve`.
+
+| Verb | Effect |
+|------|--------|
+| `start` | Starts the instance (works for a repository that has not opted in, until `serve` exits). |
+| `stop` | Stops it and keeps its index and data. |
+| `restart` | Bounces the child without counting a crash and asks for a fresh code index. |
+| `reset` | Stops it, deletes `<cacheDir>/pando/<key>/data` (the index) and starts it again. |
+
+**Exit codes**: `0` ok; `1` serve unreachable, token refused or another failure; `2` no
+repository opted in and no `--repo`; `4` unknown repository; `5` the instance cannot take the
+verb (none running for `restart`, or supervised by another `gintrack serve`).
+
 ## 5. Local REST API
 
 Base URL: `http://127.0.0.1:7317/api/v1`. All requests and responses are JSON
@@ -3499,6 +3538,7 @@ mounted repository, whether it answered, and a button to reindex.
 GET   /api/v1/search/settings
 PATCH /api/v1/search/settings   {"mcpUrl":"http://127.0.0.1:9777/mcp","projectId":"acme-api"}
 POST  /api/v1/search/reindex
+POST  /api/v1/search/managed/{repo}/start|stop|restart|reset
 ```
 
 `GET` answers:
@@ -3595,6 +3635,14 @@ the documentation folder and reindexes an edit as it happens.
 202
 {"jobId":"reindex-1","startedAt":"2026-09-15T10:04:00Z","phase":"code","repos":[]}
 ```
+
+`POST /api/v1/search/managed/{repo}/start|stop|restart|reset` is the lifecycle control of one
+repository's managed Pando (`gintrack pando`, §4.23). It answers `200` with
+`{"repo","action","managed":{optedIn,state,pid,port,version,since,crashes,error}}` and never the
+endpoint or token. `404` unknown repository; `400` `search_not_configured` when Pando is not in
+managed mode; `409` `managed_instance_refused` when there is nothing to restart or another
+`gintrack serve` supervises the instance. `start` and `stop` do not change
+`repos[].semanticSearch`; `reset` deletes only the instance's `data` directory.
 
 Poll `GET /api/v1/search/settings`, whose `reindex` field carries the running job
 and, afterwards, the last finished one:

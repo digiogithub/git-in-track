@@ -103,6 +103,7 @@ Start with:
 		newYouTrackCommand(flags),
 		newAgentCommand(flags),
 		newSpecCommand(flags),
+		newPandoCommand(flags),
 	)
 	return cmd
 }
