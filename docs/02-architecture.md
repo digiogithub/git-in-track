@@ -724,6 +724,12 @@ contract, never the only one.
   always answer from the core index alone. A companion whose Pando is down, slow
   or unconfigured answers from the core index too: the semantic leg has a 300 ms
   budget and a failure degrades the answer instead of failing the request.
+- **Who starts it (ADR-039, proposed).** `internal/pando/supervisor` is the native-only
+  package that runs one managed `pando mcp-server` per opted-in repository under
+  `<cacheDir>/pando/<key>/`: a generated 0600 `.pando.toml` and token, a free loopback
+  port, health checks with our own token, restart with backoff, a per-instance lock and
+  `state.json`. It takes a plain options struct and is not wired into `gintrack serve`
+  yet (GIT-US-0175); its internals are documented in the package's `doc.go`.
 - **Never one ranking.** Pando's knowledge-base scores are reciprocal-rank-fusion
   values around 0.016 while the core score counts field weights; the two are
   incommensurable. The merge is therefore a concatenation — exact matches first in
