@@ -19,6 +19,10 @@
 //     unchanged definition shares is pinned with code_find_symbol and its
 //     callers dropped; a test-file caller is test evidence; a caller that
 //     carries several requirements never flips a test-only hit (GIT-US-0166).
+//     Pando answers "No callers found" alike for a symbol nothing calls and
+//     for a project indexed without its code graph, so when no changed name
+//     has a caller, code_related_files probes the changed files: none coupled
+//     makes the tier unavailable (NoCallEdges), never ok (GIT-US-0167).
 //  3. Semantic. Pando's semantic search over requirement blocks, queried
 //     with the changed symbol names and the story title. Its hits are
 //     candidates with a score, never merged into the certainty of 1 and 2.

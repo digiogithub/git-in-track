@@ -1170,7 +1170,9 @@ Tiers 2 and 3 read the Pando client and semantic searcher that `search_semantic`
 the same constructor (`server.InstallSemanticSearch`) on both transports: `gintrack serve` and
 stdio `gintrack mcp` alike hand them to the impact seam (`GIT-US-0147`), so with
 `search.pando.mcpUrl` configured the two tiers answer over stdio exactly as over HTTP.
-When a tier cannot run — no Pando configured, or Pando not answering — its
+When a tier cannot run — no Pando configured, Pando not answering, or, for tier 2, a code
+project indexed without call edges (`the Pando code project has no call edges: index the
+repository root with [TokenOptimization] BuildCodeGraph = true`, `GIT-US-0167`, doc 21 §6.1) — its
 status says `unavailable` and the other tiers still answer, so an agent without Pando still gets
 the tier-1 hits: the direct trace, the Spec Delta and the links. Only a session that cannot read
 git history at all (browser-only mode, or a repository without git) refuses the whole call with
@@ -1988,8 +1990,10 @@ Tiers 1 and 2 (doc 03 §21.11) do **not** see:
   exported name, a declaration whose initializer uses the changed one, or a constant in a
   TypeScript or Python file.
 - **Unmarked code that only Pando can reach.** A changed helper with no marker reaches the
-  requirements of its traced callers only through tier 2, which needs Pando; without it tier 2
-  is `unavailable`, which means *unknown*, never *nothing affected*.
+  requirements of its traced callers only through tier 2, which needs Pando with a code graph
+  (`[TokenOptimization] BuildCodeGraph = true`, on the project id derived from the repository
+  root); without either, tier 2 is `unavailable`, which means *unknown*, never *nothing
+  affected*.
 - **Which case of a test changed.** A changed test reaches every requirement its test function
   or sub-test `Verifies:`. Those hits are `kind: test-only` (`GIT-US-0157`): the test changed,
   the behaviour may not have. They rank below the behaviour hits, and

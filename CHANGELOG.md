@@ -24,6 +24,16 @@ because a commit list cannot express them.
   - a production caller carrying several requirements no longer turns a `test-only` hit into
     `behaviour`.
 
+### Fixed
+
+- **Impact tier 2 reports a missing code graph as `unavailable`** (`GIT-US-0167`, docs/03
+  R-IMP-3, docs/21 §6.1). A Pando project indexed with `[TokenOptimization] BuildCodeGraph =
+  false` has no call edges and answers "No callers found" for every name, which tier 2 reported
+  as `ok` with no hits. When no changed name has a caller, tier 2 now probes the changed files
+  with `code_related_files`; none coupled to another makes it `unavailable` with a fixed message
+  naming `BuildCodeGraph`. docs/21 §6.1 documents the setting and that the code project id is
+  derived from the repository root.
+
 ## [2.1.0] — 2026-09-25
 
 A minor release: spec-driven development (Phase 11, ADR-037). Specs are opt-in — a project

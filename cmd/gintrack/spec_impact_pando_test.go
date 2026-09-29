@@ -12,6 +12,7 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/digiogithub/git-in-track/internal/core"
+	"github.com/digiogithub/git-in-track/internal/impact"
 )
 
 // touchNextID edits NextID, which ACME-SP-0001.R1 traces, so the diff against
@@ -80,7 +81,42 @@ func TestSpecImpactPandoTiers(t *testing.T) {
 			if tt.pando && fake.called("code_find_symbol") == 0 {
 				t.Error("tier 2 never pinned a changed name with code_find_symbol (GIT-US-0166)")
 			}
+			if tt.pando && fake.called("code_related_files") == 0 {
+				t.Error("tier 2 never checked that a no-callers answer came from a code graph (GIT-US-0167)")
+			}
 		})
+	}
+}
+
+// TestSpecImpactPandoNoCallEdges is GIT-US-0167 over the CLI: a Pando whose
+// project was indexed with [TokenOptimization] BuildCodeGraph = false answers
+// "No callers found" for every name and relates no file, and tier 2 reports
+// that as unavailable, naming BuildCodeGraph, never as ok with no hits.
+func TestSpecImpactPandoNoCallEdges(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	h := newHarness(t)
+	root := gitSpecRepo(t, h)
+	touchNextID(t, root)
+	fake := newFakeSemanticPando(t)
+	fake.noCallEdges.Store(true)
+	fake.usePando(t, h.Config)
+
+	got := decode[specImpactPayload](t, h.mustRun("spec", "impact", "--since", "HEAD", "--json"))
+	if s := tierStatus(got.Report.Tiers, core.ImpactTierDirect); s != core.ImpactTierOK {
+		t.Errorf("tier 1 = %q, want ok", s)
+	}
+	for _, tr := range got.Report.Tiers {
+		if tr.Tier != core.ImpactTierTransitive {
+			continue
+		}
+		if tr.Status != core.ImpactTierUnavailable || tr.Message != impact.NoCallEdges {
+			t.Errorf("tier 2 = %+v, want unavailable with %q", tr, impact.NoCallEdges)
+		}
+	}
+	if fake.called("code_related_files") == 0 {
+		t.Error("tier 2 never probed the code graph with code_related_files")
 	}
 }
 
