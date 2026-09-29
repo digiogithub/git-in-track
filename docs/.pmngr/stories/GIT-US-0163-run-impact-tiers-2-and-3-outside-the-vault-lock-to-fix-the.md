@@ -2,7 +2,7 @@
 id: GIT-US-0163
 type: story
 title: Run impact tiers 2 and 3 outside the vault lock to fix the Pando deadlock
-status: in_progress
+status: done
 priority: critical
 parent: GIT-EP-0029
 milestone: GIT-M-0015
@@ -11,8 +11,9 @@ author: claude
 labels: [server, core, agent-ok]
 estimate: 3
 created: 2026-09-25T12:27:40Z
-updated: 2026-09-25T12:27:40Z
+updated: 2026-09-29T18:43:46Z
 started: 2026-09-25T12:27:40Z
+closed: 2026-09-29T18:43:46Z
 links:
   - { kind: relates_to, target: GIT-US-0161 }
 ---
@@ -29,8 +30,8 @@ Tier 2's Pando calls also run under the lock for up to their 10 s budget. All th
 
 ## Acceptance Criteria
 
-- [ ] A failing test first: `impact.query` and `impact.report` with a semantic searcher that resolves its candidates through the vault. It deadlocks or times out today.
-- [ ] The impact backend's Pando calls (tier 2 call graph and tier 3 semantic search) run without the vault mutex held. They use an index snapshot taken under the lock, or a lock-free resolver. The vault lock is never held across a network call.
-- [ ] `gintrack spec impact` (default tiers), stdio `spec_impact` and the companion's impact endpoint answer with Pando configured. Tests with the fake Pando server cover all three.
-- [ ] No regression under `-race`. `make test`, `make lint` and `make wasm` pass.
-- [ ] CHANGELOG records the fix, and docs/07 or docs/21 say which calls run outside the lock, if they describe locking.
+- [x] A failing test first: `impact.query` and `impact.report` with a semantic searcher that resolves its candidates through the vault. It deadlocks or times out today.
+- [x] The impact backend's Pando calls (tier 2 call graph and tier 3 semantic search) run without the vault mutex held. They use an index snapshot taken under the lock, or a lock-free resolver. The vault lock is never held across a network call.
+- [x] `gintrack spec impact` (default tiers), stdio `spec_impact` and the companion's impact endpoint answer with Pando configured. Tests with the fake Pando server cover all three.
+- [x] No regression under `-race`. `make test`, `make lint` and `make wasm` pass.
+- [x] CHANGELOG records the fix, and docs/07 or docs/21 say which calls run outside the lock, if they describe locking.

@@ -2,15 +2,18 @@
 id: GIT-US-0167
 type: story
 title: Report a missing Pando code graph as unavailable in impact tier 2
-status: todo
+status: done
 priority: medium
 parent: GIT-EP-0029
 milestone: GIT-M-0015
+assignees: [claude]
 author: claude
 labels: [server, docs, agent-ok]
 estimate: 2
 created: 2026-09-25T12:27:40Z
-updated: 2026-09-25T12:27:40Z
+updated: 2026-09-29T19:15:43Z
+started: 2026-09-29T17:37:02Z
+closed: 2026-09-29T19:15:43Z
 links:
   - { kind: relates_to, target: GIT-US-0161 }
 ---
@@ -21,7 +24,7 @@ When a project is indexed with `[TokenOptimization] BuildCodeGraph = false`, Pan
 
 ## Acceptance Criteria
 
-- [ ] A missing code graph (no call edges for the project) makes tier 2 answer `unavailable` with a fixed reason that names `BuildCodeGraph`, never `ok 0`.
-- [ ] Tests with the fake Pando server cover a project without call edges and a real "no callers" answer.
-- [ ] docs/21 §6.1 documents that tier 2 needs `[TokenOptimization] BuildCodeGraph = true`, and that the code project id is derived from the repository root.
-- [ ] `make test` and `make lint` pass.
+- [x] A missing code graph (no call edges for the project) makes tier 2 answer `unavailable` with a fixed reason that names `BuildCodeGraph`, never `ok 0`.
+- [x] Tests with the fake Pando server cover a project without call edges and a real "no callers" answer.
+- [x] docs/21 §6.1 documents that tier 2 needs `[TokenOptimization] BuildCodeGraph = true`, and that the code project id is derived from the repository root.
+- [x] `make test` and `make lint` pass.

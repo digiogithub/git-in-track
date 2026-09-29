@@ -2,7 +2,7 @@
 id: GIT-US-0158
 type: story
 title: Reach traced code through changed package-level declarations
-status: in_progress
+status: done
 priority: medium
 parent: GIT-EP-0025
 milestone: GIT-M-0015
@@ -11,8 +11,9 @@ author: mcp
 labels: [core, agent-ok]
 estimate: 3
 created: 2026-09-24T23:18:51Z
-updated: 2026-09-25T11:15:00Z
+updated: 2026-09-29T18:43:46Z
 started: 2026-09-25T11:15:00Z
+closed: 2026-09-29T18:43:46Z
 ---
 
 ## Description
@@ -21,7 +22,7 @@ The GIT-US-0137 benchmark (PR #76) found two tier-1 misses: a change to a packag
 
 ## Acceptance Criteria
 
-- [ ] In Go, a changed package-level const, var or type is mapped to the traced symbols in the same package that reference it. This uses `go/parser` identifier resolution, deterministically and without Pando.
-- [ ] A removed line inside a traced function counts as touching that function.
-- [ ] Both benchmark misses become hits in a regression fixture, and tiers 1–2 stay deterministic.
-- [ ] docs/03 §21.11 is updated.
+- [x] In Go, a changed package-level const, var or type is mapped to the traced symbols in the same package that reference it. This uses `go/parser` identifier resolution, deterministically and without Pando.
+- [x] A removed line inside a traced function counts as touching that function.
+- [x] Both benchmark misses become hits in a regression fixture, and tiers 1–2 stay deterministic.
+- [x] docs/03 §21.11 is updated.

@@ -2,7 +2,7 @@
 id: GIT-US-0164
 type: story
 title: Follow Pando's response cache in the Pando client
-status: todo
+status: done
 priority: high
 parent: GIT-EP-0029
 milestone: GIT-M-0015
@@ -10,7 +10,9 @@ author: claude
 labels: [server, agent-ok]
 estimate: 3
 created: 2026-09-25T12:27:40Z
-updated: 2026-09-25T12:27:40Z
+updated: 2026-09-29T18:43:56Z
+started: 2026-09-29T18:43:17Z
+closed: 2026-09-29T18:43:56Z
 links:
   - { kind: relates_to, target: GIT-US-0161 }
 ---
@@ -23,8 +25,8 @@ The `unavailable` message also quotes Pando's random `cache_id`. So impact repor
 
 ## Acceptance Criteria
 
-- [ ] A failing test with the fake Pando server returning a cached-response stub.
-- [ ] `internal/pando` detects the `[Response cached …]` stub and pages the full result with `cache_read`, or keeps requests under the cache threshold. A result it still cannot decode is reported as `unavailable` with a short, fixed reason.
-- [ ] Tier messages never embed a Pando `cache_id` or any other random value. Two runs against one index give byte-identical reports.
-- [ ] `search_semantic` and workspace search benefit from the same fix, and a test covers each.
-- [ ] docs/21 describes the behaviour. `make test` and `make lint` pass.
+- [x] A failing test with the fake Pando server returning a cached-response stub.
+- [x] `internal/pando` detects the `[Response cached …]` stub and pages the full result with `cache_read`, or keeps requests under the cache threshold. A result it still cannot decode is reported as `unavailable` with a short, fixed reason.
+- [x] Tier messages never embed a Pando `cache_id` or any other random value. Two runs against one index give byte-identical reports.
+- [x] `search_semantic` and workspace search benefit from the same fix, and a test covers each.
+- [x] docs/21 describes the behaviour. `make test` and `make lint` pass.
