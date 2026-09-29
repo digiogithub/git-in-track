@@ -90,6 +90,10 @@ func (s *Server) mountAPI(api chi.Router) {
 		p.Get("/search/settings", s.handleSearchSettings)
 		p.Patch("/search/settings", s.handleSearchSettingsPatch)
 		p.Post("/search/reindex", s.handleSearchReindex)
+		// Lifecycle of the managed Pando of one repository (GIT-US-0176).
+		for _, verb := range []string{"start", "stop", "restart", "reset"} {
+			p.Post("/search/managed/{repo}/"+verb, s.handleManagedControl(verb))
+		}
 		p.Post("/validate", s.handleValidate)
 
 		// Phases 3 and 4. The routes exist so that a client learns "not yet"

@@ -14,6 +14,16 @@ because a commit list cannot express them.
 
 ### Added
 
+- **`gintrack mcp` and `gintrack spec` connect to the managed Pando; new `gintrack pando`**
+  (`GIT-US-0176`, ADR-039, docs/07 §4.23, docs/08 §8.5.1). In managed mode `search_semantic` and
+  impact tiers 2 and 3 use the instance a running `gintrack serve` supervises, found through its
+  `state.json`, token file, live pids and a port check; they never start or proxy Pando, and
+  answer `unavailable` ("managed Pando is not running — start `gintrack serve`") when there is
+  none. `gintrack pando status [--json] [--repo]` works without a server and prints the mode,
+  rule, state, pid, port, version, `mcpUrl` and `tokenFile` (never the token; a dead supervisor is
+  `stopped (stale)`). `gintrack pando start|stop|restart|reset` act through the running `serve`
+  with the new `POST /api/v1/search/managed/{repo}/start|stop|restart|reset` routes.
+
 - **Configuration keys and mode resolution for managed Pando** (`GIT-US-0174`, ADR-039,
   docs/07 §3.3). `search.pando.mode` (`auto` by default), `search.pando.managed.*` and the
   machine-local `repos[].semanticSearch` are parsed and validated, and `gintrack doctor` prints
