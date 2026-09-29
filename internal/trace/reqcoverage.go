@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/digiogithub/git-in-track/internal/core"
@@ -139,7 +140,32 @@ type Coverage struct {
 	engine   *Engine
 	evidence EvidenceSource
 	changes  ChangeLister
+	// maxDeclUsers bounds the decl: reach of drift; 0 is DefaultMaxDeclUsers,
+	// a negative value no bound.
+	maxDeclUsers int
 }
+
+// DefaultMaxDeclUsers bounds the decl: reach of a trace hit: a changed
+// package-level const, var or type that more functions of its package use
+// reaches none of them (GIT-US-0168). Impact tier 1 and coverage drift
+// (GIT-US-0169) share it, so the two never disagree about what a widely used
+// declaration reaches.
+const DefaultMaxDeclUsers = 10
+
+// WideDecl reports whether h is a decl hit whose declaration has more users
+// than bound: 0 means DefaultMaxDeclUsers, a negative bound no bound.
+func WideDecl(h core.TraceHit, bound int) bool {
+	if h.Reason != "decl" {
+		return false
+	}
+	if bound == 0 {
+		bound = DefaultMaxDeclUsers
+	}
+	return bound > 0 && h.Users > bound
+}
+
+// SetMaxDeclUsers sets the bound of coverage drift; see DefaultMaxDeclUsers.
+func (c *Coverage) SetMaxDeclUsers(n int) { c.maxDeclUsers = n }
 
 // NewCoverage returns the coverage backend of one working tree. A nil
 // evidence source is an empty cache; a nil change lister (a
@@ -280,15 +306,31 @@ func (d *drift) reasons(commit string, ref core.RequirementRef) ([]string, error
 		}
 		d.byCommit[commit] = hits
 	}
+	return driftReasons(hits[ref], d.c.maxDeclUsers), nil
+}
+
+// driftReasons turns the trace hits of one requirement into drift reasons. A
+// decl hit through a declaration with more users than the bound (WideDecl) is not
+// drift; when it is the only change, one "bounded:<n>" reason counts the
+// traced edges it suppressed, so the drift stays visible (GIT-US-0169).
+func driftReasons(hits []core.TraceHit, bound int) []string {
 	var out []string
-	for _, h := range hits[ref] {
+	wide := map[string]bool{}
+	for _, h := range hits {
+		if WideDecl(h, bound) {
+			wide[h.TraceRef()] = true
+			continue
+		}
 		prefix := core.CoverageReasonCode
 		if h.Role == core.TraceRoleTest {
 			prefix = core.CoverageReasonTest
 		}
 		out = append(out, prefix+h.TraceRef())
 	}
-	return out, nil
+	if len(out) == 0 && len(wide) > 0 {
+		out = []string{core.CoverageReasonBounded + strconv.Itoa(len(wide))}
+	}
+	return out
 }
 
 // CoverageInput is what Classify decides one requirement's state from.
@@ -407,6 +449,7 @@ func classifyDrift(row *core.CoverageRow, commits []string, driftSince DriftFunc
 	}
 	seen := map[string]bool{}
 	var changed []string
+	bounded := 0
 	for _, commit := range commits {
 		reasons, err := driftSince(commit)
 		if errors.Is(err, ErrUnknownCommit) {
@@ -421,6 +464,12 @@ func classifyDrift(row *core.CoverageRow, commits []string, driftSince DriftFunc
 			return err
 		}
 		for _, r := range reasons {
+			if n, ok := strings.CutPrefix(r, core.CoverageReasonBounded); ok {
+				if v, _ := strconv.Atoi(n); v > bounded {
+					bounded = v
+				}
+				continue
+			}
 			if !seen[r] {
 				seen[r] = true
 				changed = append(changed, r)
@@ -428,6 +477,9 @@ func classifyDrift(row *core.CoverageRow, commits []string, driftSince DriftFunc
 		}
 	}
 	if len(changed) == 0 {
+		if bounded > 0 && row.Status == core.CoveragePassing {
+			row.Reasons = append(row.Reasons, core.CoverageReasonBounded+strconv.Itoa(bounded))
+		}
 		return nil
 	}
 	sort.Strings(changed)

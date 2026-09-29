@@ -598,7 +598,7 @@ export type TraceHit = TraceEdge & {
 /**
  * The computed coverage of one requirement (doc 03 §21.6); derived, never
  * stored. `reasons` are short codes: `no-tests`, `no-results`, `partial`,
- * `failed`, `text`, `code:<ref>`, `test:<ref>`, `+<n>`, `commit-unknown`,
+ * `failed`, `text`, `code:<ref>`, `test:<ref>`, `+<n>`, `bounded:<n>`, `commit-unknown`,
  * `unchecked`, and the evidence that decided, `results` or `stamp`.
  */
 export type CoverageRow = {
