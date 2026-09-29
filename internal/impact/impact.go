@@ -42,7 +42,18 @@ const (
 	// maxDefinitions is the page of definitions tier 2 asks code_find_symbol
 	// for when it pins a name: enough to tell one from several.
 	maxDefinitions = 50
+	// maxGraphProbes caps the changed files tier 2 asks code_related_files
+	// about when no changed name has a caller (GIT-US-0167).
+	maxGraphProbes = 5
 )
+
+// NoCallEdges is the fixed message of a tier 2 that found no call edge in
+// the Pando code project: every changed name answered "No callers found" and
+// no changed file is coupled to another. Pando answers that way both for a
+// symbol nothing calls and for a project indexed without its code graph, so
+// an empty answer is only trusted once the graph is shown to exist.
+const NoCallEdges = "the Pando code project has no call edges: " +
+	"index the repository root with [TokenOptimization] BuildCodeGraph = true"
 
 // Differ lists the files that changed between two revisions, or between a
 // revision and the working tree (gitops.WorkingTree). gitops.Backend is one.
@@ -71,6 +82,16 @@ type CallGraph interface {
 // the name is kept.
 type SymbolFinder interface {
 	FindSymbol(ctx context.Context, projectID, name string, o pando.FindSymbolOptions) ([]pando.Symbol, error)
+}
+
+// FileRelator ranks the files coupled to one file (code_related_files);
+// *pando.Client is one. A CallGraph that is also a FileRelator lets tier 2
+// tell a project without call edges from a diff nothing calls (GIT-US-0167):
+// when no changed name has a caller, the changed files are probed, and a
+// project where none is coupled to another answers `unavailable`
+// (NoCallEdges). Without one, an empty answer is taken as it comes.
+type FileRelator interface {
+	RelatedFiles(ctx context.Context, projectID, path string, o pando.RelatedFilesOptions) (pando.RelatedFilesResult, error)
 }
 
 // Coverage computes the coverage rows of requirements; *trace.Coverage is
@@ -470,6 +491,7 @@ func (r *Resolver) transitive(ctx context.Context, q core.ImpactQuery, symbols [
 		kind   core.ImpactKind
 	}
 	var found []pending
+	callers := 0
 	lines := newLineMapper(tree)
 	finder, _ := client.(SymbolFinder)
 	changed := map[string]bool{}
@@ -499,6 +521,7 @@ func (r *Resolver) transitive(ctx context.Context, q core.ImpactQuery, symbols [
 			return tier
 		}
 		tier.Truncated = tier.Truncated || out.Truncated
+		callers += len(out.Callers)
 		for _, c := range out.Callers {
 			p, ok := repoPath(c.FilePath)
 			if !ok {
@@ -520,10 +543,53 @@ func (r *Resolver) transitive(ctx context.Context, q core.ImpactQuery, symbols [
 			}
 		}
 	}
+	if len(names) > 0 && callers == 0 {
+		if status, message := r.probeGraph(ctx, client, symbols); status != core.ImpactTierOK {
+			tier.Status, tier.Message, tier.Truncated = status, message, false
+			return tier
+		}
+	}
 	for _, f := range found {
 		col.add(f.ref, core.ImpactTierTransitive, f.reason, true, f.kind)
 	}
 	return tier
+}
+
+// probeGraph checks that the Pando code project has call edges, once tier 2
+// found no caller of any changed name. It asks code_related_files about the
+// changed files, test files included (a test calls the code it tests), in
+// sorted order and at most maxGraphProbes of them: the first coupled file
+// proves the graph, and the empty answers were real. No coupled file gives
+// `unavailable` with NoCallEdges, a Pando that cannot answer the probe gives
+// its own fixed reason, and a client that cannot probe leaves the tier ok.
+func (r *Resolver) probeGraph(ctx context.Context, client CallGraph, symbols []changedSymbol) (status core.ImpactTierStatus, message string) {
+	relator, ok := client.(FileRelator)
+	if !ok {
+		return core.ImpactTierOK, ""
+	}
+	seen := map[string]bool{}
+	var files []string
+	for _, s := range symbols {
+		if !seen[s.path] {
+			seen[s.path] = true
+			files = append(files, s.path)
+		}
+	}
+	sort.Strings(files)
+	if len(files) > maxGraphProbes {
+		files = files[:maxGraphProbes]
+	}
+	for _, p := range files {
+		res, err := relator.RelatedFiles(ctx, r.opts.ProjectID, p, pando.RelatedFilesOptions{Limit: 1})
+		switch {
+		case err == nil && len(res.Files) > 0:
+			return core.ImpactTierOK, ""
+		case err != nil && (pando.IsUnavailable(err) || errors.Is(err, context.DeadlineExceeded)):
+			return pandoFailure(err)
+		}
+		// Any other failure is no evidence of a graph: try the next file.
+	}
+	return core.ImpactTierUnavailable, NoCallEdges
 }
 
 // sharedName reports whether a definition the diff did not change shares

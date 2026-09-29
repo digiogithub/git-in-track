@@ -397,6 +397,25 @@ configured`, `Pando is unreachable`, `Pando rejected the token`, `Pando did not 
 text can carry a Pando cache id or an address, so two runs against one index give byte-identical
 reports (`GIT-US-0164`).
 
+**Tier 2 needs the code graph (`GIT-US-0167`).** `code_impact_analysis` reads the call edges
+Pando extracts while it indexes a code project, and Pando extracts them only with
+`[TokenOptimization] BuildCodeGraph = true` in its `.pando.toml` (the default; a project indexed
+while it was `false` has symbols but no edges). Pando's answer is the same sentence — `No callers
+found … or the project lacks call edges for its language` — for a symbol nothing calls and for a
+project without edges, so tier 2 does not trust it on its own: when **no** changed name has a
+caller, it asks `code_related_files` about the changed files (test files included, sorted, at
+most 5). The first file coupled to another proves the graph and the tier is `ok` with no hits;
+none makes the tier `unavailable` with the fixed message `the Pando code project has no call
+edges: index the repository root with [TokenOptimization] BuildCodeGraph = true`, never `ok 0`.
+A probe Pando cannot answer gives its own `pando.Reason`. To fix it, turn the setting on and
+re-index the project.
+
+The code project tier 2 asks about is **derived from the repository root**, never from
+`search.pando.projectId` alone: `pando.SanitizeProjectID(<absolute repository path>)`, Pando's own
+rule, so `/www/git-in-track` is `www_git-in-track` (§0.1). A project registered under another id
+— one indexed by hand under a name of its own — is not the one tier 2 reads, and it answers like
+a project without edges. `code_list_projects` shows the ids Pando holds.
+
 ---
 
 ## 7. Operating notes

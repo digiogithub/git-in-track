@@ -361,3 +361,113 @@ func TestImpactTier2Precision(t *testing.T) {
 		}
 	})
 }
+
+// relatorGraph is a finderGraph that also answers code_related_files, the
+// probe tier 2 runs when no changed name has a caller (GIT-US-0167).
+type relatorGraph struct {
+	*finderGraph
+	related map[string][]pando.RelatedFile
+	err     error    // the answer of every RelatedFiles, when set
+	probed  []string // every file RelatedFiles was called with
+}
+
+func (g *relatorGraph) RelatedFiles(_ context.Context, projectID, path string, _ pando.RelatedFilesOptions) (pando.RelatedFilesResult, error) {
+	g.probed = append(g.probed, path)
+	if g.err != nil {
+		return pando.RelatedFilesResult{}, g.err
+	}
+	if projectID != "acme" {
+		return pando.RelatedFilesResult{}, pando.ErrInvalidOptions
+	}
+	return pando.RelatedFilesResult{Files: g.related[path]}, nil
+}
+
+// TestImpactTier2CodeGraph pins GIT-US-0167: a project indexed without call
+// edges ([TokenOptimization] BuildCodeGraph = false) answers "No callers
+// found" for every name, which is not the same answer as a real "no callers".
+// Tier 2 tells them apart with code_related_files, and reports the first as
+// unavailable, never as ok with no hits.
+func TestImpactTier2CodeGraph(t *testing.T) {
+	f, base := precisionFixture(t)
+	q := core.ImpactQuery{Base: base, Tiers: []int{1, 2}}
+	noCallers := func() *finderGraph {
+		return &finderGraph{fakeGraph: &fakeGraph{}, defs: precisionDefs()}
+	}
+	tier2Hits := func(res core.ImpactResult) int {
+		n := 0
+		for _, h := range res.Hits {
+			if h.Tier == core.ImpactTierTransitive {
+				n++
+			}
+		}
+		return n
+	}
+
+	t.Run("a project without call edges is unavailable", func(t *testing.T) {
+		graph := &relatorGraph{finderGraph: noCallers()}
+		res := f.impact(f.resolver(graph, nil), q)
+		tier := res.Tiers[1]
+		if tier.Status != core.ImpactTierUnavailable || tier.Message != NoCallEdges {
+			t.Fatalf("tier 2 = %+v, want unavailable with %q", tier, NoCallEdges)
+		}
+		if !strings.Contains(tier.Message, "BuildCodeGraph") {
+			t.Errorf("message %q does not name BuildCodeGraph", tier.Message)
+		}
+		if res.Tiers[0].Status != core.ImpactTierOK {
+			t.Errorf("tier 1 = %+v, want ok", res.Tiers[0])
+		}
+		if got := strings.Join(graph.probed, ","); got != "src/links/kinds.go,src/links/store.go,src/links/store_test.go" {
+			t.Errorf("probed %s, want every changed file in order", got)
+		}
+	})
+
+	t.Run("a real no-callers answer is ok with no hits", func(t *testing.T) {
+		graph := &relatorGraph{finderGraph: noCallers(), related: map[string][]pando.RelatedFile{
+			"src/links/store.go": {{FilePath: "src/links/store_test.go", Score: 0.8, Reasons: []string{"calls"}}},
+		}}
+		res := f.impact(f.resolver(graph, nil), q)
+		if res.Tiers[1].Status != core.ImpactTierOK || res.Tiers[1].Message != "" {
+			t.Fatalf("tier 2 = %+v, want ok", res.Tiers[1])
+		}
+		if n := tier2Hits(res); n != 0 {
+			t.Errorf("%d tier-2 hits, want none", n)
+		}
+		if got := strings.Join(graph.probed, ","); got != "src/links/kinds.go,src/links/store.go" {
+			t.Errorf("probed %s, want the probe to stop at the first coupled file", got)
+		}
+	})
+
+	t.Run("callers prove the graph without a probe", func(t *testing.T) {
+		graph := &relatorGraph{finderGraph: &finderGraph{fakeGraph: precisionGraph(), defs: precisionDefs()}}
+		res := f.impact(f.resolver(graph, nil), q)
+		if res.Tiers[1].Status != core.ImpactTierOK {
+			t.Fatalf("tier 2 = %+v, want ok", res.Tiers[1])
+		}
+		if len(graph.probed) != 0 {
+			t.Errorf("probed %v, want no probe: a caller came back", graph.probed)
+		}
+	})
+
+	t.Run("an unreachable probe is unavailable", func(t *testing.T) {
+		graph := &relatorGraph{finderGraph: noCallers(), err: pando.ErrUnreachable}
+		res := f.impact(f.resolver(graph, nil), q)
+		if res.Tiers[1].Status != core.ImpactTierUnavailable || res.Tiers[1].Message != "Pando is unreachable" {
+			t.Errorf("tier 2 = %+v, want unavailable (Pando is unreachable)", res.Tiers[1])
+		}
+	})
+
+	t.Run("a failing probe is no evidence of a graph", func(t *testing.T) {
+		graph := &relatorGraph{finderGraph: noCallers(), err: pando.ErrToolFailed}
+		res := f.impact(f.resolver(graph, nil), q)
+		if res.Tiers[1].Status != core.ImpactTierUnavailable || res.Tiers[1].Message != NoCallEdges {
+			t.Errorf("tier 2 = %+v, want unavailable with %q", res.Tiers[1], NoCallEdges)
+		}
+	})
+
+	t.Run("a pando that cannot probe keeps ok", func(t *testing.T) {
+		res := f.impact(f.resolver(noCallers(), nil), q)
+		if res.Tiers[1].Status != core.ImpactTierOK {
+			t.Errorf("tier 2 = %+v, want ok: without code_related_files the graph cannot be checked", res.Tiers[1])
+		}
+	})
+}

@@ -3076,6 +3076,15 @@ answers `unavailable`.
     `call:` reason makes a hit `behaviour` only when nothing else reached the requirement; it
     never turns a `test-only` hit into `behaviour`. A caller carrying one requirement's marker is
     that requirement's own code and does.
+
+  When no changed name has a caller, tier 2 checks that the answer came from a code graph
+  (`GIT-US-0167`): Pando says "No callers found" alike for a symbol nothing calls and for a
+  project indexed without call edges (`[TokenOptimization] BuildCodeGraph = false`). It asks
+  `code_related_files` about the changed files, test files included, in sorted order and at most
+  5; the first file coupled to another makes the empty answer `ok`, and none makes the tier
+  `unavailable` with the fixed message `the Pando code project has no call edges: index the
+  repository root with [TokenOptimization] BuildCodeGraph = true`. A client without
+  `code_related_files` takes the empty answer as it comes.
 - **R-IMP-4 Tier 3, semantic.** One semantic search of kind `requirement` (docs/21 §2.1) with the
   story title, `title` and up to 12 changed symbol names. A hit becomes a `candidate` with a
   `score` (rounded to three decimals) and the reason `semantic`, only when tiers 1–2 did not

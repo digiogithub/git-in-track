@@ -98,7 +98,9 @@ func TestImpactAnalysis(t *testing.T) {
 		t.Parallel()
 		f := newFakePando(t, "")
 		f.setTool(toolCodeImpact, func(context.Context, map[string]any) (*mcpsdk.CallToolResult, error) {
-			return textResult(`No callers found for symbol "x".`), nil
+			// Pando's own sentence, the same for a symbol nothing calls and for a
+			// project without call edges (GIT-US-0167).
+			return textResult(`No callers found for symbol "x" (nothing in the indexed graph depends on it, or the project lacks call edges for its language).`), nil
 		})
 		c := newTestClient(t, f, nil)
 		got, err := c.ImpactAnalysis(context.Background(), "p", []string{"x"}, ImpactOptions{})
