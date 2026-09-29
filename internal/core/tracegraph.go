@@ -121,4 +121,9 @@ type TraceHit struct {
 	// Changed is the changed symbol that hit a symbol edge, or the changed
 	// package-level name behind a decl hit.
 	Changed string `json:"changed,omitempty"`
+	// Users is, on a decl hit, the number of functions of the package that
+	// use the changed name, traced or not: how widely the declaration is
+	// used. Impact tier 1 drops the decl reach of a widely used one
+	// (GIT-US-0168, R-IMP-2).
+	Users int `json:"users,omitempty"`
 }

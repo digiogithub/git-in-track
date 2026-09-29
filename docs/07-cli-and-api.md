@@ -5474,7 +5474,7 @@ without history, installs none, where the method fails with `unavailable`.
 
 | Method | Params | Result |
 |---|---|---|
-| `impact.query` | `{base?, head?, story?, title?, tiers?: (1 \| 2 \| 3)[], depth?, limit?}` | `{impact: {base, head?, files, symbols, tiers: {tier, status, hits, truncated?, message?}[], hits: {ref, title, tier, kind?, candidate?, score?, status?, suspect?, reasons, pending?}[]}}` |
+| `impact.query` | `{base?, head?, story?, title?, tiers?: (1 \| 2 \| 3)[], depth?, limit?}` | `{impact: {base, head?, files, symbols, tiers: {tier, status, hits, truncated?, dropped?, droppedVia?, message?}[], hits: {ref, title, tier, kind?, candidate?, score?, status?, suspect?, reasons, pending?}[]}}` |
 
 `base` defaults to `HEAD` and an empty `head` is the working tree, so `{}` asks what the
 uncommitted changes affect. `status` of a tier is `ok`, `unavailable` (no Pando, or Pando not

@@ -1,0 +1,39 @@
+{
+  "base": "<base>",
+  "files": 2,
+  "symbols": 2,
+  "tiers": [
+    {
+      "tier": 1,
+      "status": "ok",
+      "hits": 1,
+      "dropped": 1,
+      "droppedVia": [
+        "Result"
+      ]
+    },
+    {
+      "tier": 2,
+      "status": "skipped",
+      "hits": 0
+    },
+    {
+      "tier": 3,
+      "status": "skipped",
+      "hits": 0
+    }
+  ],
+  "hits": [
+    {
+      "ref": "ACME-SP-0002.R1",
+      "title": "Cap the page size",
+      "tier": 1,
+      "kind": "behaviour",
+      "status": "untested",
+      "reasons": [
+        "decl:src/mcp/answer.go#pageResult uses maxPageSize",
+        "decl:src/mcp/page.go#boundedLimit uses maxPageSize"
+      ]
+    }
+  ]
+}
