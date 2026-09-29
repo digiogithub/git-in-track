@@ -12,6 +12,16 @@ because a commit list cannot express them.
 
 ## [Unreleased]
 
+### Added
+
+- **Configuration keys and mode resolution for managed Pando** (`GIT-US-0174`, ADR-039,
+  docs/07 §3.3). `search.pando.mode` (`auto` by default), `search.pando.managed.*` and the
+  machine-local `repos[].semanticSearch` are parsed and validated, and `gintrack doctor` prints
+  the resolved mode and the rule that applied. `mode: managed` with `mcpUrl`, `mcpToken`,
+  `restUrl`, `restToken` or `projectId` is refused by key name; a missing `pando` binary
+  resolves to off or unavailable, never an error. Setups with `mcpUrl` set behave as before.
+  Nothing starts a Pando process yet.
+
 ### Changed
 
 - **Impact tier 2 is more precise** (`GIT-US-0166`, docs/03 R-IMP-3 and R-IMP-5, docs/08

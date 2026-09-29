@@ -357,6 +357,32 @@ Effective value = flag > environment variable > config file > built-in default.
 | `GINTRACK_LOG_FORMAT`    | `log.format`        |
 | `NO_COLOR`               | disables ANSI color |
 
+#### Pando keys and mode resolution (ADR-039)
+
+These keys live in the configuration file only. `search.pando.mode` is `auto` (default),
+`managed`, `external` or `off`. `search.pando.managed` holds `binary` (a name on PATH or an
+absolute path, default `pando`), `maxInstances` (0-64, 0 means 4), `minVersion` (empty keeps the
+floor built into gintrack) and `logLevel` (`debug|info|warn|error`, default `info`).
+`repos[].semanticSearch: true` is the machine-local opt-in of one repository to a managed Pando;
+it is never stored in a repository.
+
+The effective mode is decided when the configuration is loaded. The first matching rule wins:
+
+| # | Configuration | Effective mode |
+|---|---|---|
+| 1 | `mode: off` | off: "Pando is turned off" |
+| 2 | `mode: external` | external, as before; without `mcpUrl`, "Pando is not configured" |
+| 3 | `mode: managed` | managed; without a binary, managed-but-unavailable |
+| 4 | `auto` and `mcpUrl` set | external: an explicit endpoint beats a binary on PATH |
+| 5 | `auto`, no `mcpUrl`, binary found | managed |
+| 6 | `auto`, no `mcpUrl`, no binary | off: "no Pando binary was found" |
+
+`mode: managed` together with `mcpUrl`, `mcpToken`, `restUrl`, `restToken` or `projectId` is
+refused at load time, one error per key. A missing binary is never an error: the configuration
+loads and Pando-backed answers are `unavailable`. `gintrack doctor` prints the resolved mode and
+rule number (`pando mode managed (rule 5): ...`). The version floor is checked by the
+supervisor when it starts an instance, not by this resolution.
+
 Global flags available on every command: `--config`, `--workspace/-w`,
 `--quiet/-q`, `--verbose/-v`, `--log-level`, `--no-color`, `--help/-h`. Naming a
 workspace that does not exist creates it. `--json` is declared by every command
