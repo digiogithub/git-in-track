@@ -3061,7 +3061,21 @@ answers `unavailable`.
   Pando's `code_impact_analysis` — one call per symbol, all within 10 s. A caller whose file and
   start line fall inside a traced symbol (or whose file has whole-file edges) reaches those
   edges' requirements, with `call:<caller trace ref> calls <symbol> d<depth>`. Pando reports the
-  caller and its call depth, not the intermediate calls.
+  caller and its call depth, not the intermediate calls. Three rules keep tier 2 precise
+  (`GIT-US-0166`):
+  - **Shared names are pinned.** Pando resolves a callee by its simple name, so the callers of
+    `Valid` include the callers of every `Valid`. Before taking callers, the name is pinned with
+    `code_find_symbol`: when several callable definitions share it (fields, variables, constants
+    and types do not count) and one of them does not map, by file and start line, onto a changed
+    symbol, its callers are **dropped**. A name whose definitions all changed keeps its callers.
+    A Pando that cannot pin (the tool fails) keeps every caller for the rest of the query.
+  - **A test caller is evidence.** A caller in a test file (`*_test.go`, `*.test.*`, `*.spec.*`,
+    `test_*`) gives its reasons kind `test-only`, whatever marker it carries.
+  - **A shared caller does not flip a verdict.** A production caller whose code edges name
+    several requirements says that it runs changed code, not which of its rules changed. Its
+    `call:` reason makes a hit `behaviour` only when nothing else reached the requirement; it
+    never turns a `test-only` hit into `behaviour`. A caller carrying one requirement's marker is
+    that requirement's own code and does.
 - **R-IMP-4 Tier 3, semantic.** One semantic search of kind `requirement` (docs/21 §2.1) with the
   story title, `title` and up to 12 changed symbol names. A hit becomes a `candidate` with a
   `score` (rounded to three decimals) and the reason `semantic`, only when tiers 1–2 did not
@@ -3073,9 +3087,11 @@ answers `unavailable`.
   `behaviour` when at least one reason reaches the requirement through its **code** — an edge of
   role `code` (an `Implements:` marker or a `trace.code` entry), directly or through a call — or
   through the story's links or Spec Delta; `test-only` when every reason reaches it through an
-  edge of role `tests` (a `Verifies:` marker or a `trace.tests` entry): only a test that verifies
-  the requirement changed, or only such a test calls the changed code, so what the requirement
-  states may not have changed. `status` is the
+  edge of role `tests` (a `Verifies:` marker or a `trace.tests` entry) or through a caller in a
+  test file: only a test that verifies the requirement changed, or only such a test calls the
+  changed code, so what the requirement states may not have changed. A `call:` reason from a
+  production caller that carries several requirements (R-IMP-3) counts as `behaviour` only when
+  the hit has no other reason, so it never overrides `test-only`. `status` is the
   coverage state (R-REQ-12a). `pending` lists the open items whose unapplied Spec Delta modifies
   the requirement. `suspect` means **changed and not re-verified** (`GIT-US-0148`):
   1. state `suspect` → set;

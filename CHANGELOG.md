@@ -12,7 +12,17 @@ because a commit list cannot express them.
 
 ## [Unreleased]
 
-Nothing yet.
+### Changed
+
+- **Impact tier 2 is more precise** (`GIT-US-0166`, docs/03 R-IMP-3 and R-IMP-5, docs/08
+  §10.8). The Pando re-run of the spec impact benchmark (`GIT-US-0161`) found 1 behaviour hit in
+  22 of tier 2's own. Three rules now apply:
+  - a changed name that an unchanged definition shares is pinned with `code_find_symbol`, and
+    its callers are dropped (`CommentKind.Valid` no longer answers for `LinkKind.Valid`); a Pando
+    whose `code_find_symbol` fails keeps every caller, as before;
+  - a caller in a test file gives `test-only` reasons, whatever marker it carries;
+  - a production caller carrying several requirements no longer turns a `test-only` hit into
+    `behaviour`.
 
 ## [2.1.0] — 2026-09-25
 

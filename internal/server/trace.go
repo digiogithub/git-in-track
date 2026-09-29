@@ -24,6 +24,7 @@ var (
 	_ vault.RequirementCoverage = (*trace.Coverage)(nil)
 	_ vault.RequirementImpact   = (*impact.Resolver)(nil)
 	_ impact.CallGraph          = (*pando.Client)(nil)
+	_ impact.SymbolFinder       = (*pando.Client)(nil)
 )
 
 // TraceSeams describes the requirement seams of one mounted repository: what

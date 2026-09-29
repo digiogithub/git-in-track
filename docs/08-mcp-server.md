@@ -1157,7 +1157,9 @@ Every tier-1 and tier-2 hit carries a `kind` (`GIT-US-0157`, doc 03 R-IMP-5): `b
 reason reaches the requirement through its code (an `Implements:` marker or a `trace.code`
 entry, directly or through a call) or through the story's links or Spec Delta, `test-only` when
 every reason reaches it through a test that verifies it (a `Verifies:` marker or a
-`trace.tests` entry). A `test-only` hit says "a test of this requirement changed", not "its
+`trace.tests` entry) or through a tier-2 caller in a test file. A `call:` reason from a caller
+that carries several requirements never turns a `test-only` hit into `behaviour`
+(`GIT-US-0166`). A `test-only` hit says "a test of this requirement changed", not "its
 behaviour changed": read the behaviour hits first, and a `test-only` one only to check that the
 test still asserts what the requirement states. A tier-3 candidate has no `kind`. A tier that could not run takes one short line
 (`3 unavailable (Pando is not configured)`), and the `json` form carries `tiers` and the ranked
@@ -1993,7 +1995,15 @@ Tiers 1 and 2 (doc 03 §21.11) do **not** see:
   the behaviour may not have. They rank below the behaviour hits, and
   `--fail-on failing,suspect,behaviour` leaves them out of the gate.
 - **Which of several markers a change is about.** A function carrying four `Implements:`
-  markers turns any change of it into four hits.
+  markers turns any change of it into four hits. As a tier-2 *caller* it still adds its
+  requirements, but its `call:` reason no longer turns a `test-only` hit into `behaviour`
+  (`GIT-US-0166`).
+- **Which definition of a shared name a caller calls.** Pando resolves callees by name. Tier 2
+  pins each changed name with `code_find_symbol` and drops the callers of a name that an
+  unchanged definition shares (`CommentKind.Valid` next to a changed `LinkKind.Valid`, two
+  `add`s), so a real caller of the changed one is dropped too: its requirements then reach the
+  report only through tier 1. A Pando whose `code_find_symbol` fails keeps every caller, and the
+  shared-name hits come back.
 
 So place markers where the behaviour lives:
 
