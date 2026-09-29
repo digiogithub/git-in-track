@@ -1166,6 +1166,14 @@ test still asserts what the requirement states. A tier-3 candidate has no `kind`
 `hits` in the shape of doc 03 §21.11 R-IMP-5 instead of `text`. What tiers 1–2 cannot see, and where to put
 markers so the report stays useful, is in section 10.8.
 
+Tier 3 searches spec files only (Pando's `path_prefix` on `.pmngr/specs/`) with a query built
+from the story's title and `## Spec Delta`, `title`, and the changed declarations in words (a Go
+doc comment's first sentence, else the split name): passing `story` sharpens its candidates the
+most (doc 03 R-IMP-4, `GIT-US-0165`). Pando's full-text search requires every word of a query,
+so this long query gets no full-text hits and tier 3 is ranked by vector similarity alone
+(docs/21 §6.1). `search_semantic` with `kind: "requirement"` takes the same
+spec-only path.
+
 Tiers 2 and 3 read the Pando client and semantic searcher that `search_semantic` uses, built by
 the same constructor (`server.InstallSemanticSearch`) on both transports: `gintrack serve` and
 stdio `gintrack mcp` alike hand them to the impact seam (`GIT-US-0147`), so with
@@ -1988,7 +1996,12 @@ Tiers 1 and 2 (doc 03 §21.11) do **not** see:
   or `type` reaches the traced functions of the *same package* that use it (`decl:` reasons,
   one hop, `GIT-US-0158`). It does not reach a function in another package that uses an
   exported name, a declaration whose initializer uses the changed one, or a constant in a
-  TypeScript or Python file.
+  TypeScript or Python file. And the reach is **bounded** (`GIT-US-0168`): a declaration more
+  than 10 functions of its package use — `core.Item`, `mcp.ItemResult` — reaches nothing. The
+  requirements only it would have reached are counted on tier 1's status (`dropped`,
+  `droppedVia`; `1 ok 0, 12 dropped (uses ItemResult)` in the text form). A non-zero `dropped`
+  is a known gap, not *nothing affected*: when you change such a type on purpose, run
+  `trace_requirement` or `spec_context` on the requirements you expect it to touch.
 - **Unmarked code that only Pando can reach.** A changed helper with no marker reaches the
   requirements of its traced callers only through tier 2, which needs Pando with a code graph
   (`[TokenOptimization] BuildCodeGraph = true`, on the project id derived from the repository

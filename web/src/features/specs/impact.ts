@@ -112,7 +112,12 @@ export function tierStatusText(status: TierStatus | undefined): string | undefin
   if (!status) return 'Not reported.';
   switch (status.status) {
     case 'ok':
-      return status.truncated ? 'Partial: the per-symbol limit cut some callers.' : undefined;
+      if (status.truncated) return 'Partial: the per-symbol limit cut some callers.';
+      if (status.dropped) {
+        const via = (status.droppedVia ?? []).join(', ');
+        return `Left out ${status.dropped} requirements reached only through ${via}, a widely used declaration.`;
+      }
+      return undefined;
     case 'skipped':
       return 'Skipped: this tier was not asked for.';
     case 'unavailable':

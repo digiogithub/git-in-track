@@ -37,6 +37,12 @@ const (
 	DefaultCallBudget = 10 * time.Second
 	// maxQueryNames caps the symbol names in the tier-3 query text.
 	maxQueryNames = 12
+	// DefaultMaxDeclUsers bounds the decl: reach of tier 1: a changed
+	// package-level const, var or type that more functions of its package use
+	// reaches none of them (GIT-US-0168). The requirements only it reached
+	// are counted in the tier's Dropped. A type used everywhere, such as
+	// core.Item, says little about which requirement a change affects.
+	DefaultMaxDeclUsers = 10
 	// maxReasons caps the reasons of one hit; the rest are counted in "+n".
 	maxReasons = 4
 	// maxDefinitions is the page of definitions tier 2 asks code_find_symbol
@@ -122,6 +128,10 @@ type Options struct {
 	MaxSymbols int
 	// CallBudget bounds tier 2; 0 is DefaultCallBudget.
 	CallBudget time.Duration
+	// MaxDeclUsers bounds the decl: reach of tier 1 by the users of the
+	// changed declaration; 0 is DefaultMaxDeclUsers, a negative value no
+	// bound.
+	MaxDeclUsers int
 }
 
 // Resolver answers impact queries over one repository.
@@ -136,6 +146,9 @@ func New(opts Options) *Resolver {
 	}
 	if opts.CallBudget <= 0 {
 		opts.CallBudget = DefaultCallBudget
+	}
+	if opts.MaxDeclUsers == 0 {
+		opts.MaxDeclUsers = DefaultMaxDeclUsers
 	}
 	return &Resolver{opts: opts}
 }
@@ -258,15 +271,10 @@ func (r *Resolver) Impact(ctx context.Context, ix *core.Index, q core.ImpactQuer
 	if err != nil {
 		return core.ImpactResult{}, fmt.Errorf("trace graph: %w", err)
 	}
+	var wide map[core.RequirementRef][]string
 	if q.Wants(core.ImpactTierDirect) {
 		tiers[0].Status = core.ImpactTierOK
-		for _, h := range touching {
-			reason := h.Reason + ":" + h.TraceRef()
-			if h.Reason == "decl" && h.Changed != "" {
-				reason += " uses " + h.Changed
-			}
-			col.add(h.Ref, core.ImpactTierDirect, reason, true, roleKind(h.Role))
-		}
+		wide = r.direct(touching, col)
 		storyHits(ix, q.Story, col)
 	}
 
@@ -288,6 +296,7 @@ func (r *Resolver) Impact(ctx context.Context, ix *core.Index, q core.ImpactQuer
 		h := col.add(s.ref, core.ImpactTierSemantic, "semantic", false, "")
 		h.score = s.score
 	}
+	tiers[0].Dropped, tiers[0].DroppedVia = dropped(wide, col)
 
 	var headSHA string
 	for _, h := range col.hits {
@@ -307,6 +316,51 @@ func (r *Resolver) Impact(ctx context.Context, ix *core.Index, q core.ImpactQuer
 	res.Tiers = tiers
 	res.Hits = hits
 	return res, nil
+}
+
+// direct adds the tier-1 hits of the touched trace edges. A decl: reason
+// through a declaration more functions of its package use than the bound is
+// left out: the returned map holds, for each requirement it would have
+// reached, the names of those declarations (GIT-US-0168).
+func (r *Resolver) direct(touching []core.TraceHit, col *collector) map[core.RequirementRef][]string {
+	wide := map[core.RequirementRef][]string{}
+	for _, h := range touching {
+		if h.Reason == "decl" && r.opts.MaxDeclUsers > 0 && h.Users > r.opts.MaxDeclUsers {
+			wide[h.Ref] = append(wide[h.Ref], h.Changed)
+			continue
+		}
+		reason := h.Reason + ":" + h.TraceRef()
+		if h.Reason == "decl" && h.Changed != "" {
+			reason += " uses " + h.Changed
+		}
+		col.add(h.Ref, core.ImpactTierDirect, reason, true, roleKind(h.Role))
+	}
+	return wide
+}
+
+// dropped counts the requirements only a widely used declaration reached —
+// no reason of any tier reached them otherwise — and names those
+// declarations, sorted and deduplicated.
+func dropped(wide map[core.RequirementRef][]string, col *collector) (n int, via []string) {
+	names := map[string]bool{}
+	for ref, via := range wide {
+		if _, reported := col.hits[ref]; reported {
+			continue
+		}
+		n++
+		for _, name := range via {
+			names[name] = true
+		}
+	}
+	if n == 0 {
+		return 0, nil
+	}
+	via = make([]string, 0, len(names))
+	for name := range names {
+		via = append(via, name)
+	}
+	sort.Strings(via)
+	return n, via
 }
 
 // headCommit returns the full commit id the diff ends at, "" when there is
@@ -704,8 +758,8 @@ type semanticHit struct {
 	score float64
 }
 
-// semantic runs tier 3: requirement blocks ranked near the changed symbol
-// names and the story title.
+// semantic runs tier 3: requirement blocks ranked near what the story and
+// the changed declarations say (queryText).
 func (r *Resolver) semantic(ctx context.Context, ix *core.Index, q core.ImpactQuery, symbols []changedSymbol) (core.ImpactTier, []semanticHit) {
 	tier := core.ImpactTier{Tier: core.ImpactTierSemantic, Status: core.ImpactTierOK}
 	var searcher vault.SemanticSearcher
@@ -717,7 +771,7 @@ func (r *Resolver) semantic(ctx context.Context, ix *core.Index, q core.ImpactQu
 		tier.Message = "no Pando semantic search is configured"
 		return tier, nil
 	}
-	text := queryText(ix, q, symbols)
+	text := queryText(ix, q, symbols, r.opts.Engine.Tree())
 	if text == "" {
 		return tier, nil
 	}
@@ -745,36 +799,6 @@ func (r *Resolver) semantic(ctx context.Context, ix *core.Index, q core.ImpactQu
 		out = append(out, semanticHit{ref: ref, score: math.Round(h.Score*1000) / 1000})
 	}
 	return tier, out
-}
-
-// queryText is the tier-3 query: the story title, the caller's title and the
-// changed symbol names, split into words.
-func queryText(ix *core.Index, q core.ImpactQuery, symbols []changedSymbol) string {
-	var parts []string
-	if q.Story != "" {
-		if it, err := ix.Item(q.Story); err == nil {
-			parts = append(parts, strings.TrimSpace(it.Title))
-		}
-	}
-	if t := strings.TrimSpace(q.Title); t != "" {
-		parts = append(parts, t)
-	}
-	seen := map[string]bool{}
-	var names []string
-	for _, s := range symbols {
-		n := pandoName(s.symbol)
-		if n == "" || seen[n] {
-			continue
-		}
-		seen[n] = true
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	if len(names) > maxQueryNames {
-		names = names[:maxQueryNames]
-	}
-	parts = append(parts, names...)
-	return strings.TrimSpace(strings.Join(parts, " "))
 }
 
 // render turns the collected hits into the sorted answer: title, coverage

@@ -33,6 +33,10 @@ type Repo struct {
 	// its own; a folder deeper than that is found only because it is listed
 	// here (ADR-018).
 	DocsFolders []string
+	// SemanticSearch is the machine-local opt-in to a managed Pando for this
+	// repository (`repos[].semanticSearch`, ADR-039). It matters only in managed
+	// mode.
+	SemanticSearch bool
 }
 
 // declaredDocsFolders returns the documentation folders this registration
@@ -64,9 +68,11 @@ type mount struct {
 	docs string
 	// docsFolders are every documentation folder the registration declared.
 	docsFolders []string
-	label       string
-	vlt         *vault.Vault
-	err         error
+	// semantic is the repository's opt-in to a managed Pando.
+	semantic bool
+	label    string
+	vlt      *vault.Vault
+	err      error
 
 	// mu guards lastIndexed, which every reindex and every watcher pass writes.
 	mu          sync.Mutex
@@ -89,6 +95,7 @@ func openMount(repo Repo, now func() time.Time) *mount {
 		role:        role,
 		docs:        repo.DocsFolder,
 		docsFolders: repo.declaredDocsFolders(),
+		semantic:    repo.SemanticSearch,
 		label:       filepath.Base(filepath.Clean(repo.Path)),
 		lastIndexed: now(),
 	}

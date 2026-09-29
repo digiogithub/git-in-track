@@ -101,8 +101,8 @@ or `off`) and resolved by the six rules of docs/07 §3.3: with `mcpUrl` set, `au
 hand-run (external) setup exactly as described below; without it, a `pando` binary on PATH
 resolves to managed mode and none resolves to off, which is not an error. `mode: managed` may
 not be combined with `mcpUrl`, `mcpToken`, `restUrl`, `restToken` or `projectId`. The per-repository
-opt-in is `repos[].semanticSearch` in the machine-local configuration file. Running the managed
-instances is ADR-039 work that lands separately; this section describes the keys only.
+opt-in is `repos[].semanticSearch` in the machine-local configuration file. In managed mode
+`gintrack serve` runs the instances (§1.1).
 
 `gintrack agent init` writes this into the repository's `.pando.toml`, and `--kb-path`
 overrides the directory for a layout it cannot guess (docs/07 §4.18):
@@ -129,6 +129,39 @@ it happens. See §5 for the warning this replaces.
 **Nothing is copied.** The files Pando indexes are the repository's own, committed files. There
 is no second directory to keep current, nothing to prune, and no window in which the index is
 one export behind the working tree.
+
+### 1.1 Managed mode: what `gintrack serve` does (ADR-039, GIT-US-0175)
+
+When the resolved mode is managed, `serve` starts, in the background and without holding the
+listener up, one supervised `pando mcp-server` (`internal/pando/supervisor`) for every mounted
+repository whose `semanticSearch` is true, up to `search.pando.managed.maxInstances`. A
+repository past the cap, or opted in with no usable binary, gets no instance; its row in
+`GET /api/v1/search/settings` reads `managed.state: "skipped"` with the reason. An instance
+another `gintrack serve` already supervises is reached through its state file and token instead
+of being started twice, and it is never stopped from here.
+
+- **Registration.** When an instance becomes `ready`, the repository root is registered with
+  **that** instance as a code project under `pando.SanitizeProjectID(root)` (the id the
+  supervisor reports as `Status.Project`), through the same pass as §0.1. The instance's
+  generated configuration already enables the code graph.
+- **Search.** A semantic search is sent to every `ready` instance in parallel, each with the
+  usual 300 ms budget, so the whole fan-out stays inside one budget. The candidates are
+  resolved against the workspace and merged exactly as one instance's are, so a document
+  reached by two instances appears once. An instance that is `starting`, `restarting` or
+  `failed` contributes nothing and the others still answer. When **no** instance can answer,
+  the search is `unavailable` with each repository's reason (`degraded` on the REST route),
+  never an empty success. With no repository opted in it answers "not configured".
+- **Impact.** Tiers 2 and 3 of `spec_impact` use the instance of the repository being analysed.
+  If that repository's instance is not ready the tier says `unavailable`; a repository that
+  did not opt in gets the same "no Pando is configured" as before.
+- **Reindex.** See docs/07: the `kb` phase restarts the instance instead of calling a REST
+  route, and `kbNote` says so.
+- **Shutdown.** Every instance is stopped (SIGTERM, then SIGKILL after 10 s) when the server
+  stops, and the child also dies with `gintrack serve` if that is killed (Linux).
+- **Not managed.** External mode is exactly as described above. Explicit `mode: off` disables
+  Pando entirely even with an `mcpUrl` set (rule 1): no client is built, the backend is `core`,
+  and semantic search answers `unavailable` naming `search.pando.mode: off`. Neither constructs
+  an instance. Browser-only mode has no instance and answers `unavailable`.
 
 The repository root is registered as a Pando **code** project separately, by the companion, when
 `gintrack serve` starts (§0.1). Nothing has to be run by hand for that.
@@ -185,6 +218,18 @@ further:
    clipped to the part of the chunk inside the block, so a chunk straddling two requirements
    never shows the neighbour's text as the reason this one matched.
 
+**A requirement query searches spec files only (`GIT-US-0165`).** A query of kind
+`requirement` sends Pando's `path_prefix` filter, `.pmngr/specs/` — the specs folder relative to
+`KBPath`, the documentation folder (§1) — which Pando applies in SQL to both search legs, so the
+top chunks are spec chunks rather than the docs pages, stories and comments that quote the same
+words (before this, 9 of 224 top-16 chunks came from spec files in the `GIT-US-0161` benchmark).
+It skips the code leg, which skips dot-directories and so never holds a spec. A deployment whose
+`KBPath` is not the documentation folder reports spec paths under another prefix and would match
+nothing, so an empty prefixed answer is asked once more without the prefix; the resolver's kind
+filter still keeps only requirement rows. The vector leg always ranks some chunk, so an empty
+prefixed answer means no spec is indexed there, never that no spec is relevant. Pando still only
+reads: nothing is written into `docs/.pmngr/specs/` (ADR-036).
+
 Rows are merged by ref, so several chunks of one block are one row and chunks of two blocks are
 two rows. A chunk of the spec outside every block — its purpose, its notes — stays a hit on the
 spec itself (`kind: "item"`), and so does every spec hit of a query scoped to `kind: "item"`;
@@ -225,7 +270,8 @@ says so, adding that Pando's own watcher still follows the documentation directo
 claims a reindex that did not happen.
 
 A second call while one is running is refused with `search_reindex_running` (409) and the running
-job is untouched. A companion with no Pando endpoint answers `search_not_configured` (400).
+job is untouched. A companion with no Pando endpoint answers `search_not_configured` (400). In managed mode the
+`kb` phase restarts the instance instead (§1.1).
 
 **One repository.** A body of `{"repo":"<mount id>"}` limits the `code` phase to that repository
 (GIT-US-0101): it is registered and indexed alone, the other repositories are not touched, and the
@@ -395,7 +441,14 @@ traced symbols of the trace graph. Because `code_impact_analysis` resolves a cal
 an unchanged definition shares; a failing pin turns pinning off, never the tier. A caller in a
 test file is test evidence, and a caller carrying several requirements does not turn a
 `test-only` hit into `behaviour` (docs/03 R-IMP-3). Tier 3 sends one `search.semantic` query of kind
-`requirement` (§2.1) built from the story title and the changed symbol names; its hits are
+`requirement` (§2.1) built from the story title, the operations of its `## Spec Delta`, the
+caller's `title` and the changed declarations in words — a Go doc comment's first sentence, else
+the name split into words — never from bare identifiers, which match prose *about* the code
+(docs pages, stories, comments) better than the EARS statement of a requirement
+(`GIT-US-0165`, docs/03 R-IMP-4). That query is long on purpose, and it has a cost: Pando's
+full-text leg quotes every word of the query and FTS5 requires all of them in one chunk, so a
+story-based query almost never matches there and the vector leg does all the ranking. The query is
+capped at 1,000 bytes because a longer one buys nothing for either leg. Its hits are
 `candidate`s with a score and never raise a tier-1 or tier-2 hit. Both read the client at call
 time, so a settings change applies to the next query. An `IsUnavailable` error, or no Pando at
 all, makes the tier `unavailable`; any other error makes it `error`; tier 1 answers regardless.

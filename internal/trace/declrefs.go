@@ -26,6 +26,7 @@ type declRef struct {
 	path   string // the file of the function
 	symbol string // the function, in the trace-ref spelling (Func, Type.Method)
 	name   string // the changed name it references
+	users  int    // the functions of the package that reference name, traced or not
 }
 
 // changedDecls returns the package clause of a Go file and the names of the
@@ -83,8 +84,10 @@ func specNames(s ast.Spec) []*ast.Ident {
 // declReferences returns the functions of the Go package of p — the .go files
 // of p's directory whose package clause is pkg — that reference one of names
 // as the package-level declaration, sorted by path, symbol and name. Only the
-// files traced accepts are read, so a package without trace edges costs one
-// directory listing.
+// functions of the files traced accepts are returned, but each carries the
+// number of functions of the whole package that reference its name: how
+// widely the declaration is used, which impact tier 1 bounds its reach by
+// (GIT-US-0168). A package without trace edges costs one directory listing.
 func declReferences(tree fs.FS, p, pkg string, names []string, traced func(string) bool) []declRef {
 	if tree == nil || pkg == "" || len(names) == 0 {
 		return nil
@@ -98,15 +101,27 @@ func declReferences(tree fs.FS, p, pkg string, names []string, traced func(strin
 	if err != nil {
 		return nil
 	}
+	var files []string
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") {
+			continue
+		}
+		q := path.Join(dir, entry.Name())
+		if traced(q) {
+			files = append(files, q)
+		}
+	}
+	if len(files) == 0 {
+		return nil
+	}
+	users := map[string]int{}
 	var out []declRef
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") {
 			continue
 		}
 		q := path.Join(dir, entry.Name())
-		if !traced(q) {
-			continue
-		}
+		isTraced := traced(q)
 		src, err := fs.ReadFile(tree, q)
 		if err != nil {
 			continue
@@ -125,9 +140,15 @@ func declReferences(tree fs.FS, p, pkg string, names []string, traced func(strin
 			w.funcDecl(fn)
 			symbol := funcName(fn)
 			for n := range w.found {
-				out = append(out, declRef{path: q, symbol: symbol, name: n})
+				users[n]++
+				if isTraced {
+					out = append(out, declRef{path: q, symbol: symbol, name: n})
+				}
 			}
 		}
+	}
+	for i := range out {
+		out[i].users = users[out[i].name]
 	}
 	sort.Slice(out, func(i, j int) bool {
 		a, b := out[i], out[j]
