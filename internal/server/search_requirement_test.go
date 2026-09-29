@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/digiogithub/git-in-track/internal/pando"
@@ -178,5 +179,77 @@ func TestSemanticSpecHitOnARemovedBlockStaysTheSpec(t *testing.T) {
 	hits := semanticFor(t, s, vault.SemanticQuery{Q: "geocode", Limit: 5})
 	if len(hits) != 1 || hits[0].Kind != "item" || hits[0].ID != "DEMO-SP-0001" {
 		t.Fatalf("hits = %+v, want the spec itself", hits)
+	}
+}
+
+// TestSemanticRequirementQueriesSearchOnlySpecs pins GIT-US-0165: a query of
+// kind "requirement" asks Pando for the specs folder alone, with the
+// path_prefix filter Pando applies in SQL, and skips the code leg, which
+// never holds a spec. A deployment whose KBPath is not the documentation
+// folder reports spec paths under another prefix, so an empty prefixed
+// answer is asked again, once, without the prefix.
+func TestSemanticRequirementQueriesSearchOnlySpecs(t *testing.T) {
+	t.Parallel()
+
+	specChunk := "The checkout SHALL refuse\nan empty address."
+	tests := []struct {
+		name       string
+		kind       string
+		hitPath    string
+		wantIDs    []string
+		wantPrefix []string // the PathPrefix of each knowledge-base call, in order
+		wantCode   bool
+	}{
+		{
+			name: "requirements search the specs folder", kind: "requirement", hitPath: specHitPath,
+			wantIDs: []string{"DEMO-SP-0001.R2"}, wantPrefix: []string{".pmngr/specs/"},
+		},
+		{
+			name: "an empty prefixed answer is asked again without the prefix", kind: "requirement",
+			hitPath: "docs/" + specHitPath,
+			wantIDs: []string{"DEMO-SP-0001.R2"}, wantPrefix: []string{".pmngr/specs/", ""},
+		},
+		{
+			name: "every kind searches everything", hitPath: specHitPath,
+			wantIDs: []string{"DEMO-SP-0001.R2", "DEMO-SP-0001"}, wantPrefix: []string{""}, wantCode: true,
+		},
+		{
+			name: "items search everything", kind: "item", hitPath: specHitPath,
+			wantIDs: []string{"DEMO-SP-0001"}, wantPrefix: []string{""}, wantCode: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			s, root := newAPIServer(t)
+			withSpec(t, s, root)
+			fake := &fakePando{honourPrefix: true, hits: []pando.KBHit{
+				{FilePath: tt.hitPath, Chunk: specChunk, Score: 0.04, Rank: 1},
+				{FilePath: tt.hitPath, Chunk: "Why the checkout cares about addresses.", Score: 0.02, Rank: 2},
+			}}
+			installPando(t, s, fake)
+
+			hits := semanticFor(t, s, vault.SemanticQuery{Q: "empty address", Limit: 10, Kind: tt.kind})
+			var ids []string
+			for _, h := range hits {
+				ids = append(ids, h.ID)
+			}
+			if strings.Join(ids, ",") != strings.Join(tt.wantIDs, ",") {
+				t.Errorf("ids = %v, want %v", ids, tt.wantIDs)
+			}
+			fake.mu.Lock()
+			var prefixes []string
+			for _, o := range fake.kbOpts {
+				prefixes = append(prefixes, o.PathPrefix)
+			}
+			code := len(fake.codeSearched) > 0
+			fake.mu.Unlock()
+			if strings.Join(prefixes, "|") != strings.Join(tt.wantPrefix, "|") || len(prefixes) != len(tt.wantPrefix) {
+				t.Errorf("knowledge-base prefixes = %q, want %q", prefixes, tt.wantPrefix)
+			}
+			if code != tt.wantCode {
+				t.Errorf("code leg searched = %v, want %v", code, tt.wantCode)
+			}
+		})
 	}
 }

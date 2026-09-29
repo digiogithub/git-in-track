@@ -152,6 +152,11 @@ type Repo struct {
 	// Enabled is false for a registration the user keeps but does not want
 	// indexed. It defaults to true.
 	Enabled bool `json:"enabled" yaml:"enabled"`
+	// SemanticSearch is the machine-local opt-in to a managed Pando for this
+	// repository (ADR-039). Absent or false means the repository is not indexed
+	// in managed mode. It lives in the user's configuration file only, never in
+	// the repository.
+	SemanticSearch bool `json:"semanticSearch,omitempty" yaml:"semanticSearch,omitempty"`
 }
 
 // Server is the local HTTP server section.
@@ -477,6 +482,12 @@ type Search struct {
 // Both tokens are excluded from JSON and resolved through
 // Config.ResolvedPandoMCPToken and Config.ResolvedPandoRESTToken.
 type SearchPando struct {
+	// Mode picks who provides Pando: auto (the default), managed, external or
+	// off. PandoMode resolves it against the other keys (ADR-039).
+	Mode string `json:"mode,omitempty" yaml:"mode,omitempty"`
+	// Managed tunes the Pando processes gintrack serve supervises. It is read
+	// only when the resolved mode is managed.
+	Managed PandoManaged `json:"managed" yaml:"managed"`
 	// MCPURL is the streamable-HTTP endpoint of `pando mcp-server`, for example
 	// http://127.0.0.1:9777/mcp. Empty turns semantic search off.
 	MCPURL string `json:"mcpUrl,omitempty" yaml:"mcpUrl,omitempty"`

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log/slog"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"syscall"
@@ -13,6 +14,7 @@ import (
 	"github.com/digiogithub/git-in-track/internal/core"
 	"github.com/digiogithub/git-in-track/internal/core/osfs"
 	"github.com/digiogithub/git-in-track/internal/gitops"
+	"github.com/digiogithub/git-in-track/internal/impact"
 	"github.com/digiogithub/git-in-track/internal/mcp"
 	"github.com/digiogithub/git-in-track/internal/pando"
 	"github.com/digiogithub/git-in-track/internal/server"
@@ -162,7 +164,7 @@ func runMCP(cmd *cobra.Command, build buildInfo, flags *globalFlags, local *mcpF
 	// it keeps answering `unavailable` (GIT-US-0121). The impact seam gets the
 	// same client and searcher, so spec_impact tiers 2 and 3 answer over stdio
 	// as they do over HTTP (GIT-US-0147).
-	semantic := installMCPSemantic(res.Config, space, mounts, logger)
+	semantic := installMCPSemantic(res.Config, res.Path, space, mounts, logger)
 	defer func() { _ = semantic.Close() }()
 	installMCPTraceSeams(mounts, res.Config.Git.Backend, semantic, logger)
 
@@ -194,7 +196,8 @@ func installMCPTraceSeams(mounts []mcpMount, backend config.Backend, pandoHost *
 	for _, m := range mounts {
 		seams := server.TraceSeams{
 			Root: m.root, ProjectID: pando.SanitizeProjectID(m.root),
-			CallGraph: pandoHost.CallGraph, Semantic: pandoHost.Semantic,
+			CallGraph: func() impact.CallGraph { return pandoHost.CallGraphFor(m.id) },
+			Semantic:  func() corevault.SemanticSearcher { return pandoHost.SemanticFor(m.id) },
 		}
 		repo, err := gitops.Open(m.root, gitops.Options{Backend: gitops.Kind(backend)})
 		if err != nil {
@@ -212,12 +215,25 @@ func installMCPTraceSeams(mounts []mcpMount, backend config.Backend, pandoHost *
 // way `gintrack serve` resolves them. It returns the host that hands the same
 // Pando client and searcher to the impact seam and closes the Pando session;
 // it is never nil.
-func installMCPSemantic(cfg *config.Config, space *corevault.Workspace, mounts []mcpMount, log *slog.Logger) *server.SemanticHost {
+//
+// In managed mode (ADR-039) nothing is started and nothing is proxied: the
+// host only connects to the instances a running `gintrack serve` supervises,
+// found through their state files, and answers `unavailable` when there are
+// none. configPath locates the cache directory those files live in.
+func installMCPSemantic(cfg *config.Config, configPath string, space *corevault.Workspace, mounts []mcpMount, log *slog.Logger) *server.SemanticHost {
+	optedIn := map[string]bool{}
+	for _, r := range cfg.Repos {
+		optedIn[r.Path] = r.SemanticSearch
+	}
 	repos := make([]server.SemanticRepo, 0, len(mounts))
 	for _, m := range mounts {
 		repos = append(repos, server.SemanticRepo{
 			ID: m.id, Path: m.root, Role: m.role, DocsFolders: m.docs, Vault: m.vlt,
+			SemanticSearch: optedIn[m.root],
 		})
+	}
+	if res := config.ResolvePandoMode(cfg.Search.Pando, exec.LookPath); res.Mode == config.PandoModeManaged {
+		return server.InstallDiscoveredSemanticSearch(cfg.CacheDir(configPath), space, repos, log)
 	}
 	return server.InstallSemanticSearch(searchSettings(cfg).Pando, space, repos, log)
 }

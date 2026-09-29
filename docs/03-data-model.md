@@ -2846,7 +2846,10 @@ Two hashes per requirement, both `"sha256:" + lowercase_hex(sha256(x))[0:16]` li
     bare key and a struct field name never match. It is one hop and deterministic: a
     package-level declaration whose own initializer uses the name is not followed, no type
     checking runs, and nothing asks Pando. A direct reason (`file`, `symbol`, `marker`) of the
-    same edge wins over `decl`.
+    same edge wins over `decl`. Each `decl` hit also carries `users`: the number of functions of
+    the whole package, traced or not, that use the name — how widely the declaration is used
+    (`GIT-US-0168`). An edge several changed names reach keeps the least used one (ties by
+    name), so impact's bound (R-IMP-2) never hides a narrow declaration behind a wide one.
   - Every list is sorted (requirements by spec and number; edges by path, symbol, ref and role),
     so the same repository state gives byte-identical answers. The graph lives in memory, is
     rebuilt when the index or the scan changes, and is never written to any file. The companion
@@ -3056,14 +3059,54 @@ answers `unavailable`.
   package-level declaration (§21.7, `GIT-US-0158`). The `implements`/`modifies` links of `story` that name a requirement add
   `<kind>:<story>`, and its **pending** `modifies` edges (an unapplied Spec Delta, R-DELTA-10) add
   `delta:<story>`.
+  **The `decl` reach is bounded** (`GIT-US-0168`): a `decl` hit whose declaration has more than
+  **10** users (§21.7) adds no reason. A type used everywhere, such as `core.Item`, says little
+  about which requirement a change affects: in the spec impact benchmark it added 14 hits to
+  one PR and 12 to another, none of them a behaviour change. A requirement that such a hit
+  would have reached and that no other reason of any tier reaches is **dropped and counted**,
+  never silently lost: tier 1's status carries `dropped` (the count) and `droppedVia` (the
+  declarations, sorted), and the text form's tier line prints `1 ok <n>, <d> dropped (uses
+  <names>)`. A requirement another reason reaches is reported as usual, without the wide
+  `decl` reason. The bound is a resolver option (`impact.Options.MaxDeclUsers`; negative lifts
+  it), not a query parameter.
 - **R-IMP-3 Tier 2, transitive.** Each changed symbol outside a test file (its simple name: the
   method of `Type.Method`, the test of `TestX/case`), at most 25 in sorted order, is sent to
   Pando's `code_impact_analysis` — one call per symbol, all within 10 s. A caller whose file and
   start line fall inside a traced symbol (or whose file has whole-file edges) reaches those
   edges' requirements, with `call:<caller trace ref> calls <symbol> d<depth>`. Pando reports the
-  caller and its call depth, not the intermediate calls.
-- **R-IMP-4 Tier 3, semantic.** One semantic search of kind `requirement` (docs/21 §2.1) with the
-  story title, `title` and up to 12 changed symbol names. A hit becomes a `candidate` with a
+  caller and its call depth, not the intermediate calls. Three rules keep tier 2 precise
+  (`GIT-US-0166`):
+  - **Shared names are pinned.** Pando resolves a callee by its simple name, so the callers of
+    `Valid` include the callers of every `Valid`. Before taking callers, the name is pinned with
+    `code_find_symbol`: when several callable definitions share it (fields, variables, constants
+    and types do not count) and one of them does not map, by file and start line, onto a changed
+    symbol, its callers are **dropped**. A name whose definitions all changed keeps its callers.
+    A Pando that cannot pin (the tool fails) keeps every caller for the rest of the query.
+  - **A test caller is evidence.** A caller in a test file (`*_test.go`, `*.test.*`, `*.spec.*`,
+    `test_*`) gives its reasons kind `test-only`, whatever marker it carries.
+  - **A shared caller does not flip a verdict.** A production caller whose code edges name
+    several requirements says that it runs changed code, not which of its rules changed. Its
+    `call:` reason makes a hit `behaviour` only when nothing else reached the requirement; it
+    never turns a `test-only` hit into `behaviour`. A caller carrying one requirement's marker is
+    that requirement's own code and does.
+
+  When no changed name has a caller, tier 2 checks that the answer came from a code graph
+  (`GIT-US-0167`): Pando says "No callers found" alike for a symbol nothing calls and for a
+  project indexed without call edges (`[TokenOptimization] BuildCodeGraph = false`). It asks
+  `code_related_files` about the changed files, test files included, in sorted order and at most
+  5; the first file coupled to another makes the empty answer `ok`, and none makes the tier
+  `unavailable` with the fixed message `the Pando code project has no call edges: index the
+  repository root with [TokenOptimization] BuildCodeGraph = true`. A client without
+  `code_related_files` takes the empty answer as it comes.
+- **R-IMP-4 Tier 3, semantic.** One semantic search of kind `requirement` (docs/21 §2.1), which
+  searches spec files only: Pando's `path_prefix` filter on `.pmngr/specs/`, asked again once
+  without it when nothing is indexed under that prefix, and no code search (`GIT-US-0165`).
+  The query is one part per line: the story title, each operation of its `## Spec Delta`
+  (`<title>: <statement>`, a REMOVED one with its `Reason:`), `title`, then up to 12 changed
+  declarations in words — the first sentence of a Go declaration's doc comment, marker lines
+  dropped, else the name split into lower-case words (`nextNumber` → `next number`) — with
+  declarations in test files only when nothing else changed; at most 1,000 bytes, cut on a word
+  boundary. A hit becomes a `candidate` with a
   `score` (rounded to three decimals) and the reason `semantic`, only when tiers 1–2 did not
   reach the requirement: a candidate never adds to or overrides their certainty.
 - **R-IMP-5 Hit.** `{ref, title, tier, kind?, candidate?, score?, status?, suspect?, reasons[],
@@ -3073,9 +3116,11 @@ answers `unavailable`.
   `behaviour` when at least one reason reaches the requirement through its **code** — an edge of
   role `code` (an `Implements:` marker or a `trace.code` entry), directly or through a call — or
   through the story's links or Spec Delta; `test-only` when every reason reaches it through an
-  edge of role `tests` (a `Verifies:` marker or a `trace.tests` entry): only a test that verifies
-  the requirement changed, or only such a test calls the changed code, so what the requirement
-  states may not have changed. `status` is the
+  edge of role `tests` (a `Verifies:` marker or a `trace.tests` entry) or through a caller in a
+  test file: only a test that verifies the requirement changed, or only such a test calls the
+  changed code, so what the requirement states may not have changed. A `call:` reason from a
+  production caller that carries several requirements (R-IMP-3) counts as `behaviour` only when
+  the hit has no other reason, so it never overrides `test-only`. `status` is the
   coverage state (R-REQ-12a). `pending` lists the open items whose unapplied Spec Delta modifies
   the requirement. `suspect` means **changed and not re-verified** (`GIT-US-0148`):
   1. state `suspect` → set;
@@ -3101,7 +3146,7 @@ answers `unavailable`.
   reads no clock: the same diff, history, working tree and ingested results give the same flags
   (R-IMP-7).
 - **R-IMP-6 Result.** `{base, head?, files, symbols, tiers: {tier, status, hits, truncated?,
-  message?}[], hits}`. A tier's `status` is `ok`, `unavailable` (no Pando, or Pando unreachable,
+  dropped?, droppedVia?[], message?}[], hits}`. A tier's `status` is `ok`, `unavailable` (no Pando, or Pando unreachable,
   unauthorized or timing out: `pando.IsUnavailable`), `error` (Pando's tool failed, e.g. a project
   not indexed) or `skipped` (not asked for); tier 1 always answers when the query does. Hits are
   sorted by tier, then spec and number.
@@ -3130,7 +3175,7 @@ answers `unavailable`.
 
   ```text
   impact <base>..<head|worktree>: <files> files, <symbols> symbols, <total> hits[, showing a-b]
-  tiers: 1 ok <n>; 2 ok <n>[ (partial)]; 3 unavailable (<message, clipped>)
+  tiers: 1 ok <n>[, <d> dropped (uses <names>)]; 2 ok <n>[ (partial)]; 3 unavailable (<message, clipped>)
   <ref> t<tier>[~<score>] <status|-> [suspect] [test-only] "<title, 40 runes>" <first reason, 60 runes>[ +<n>]
   truncated: <n>, cursor: <token>
   ```

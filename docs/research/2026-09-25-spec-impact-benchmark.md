@@ -1,7 +1,7 @@
 ---
 title: Spec impact benchmark — the impact report against reading the specs
 created: 2026-09-25
-updated: 2026-09-25
+updated: 2026-09-29
 author: claude
 status: measured
 item: GIT-US-0137
@@ -391,7 +391,8 @@ Over the 12 PRs (controls excluded), with the report's `tokens`:
   to the reading of the oracle spec (1.5×).
 - The stack head's tier 1 already reaches that worst case without Pando. Through `decl:… uses
   Item`, `GIT-US-0158` adds 14 hits to P4, and through `uses ItemResult` it adds 12 `test-only`
-  hits to P5. These were not judged here. The follow-up in §9.7 flags them.
+  hits to P5. They are judged in [§9.9](#99-the-decl-hits-judged-git-us-0168): none is a
+  behaviour change, and `GIT-US-0168` now bounds that reach.
 - Tier 3 as shipped costs +99 tokens a report, for an `unavailable` line that quotes Pando's
   cache header. It adds no candidate.
 - **Latency.** Pando is local, so latency is not a cost. Tiers 1–2 take a median of 0.69–0.72 s, the
@@ -467,7 +468,8 @@ under `GIT-EP-0029`:
    project lacks call edges" when `BuildCodeGraph` is off, and tier 2 reports that as `ok 0`.
    Document in docs/21 §6.1 that tier 2 needs `[TokenOptimization] BuildCodeGraph = true`.
 6. **Bound the `decl:` reach of `GIT-US-0158`.** A changed type used everywhere, such as `Item` or
-   `ItemResult`, floods tier 1 (P4 +14, P5 +12). Judge those hits, and cap or rank them.
+   `ItemResult`, floods tier 1 (P4 +14, P5 +12). Judge those hits, and cap or rank them. Done in
+   `GIT-US-0168`: see §9.9.
 
 ### 9.8 The maintainer's environment, as found
 
@@ -481,3 +483,65 @@ This explains why a run with the existing configuration would show nothing:
   has no call edges. This benchmark's first index had 0 edges, and tier 2 answered `ok 0` on P1.
 - The repository's existing code project is registered as `figma-linux` (indexed 2026-09-04),
   not under the id derived from the repository path that the impact seam asks for.
+
+### 9.9 The `decl:` hits judged (`GIT-US-0168`)
+
+P4 and P5 were replayed again on the base `7e60c1c4`, exactly as in §2 (`patch -R -F3`), and
+`spec impact --tiers 1` ran on each with the tier 1 of the stack head, which includes
+`GIT-US-0158`. No test results were ingested, so every hit is `untested`; the verdicts use the
+categories of §5 and the widened "evidence" of §9.3.
+
+**P4** changes `core.Item`: it drops the unexported line fields `BodyLine` and `reqLines`, which
+only place diagnostics on file lines. 14 of its 15 hits come only from `decl:… uses Item`.
+
+| Hits | Reached through | Verdict | Why |
+|---|---|---|---|
+| `SP-0001.R2`, `R3`, `R4`, `R9`, `R10` | `FileStore.UpdateRequirement`, `readChecked`, `ItemPatch.conflictWith`, `diffFields`, `requirementConflicts` | unrelated | They take or return an `Item`, but read neither removed field. The rev protocol does not change. |
+| `SP-0002.R7` | `NextRequirementNumber`, `FileStore.CreateRequirement`, `TestNextRequirementNumber` | unrelated | Number allocation reads the `requirements:` keys, not diagnostic lines. |
+| `SP-0004.R2`, `R3`, `R5` | `Index.Items` | unrelated | Paging and sorting read the front matter, not diagnostic lines. |
+| `SP-0003.R1`, `R3`, `R4`, `R5`, `R6` | `validateItemLinks`, `validateLinkTargetType`, and the tests that verify them | evidence | The diagnostics they produce lose their file line, so their verifying tests run changed code. The rules do not change. §9.3 judged the same five evidence through `orderDiagnostics`. |
+
+**P5** changes `mcp.ItemResult`: `Item` becomes a value again, and `Requirement` and `SpecRev`
+go. All 12 hits are `test-only`, and each comes only from `decl:… uses ItemResult` in a test.
+
+| Hits | Reached through | Verdict | Why |
+|---|---|---|---|
+| `SP-0001.R4`, `R5`, `R7`, `R8`, `R9`, `R10` | `TestRequirementRevProtocol` | evidence | The test reads a requirement ref through `get_item` and `ItemResult.Requirement`, which the replay removes; it no longer compiles. |
+| `SP-0004.R3`, `R4`, `R6` | `TestListRequirements` | evidence | Same: it reads requirement refs through `ItemResult.Requirement`. |
+| `SP-0001.R2`, `R3`, `R6` | `TestTwoAgentsCannotLoseAnUpdate`, `TestStaleRevisionTeachesTheRetry` | evidence | They read plain items through `ItemResult.Item`, whose type changes. The rev protocol does not. |
+
+| PR | `decl:` hits | Behaviour | Evidence | Unrelated |
+|---|---:|---:|---:|---:|
+| P4 | 14 | 0 | 5 | 9 |
+| P5 | 12 | 0 | 12 | 0 |
+| Both | 26 | **0** | 17 | 9 |
+
+None of the 26 is a behaviour hit, so the reach through a widely used type costs tokens and
+precision and finds nothing. The narrow reach that `GIT-US-0158` was built for is different:
+the S4 constant `maxPageSize` has 2 users in its package and is a behaviour hit.
+
+**Users per declaration.** `GIT-US-0168` counts the functions of the whole package, traced or
+not, that use a changed name, with the same scope rules as the reach (docs/03 §21.7):
+
+| Declaration | Package | Users |
+|---|---|---:|
+| `maxPageSize` (S4) | `internal/mcp` | 2 |
+| `Comment` | `internal/core` | 14 |
+| `ItemResult` (P5) | `internal/mcp` | 18 |
+| `Rev` | `internal/core` | 32 |
+| `Item` (P4) | `internal/core` | 129 |
+
+The bound is **10 users**. Above it, a `decl` hit adds no reason, and the requirements that only
+such hits reached are counted on tier 1's status as `dropped`, with the declarations in
+`droppedVia` (docs/03 R-IMP-2). Tier 1 alone, the text line and the JSON report `tokens`, on
+the same replays:
+
+| PR | Hits before | Hits after | Tier line after | Tokens before | Tokens after |
+|---|---:|---:|---|---:|---:|
+| P4 | 15 | 1 | `1 ok 1, 14 dropped (uses Item)` | 1,340 | 173 |
+| P5 | 12 | 0 | `1 ok 0, 12 dropped (uses ItemResult)` | 963 | 80 |
+
+The 17 evidence hits go with the 9 unrelated ones, and that is the trade-off: the dropped count
+tells the agent that a widely used type changed, and the agent can then `trace_requirement` the
+requirements it expects to be affected. The P4 hit that remains, `SP-0003.R7`, is a direct
+`symbol:` hit.

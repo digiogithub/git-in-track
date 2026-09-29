@@ -23,6 +23,9 @@ type SemanticRepo struct {
 	DocsFolders []string
 	// Vault is the open vault attached to the workspace.
 	Vault *vault.Vault
+	// SemanticSearch is the repository's opt-in to a managed Pando
+	// (`repos[].semanticSearch`). Only [InstallDiscoveredSemanticSearch] reads it.
+	SemanticSearch bool
 }
 
 // InstallSemanticSearch builds the semantic searcher `gintrack serve`
@@ -44,6 +47,18 @@ func InstallSemanticSearch(settings config.SearchPando, space *vault.Workspace, 
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
+	reg := semanticRegistry(space, repos)
+	client, searcher := newPandoSearcher(settings, reg, log)
+	if searcher == nil {
+		space.SetSemanticSearcher(nil)
+		return &SemanticHost{}
+	}
+	space.SetSemanticSearcher(searcher)
+	return &SemanticHost{client: client, searcher: searcher}
+}
+
+// semanticRegistry mounts the repositories a host attached to space.
+func semanticRegistry(space *vault.Workspace, repos []SemanticRepo) *registry {
 	reg := &registry{byID: make(map[string]*mount, len(repos)), space: space}
 	for _, r := range repos {
 		if r.Vault == nil {
@@ -61,17 +76,11 @@ func InstallSemanticSearch(settings config.SearchPando, space *vault.Workspace, 
 			id: r.ID, path: r.Path, role: role, docs: docs, docsFolders: r.DocsFolders,
 			label: filepath.Base(filepath.Clean(r.Path)), vlt: r.Vault,
 		}
+		m.semantic.Store(r.SemanticSearch)
 		reg.byID[m.id] = m
 		reg.mounts = append(reg.mounts, m)
 	}
-
-	client, searcher := newPandoSearcher(settings, reg, log)
-	if searcher == nil {
-		space.SetSemanticSearcher(nil)
-		return &SemanticHost{}
-	}
-	space.SetSemanticSearcher(searcher)
-	return &SemanticHost{client: client, searcher: searcher}
+	return reg
 }
 
 // SemanticHost is the Pando session a host other than the companion built
@@ -82,6 +91,9 @@ func InstallSemanticSearch(settings config.SearchPando, space *vault.Workspace, 
 type SemanticHost struct {
 	client   pandoAPI
 	searcher *pandoSearcher
+	// discovered is set by [InstallDiscoveredSemanticSearch]: one connect-only
+	// slot per opted-in repository instead of one client.
+	discovered *managedState
 }
 
 // CallGraph is the Pando client tier 2 of the impact query calls; nil when no
@@ -96,6 +108,25 @@ func (h *SemanticHost) CallGraph() impact.CallGraph {
 	return nil
 }
 
+// CallGraphFor is the code graph tier 2 reads for one repository. A host
+// connected to managed instances answers that repository's own instance, or a
+// graph that says why there is none; any other host answers [SemanticHost.CallGraph].
+func (h *SemanticHost) CallGraphFor(repo string) impact.CallGraph {
+	if h != nil && h.discovered != nil {
+		return h.discovered.impactGraph(repo)
+	}
+	return h.CallGraph()
+}
+
+// SemanticFor is the searcher tier 3 asks for one repository, as
+// [SemanticHost.CallGraphFor] is for tier 2.
+func (h *SemanticHost) SemanticFor(repo string) vault.SemanticSearcher {
+	if h != nil && h.discovered != nil {
+		return h.discovered.impactSemantic(repo)
+	}
+	return h.Semantic()
+}
+
 // Semantic is the searcher tier 3 of the impact query asks for requirement
 // blocks; nil when semantic search is off.
 func (h *SemanticHost) Semantic() vault.SemanticSearcher {
@@ -107,6 +138,18 @@ func (h *SemanticHost) Semantic() vault.SemanticSearcher {
 
 // Close ends the Pando session, if there is one.
 func (h *SemanticHost) Close() error {
+	if h != nil && h.discovered != nil {
+		for _, slot := range h.discovered.slots() {
+			slot.mu.Lock()
+			c := slot.client
+			slot.client = nil
+			slot.mu.Unlock()
+			if c != nil {
+				_ = c.Close()
+			}
+		}
+		return nil
+	}
 	if h == nil || h.client == nil {
 		return nil
 	}

@@ -741,6 +741,17 @@ that repository is registered with Pando and indexed. The row follows its own jo
 the control is a link to the settings card (`/settings#semantic-search`); without the
 `searchSettings` capability it is absent.
 
+In managed mode (`settings.mode` is `managed`, GIT-US-0177, ADR-039) the row's switch is the
+machine-local opt-in instead of a reindex: **Enable semantic search** calls
+`setSemanticSearch(repoId, {enabled: true})` (`PUT /api/v1/search/managed/{repo}/opt-in`), and
+**Disable semantic search** opens a dialog asking whether to delete the index too before it calls
+`setSemanticSearch(repoId, {enabled: false, deleteIndex})`. The badge reads the instance's
+`managed.state`. The settings card gains a **Managed Pando** table with one row per opted-in
+repository — state, Pando version, last error — and a **Restart** button
+(`restartManagedSearch(repoId)`, `POST /api/v1/search/managed/{repo}/restart`). Both are behind the
+`searchSettings` capability, so browser-only mode shows none of it, and `BrowserProvider` refuses
+the two calls with `not_supported`.
+
 **Import from YouTrack (`features/youtrack/`, story GIT-US-0059).** The entry is a button in the
 backlog toolbar, and it needs **both** capability flags: `youtrackSupported`, because a browser-only
 tab has no process to hold a token, and `youtrack`, because importing from an instance nothing is

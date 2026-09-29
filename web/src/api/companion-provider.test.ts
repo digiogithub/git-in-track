@@ -2438,6 +2438,47 @@ describe('CompanionProvider semantic search settings (story GIT-US-0091)', () =>
     });
   });
 
+  it('saves the managed opt-in and restarts an instance (GIT-US-0177)', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      response({
+        repo: 'a b',
+        optedIn: false,
+        persisted: true,
+        indexDeleted: true,
+        managed: { optedIn: false, state: 'disabled' },
+      }),
+    );
+
+    const result = await provider(fetchImpl).setSemanticSearch('a b', {
+      enabled: false,
+      deleteIndex: true,
+    });
+
+    expect(lastCall(fetchImpl).url).toBe(`${BASE}/api/v1/search/managed/a%20b/opt-in`);
+    expect(lastCall(fetchImpl).init.method).toBe('PUT');
+    expect(result).toEqual({
+      repo: 'a b',
+      optedIn: false,
+      persisted: true,
+      indexDeleted: true,
+      managed: { optedIn: false, state: 'disabled' },
+    });
+
+    const restart = vi.fn().mockResolvedValue(response({}, { status: 202 }));
+    await provider(restart).restartManagedSearch('a');
+    expect(lastCall(restart).url).toBe(`${BASE}/api/v1/search/managed/a/restart`);
+    expect(lastCall(restart).init.method).toBe('POST');
+
+    const notManaged = vi
+      .fn()
+      .mockResolvedValue(
+        response({ code: 'search_not_managed', detail: 'Not managed.' }, { status: 409 }),
+      );
+    await expect(
+      provider(notManaged).setSemanticSearch('a', { enabled: true }),
+    ).rejects.toMatchObject({ code: 'search_not_managed' });
+  });
+
   it('translates a search.progress frame into a searchProgress event', () => {
     const client = eventProvider();
     const events: ChangeEvent[] = [];

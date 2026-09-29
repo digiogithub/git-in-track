@@ -118,13 +118,20 @@ func toolErrorOf(t *testing.T, res *sdk.CallToolResult) (code, retry string) {
 
 // fakeSemanticPando is an in-process Pando MCP endpoint answering every tool
 // the semantic searcher calls with Pando's own "nothing found" text, and
-// code_impact_analysis — the call graph of impact tier 2 — with no callers.
-// It counts the calls of each tool.
+// code_impact_analysis and code_find_symbol — the call graph of impact tier
+// 2 — with no callers and no definitions, and code_related_files — the probe
+// that tells a real "no callers" from a project without call edges
+// (GIT-US-0167) — with one coupled file.
+// It counts the calls of each tool. With noCallEdges set it answers the graph
+// tools the way a project indexed with BuildCodeGraph = false does.
 type fakeSemanticPando struct {
-	srv      *httptest.Server
-	requests atomic.Int64
-	mu       sync.Mutex
-	calls    map[string]int
+	srv         *httptest.Server
+	requests    atomic.Int64
+	mu          sync.Mutex
+	calls       map[string]int
+	noCallEdges atomic.Bool
+	// kbArgs are the arguments of every kb_search_documents call, in order.
+	kbArgs []map[string]any
 }
 
 func newFakeSemanticPando(t *testing.T) *fakeSemanticPando {
@@ -133,19 +140,41 @@ func newFakeSemanticPando(t *testing.T) *fakeSemanticPando {
 	srv := sdk.NewServer(&sdk.Implementation{Name: "pando-fake", Version: "test"}, nil)
 	for _, name := range []string{
 		"kb_search_documents", "code_hybrid_search", "code_list_projects", "code_index_project",
-		"code_impact_analysis",
+		"code_impact_analysis", "code_find_symbol", "code_related_files",
 	} {
 		text := "No documents found matching the query."
-		if name == "code_impact_analysis" {
+		switch name {
+		case "code_impact_analysis":
 			text = `{"symbol":"NextID","count":0,"truncated":false,"callers":[]}`
+		case "code_find_symbol":
+			text = "No symbols found matching the pattern."
+		case "code_related_files":
+			text = "count: 1\nrelated[1]:\n  - file_path: src/alloc_test.go\n    reasons[1]: calls\n    score: 0.8\ntruncated: false"
 		}
 		srv.AddTool(
 			&sdk.Tool{Name: name, Description: name, InputSchema: map[string]any{"type": "object"}},
-			func(context.Context, *sdk.CallToolRequest) (*sdk.CallToolResult, error) {
+			func(_ context.Context, req *sdk.CallToolRequest) (*sdk.CallToolResult, error) {
+				var args map[string]any
+				if req.Params != nil && len(req.Params.Arguments) > 0 {
+					_ = json.Unmarshal(req.Params.Arguments, &args)
+				}
 				f.mu.Lock()
 				f.calls[name]++
+				if name == "kb_search_documents" {
+					f.kbArgs = append(f.kbArgs, args)
+				}
 				f.mu.Unlock()
-				return &sdk.CallToolResult{Content: []sdk.Content{&sdk.TextContent{Text: text}}}, nil
+				answer := text
+				if f.noCallEdges.Load() {
+					// Pando's own sentences (internal/llm/tools/graph_tools.go).
+					switch name {
+					case "code_impact_analysis":
+						answer = `No callers found for symbol "NextID" (nothing in the indexed graph depends on it, or the project lacks call edges for its language).`
+					case "code_related_files":
+						answer = `No related files found for "src/alloc.go" (no resolved imports or call coupling in the indexed graph).`
+					}
+				}
+				return &sdk.CallToolResult{Content: []sdk.Content{&sdk.TextContent{Text: answer}}}, nil
 			},
 		)
 	}
@@ -165,6 +194,13 @@ func (f *fakeSemanticPando) called(tool string) int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.calls[tool]
+}
+
+// kbSearches returns the arguments of every kb_search_documents call.
+func (f *fakeSemanticPando) kbSearches() []map[string]any {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]map[string]any(nil), f.kbArgs...)
 }
 
 // usePando points the configuration at the fake.

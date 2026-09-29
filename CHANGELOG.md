@@ -12,7 +12,95 @@ because a commit list cannot express them.
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+  `PUT /api/v1/search/managed/{repo}/opt-in` (`{enabled, deleteIndex?}`) saves the machine-local
+  `repos[].semanticSearch` (guarded against concurrent edits of the configuration file) and starts
+  or stops the repository's instance; `deleteIndex` also removes its data directory. In managed
+  mode the workspace list's Enable/Disable semantic search button uses it and Disable asks whether
+  to delete the index, and the settings card shows each instance's state, Pando version and last
+  error with a Restart button. Browser-only mode shows none of it. docs/08 §10.9 explains how an
+  agent connects to a managed Pando with `gintrack pando status --json`, and warns that this
+  exposes Pando's write tools.
+- **`gintrack mcp` and `gintrack spec` connect to the managed Pando; new `gintrack pando`**
+  (`GIT-US-0176`, ADR-039, docs/07 §4.23, docs/08 §8.5.1). In managed mode `search_semantic` and
+  impact tiers 2 and 3 use the instance a running `gintrack serve` supervises, found through its
+  `state.json`, token file, live pids and a port check; they never start or proxy Pando, and
+  answer `unavailable` ("managed Pando is not running — start `gintrack serve`") when there is
+  none. `gintrack pando status [--json] [--repo]` works without a server and prints the mode,
+  rule, state, pid, port, version, `mcpUrl` and `tokenFile` (never the token; a dead supervisor is
+  `stopped (stale)`). `gintrack pando start|stop|restart|reset` act through the running `serve`
+  with the new `POST /api/v1/search/managed/{repo}/start|stop|restart|reset` routes.
+
+- **Configuration keys and mode resolution for managed Pando** (`GIT-US-0174`, ADR-039,
+  docs/07 §3.3). `search.pando.mode` (`auto` by default), `search.pando.managed.*` and the
+  machine-local `repos[].semanticSearch` are parsed and validated, and `gintrack doctor` prints
+  the resolved mode and the rule that applied. `mode: managed` with `mcpUrl`, `mcpToken`,
+  `restUrl`, `restToken` or `projectId` is refused by key name; a missing `pando` binary
+  resolves to off or unavailable, never an error. Setups with `mcpUrl` set behave as before.
+  Nothing starts a Pando process yet.
+- **A supervisor for managed Pando instances** (`GIT-US-0173`, ADR-039). The new native-only
+  package `internal/pando/supervisor` runs one `pando mcp-server` per repository under
+  `<cacheDir>/pando/<key>/` with a generated 0600 `.pando.toml` and token, a free loopback port,
+  health checks with the instance's own token, exponential restart backoff (`failed` after 5
+  crashes in 10 minutes), a per-instance lock and a `state.json`. Nothing is written inside the
+  repository. It is not reachable from `gintrack serve` or the configuration yet.
+
+- **`gintrack serve` runs the managed Pando instances** (`GIT-US-0175`, ADR-039, docs/07 search settings,
+  docs/21 §1.1). In managed mode, `serve` starts one supervised Pando per repository with
+  `semanticSearch: true`, at most `search.pando.managed.maxInstances` of them (the rest report
+  `skipped` with the reason), registers each repository as a code project under
+  `pando.SanitizeProjectID(root)` once its instance is ready, and stops them all when it stops.
+  A semantic search is sent to every ready instance in parallel inside the existing 300 ms budget
+  and merged as before; impact tiers 2 and 3 use the instance of the repository being analyzed.
+  An instance that is not ready makes its repository `unavailable` with a reason, never an
+  empty answer. `GET /api/v1/search/settings` gains `mode`, `modeRule`, `modeReason`, `binary`,
+  `maxInstances` and, per `indexed[]` row, `managed: {optedIn, state, pid, port, version, since,
+  crashes, error}`. The KB half of `POST /api/v1/search/reindex` restarts the instance (its
+  `KBAutoImport` performs the full sync) and `kbNote` says so. `PATCH` of `mcpUrl`, `restUrl` or
+  `projectId` is refused while the mode is managed. External mode behaves as before; explicit `mode: off` now disables Pando entirely, an `mcpUrl` included.
+  The version floor is only `search.pando.managed.minVersion`; gintrack has no built-in one.
+
+### Changed
+
+- **Impact tier 2 is more precise** (`GIT-US-0166`, docs/03 R-IMP-3 and R-IMP-5, docs/08
+  §10.8). The Pando re-run of the spec impact benchmark (`GIT-US-0161`) found 1 behaviour hit in
+  22 of tier 2's own. Three rules now apply:
+  - a changed name that an unchanged definition shares is pinned with `code_find_symbol`, and
+    its callers are dropped (`CommentKind.Valid` no longer answers for `LinkKind.Valid`); a Pando
+    whose `code_find_symbol` fails keeps every caller, as before;
+  - a caller in a test file gives `test-only` reasons, whatever marker it carries;
+  - a production caller carrying several requirements no longer turns a `test-only` hit into
+    `behaviour`.
+- **Impact tier 1 bounds its reach through widely used declarations** (`GIT-US-0168`, docs/03
+  §21.7 and R-IMP-2, docs/08 §10.8). A changed package-level `const`, `var` or `type` that more
+  than 10 functions of its package use no longer adds `decl:` reasons: in the spec impact
+  benchmark, `uses Item` added 14 hits to one PR and `uses ItemResult` 12 to another, none of
+  them a behaviour change. The requirements only such a declaration reached are counted, never
+  silently lost: tier 1's status gains `dropped` and `droppedVia`, the text form prints
+  `1 ok <n>, <d> dropped (uses <names>)`, and the web impact view says so under tier 1. Each
+  `decl` trace hit now carries `users`, and an edge several changed names reach keeps the least
+  used one. The benchmark's worst tier-1 report (P4) falls from 1,340 to 173 tokens.
+- **Impact tier 3 searches requirement blocks with a story-based query** (`GIT-US-0165`,
+  docs/03 R-IMP-4, docs/21 §2.1 and §6.1, docs/08 §4.21). A semantic query of kind `requirement` —
+  impact tier 3, `search_semantic` with `kind: "requirement"`, and the `similar[]` of a
+  requirement create — now sends Pando's `path_prefix` filter on `.pmngr/specs/`, so only spec
+  chunks compete, and skips the code leg, which never holds a spec. An empty prefixed answer (a
+  `KBPath` other than the documentation folder) is asked again once without the prefix. The
+  tier-3 query is built from the story title, the operations of its `## Spec Delta`, the
+  caller's `title` and the changed declarations in words — a Go doc comment's first sentence
+  (new `trace.DocSummaries`), else the name split into words — with test declarations only when
+  nothing else changed, capped at 1,000 bytes; it no longer sends bare symbol names.
+
+### Fixed
+
+- **Impact tier 2 reports a missing code graph as `unavailable`** (`GIT-US-0167`, docs/03
+  R-IMP-3, docs/21 §6.1). A Pando project indexed with `[TokenOptimization] BuildCodeGraph =
+  false` has no call edges and answers "No callers found" for every name, which tier 2 reported
+  as `ok` with no hits. When no changed name has a caller, tier 2 now probes the changed files
+  with `code_related_files`; none coupled to another makes it `unavailable` with a fixed message
+  naming `BuildCodeGraph`. docs/21 §6.1 documents the setting and that the code project id is
+  derived from the repository root.
 
 ## [2.1.0] — 2026-09-25
 

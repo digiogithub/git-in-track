@@ -2,14 +2,15 @@
 id: GIT-EP-0026
 type: epic
 title: Spec agent surface in MCP and CLI
-status: in_progress
+status: done
 priority: high
 milestone: GIT-M-0015
 author: claude
 labels: [mcp, cli, docs]
 created: 2026-09-24T12:08:17Z
-updated: 2026-09-25T11:15:00Z
+updated: 2026-09-29T18:44:12Z
 started: 2026-09-25T11:15:00Z
+closed: 2026-09-29T18:44:12Z
 links:
   - { kind: relates_to, target: GIT-T-0238 }
 ---

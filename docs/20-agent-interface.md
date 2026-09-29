@@ -466,6 +466,15 @@ gateway-on configuration that used to complete a turn reached the tools through
 | Opening the panel in a second tab kills the first tab's answer | A second POST on a live thread abandons the running one — Pando's behaviour, not a bug in the panel | Use one tab per thread. |
 | `.pando.toml` shows up in `git status` | It was not excluded | Add it to `.gitignore`; it carries the companion token, encrypted. |
 
+### 7.1 Semantic search under managed Pando (GIT-US-0177)
+
+When `gintrack serve` runs Pando itself (docs/21 §1.1, ADR-039), each opted-in repository has its
+own instance, separate from the `pando agui-serve` of this document. Turning a repository on or off
+is the workspace list's **Enable/Disable semantic search** button; the settings card shows each
+instance's state, version and last error and can restart it. The assistant's own Pando and the
+managed search instance are different processes with different tokens; neither is reachable with
+the other's token.
+
 ---
 
 ## 8. Related documents

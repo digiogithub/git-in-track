@@ -2,7 +2,7 @@
 id: GIT-US-0157
 type: story
 title: Tell test-only impact hits apart from behaviour hits
-status: in_progress
+status: done
 priority: medium
 parent: GIT-EP-0025
 milestone: GIT-M-0015
@@ -11,8 +11,9 @@ author: mcp
 labels: [core, mcp, agent-ok]
 estimate: 3
 created: 2026-09-24T23:18:50Z
-updated: 2026-09-25T11:15:00Z
+updated: 2026-09-29T18:43:46Z
 started: 2026-09-25T11:15:00Z
+closed: 2026-09-29T18:43:46Z
 ---
 
 ## Description
@@ -21,6 +22,6 @@ The GIT-US-0137 benchmark (PR #76) measured tier-1 precision at 52% for behaviou
 
 ## Acceptance Criteria
 
-- [ ] Impact hits carry a kind, `behaviour` or `test-only`, derived from whether a changed symbol comes from an `Implements`/`trace.code` edge or only from a `Verifies`/`trace.tests` edge.
-- [ ] The renderer ranks `test-only` below behaviour hits, and `--fail-on` can exclude them. The default stays unchanged.
-- [ ] Golden tests are updated. docs/03 §21.11 and docs/08 are updated.
+- [x] Impact hits carry a kind, `behaviour` or `test-only`, derived from whether a changed symbol comes from an `Implements`/`trace.code` edge or only from a `Verifies`/`trace.tests` edge.
+- [x] The renderer ranks `test-only` below behaviour hits, and `--fail-on` can exclude them. The default stays unchanged.
+- [x] Golden tests are updated. docs/03 §21.11 and docs/08 are updated.

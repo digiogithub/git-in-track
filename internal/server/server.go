@@ -35,6 +35,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/digiogithub/git-in-track/internal/config"
+	"github.com/digiogithub/git-in-track/internal/pando/supervisor"
 )
 
 // DefaultPort is the loopback port the companion listens on.
@@ -144,6 +145,16 @@ type Options struct {
 	// are expected already resolved through Config.ResolvedPandoMCPToken and
 	// Config.ResolvedPandoRESTToken; they are never marshaled into a response.
 	Search config.Search
+	// CacheDir is where the managed Pando instances keep their directories,
+	// `<CacheDir>/pando/<key>/` (ADR-039). Empty means no instance can run.
+	CacheDir string
+
+	// The managed-Pando seams. Production leaves them nil; a test replaces them
+	// so that no process is spawned.
+	pandoLookPath    func(string) (string, error)
+	pandoNewInstance func(supervisor.Options) (ManagedInstance, error)
+	pandoNewClient   func(mcpURL, token, project string) (pandoAPI, error)
+	pandoTick        time.Duration
 
 	// SyncEngine configures the background job engine: the worker pool, the
 	// batch size, the shared outbound rate limit, the retry budget and the
@@ -370,6 +381,12 @@ func (s *Server) Start(ctx context.Context) error {
 	// the background: a fresh clone becomes searchable by starting the server,
 	// and a Pando that is down or slow never holds this up (GIT-US-0098).
 	s.search.startRegistration(ctx)
+	// In managed mode the same start brings up one Pando per opted-in
+	// repository, in the background, and stops them all on the way out
+	// (GIT-US-0175). The stop is detached from ctx for the same reason the
+	// committer's flush is: ctx is what ended the server.
+	s.search.startManaged(ctx)
+	defer s.search.stopManaged(context.WithoutCancel(ctx))
 	// The tunnel forwards to the address the listener just resolved, so it can
 	// only be opened here, and it is closed before the process exits so that no
 	// published workspace outlives the server.

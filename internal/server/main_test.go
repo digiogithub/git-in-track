@@ -2,6 +2,7 @@ package server
 
 import (
 	"os"
+	"os/exec"
 	"testing"
 )
 
@@ -27,5 +28,8 @@ func TestMain(m *testing.M) {
 			panic(err)
 		}
 	}
+	// Mode resolution looks for a pando binary on PATH; a test must not depend
+	// on whether the machine has one.
+	defaultPandoLookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 	os.Exit(m.Run())
 }

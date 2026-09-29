@@ -2,14 +2,15 @@
 id: GIT-EP-0029
 type: epic
 title: Dogfood specs and token benchmark
-status: in_progress
+status: done
 priority: medium
 milestone: GIT-M-0015
 author: claude
 labels: [docs]
 created: 2026-09-24T12:08:35Z
-updated: 2026-09-25T11:15:00Z
+updated: 2026-09-29T22:56:46Z
 started: 2026-09-25T11:15:00Z
+closed: 2026-09-29T22:56:46Z
 links:
   - { kind: relates_to, target: GIT-T-0238 }
 ---
