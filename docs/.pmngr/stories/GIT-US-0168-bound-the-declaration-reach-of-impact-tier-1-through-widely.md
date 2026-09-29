@@ -2,15 +2,18 @@
 id: GIT-US-0168
 type: story
 title: Bound the declaration reach of impact tier 1 through widely used types
-status: todo
+status: done
 priority: low
 parent: GIT-EP-0029
 milestone: GIT-M-0015
+assignees: [claude]
 author: claude
 labels: [core, agent-ok]
 estimate: 3
 created: 2026-09-25T12:27:40Z
-updated: 2026-09-25T12:27:40Z
+updated: 2026-09-29T19:15:43Z
+started: 2026-09-29T17:27:44Z
+closed: 2026-09-29T19:15:43Z
 links:
   - { kind: relates_to, target: GIT-US-0161 }
   - { kind: relates_to, target: GIT-US-0158 }
@@ -22,7 +25,7 @@ GIT-US-0158 reaches traced code through changed package-level declarations. When
 
 ## Acceptance Criteria
 
-- [ ] The P4 and P5 `decl:` hits are judged by hand, and the verdicts are recorded in the benchmark doc.
-- [ ] The `decl:` reach is capped or ranked, for example by the number of users of the declaration, so that a widely used type does not fill the budget. Hits it drops are counted in the report, never silently lost.
-- [ ] Golden tests cover a widely used type and a narrowly used one.
-- [ ] docs/03 §21 describes the rule. `make test` and `make lint` pass.
+- [x] The P4 and P5 `decl:` hits are judged by hand, and the verdicts are recorded in the benchmark doc.
+- [x] The `decl:` reach is capped or ranked, for example by the number of users of the declaration, so that a widely used type does not fill the budget. Hits it drops are counted in the report, never silently lost.
+- [x] Golden tests cover a widely used type and a narrowly used one.
+- [x] docs/03 §21 describes the rule. `make test` and `make lint` pass.

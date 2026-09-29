@@ -2,7 +2,7 @@
 id: GIT-US-0156
 type: story
 title: Bind HTTP, browser and spec-tool cursors to their filters
-status: in_progress
+status: done
 priority: medium
 milestone: GIT-M-0015
 assignees: [claude]
@@ -10,8 +10,11 @@ author: mcp
 labels: [server, web, mcp, agent-ok]
 estimate: 3
 created: 2026-09-24T23:06:50Z
-updated: 2026-09-25T11:15:00Z
+updated: 2026-09-29T18:43:46Z
 started: 2026-09-25T11:15:00Z
+closed: 2026-09-29T18:43:46Z
+links:
+  - { kind: modifies, target: GIT-SP-0004.R5 }
 ---
 
 ## Description
@@ -23,10 +26,10 @@ GIT-US-0155 (PR #75) bound the MCP `list_items` and `list_inbox` cursors to ever
 
 ## Acceptance Criteria
 
-- [ ] Failing tests for each path that accepts a changed filter today.
-- [ ] Each cursor is bound to its filters and sort, and a mismatch returns the existing invalid-cursor error. Share one helper; do not duplicate the MCP one.
-- [ ] If GIT-SP-0004 (#74) is merged by then, add a MODIFIED Spec Delta for its cursor requirement.
-- [ ] docs/07 and docs/08 are updated. `make test` and `make lint` pass.
+- [x] Failing tests for each path that accepts a changed filter today.
+- [x] Each cursor is bound to its filters and sort, and a mismatch returns the existing invalid-cursor error. Share one helper; do not duplicate the MCP one.
+- [x] If GIT-SP-0004 (#74) is merged by then, add a MODIFIED Spec Delta for its cursor requirement.
+- [x] docs/07 and docs/08 are updated. `make test` and `make lint` pass.
 
 ## Spec Delta
 
