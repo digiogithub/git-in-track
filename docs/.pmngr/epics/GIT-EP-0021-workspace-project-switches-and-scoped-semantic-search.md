@@ -2,13 +2,15 @@
 id: GIT-EP-0021
 type: epic
 title: Workspace project switches and scoped semantic search
-status: backlog
+status: done
 priority: high
 milestone: GIT-M-0014
 author: mcp
 labels: [web, server, core]
 created: 2026-09-17T09:31:41Z
-updated: 2026-09-17T09:31:41Z
+updated: 2026-09-24T11:08:51Z
+started: 2026-09-24T11:08:40Z
+closed: 2026-09-24T11:08:51Z
 ---
 
 ## Description
@@ -22,8 +24,8 @@ Four capabilities for the web workspace:
 
 ## Acceptance Criteria
 
-- [ ] Every story of this epic is done and merged to main.
-- [ ] Go tests, wasm build, vitest, typecheck and eslint pass on main.
+- [x] Every story of this epic is done and merged to main.
+- [x] Go tests, wasm build, vitest, typecheck and eslint pass on main.
 
 ## Notes
 
