@@ -105,6 +105,9 @@ import type {
   SearchIndexedRepo,
   SearchHit,
   SearchQuery,
+  SearchManagedInstance,
+  SearchManagedState,
+  SearchOptInResult,
   SearchReindexJob,
   SearchReindexKbStats,
   SearchReindexPhase,
@@ -388,6 +391,7 @@ const PROBLEM_CODES: Record<string, ProviderErrorCode> = {
   // A reindex that is already running is a refusal to explain, and a companion
   // with nothing to index with is a configuration to fix; neither is a retry.
   search_reindex_running: 'search_reindex_running',
+  search_not_managed: 'search_not_managed',
   search_not_configured: 'search_not_configured',
   // No tracer, coverage backend or impact resolver for this repository
   // (GIT-US-0127): a state for the view to explain, not a retry.
@@ -1096,8 +1100,36 @@ function toSearchIndexed(value: unknown): SearchIndexedRepo[] {
       pages: asNumber(record['pages']) ?? 0,
       comments: asNumber(record['comments']) ?? 0,
       ...optional('code', toSearchCodeIndex(record['code'])),
+      ...optional('managed', toSearchManaged(record['managed'])),
     };
   });
+}
+
+const MANAGED_STATES: readonly SearchManagedState[] = [
+  'stopped',
+  'starting',
+  'ready',
+  'restarting',
+  'failed',
+  'disabled',
+  'skipped',
+];
+
+/** `indexed[].managed`, absent outside managed mode. */
+export function toSearchManaged(value: unknown): SearchManagedInstance | undefined {
+  const record = asRecord(value);
+  if (record === null) return undefined;
+  const state = asString(record['state']);
+  return {
+    optedIn: asBoolean(record['optedIn']) ?? false,
+    state: MANAGED_STATES.find((known) => known === state) ?? 'failed',
+    ...optional('pid', asNumber(record['pid'])),
+    ...optional('port', asNumber(record['port'])),
+    ...optional('version', asString(record['version'])),
+    ...optional('since', asString(record['since'])),
+    ...optional('crashes', asNumber(record['crashes'])),
+    ...optional('error', asString(record['error'])),
+  };
 }
 
 /** One repository's code-project registration, absent until it has run. */
@@ -1172,6 +1204,10 @@ export function toSearchSettings(value: unknown): SearchSettings {
     allowRemote: asBoolean(record['allowRemote']) ?? false,
     reachable: reachable ?? null,
     reachableError: asString(record['reachableError']) ?? '',
+    ...optional('mode', asString(record['mode'])),
+    ...optional('modeReason', asString(record['modeReason'])),
+    ...optional('binary', asString(record['binary'])),
+    ...optional('maxInstances', asNumber(record['maxInstances'])),
     indexed: toSearchIndexed(record['indexed']),
     reindex:
       record['reindex'] === undefined || record['reindex'] === null
@@ -2704,6 +2740,37 @@ export class CompanionProvider implements DataProvider {
     return toSearchReindexJob(
       await this.#json(`${API_PREFIX}/search/reindex`, { method: 'POST', body }),
     );
+  }
+
+  /**
+   * `PUT /api/v1/search/managed/{repo}/opt-in` saves `repos[].semanticSearch`
+   * and starts or stops the repository's managed Pando (GIT-US-0177).
+   */
+  async setSemanticSearch(
+    repo: string,
+    opts: { enabled: boolean; deleteIndex?: boolean },
+  ): Promise<SearchOptInResult> {
+    const record = asRecord(
+      await this.#json(`${API_PREFIX}/search/managed/${encodeURIComponent(repo)}/opt-in`, {
+        method: 'PUT',
+        body: opts,
+      }),
+    );
+    const managed = toSearchManaged(record?.['managed']);
+    return {
+      repo: asString(record?.['repo']) ?? repo,
+      optedIn: asBoolean(record?.['optedIn']) ?? opts.enabled,
+      persisted: asBoolean(record?.['persisted']) ?? false,
+      indexDeleted: asBoolean(record?.['indexDeleted']) ?? false,
+      managed: managed ?? { optedIn: opts.enabled, state: 'disabled' },
+    };
+  }
+
+  /** `POST /api/v1/search/managed/{repo}/restart`. */
+  async restartManagedSearch(repo: string): Promise<void> {
+    await this.#json(`${API_PREFIX}/search/managed/${encodeURIComponent(repo)}/restart`, {
+      method: 'POST',
+    });
   }
 
   // --------------------------------------------------------- mcp write tools

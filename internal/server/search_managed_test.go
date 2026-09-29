@@ -117,6 +117,8 @@ type managedRigOptions struct {
 	mode string
 	// mcpURL sets an external endpoint.
 	mcpURL string
+	// configPath is the configuration file a settings change is written to.
+	configPath string
 }
 
 func newManagedRig(t *testing.T, o managedRigOptions) *managedRig {
@@ -150,7 +152,7 @@ func newManagedRig(t *testing.T, o managedRigOptions) *managedRig {
 		mode = config.PandoModeAuto
 	}
 	s, err := New(Options{
-		Token: "test-token", Workspace: "test", Repos: repos, CacheDir: t.TempDir(),
+		Token: "test-token", Workspace: "test", Repos: repos, CacheDir: t.TempDir(), ConfigPath: o.configPath,
 		Now: func() time.Time { return time.Date(2026, 9, 29, 10, 0, 0, 0, time.UTC) },
 		Search: config.Search{Pando: config.SearchPando{
 			Mode: mode, MCPURL: o.mcpURL, Managed: config.PandoManaged{MaxInstances: o.max},

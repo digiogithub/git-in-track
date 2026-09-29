@@ -1517,6 +1517,47 @@ export type SearchIndexedRepo = {
    * be readable here.
    */
   code?: SearchCodeIndex;
+  /**
+   * The managed Pando instance of this repository (ADR-039). Present only when
+   * the companion runs Pando itself (`mode` is `managed`).
+   */
+  managed?: SearchManagedInstance;
+};
+
+/** What a managed Pando instance is doing, as the settings report it. */
+export type SearchManagedState =
+  | 'stopped'
+  | 'starting'
+  | 'ready'
+  | 'restarting'
+  | 'failed'
+  | 'disabled'
+  | 'skipped';
+
+/** One repository's managed Pando: `indexed[].managed` of the settings. */
+export type SearchManagedInstance = {
+  /** `repos[].semanticSearch`: the machine-local opt-in. */
+  optedIn: boolean;
+  state: SearchManagedState;
+  pid?: number;
+  port?: number;
+  version?: string;
+  /** When `state` last changed (RFC 3339). */
+  since?: string;
+  crashes?: number;
+  /** The last error, or why the instance was skipped. */
+  error?: string;
+};
+
+/** `PUT /api/v1/search/managed/{repo}/opt-in` → what came of it. */
+export type SearchOptInResult = {
+  repo: string;
+  optedIn: boolean;
+  /** Whether the choice reached the configuration file. */
+  persisted: boolean;
+  /** Whether the instance directory (Pando's index) was removed. */
+  indexDeleted: boolean;
+  managed: SearchManagedInstance;
 };
 
 /** What became of one repository's code-project registration. */
@@ -1607,6 +1648,17 @@ export type SearchSettings = {
    */
   reachable: boolean | null;
   reachableError: string;
+  /**
+   * How the companion reaches Pando: `managed` (it runs one per opted-in
+   * repository), `external`, `off` or `auto`. Absent from a companion that
+   * predates ADR-039.
+   */
+  mode?: string;
+  /** Why that mode is in force. */
+  modeReason?: string;
+  /** The pando binary a managed companion launches. */
+  binary?: string;
+  maxInstances?: number;
   /** What Pando indexes, one row per mounted repository. */
   indexed: SearchIndexedRepo[];
   /** The running job, or the last finished one; null before the first. */
@@ -1719,6 +1771,8 @@ export type ProviderErrorCode =
    * keeps following the job that is already there (GIT-US-0091).
    */
   | 'search_reindex_running'
+  /** A managed-Pando request against a companion that is not in managed mode. */
+  | 'search_not_managed'
   /** No Pando endpoint: there is nothing to index. */
   | 'search_not_configured'
   /**
@@ -2124,6 +2178,19 @@ export interface DataProvider {
    * with `not_found` (GIT-US-0101).
    */
   reindexSearch(repo?: string): Promise<SearchReindexJob>;
+  /**
+   * Saves the machine-local opt-in (`repos[].semanticSearch`) of one repository
+   * and starts or stops its managed Pando. `deleteIndex` also removes the
+   * instance directory when disabling. Refused with `search_not_managed` when
+   * the companion does not run Pando itself (`PUT /search/managed/{repo}/opt-in`,
+   * GIT-US-0177).
+   */
+  setSemanticSearch(
+    repo: string,
+    opts: { enabled: boolean; deleteIndex?: boolean },
+  ): Promise<SearchOptInResult>;
+  /** Restarts one repository's managed Pando (`POST /search/managed/{repo}/restart`). */
+  restartManagedSearch(repo: string): Promise<void>;
 
   // MCP write tools (`GET|PATCH /api/v1/mcp/settings`)
   /**

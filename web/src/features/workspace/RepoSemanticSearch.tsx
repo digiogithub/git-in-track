@@ -18,13 +18,28 @@
 
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
-import { Sparkles } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { Sparkles, SquareX } from 'lucide-react';
+import { useEffect, useId, useState } from 'react';
 
-import { ProviderError, type SearchCodeIndex, type SearchSettings } from '@/api/provider';
+import {
+  ProviderError,
+  type SearchCodeIndex,
+  type SearchManagedInstance,
+  type SearchSettings,
+} from '@/api/provider';
 import { useOptionalProvider } from '@/api/provider-context';
 import { Badge, type BadgeProps } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
 import { searchSettingsKey, useSearchSettings } from '@/features/settings/search-queries';
 
 type RowState = 'on' | 'indexing' | 'off' | 'unavailable';
@@ -95,6 +110,16 @@ function RepoSemanticSearchControl({ repoId }: { repoId: string }) {
   const data = settings.data;
   if (!data) return null;
 
+  // In managed mode the switch is the machine-local opt-in, not a reindex.
+  if (data.mode === 'managed') {
+    return (
+      <ManagedToggle
+        repoId={repoId}
+        managed={data.indexed.find((entry) => entry.repo === repoId)?.managed}
+      />
+    );
+  }
+
   if (!data.configured) {
     return (
       <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -140,6 +165,140 @@ function RepoSemanticSearchControl({ repoId }: { repoId: string }) {
           {error}
         </p>
       )}
+    </div>
+  );
+}
+
+const MANAGED_TONES: Record<SearchManagedInstance['state'], BadgeProps['variant']> = {
+  ready: 'success',
+  starting: 'info',
+  restarting: 'info',
+  stopped: 'outline',
+  disabled: 'outline',
+  skipped: 'warning',
+  failed: 'destructive',
+};
+
+/**
+ * The opt-in switch of managed mode (GIT-US-0177, ADR-039). Enabling saves
+ * `repos[].semanticSearch` and starts the repository's Pando; disabling stops
+ * it and asks whether the index goes with it.
+ */
+function ManagedToggle({
+  repoId,
+  managed,
+}: {
+  repoId: string;
+  managed: SearchManagedInstance | undefined;
+}) {
+  const provider = useOptionalProvider();
+  const queryClient = useQueryClient();
+  const [error, setError] = useState<string | null>(null);
+  const [asking, setAsking] = useState(false);
+  const [deleteIndex, setDeleteIndex] = useState(false);
+  const deleteId = useId();
+
+  const save = useMutation({
+    mutationFn: (opts: { enabled: boolean; deleteIndex?: boolean }) => {
+      if (!provider) return Promise.reject(new Error('No data provider.'));
+      return provider.setSemanticSearch(repoId, opts);
+    },
+    onMutate: () => {
+      setError(null);
+    },
+    onSuccess: () => {
+      setAsking(false);
+      setDeleteIndex(false);
+      void queryClient.invalidateQueries({ queryKey: searchSettingsKey });
+    },
+    onError: (cause: unknown) => {
+      setAsking(false);
+      setError(cause instanceof Error ? cause.message : String(cause));
+    },
+  });
+
+  const optedIn = managed?.optedIn ?? false;
+  const state = managed?.state ?? 'disabled';
+
+  return (
+    <div className="flex flex-col gap-1 text-xs">
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge variant={MANAGED_TONES[state]} size="sm" title={managed?.error}>
+          Semantic search {state}
+        </Badge>
+        {optedIn ? (
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={save.isPending}
+            onClick={() => {
+              setAsking(true);
+            }}
+          >
+            <SquareX aria-hidden="true" className="h-4 w-4" />
+            Disable semantic search
+          </Button>
+        ) : (
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={save.isPending}
+            onClick={() => {
+              save.mutate({ enabled: true });
+            }}
+          >
+            <Sparkles aria-hidden="true" className="h-4 w-4" />
+            Enable semantic search
+          </Button>
+        )}
+      </div>
+      {managed?.state === 'skipped' && managed.error ? (
+        <p className="text-muted-foreground">{managed.error}</p>
+      ) : null}
+      {error === null ? null : (
+        <p role="alert" className="text-destructive">
+          {error}
+        </p>
+      )}
+      <Dialog open={asking} onOpenChange={setAsking}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Disable semantic search for {repoId}?</DialogTitle>
+            <DialogDescription>
+              Its Pando instance stops. The index is kept on disk unless you delete it too, so
+              enabling semantic search again is quick.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex items-center gap-2 text-sm">
+            <Checkbox
+              id={deleteId}
+              checked={deleteIndex}
+              onChange={(event) => {
+                setDeleteIndex(event.target.checked);
+              }}
+            />
+            <Label htmlFor={deleteId}>Also delete the index</Label>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setAsking(false);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={save.isPending}
+              onClick={() => {
+                save.mutate({ enabled: false, deleteIndex });
+              }}
+            >
+              Disable
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

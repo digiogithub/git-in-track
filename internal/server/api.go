@@ -90,6 +90,8 @@ func (s *Server) mountAPI(api chi.Router) {
 		p.Get("/search/settings", s.handleSearchSettings)
 		p.Patch("/search/settings", s.handleSearchSettingsPatch)
 		p.Post("/search/reindex", s.handleSearchReindex)
+		// The machine-local opt-in to a managed Pando (GIT-US-0177, ADR-039).
+		p.Put("/search/managed/{repo}/opt-in", s.handleSearchManagedOptIn)
 		p.Post("/validate", s.handleValidate)
 
 		// Phases 3 and 4. The routes exist so that a client learns "not yet"

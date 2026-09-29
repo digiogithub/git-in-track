@@ -110,7 +110,7 @@ func statusForCode(code string) int {
 		"project_exists", "team_exists",
 		vault.TeamProjectExistsCode, vault.TeamProjectReferencedCode,
 		codeTunnelRequiresToken, codeYouTrackNotConfigured, codeSyncJobNotRetryable,
-		codeSearchReindexRunning,
+		codeSearchReindexRunning, codeSearchNotManaged,
 		vault.NoTriageStatusCode, vault.SprintTargetCompletedCode,
 		vault.InboxEnabledCode, vault.TriageIDTakenCode:
 		// A WIP limit is advisory: the move is refused once, and the caller may

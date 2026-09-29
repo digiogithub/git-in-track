@@ -1,8 +1,9 @@
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 
 import { FakeProvider, type FakeSearch } from '@/api/fake-provider';
+import type { SearchManagedState } from '@/api/provider';
 import { ProviderContext } from '@/api/provider-context';
 import { ToastProvider } from '@/components/ui/toast';
 import { PandoSearchCard } from '@/features/settings/PandoSearchCard';
@@ -255,5 +256,73 @@ describe('PandoSearchCard', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('A reindex is already running');
     // The running job was untouched, so the button stays offered.
     expect(screen.getByRole('button', { name: 'Reindex now' })).toBeEnabled();
+  });
+
+  describe('managed Pando (GIT-US-0177)', () => {
+    const managed = (state: SearchManagedState, extra: object = {}): FakeSearch => ({
+      fullTextSearch: 'pando',
+      settings: {
+        mode: 'managed',
+        binary: '/usr/bin/pando',
+        maxInstances: 4,
+        mcpUrl: '',
+        indexed: [
+          {
+            repo: 'acme-api',
+            root: '/home/dana/src/acme-api',
+            docs: ['docs'],
+            items: 1,
+            pages: 1,
+            comments: 0,
+            managed: { optedIn: true, state, ...extra },
+          },
+          {
+            repo: 'other',
+            root: '/home/dana/src/other',
+            docs: ['docs'],
+            items: 1,
+            pages: 1,
+            comments: 0,
+            managed: { optedIn: false, state: 'disabled' },
+          },
+        ],
+      },
+    });
+
+    it('shows state, version and last error of each opted-in repository only', async () => {
+      renderCard(managed('failed', { version: '1.8.2', error: 'exit status 2' }));
+
+      const section = await screen.findByTestId('pando-managed');
+      expect(within(section).getByText('failed')).toBeVisible();
+      expect(within(section).getByText('1.8.2')).toBeVisible();
+      expect(within(section).getByText('exit status 2')).toBeVisible();
+      expect(within(section).queryByText('other')).toBeNull();
+    });
+
+    it('restarts an instance and reloads', async () => {
+      const provider = renderCard(managed('ready', { version: '1.8.2' }));
+
+      await userEvent.click(
+        await screen.findByRole('button', { name: 'Restart Pando for acme-api' }),
+      );
+
+      await waitFor(() => {
+        expect(provider.managedRestarts).toEqual(['acme-api']);
+      });
+    });
+
+    it('offers no restart for a skipped instance', async () => {
+      renderCard(managed('skipped', { error: 'cap reached' }));
+
+      await screen.findByTestId('pando-managed');
+      expect(screen.queryByRole('button', { name: /restart pando/i })).toBeNull();
+    });
+
+    it('is not shown outside managed mode', async () => {
+      renderCard(configured);
+
+      await screen.findByText('pando');
+      expect(screen.queryByTestId('pando-managed')).toBeNull();
+    });
   });
 });
