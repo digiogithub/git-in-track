@@ -247,3 +247,7 @@ func marshalStatus(st Status) ([]byte, error) {
 	}
 	return append(b, '\n'), nil
 }
+
+// DataDir is where Pando keeps the index and the knowledge base of an
+// instance directory; `gintrack pando reset` deletes it.
+func DataDir(dir string) string { return filepath.Join(dir, dataDirName) }

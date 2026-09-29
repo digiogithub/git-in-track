@@ -28,6 +28,8 @@ const (
 	// 409: the caller waits for the running job rather than starting a second
 	// one that would fight it for the same index.
 	codeSearchReindexRunning = "search_reindex_running"
+	// codeManagedInstance refuses a lifecycle verb the instance cannot take.
+	codeManagedInstance = "managed_instance_refused"
 	// codeSearchNotConfigured means no Pando endpoint is configured, so there
 	// is nothing to reindex.
 	codeSearchNotConfigured = "search_not_configured"
