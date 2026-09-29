@@ -14,6 +14,10 @@ because a commit list cannot express them.
 
 ### Added
 
+- **Coverage drift bounds declaration reach like impact** (`GIT-US-0169`, docs/03 §21.6-§21.7). A
+  changed `const`, `var` or `type` used by more than 10 functions of its package no longer marks a
+  passing requirement `suspect`; the row stays `passing` and shows `bounded:<n>`, the traced edges
+  the bound suppressed. Impact and coverage share `trace.DefaultMaxDeclUsers`.
   `PUT /api/v1/search/managed/{repo}/opt-in` (`{enabled, deleteIndex?}`) saves the machine-local
   `repos[].semanticSearch` (guarded against concurrent edits of the configuration file) and starts
   or stops the repository's instance; `deleteIndex` also removes its data directory. In managed

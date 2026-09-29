@@ -43,6 +43,7 @@ const (
 	CoverageReasonCode          = "code:"          // + trace ref: traced code changed since the evidence commit
 	CoverageReasonTest          = "test:"          // + trace ref: a traced test changed since the evidence commit
 	CoverageReasonMore          = "+"              // + count: more changed trace refs than listed
+	CoverageReasonBounded       = "bounded:"       // + count: traced edges whose only change is a widely used declaration; not drift
 	CoverageReasonCommitUnknown = "commit-unknown" // the evidence commit is not in this history
 	CoverageReasonUnchecked     = "unchecked"      // no history to compare with: drift not checked
 	CoverageReasonStamp         = "stamp"          // the evidence is the verified stamp
