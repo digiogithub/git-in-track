@@ -130,6 +130,8 @@ type fakeSemanticPando struct {
 	mu          sync.Mutex
 	calls       map[string]int
 	noCallEdges atomic.Bool
+	// kbArgs are the arguments of every kb_search_documents call, in order.
+	kbArgs []map[string]any
 }
 
 func newFakeSemanticPando(t *testing.T) *fakeSemanticPando {
@@ -151,9 +153,16 @@ func newFakeSemanticPando(t *testing.T) *fakeSemanticPando {
 		}
 		srv.AddTool(
 			&sdk.Tool{Name: name, Description: name, InputSchema: map[string]any{"type": "object"}},
-			func(context.Context, *sdk.CallToolRequest) (*sdk.CallToolResult, error) {
+			func(_ context.Context, req *sdk.CallToolRequest) (*sdk.CallToolResult, error) {
+				var args map[string]any
+				if req.Params != nil && len(req.Params.Arguments) > 0 {
+					_ = json.Unmarshal(req.Params.Arguments, &args)
+				}
 				f.mu.Lock()
 				f.calls[name]++
+				if name == "kb_search_documents" {
+					f.kbArgs = append(f.kbArgs, args)
+				}
 				f.mu.Unlock()
 				answer := text
 				if f.noCallEdges.Load() {
@@ -185,6 +194,13 @@ func (f *fakeSemanticPando) called(tool string) int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.calls[tool]
+}
+
+// kbSearches returns the arguments of every kb_search_documents call.
+func (f *fakeSemanticPando) kbSearches() []map[string]any {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]map[string]any(nil), f.kbArgs...)
 }
 
 // usePando points the configuration at the fake.

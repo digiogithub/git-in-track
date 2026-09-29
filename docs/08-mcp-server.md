@@ -1166,6 +1166,14 @@ test still asserts what the requirement states. A tier-3 candidate has no `kind`
 `hits` in the shape of doc 03 §21.11 R-IMP-5 instead of `text`. What tiers 1–2 cannot see, and where to put
 markers so the report stays useful, is in section 10.8.
 
+Tier 3 searches spec files only (Pando's `path_prefix` on `.pmngr/specs/`) with a query built
+from the story's title and `## Spec Delta`, `title`, and the changed declarations in words (a Go
+doc comment's first sentence, else the split name): passing `story` sharpens its candidates the
+most (doc 03 R-IMP-4, `GIT-US-0165`). Pando's full-text search requires every word of a query,
+so this long query gets no full-text hits and tier 3 is ranked by vector similarity alone
+(docs/21 §6.1). `search_semantic` with `kind: "requirement"` takes the same
+spec-only path.
+
 Tiers 2 and 3 read the Pando client and semantic searcher that `search_semantic` uses, built by
 the same constructor (`server.InstallSemanticSearch`) on both transports: `gintrack serve` and
 stdio `gintrack mcp` alike hand them to the impact seam (`GIT-US-0147`), so with

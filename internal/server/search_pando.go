@@ -110,26 +110,31 @@ func (p *pandoSearcher) SearchSemantic(ctx context.Context, q vault.SemanticQuer
 		codeDropped int
 	)
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		code, codeDropped = p.searchCode(ctx, q)
-	}()
+	// A query of kind "requirement" skips the code leg: the code index skips
+	// dot-directories, so it never holds a spec (GIT-US-0165).
+	if q.Kind != core.SearchKindRequirement {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			code, codeDropped = p.searchCode(ctx, q)
+		}()
+	}
 
-	// No path prefix is sent. The repository layout gives a project no prefix
-	// of its own — every project's items sit side by side under `.pmngr/` —
-	// and Pando reports an absolute `metadata.source_path` for some documents,
-	// against which any prefix built here would match nothing at all. A filter
-	// that silently returns an empty result is worse than the over-fetch the
-	// scope costs, so the scope is applied below, on resolved hits.
-	candidates, err := p.client.SearchKB(ctx, q.Q, pando.KBSearchOptions{Limit: overFetch(q.Limit)})
+	// No project path prefix is sent. The repository layout gives a project no
+	// prefix of its own — every project's items sit side by side under
+	// `.pmngr/` — and Pando reports an absolute `metadata.source_path` for
+	// some documents, against which any prefix built here would match nothing
+	// at all. A filter that silently returns an empty result is worse than the
+	// over-fetch the scope costs, so the scope is applied below, on resolved
+	// hits. A requirement query is the one exception: see specsPrefix.
+	candidates, err := p.searchKB(ctx, q)
 	wg.Wait()
 	if err != nil {
 		// The knowledge-base leg is the one the caller degrades over: it holds
 		// the backlog, which is what this companion is about. A code leg that
 		// failed on its own has already been logged and simply contributes
 		// nothing.
-		return nil, fmt.Errorf("pando kb search: %w", err)
+		return nil, err
 	}
 
 	merge := newSemanticMerge(len(candidates) + len(code))
@@ -158,6 +163,41 @@ func (p *pandoSearcher) SearchSemantic(ctx context.Context, q vault.SemanticQuer
 			"query", q.Q, "dropped", dropped, "kept", len(out), "total", p.dropped.Load())
 	}
 	return out, nil
+}
+
+// specsPrefix is where every spec file sits relative to Pando's KBPath, the
+// documentation folder (docs/21 §1): `.pmngr/specs/`.
+var specsPrefix = backlogDir + "/" + core.SpecsDirName + "/"
+
+// searchKB runs the knowledge-base leg. A query of kind "requirement" asks
+// for the specs folder alone, with the path_prefix Pando applies in SQL
+// (GIT-US-0165): without it the top chunks are docs pages, stories and
+// comments quoting the same words, and the requirement filter after them
+// leaves next to nothing. Pando matches the prefix against its
+// KBPath-relative file_path, so a deployment whose KBPath is not the
+// documentation folder matches nothing under it; an empty prefixed answer is
+// therefore asked again, once, without the prefix, and the kind filter of
+// the resolver still keeps only requirement rows. A vector leg always ranks
+// some chunk, so an empty answer under the prefix means no spec is indexed
+// there, never that no spec is relevant.
+func (p *pandoSearcher) searchKB(ctx context.Context, q vault.SemanticQuery) ([]pando.KBHit, error) {
+	opts := pando.KBSearchOptions{Limit: overFetch(q.Limit)}
+	if q.Kind == core.SearchKindRequirement {
+		prefixed := opts
+		prefixed.PathPrefix = specsPrefix
+		hits, err := p.client.SearchKB(ctx, q.Q, prefixed)
+		if err != nil {
+			return nil, fmt.Errorf("pando kb search: %w", err)
+		}
+		if len(hits) > 0 {
+			return hits, nil
+		}
+	}
+	hits, err := p.client.SearchKB(ctx, q.Q, opts)
+	if err != nil {
+		return nil, fmt.Errorf("pando kb search: %w", err)
+	}
+	return hits, nil
 }
 
 // semanticDropsKey is the context key a caller hands the resolver a counter

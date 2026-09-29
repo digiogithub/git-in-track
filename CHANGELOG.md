@@ -32,6 +32,16 @@ because a commit list cannot express them.
   `1 ok <n>, <d> dropped (uses <names>)`, and the web impact view says so under tier 1. Each
   `decl` trace hit now carries `users`, and an edge several changed names reach keeps the least
   used one. The benchmark's worst tier-1 report (P4) falls from 1,340 to 173 tokens.
+- **Impact tier 3 searches requirement blocks with a story-based query** (`GIT-US-0165`,
+  docs/03 R-IMP-4, docs/21 §2.1 and §6.1, docs/08 §4.21). A semantic query of kind `requirement` —
+  impact tier 3, `search_semantic` with `kind: "requirement"`, and the `similar[]` of a
+  requirement create — now sends Pando's `path_prefix` filter on `.pmngr/specs/`, so only spec
+  chunks compete, and skips the code leg, which never holds a spec. An empty prefixed answer (a
+  `KBPath` other than the documentation folder) is asked again once without the prefix. The
+  tier-3 query is built from the story title, the operations of its `## Spec Delta`, the
+  caller's `title` and the changed declarations in words — a Go doc comment's first sentence
+  (new `trace.DocSummaries`), else the name split into words — with test declarations only when
+  nothing else changed, capped at 1,000 bytes; it no longer sends bare symbol names.
 
 ### Fixed
 
