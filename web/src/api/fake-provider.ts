@@ -83,6 +83,7 @@ import type {
   RepoInfo,
   SearchHit,
   SearchQuery,
+  SearchOptInResult,
   SearchReindexJob,
   SearchResult,
   SearchSettings,
@@ -3944,6 +3945,58 @@ export class FakeProvider implements DataProvider {
     );
     this.searchSettings = { ...current, indexed, reindex: structuredClone(job) };
     return Promise.resolve(structuredClone(job));
+  }
+
+  /** Calls made to `restartManagedSearch`, in order. */
+  managedRestarts: string[] = [];
+  /** Calls made to `setSemanticSearch`, in order. */
+  optInCalls: { repo: string; enabled: boolean; deleteIndex?: boolean }[] = [];
+
+  setSemanticSearch(
+    repo: string,
+    opts: { enabled: boolean; deleteIndex?: boolean },
+  ): Promise<SearchOptInResult> {
+    let current: SearchSettings;
+    try {
+      current = this.requireSearchSettings();
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+    }
+    if (current.mode !== 'managed') {
+      return Promise.reject(
+        new ProviderError('search_not_managed', 'Semantic search is not managed by this companion.'),
+      );
+    }
+    if (!current.indexed.some((row) => row.repo === repo)) {
+      return Promise.reject(
+        new ProviderError('not_found', `No repository is registered as ${repo}.`),
+      );
+    }
+    this.optInCalls.push({ repo, ...opts });
+    const managed = opts.enabled
+      ? { optedIn: true, state: 'starting' as const }
+      : { optedIn: false, state: 'disabled' as const };
+    this.searchSettings = {
+      ...current,
+      indexed: current.indexed.map((row) => (row.repo === repo ? { ...row, managed } : row)),
+    };
+    return Promise.resolve({
+      repo,
+      optedIn: opts.enabled,
+      persisted: this.searchPersisted,
+      indexDeleted: !opts.enabled && opts.deleteIndex === true,
+      managed,
+    });
+  }
+
+  restartManagedSearch(repo: string): Promise<void> {
+    try {
+      this.requireSearchSettings();
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+    }
+    this.managedRestarts.push(repo);
+    return Promise.resolve();
   }
 
   /**

@@ -14,6 +14,14 @@ because a commit list cannot express them.
 
 ### Added
 
+  `PUT /api/v1/search/managed/{repo}/opt-in` (`{enabled, deleteIndex?}`) saves the machine-local
+  `repos[].semanticSearch` (guarded against concurrent edits of the configuration file) and starts
+  or stops the repository's instance; `deleteIndex` also removes its data directory. In managed
+  mode the workspace list's Enable/Disable semantic search button uses it and Disable asks whether
+  to delete the index, and the settings card shows each instance's state, Pando version and last
+  error with a Restart button. Browser-only mode shows none of it. docs/08 §10.9 explains how an
+  agent connects to a managed Pando with `gintrack pando status --json`, and warns that this
+  exposes Pando's write tools.
 - **`gintrack mcp` and `gintrack spec` connect to the managed Pando; new `gintrack pando`**
   (`GIT-US-0176`, ADR-039, docs/07 §4.23, docs/08 §8.5.1). In managed mode `search_semantic` and
   impact tiers 2 and 3 use the instance a running `gintrack serve` supervises, found through its

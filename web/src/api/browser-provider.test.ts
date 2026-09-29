@@ -864,6 +864,12 @@ describe('BrowserProvider — what a tab cannot do (GIT-EP-0012, GIT-EP-0015)', 
       code: 'not_supported',
     });
     await expect(provider.reindexSearch()).rejects.toMatchObject({ code: 'not_supported' });
+    await expect(provider.setSemanticSearch('a', { enabled: true })).rejects.toMatchObject({
+      code: 'not_supported',
+    });
+    await expect(provider.restartManagedSearch('a')).rejects.toMatchObject({
+      code: 'not_supported',
+    });
   });
 });
 

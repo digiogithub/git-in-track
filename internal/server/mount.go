@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/digiogithub/git-in-track/internal/core"
@@ -69,7 +70,7 @@ type mount struct {
 	// docsFolders are every documentation folder the registration declared.
 	docsFolders []string
 	// semantic is the repository's opt-in to a managed Pando.
-	semantic bool
+	semantic atomic.Bool
 	label    string
 	vlt      *vault.Vault
 	err      error
@@ -95,10 +96,10 @@ func openMount(repo Repo, now func() time.Time) *mount {
 		role:        role,
 		docs:        repo.DocsFolder,
 		docsFolders: repo.declaredDocsFolders(),
-		semantic:    repo.SemanticSearch,
 		label:       filepath.Base(filepath.Clean(repo.Path)),
 		lastIndexed: now(),
 	}
+	m.semantic.Store(repo.SemanticSearch)
 	fsys, err := osfs.New(repo.Path)
 	if err != nil {
 		m.err = fmt.Errorf("mount %s: %w", repo.Path, err)

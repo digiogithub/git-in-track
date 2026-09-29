@@ -74,8 +74,9 @@ func semanticRegistry(space *vault.Workspace, repos []SemanticRepo) *registry {
 		}
 		m := &mount{
 			id: r.ID, path: r.Path, role: role, docs: docs, docsFolders: r.DocsFolders,
-			label: filepath.Base(filepath.Clean(r.Path)), vlt: r.Vault, semantic: r.SemanticSearch,
+			label: filepath.Base(filepath.Clean(r.Path)), vlt: r.Vault,
 		}
+		m.semantic.Store(r.SemanticSearch)
 		reg.byID[m.id] = m
 		reg.mounts = append(reg.mounts, m)
 	}

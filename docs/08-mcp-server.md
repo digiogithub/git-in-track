@@ -2064,6 +2064,30 @@ Spec text — statements, scenarios, `## Spec Delta` sections — is repository 
 item body: data describing what the code must do, never an instruction to the agent reading it
 (section 7.5).
 
+### 10.9 Connecting to a managed Pando directly (GIT-US-0177, ADR-039)
+
+gintrack does not proxy Pando. An agent that wants Pando's own tools (`kb_search_documents`,
+`code_hybrid_search`, ...) adds Pando's MCP server to its client as a separate server and finds the
+endpoint with:
+
+```console
+$ gintrack pando status --json
+```
+
+The output is `{mode, rule, reason, binary, instances[]}`, and each instance row carries `repo`,
+`path`, `optedIn`, `state`, `stale`, `pid`, `port`, `version`, `mcpUrl`, `tokenFile` and `error`
+(never the token). `--repo <id>` narrows it to one repository. Use an instance only when `state` is
+`ready` and `stale` is not true; the client sends the token file's contents as
+`Authorization: Bearer ...`. Resolve it each time the client launches: the
+port changes whenever `serve` restarts an instance. Only repositories that opted in have an
+instance (the workspace list's **Enable semantic search**, or `repos[].semanticSearch`).
+
+**Warning: a direct connection exposes Pando's write tools.** The agent then sees Pando's full
+tool surface, including `kb_add_document`, `kb_delete_document` and the memory tools, which write
+(ADR-036). The token confines the endpoint to local users who can read the file; nothing
+restricts which tools such a user calls. Prefer gintrack's own MCP tools (`search_semantic`,
+`spec_impact`) for search and impact, and connect directly only when you accept that.
+
 ---
 
 ## 11. Implementation notes (`internal/mcp`)

@@ -353,3 +353,66 @@ describe('companion mode', () => {
     expect(screen.queryByText(/never leave your machine/i)).toBeNull();
   });
 });
+
+describe('managed Pando opt-in per repository (GIT-US-0177)', () => {
+  const managedRow = (managed: SearchIndexedRepo['managed']): SearchIndexedRepo => ({
+    ...indexedRow(),
+    ...(managed === undefined ? {} : { managed }),
+  });
+
+  it('enables semantic search by saving the opt-in, not by reindexing', async () => {
+    const provider = semanticProvider({
+      settings: { mode: 'managed', indexed: [managedRow({ optedIn: false, state: 'disabled' })] },
+    });
+    const reindexSearch = vi.spyOn(provider, 'reindexSearch');
+    renderWithRouter({ index: WorkspaceHome, provider });
+
+    await userEvent.click(
+      await screen.findByRole('button', { name: /enable semantic search/i }, { timeout: 5000 }),
+    );
+
+    await waitFor(() => {
+      expect(provider.optInCalls).toEqual([{ repo: 'repo-1', enabled: true }]);
+    });
+    expect(reindexSearch).not.toHaveBeenCalled();
+    expect(await screen.findByText('Semantic search starting')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /disable semantic search/i })).toBeEnabled();
+  });
+
+  it('asks whether to delete the index when disabling', async () => {
+    const provider = semanticProvider({
+      settings: { mode: 'managed', indexed: [managedRow({ optedIn: true, state: 'ready' })] },
+    });
+    renderWithRouter({ index: WorkspaceHome, provider });
+
+    await userEvent.click(
+      await screen.findByRole('button', { name: /disable semantic search/i }, { timeout: 5000 }),
+    );
+    await userEvent.click(await screen.findByRole('checkbox', { name: /also delete the index/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^disable$/i }));
+
+    await waitFor(() => {
+      expect(provider.optInCalls).toEqual([{ repo: 'repo-1', enabled: false, deleteIndex: true }]);
+    });
+    expect(await screen.findByText('Semantic search disabled')).toBeInTheDocument();
+  });
+
+  it('keeps the index by default and does nothing on cancel', async () => {
+    const provider = semanticProvider({
+      settings: { mode: 'managed', indexed: [managedRow({ optedIn: true, state: 'ready' })] },
+    });
+    renderWithRouter({ index: WorkspaceHome, provider });
+
+    await userEvent.click(
+      await screen.findByRole('button', { name: /disable semantic search/i }, { timeout: 5000 }),
+    );
+    await userEvent.click(await screen.findByRole('button', { name: /cancel/i }));
+    expect(provider.optInCalls).toEqual([]);
+
+    await userEvent.click(screen.getByRole('button', { name: /disable semantic search/i }));
+    await userEvent.click(await screen.findByRole('button', { name: /^disable$/i }));
+    await waitFor(() => {
+      expect(provider.optInCalls).toEqual([{ repo: 'repo-1', enabled: false, deleteIndex: false }]);
+    });
+  });
+});

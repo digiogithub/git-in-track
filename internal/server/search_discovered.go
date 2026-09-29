@@ -73,7 +73,7 @@ func InstallDiscoveredSemanticSearch(cacheDir string, space *vault.Workspace, re
 	reg := semanticRegistry(space, repos)
 	ms := newManagedState(Options{CacheDir: cacheDir}, config.PandoResolution{Mode: config.PandoModeManaged}, reg, nil, log)
 	for _, m := range reg.mounts {
-		if !m.semantic || m.role != roleProject {
+		if !m.semantic.Load() || m.role != roleProject {
 			continue
 		}
 		dir := supervisor.InstanceDir(cacheDir, supervisor.InstanceKey(m.path))
@@ -156,7 +156,7 @@ func (ms *managedState) control(ctx context.Context, m *mount, action string) (m
 		if slot == nil || ms.restart(m.id) == 0 {
 			return managedInstanceView{}, errManagedNotRunning
 		}
-		return ms.viewOf(slot, m.semantic), nil
+		return ms.viewOf(slot, m.semantic.Load()), nil
 	case "reset":
 		if err := ms.Disable(ctx, m.id); err != nil {
 			return managedInstanceView{}, err

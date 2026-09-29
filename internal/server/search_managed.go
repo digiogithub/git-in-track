@@ -160,7 +160,7 @@ func (ms *managedState) begin(ctx context.Context) {
 	ms.runCtx, ms.cancel = runCtx, cancel
 	ms.mu.Unlock()
 	for _, m := range ms.repos.ready() {
-		if m.semantic {
+		if m.semantic.Load() {
 			ms.enable(runCtx, m.id)
 		}
 	}
@@ -525,9 +525,9 @@ func (ms *managedState) viewOf(slot *managedRepo, optedIn bool) managedInstanceV
 // opt in and has no instance.
 func (ms *managedState) viewFor(m *mount) managedInstanceView {
 	if slot := ms.slot(m.id); slot != nil {
-		return ms.viewOf(slot, m.semantic)
+		return ms.viewOf(slot, m.semantic.Load())
 	}
-	return managedInstanceView{State: managedStateDisabled, OptedIn: m.semantic}
+	return managedInstanceView{State: managedStateDisabled, OptedIn: m.semantic.Load()}
 }
 
 // restart bounces the instances in scope (all of them when repo is empty) and

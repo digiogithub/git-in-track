@@ -3697,6 +3697,31 @@ POST /api/v1/search/reindex
 {"jobId":"reindex-2","scope":"acme-api","startedAt":"2026-09-17T10:00:00Z","phase":"code","repos":[]}
 ```
 
+#### The managed opt-in (GIT-US-0177, ADR-039)
+
+```http
+PUT /api/v1/search/managed/{repo}/opt-in
+{"enabled":false,"deleteIndex":true}
+
+200
+{"repo":"acme-api","optedIn":false,"persisted":true,"indexDeleted":true,
+ "managed":{"optedIn":false,"state":"disabled"}}
+```
+
+Companion-only, managed mode only. It saves `repos[].semanticSearch` of the repository in the
+machine-local configuration file, then starts (`enabled: true`) or stops (`enabled: false`) its
+Pando instance and answers the resulting `managed` row of the settings. The file is written
+first: when the write fails the answer is `500` and the running state is untouched. The write is
+guarded, so a configuration file another process changed meanwhile is refused instead of
+overwritten. `deleteIndex` is valid only with `enabled: false` and removes the instance directory
+(`<cacheDir>/pando/<key>/`, Pando's index included) after the instance has stopped; an instance
+another `serve` supervises is stopped-not-owned and its directory is left alone
+(`indexDeleted: false`). `persisted: false` means this process has no configuration file, or the
+file does not list the repository (`serve --repo`): the choice lasts until the process exits.
+Errors: `search_not_managed` (`409`) outside managed mode, `repo_not_registered` (`404`) for an id
+this companion does not serve, `invalid_request` (`400`) for `deleteIndex` with `enabled: true`.
+Restarting an instance is `POST /api/v1/search/managed/{repo}/restart`.
+
 > **Operations: the embedding model is pinned configuration.** Pando skips any
 > chunk whose vector length differs from the query's — silently, with no
 > dimension guard and no error — and the model is configured **per Pando

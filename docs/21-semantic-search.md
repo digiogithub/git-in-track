@@ -162,6 +162,15 @@ of being started twice, and it is never stopped from here.
   Pando entirely even with an `mcpUrl` set (rule 1): no client is built, the backend is `core`,
   and semantic search answers `unavailable` naming `search.pando.mode: off`. Neither constructs
   an instance. Browser-only mode has no instance and answers `unavailable`.
+- **Turning a repository on or off (GIT-US-0177).** The opt-in is saved by
+  `PUT /api/v1/search/managed/{repo}/opt-in` (docs/07): the request writes `repos[].semanticSearch`
+  in the machine-local configuration file first, guarded so that a file another writer changed
+  meanwhile is refused rather than overwritten, and only then starts or stops that repository's
+  instance. Disabling keeps Pando's data directory unless the request says `deleteIndex`. The
+  workspace list's **Enable/Disable semantic search** button calls it in managed mode (and keeps
+  the scoped reindex of GIT-US-0101 in every other mode); Disable asks whether to delete the
+  index too. The settings card lists each opted-in repository's state, Pando version and last
+  error with a **Restart** button. Browser-only mode has neither the button nor the card.
 
 The repository root is registered as a Pando **code** project separately, by the companion, when
 `gintrack serve` starts (§0.1). Nothing has to be run by hand for that.
@@ -492,6 +501,8 @@ a project without edges. `code_list_projects` shows the ids Pando holds.
 | Why are there no tags in Pando? | Backlog files carry `labels`, not `tags`, and the exporter that synthesised `tags` is gone. Filtering by tag inside Pando is lost on purpose (§5). |
 | A search hit is a file with no title — is that a bug? | No. A path that is neither a backlog file nor a knowledge-base page comes back as a plain `file` result (§2). |
 | Why does a hit on a spec name one requirement? | The chunk Pando matched is mapped onto the requirement block it lies in; the row carries the ref, the spec and the block anchor (§2.1). |
+| How do I turn semantic search on for one repository in managed mode? | Use **Enable semantic search** in the workspace list (or `PUT /api/v1/search/managed/{repo}/opt-in`). It saves `repos[].semanticSearch` on this machine only and starts that repository's Pando; **Disable** stops it and offers to delete the index (§1.1). |
+| The instance shows `failed` or `skipped` in the settings card | The card shows the last error or the reason (cap reached, no binary). **Restart** bounces a failed one; a `skipped` one needs a higher `search.pando.managed.maxInstances` or a `pando` on PATH. |
 | Does the index contain secrets? | It contains exactly what the repository contains. Treat it with the same care. |
 
 ---

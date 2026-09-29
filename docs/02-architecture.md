@@ -733,6 +733,11 @@ contract, never the only one.
   (GIT-US-0175, `internal/server/search_managed.go`): the search fans out to every ready
   instance, the impact tiers use the instance of the repository being analysed, and the settings
   API reports each instance's state (docs/21 §1.1).
+- **Who turns it on (GIT-US-0177).** The opt-in is `repos[].semanticSearch` in the user's
+  configuration file, written by `PUT /api/v1/search/managed/{repo}/opt-in` before the instance is
+  started or stopped, so the choice survives a restart and never enters a repository. The web
+  app's workspace list and settings card are its only UI, and they are absent in browser-only mode
+  (the `searchSettings` capability is false there).
 - **Never one ranking.** Pando's knowledge-base scores are reciprocal-rank-fusion
   values around 0.016 while the core score counts field weights; the two are
   incommensurable. The merge is therefore a concatenation — exact matches first in
