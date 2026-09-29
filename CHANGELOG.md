@@ -21,6 +21,12 @@ because a commit list cannot express them.
   `restUrl`, `restToken` or `projectId` is refused by key name; a missing `pando` binary
   resolves to off or unavailable, never an error. Setups with `mcpUrl` set behave as before.
   Nothing starts a Pando process yet.
+- **A supervisor for managed Pando instances** (`GIT-US-0173`, ADR-039). The new native-only
+  package `internal/pando/supervisor` runs one `pando mcp-server` per repository under
+  `<cacheDir>/pando/<key>/` with a generated 0600 `.pando.toml` and token, a free loopback port,
+  health checks with the instance's own token, exponential restart backoff (`failed` after 5
+  crashes in 10 minutes), a per-instance lock and a `state.json`. Nothing is written inside the
+  repository. It is not reachable from `gintrack serve` or the configuration yet.
 
 ### Changed
 
