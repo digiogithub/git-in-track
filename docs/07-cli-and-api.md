@@ -437,10 +437,18 @@ execution, agent spawning — so a companion that could be pointed at a remote P
 remote-code-execution gadget wearing a search feature's clothes. `allowRemote` exists for a
 future authenticated deployment and should stay off.
 
-**Loopback is not a boundary against your own browser.** Until Pando's MCP CORS policy stops
-being `*`, any web page you visit can reach `127.0.0.1:9777` from the browser with no companion
-involved. Binding to loopback keeps the network out; it does not keep a hostile page out. That
-is Pando's to fix (its backlog item PANDO-EP-0006), not the companion's.
+**Pando's CORS allow-list is empty by default, and it should stay empty.** Pando's MCP HTTP
+transport now requires a bearer token and sends no `Access-Control-*` headers unless
+`MCPServer.HttpAllowedOrigins` (Pando config) lists the caller's origin; preflight requests
+are refused otherwise, so a web page you visit cannot read `127.0.0.1:9777` from the browser.
+The wildcard `*` was the policy of older Pando releases: the change (Pando commit `13f01347b`,
+2026-09-14) first shipped in **Pando v0.715.6**, so use that or a later release. Against an
+older Pando, loopback is not a boundary against your own browser. The companion is not a
+browser and needs no CORS entry, and a browser-only session does not talk to Pando at all
+(there is no Pando client in the tab): do not add an origin, or `*`, to make either work. A
+browser-side caller that must reach Pando directly would have to list its exact origin in
+`HttpAllowedOrigins` and present the token, which puts the token in the page; go through the
+companion instead.
 
 ### 3.4 Git backend selection
 
