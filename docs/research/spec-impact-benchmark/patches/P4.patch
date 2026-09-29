@@ -1,0 +1,977 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index f70ad26..5827761 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -367,6 +367,15 @@ because a commit list cannot express them.
+ 
+ ### Fixed
+ 
++- **Requirement diagnostics point at the line of the file** (`GIT-US-0144`, docs/03 §16).
++  `E-REQ-*`, `W-REQ-*`, `LINT-REQ-*`, the Spec Delta findings (`E-DELTA-*`,
++  `W-DELTA-DANGLING`) and the findings about a `requirements.R<n>` entry counted lines of the
++  body in their message (`line 13 of the body: …`), so `gintrack doctor`, `gintrack spec lint`
++  and `item.validate` pointed at the wrong line of any spec with front matter. They now carry the
++  file line in the diagnostic's `line` (printed as `<path>:<line>`), and the message drops the
++  body line. An entry finding points at its node in the front matter; an item not yet written is
++  numbered as the canonical file it would be written as. The web editor's live lint
++  (`spec.lint`) still numbers the body it holds.
+ - **`suspect` clears once a changed requirement is re-verified at head** (`GIT-US-0148`,
+   docs/03 R-REQ-12a rule 6, R-IMP-5). The impact query flagged every passing requirement whose
+   traced code the diff touched as `suspect`, so with `--fail-on suspect` every pull request that
+diff --git a/docs/03-data-model.md b/docs/03-data-model.md
+index 4165663..9c5ebcd 100644
+--- a/docs/03-data-model.md
++++ b/docs/03-data-model.md
+@@ -1927,6 +1927,18 @@ every write and by the index (so by `gintrack doctor`):
+ A misspelled requirement ref in a requirement or Spec Delta heading (`R02`, `r2`) is
+ `E-ID-GRAMMAR`. A non-canonical separator in a Spec Delta heading is `W-REQ-SEPARATOR`.
+ 
++**Lines of requirement diagnostics.** Every `E-REQ-*`, `W-REQ-*`, `LINT-REQ-*`, `E-DELTA-*` and
++`W-DELTA-DANGLING` finding, the `E-ID-GRAMMAR` of a heading, and every finding about a
++`requirements.R<n>` entry (its `status`, `trace`, `verified` and `links`, including a
++requirement-level `W-REF-DANGLING`) carries `line`: the 1-based line **of the file**, front matter
++and fences included — the line `gintrack doctor`, `gintrack spec lint` and `item.validate` print
++as `<path>:<line>`. A body finding points at its line of the body; an entry finding at the node
++of the entry (a link at its list entry), or at the closest enclosing node the file holds; a
++block with no entry (`W-REQ-NO-ENTRY`) at its heading. An item validated before it is written
++is numbered as the canonical file it would be written as. The message no longer repeats the
++line. The live lint of the web editor (`spec.lint`, docs/07 §6.7) is the one exception: it lints
++the body the editor holds and numbers lines of that body (since `GIT-US-0144`).
++
+ `W-MARKER-SYNTAX`, `W-MARKER-DANGLING` and `W-TRACE-BROKEN` (a `trace:` path or symbol that no
+ longer exists) are emitted by the native trace engine, which reads source code; `internal/core`
+ cannot, and does not.
+@@ -2846,8 +2858,8 @@ What each rule reports, precisely (inline code spans are never read as prose by
+ - **R-LINT-1** Findings carry the requirement ref, the rule and a line. At `off` the rule does not
+   run and reports nothing; at `warning` findings never block anything; at `error` they are validation errors of the spec (writes through the API and MCP
+   are refused, `gintrack doctor` exits non-zero). As a diagnostic of the spec file a finding
+-  has the rule as its code, `body.<REQREF>` as its field and a message opening with
+-  `line <n> of the body:`, like the parser's findings. Only the first block of a duplicated
++  has the rule as its code, `body.<REQREF>` as its field and the file line of the finding as
++  its `line`, like the parser's findings (§16, lines of requirement diagnostics). Only the first block of a duplicated
+   `R<n>` is linted.
+ - **R-LINT-2** `vague_words`, when present, replaces the built-in list. A per-rule value wins over
+   `severity` in both directions. `specs.lint: <value>` (a scalar) is shorthand for
+diff --git a/docs/05-web-app.md b/docs/05-web-app.md
+index 30bb573..d00b65f 100644
+--- a/docs/05-web-app.md
++++ b/docs/05-web-app.md
+@@ -1610,7 +1610,9 @@ once, in `internal/core`, and there is no copy of them in TypeScript.
+   dispatcher and one implementation behind both.
+ - **Diagnostics.** `MarkdownEditor` takes a `lint` source; `@codemirror/lint`'s `linter()`
+   calls it once typing pauses for 500 ms (the debounce is CodeMirror's own, and an answer that
+-  arrives after the document moved on is dropped). A finding carries a 1-based body line;
++  arrives after the document moved on is dropped). A finding carries a 1-based body line — the
++  editor holds the body alone, so `spec.lint` numbers the body, never the file the save-time
++  validation numbers (`GIT-US-0144`);
+   `components/editor/lint.ts` maps it onto a range from the line's first non-blank character to
+   its end (a blank line gets one character, a line past the end clamps to the last) and keeps
+   its severity. The severity is the one `specs.lint` gives the rule — `warning` or `error`,
+diff --git a/docs/07-cli-and-api.md b/docs/07-cli-and-api.md
+index 9e7a1c9..3050aa8 100644
+--- a/docs/07-cli-and-api.md
++++ b/docs/07-cli-and-api.md
+@@ -5350,7 +5350,9 @@ modes — through `gintrackCore.call` in the browser and through `POST …/specs
+ `W-REQ-SEPARATOR`) and a story or task body through its `## Spec Delta`: the parse findings
+ (`E-DELTA-*`), the grammar lint of every ADDED and MODIFIED block (`LintSpecDelta`) and
+ `W-DELTA-DANGLING` for a target this repository does not hold; any other type yields no findings,
+-and a missing `type` is `invalid_request`. `line` is 1-based in the body sent. Each `LINT-REQ-*`
++and a missing `type` is `invalid_request`. `line` is 1-based in the body sent — the text the
++editor holds, without front matter — whereas `item.validate`, `gintrack doctor` and
++`gintrack spec lint` report the same findings on lines of the file (`GIT-US-0144`). Each `LINT-REQ-*`
+ finding carries the severity `specs.lint` of the project (`project`, else the key of `id`, else
+ the repository's only project) gives its rule; a rule at `off` does not run. `spec.delta.preview`
+ returns every operation with the block it proposes (`proposed`, below the heading and without the
+diff --git a/internal/core/errors.go b/internal/core/errors.go
+index 97178a2..9e363f4 100644
+--- a/internal/core/errors.go
++++ b/internal/core/errors.go
+@@ -174,6 +174,8 @@ func (d Diagnostic) String() string {
+ 			fmt.Fprintf(&b, ":%d", d.Line)
+ 		}
+ 		b.WriteString(" ")
++	} else if d.Line > 0 {
++		fmt.Fprintf(&b, "line %d ", d.Line)
+ 	}
+ 	if d.Field != "" {
+ 		fmt.Fprintf(&b, "field %q: ", d.Field)
+diff --git a/internal/core/frontmatter.go b/internal/core/frontmatter.go
+index 5ea6fb3..8eeeb18 100644
+--- a/internal/core/frontmatter.go
++++ b/internal/core/frontmatter.go
+@@ -50,20 +50,39 @@ var knownKeys = func() map[string]bool {
+ // It returns an error wrapping ErrInvalidFrontMatter when the file does not start
+ // with a fence or the fence is never closed.
+ func SplitFrontMatter(data []byte) (frontMatter []byte, body string, err error) {
++	frontMatter, body, _, err = splitFrontMatter(data)
++	return frontMatter, body, err
++}
++
++// BodyStartLine returns the 1-based line of the file that the first line of
++// its body — Item.Body[0] — sits on: the front matter, both fences and the
++// blank lines before the body are counted. It returns 0 when the file has no
++// closed front matter or no body.
++func BodyStartLine(data []byte) int {
++	_, body, line, err := splitFrontMatter(data)
++	if err != nil || body == "" {
++		return 0
++	}
++	return line
++}
++
++// splitFrontMatter is SplitFrontMatter that also reports the file line the
++// body starts on.
++func splitFrontMatter(data []byte) (frontMatter []byte, body string, bodyLine int, err error) {
+ 	clean := bytes.TrimPrefix(data, bom)
+ 	clean = bytes.ReplaceAll(clean, []byte("\r\n"), []byte("\n"))
+ 
+ 	rest, ok := bytes.CutPrefix(clean, []byte(delimiter+"\n"))
+ 	if !ok {
+ 		if bytes.Equal(bytes.TrimRight(clean, "\n"), []byte(delimiter)) {
+-			return nil, "", fmt.Errorf("%w: front matter is not closed", ErrInvalidFrontMatter)
++			return nil, "", 0, fmt.Errorf("%w: front matter is not closed", ErrInvalidFrontMatter)
+ 		}
+-		return nil, "", fmt.Errorf("%w: file does not start with %q", ErrInvalidFrontMatter, delimiter)
++		return nil, "", 0, fmt.Errorf("%w: file does not start with %q", ErrInvalidFrontMatter, delimiter)
+ 	}
+ 
+ 	end := indexClosingFence(rest)
+ 	if end < 0 {
+-		return nil, "", fmt.Errorf("%w: front matter is not closed", ErrInvalidFrontMatter)
++		return nil, "", 0, fmt.Errorf("%w: front matter is not closed", ErrInvalidFrontMatter)
+ 	}
+ 	block := rest[:end]
+ 	after := rest[end:]
+@@ -73,7 +92,11 @@ func SplitFrontMatter(data []byte) (frontMatter []byte, body string, err error)
+ 	} else {
+ 		after = nil
+ 	}
+-	return block, strings.Trim(string(after), "\n"), nil
++	// The opening fence, every line of the block (each ends in "\n"), the
++	// closing fence and the blank lines the body is trimmed of come first.
++	leading := len(after) - len(bytes.TrimLeft(after, "\n"))
++	bodyLine = fmFirstLine + bytes.Count(block, []byte("\n")) + 1 + leading + 1
++	return block, strings.Trim(string(after), "\n"), bodyLine, nil
+ }
+ 
+ // indexClosingFence returns the offset of the closing fence line, or -1.
+@@ -167,6 +190,57 @@ func rejectAnchors(n *yaml.Node) error {
+ 	return nil
+ }
+ 
++// requirementLines maps every node under the requirements: key of a
++// front-matter mapping to its file line, keyed by the field path diagnostics
++// use: "requirements.R3", "requirements.R3.status",
++// "requirements.R3.links[0].target". It returns nil when there is no such key.
++func requirementLines(root *yaml.Node) map[string]int {
++	for i := 0; i+1 < len(root.Content); i += 2 {
++		if root.Content[i].Value == "requirements" {
++			out := map[string]int{"requirements": root.Content[i].Line + fmFirstLine}
++			walkNodeLines("requirements", root.Content[i+1], out)
++			return out
++		}
++	}
++	return nil
++}
++
++// walkNodeLines records the file line of every key and sequence entry below n.
++func walkNodeLines(prefix string, n *yaml.Node, out map[string]int) {
++	switch n.Kind {
++	case yaml.MappingNode:
++		for i := 0; i+1 < len(n.Content); i += 2 {
++			p := prefix + "." + n.Content[i].Value
++			out[p] = n.Content[i].Line + fmFirstLine
++			walkNodeLines(p, n.Content[i+1], out)
++		}
++	case yaml.SequenceNode:
++		for i, c := range n.Content {
++			p := fmt.Sprintf("%s[%d]", prefix, i)
++			out[p] = c.Line + fmFirstLine
++			walkNodeLines(p, c, out)
++		}
++	}
++}
++
++// setLayout records where things sit in the bytes the item was written as or
++// read from: the line its body starts on and the lines of its requirements:
++// entries, which the requirement diagnostics point at (fileLines).
++func (it *Item) setLayout(data []byte) {
++	block, _, bodyLine, err := splitFrontMatter(data)
++	if err != nil {
++		it.BodyLine, it.reqLines = 0, nil
++		return
++	}
++	it.BodyLine, it.reqLines = bodyLine, nil
++	if len(it.Requirements) == 0 {
++		return
++	}
++	if node, err := decodeMappingNode(block); err == nil {
++		it.reqLines = requirementLines(node)
++	}
++}
++
+ // keyLines maps every top-level front-matter key to the file line of its value,
+ // so that parse errors can point at the offending line.
+ func keyLines(node *yaml.Node) map[string]int {
+@@ -187,7 +261,7 @@ func keyLines(node *yaml.Node) map[string]int {
+ // that needs the project configuration or the rest of the vault — unknown
+ // statuses, dangling references, workflow transitions — is left to the validator.
+ func ParseItem(path string, data []byte) (*Item, error) {
+-	block, body, err := SplitFrontMatter(data)
++	block, body, bodyLine, err := splitFrontMatter(data)
+ 	if err != nil {
+ 		return nil, newParseError(path, 1, "", CodeFMMissing, strings.TrimPrefix(err.Error(), ErrInvalidFrontMatter.Error()+": "), nil)
+ 	}
+@@ -204,9 +278,11 @@ func ParseItem(path string, data []byte) (*Item, error) {
+ 
+ 	p := &fieldReader{path: path, fm: fm, lines: keyLines(node)}
+ 	it := &Item{
+-		Path: path,
+-		Body: body,
+-		Rev:  ComputeRev(data),
++		Path:     path,
++		Body:     body,
++		Rev:      ComputeRev(data),
++		BodyLine: bodyLine,
++		reqLines: requirementLines(node),
+ 	}
+ 
+ 	it.Type = ItemType(p.str("type"))
+diff --git a/internal/core/index.go b/internal/core/index.go
+index a8f0712..a1b778e 100644
+--- a/internal/core/index.go
++++ b/internal/core/index.go
+@@ -1265,7 +1265,9 @@ func (ix *Index) resolveReferences(graph *Graph) {
+ // targets, and comment folders with no item (W-REF-DANGLING, W-CMT-ORPHAN).
+ func (ix *Index) checkReferentialIntegrity() {
+ 	blocks := map[ItemID]map[int]bool{}
+-	dangling := func(it *Item, field string, target string) {
++	// dangling reports a target nothing in the vault answers to; line is the
++	// file line of the link when the caller knows it, or 0.
++	dangling := func(it *Item, field string, line int, target string) {
+ 		if target == "" {
+ 			return
+ 		}
+@@ -1288,7 +1290,7 @@ func (ix *Index) checkReferentialIntegrity() {
+ 			return
+ 		}
+ 		ix.derivedDiags = append(ix.derivedDiags, Diagnostic{
+-			Code: idxCodeRefDangling, Severity: SeverityWarning, Path: it.Path, Field: field,
++			Code: idxCodeRefDangling, Severity: SeverityWarning, Path: it.Path, Field: field, Line: line,
+ 			Message: fmt.Sprintf("%s points at unknown %s %s", field, what, target),
+ 		})
+ 	}
+@@ -1299,15 +1301,17 @@ func (ix *Index) checkReferentialIntegrity() {
+ 		if parent == "" && it.Epic != "" {
+ 			parent, field = it.Epic, "epic"
+ 		}
+-		dangling(it, field, string(parent))
+-		dangling(it, "milestone", string(it.Milestone))
++		dangling(it, field, 0, string(parent))
++		dangling(it, "milestone", 0, string(it.Milestone))
+ 		for _, l := range it.Links {
+-			dangling(it, "links."+string(l.Kind), l.Target)
++			dangling(it, "links."+string(l.Kind), 0, l.Target)
+ 		}
++		lines := &fileLines{item: it}
+ 		for _, key := range it.Requirements.Keys() {
+ 			if e := it.Requirements[key]; e != nil {
+-				for _, l := range e.Links {
+-					dangling(it, "requirements."+key+".links."+string(l.Kind), l.Target)
++				for i, l := range e.Links {
++					dangling(it, "requirements."+key+".links."+string(l.Kind),
++						lines.field(fmt.Sprintf("requirements.%s.links[%d]", key, i)), l.Target)
+ 				}
+ 			}
+ 		}
+diff --git a/internal/core/indexspec.go b/internal/core/indexspec.go
+index 64c9d23..a1e70f7 100644
+--- a/internal/core/indexspec.go
++++ b/internal/core/indexspec.go
+@@ -70,10 +70,11 @@ func (ix *Index) checkDeltaTargets() {
+ 			continue
+ 		}
+ 		it := ix.byID[id]
++		lines := &fileLines{item: it}
+ 		report := func(field string, line int, format string, args ...any) {
+ 			ix.derivedDiags = append(ix.derivedDiags, Diagnostic{
+ 				Code: CodeWarnDeltaDangling, Severity: SeverityWarning, Path: it.Path, Field: field,
+-				Message: fmt.Sprintf("line %d of the body: ", line) + fmt.Sprintf(format, args...),
++				Line: lines.body(line), Message: fmt.Sprintf(format, args...),
+ 			})
+ 		}
+ 		check := func(field string, line int, what string, spec ItemID, ref *RequirementRef) {
+diff --git a/internal/core/model.go b/internal/core/model.go
+index 91f5bff..34c1999 100644
+--- a/internal/core/model.go
++++ b/internal/core/model.go
+@@ -487,6 +487,15 @@ type Item struct {
+ 	Body string `json:"body" yaml:"-"` // Markdown after the front matter
+ 	Path string `json:"path" yaml:"-"` // vault-relative, forward slashes
+ 	Rev  Rev    `json:"rev" yaml:"-"`  // content hash of the canonical bytes
++	// BodyLine is the 1-based file line Body starts on, as ParseItem read it
++	// and the store wrote it; 0 when unknown (an item built in memory or
++	// decoded from JSON), in which case the canonical layout is assumed. It
++	// turns the body lines of the spec parser into the file lines of
++	// diagnostics (bodyLines).
++	BodyLine int `json:"-" yaml:"-"`
++	// reqLines is the file line of every requirements: node, keyed by field
++	// path (requirementLines); nil alongside a BodyLine of 0.
++	reqLines map[string]int
+ }
+ 
+ // Comment is one entry under .pmngr/comments/<ITEM-ID>/. Comments have no id of
+diff --git a/internal/core/requirements.go b/internal/core/requirements.go
+index 529b523..cac5d6d 100644
+--- a/internal/core/requirements.go
++++ b/internal/core/requirements.go
+@@ -633,29 +633,31 @@ func RequirementDiagnostics(item *Item, cfg *ProjectConfig) []Diagnostic {
+ 		return nil
+ 	}
+ 	d := &diagSet{path: item.Path}
++	lines := &fileLines{item: item}
+ 	body := ParseSpecBody(item.ID, item.Body)
+ 	for _, f := range body.Findings {
+ 		field := "body"
+ 		if f.Ref != "" {
+ 			field = "body." + f.Ref
+ 		}
+-		d.add(f.Code, f.Severity, field, fmt.Sprintf("line %d of the body: %s", f.Line, f.Message))
++		d.addAt(f.Code, f.Severity, field, lines.body(f.Line), f.Message)
+ 	}
+ 
+ 	seen := map[int]int{}
+ 	for _, blk := range body.Blocks {
+ 		if first, dup := seen[blk.Ref.Number]; dup {
+-			d.errorf("body."+blk.Ref.String(), CodeReqDuplicate,
+-				"%s is declared twice, on lines %d and %d of the body", blk.Ref, first, blk.Line)
++			d.addAt(CodeReqDuplicate, SeverityError, "body."+blk.Ref.String(), lines.body(blk.Line),
++				fmt.Sprintf("%s is declared twice, on lines %d and %d", blk.Ref, lines.body(first), lines.body(blk.Line)))
+ 			continue
+ 		}
+ 		seen[blk.Ref.Number] = blk.Line
+-		lintDiagnostics(d, blk, cfg.SpecLint())
++		lintDiagnostics(d, lines, blk, cfg.SpecLint())
+ 		entry, ok := item.Requirements[blk.Ref.Key()]
+ 		switch {
+ 		case !ok:
+-			d.warnf("requirements."+blk.Ref.Key(), CodeWarnReqNoEntry,
+-				"%s has no requirements: entry; its status reads as the workflow's initial status", blk.Ref)
++			// Nothing in the front matter to point at: the block is.
++			d.addAt(CodeWarnReqNoEntry, SeverityWarning, "requirements."+blk.Ref.Key(), lines.body(blk.Line),
++				fmt.Sprintf("%s has no requirements: entry; its status reads as the workflow's initial status", blk.Ref))
+ 		case entry == nil || entry.Status == "":
+ 			d.warnf("requirements."+blk.Ref.Key()+".status", CodeWarnReqNoEntry,
+ 				"%s has no status; it reads as the workflow's initial status", blk.Ref)
+@@ -674,6 +676,13 @@ func RequirementDiagnostics(item *Item, cfg *ProjectConfig) []Diagnostic {
+ 		}
+ 		validateRequirementEntry(d, field, entry, cfg)
+ 	}
++	// Every finding about a requirements: entry points at its node, or at
++	// the closest one the file holds.
++	for i := range d.out {
++		if d.out[i].Line == 0 && strings.HasPrefix(d.out[i].Field, "requirements.") {
++			d.out[i].Line = lines.field(d.out[i].Field)
++		}
++	}
+ 	orderDiagnostics(d.out)
+ 	return d.out
+ }
+diff --git a/internal/core/spec.go b/internal/core/spec.go
+index 0045937..fae23f9 100644
+--- a/internal/core/spec.go
++++ b/internal/core/spec.go
+@@ -169,6 +169,74 @@ type SpecFinding struct {
+ 	Message string `json:"message"`
+ }
+ 
++// fileLines turns what the spec and Spec Delta parsers report — 1-based lines
++// of the body (SpecFinding, LintFinding, RequirementBlock and DeltaOperation
++// lines) — and the requirements: fields of the front matter into the 1-based
++// lines of the item's file that a Diagnostic carries, so that doctor, the CLI
++// and the API point at the line an editor of the file shows (GIT-US-0144). An
++// item read from a file knows its layout (Item.BodyLine); for one built in
++// memory it is the file SerializeItem would write. The layout is worked out
++// once, on the first line asked for.
++type fileLines struct {
++	item   *Item
++	known  bool
++	offset int            // file line minus body line
++	fields map[string]int // requirementLines
++}
++
++// load works the layout out.
++func (l *fileLines) load() {
++	if l.known {
++		return
++	}
++	l.known = true
++	it := l.item
++	if it.BodyLine > 0 {
++		l.offset, l.fields = it.BodyLine-1, it.reqLines
++		return
++	}
++	data, err := SerializeItem(it)
++	if err != nil {
++		return
++	}
++	var canonical Item
++	canonical.Requirements = it.Requirements
++	canonical.setLayout(data)
++	if canonical.BodyLine == 0 {
++		return
++	}
++	// SerializeItem drops the blank lines the body opens with; the parsers
++	// count them.
++	leading := len(it.Body) - len(strings.TrimLeft(it.Body, "\n"))
++	l.offset, l.fields = canonical.BodyLine-1-leading, canonical.reqLines
++}
++
++// body returns the file line of a body line; 0 (unknown) stays 0.
++func (l *fileLines) body(line int) int {
++	if line <= 0 {
++		return 0
++	}
++	l.load()
++	return line + l.offset
++}
++
++// field returns the file line of a requirements: field path, falling back to
++// the closest enclosing node the file holds, or 0.
++func (l *fileLines) field(path string) int {
++	l.load()
++	for path != "" {
++		if n, ok := l.fields[path]; ok {
++			return n
++		}
++		i := strings.LastIndexAny(path, ".[")
++		if i < 0 {
++			break
++		}
++		path = path[:i]
++	}
++	return 0
++}
++
+ // SpecBody is the result of parsing the body of a spec.
+ type SpecBody struct {
+ 	Blocks   []RequirementBlock `json:"blocks"`
+diff --git a/internal/core/spec_lines_test.go b/internal/core/spec_lines_test.go
+new file mode 100644
+index 0000000..55d238f
+--- /dev/null
++++ b/internal/core/spec_lines_test.go
+@@ -0,0 +1,107 @@
++package core
++
++import (
++	"fmt"
++	"os"
++	"path/filepath"
++	"reflect"
++	"strings"
++	"testing"
++)
++
++func TestBodyStartLine(t *testing.T) {
++	t.Parallel()
++	tests := []struct {
++		name string
++		data string
++		want int
++	}{
++		{"body after one blank line", "---\nid: A\n---\n\nbody\n", 5},
++		{"body right after the fence", "---\nid: A\n---\nbody\n", 4},
++		{"several blank lines", "---\nid: A\ntype: spec\n---\n\n\n\nbody\n", 8},
++		{"crlf and bom", "\ufeff---\r\nid: A\r\n---\r\n\r\nbody\r\n", 5},
++		{"empty front matter", "---\n---\n\nbody\n", 4},
++		{"no body", "---\nid: A\n---\n", 0},
++		{"not closed", "---\nid: A\n", 0},
++		{"no front matter", "body\n", 0},
++	}
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			t.Parallel()
++			if got := BodyStartLine([]byte(tt.data)); got != tt.want {
++				t.Errorf("BodyStartLine(%q) = %d, want %d", tt.data, got, tt.want)
++			}
++		})
++	}
++}
++
++// specLinesFixture parses a spec whose front matter spans many lines.
++func specLinesFixture(t *testing.T) ([]byte, *Item) {
++	t.Helper()
++	data, err := os.ReadFile(filepath.Join("testdata", "spec-lines-item.md"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	it, err := ParseItem("docs/.pmngr/specs/TEST-SP-0007-requirement-diagnostics-on-file-lines.md", data)
++	if err != nil {
++		t.Fatalf("ParseItem(): %v", err)
++	}
++	return data, it
++}
++
++// TestRequirementDiagnosticsFileLinesGolden pins the file line of every
++// requirement diagnostic of a spec with a multi-line front matter
++// (GIT-US-0144), and the text of that line, so a reviewer of the golden sees
++// what each finding points at.
++func TestRequirementDiagnosticsFileLinesGolden(t *testing.T) {
++	t.Parallel()
++	data, it := specLinesFixture(t)
++	lines := strings.Split(string(data), "\n")
++
++	var b strings.Builder
++	b.WriteString("# RequirementDiagnostics(spec-lines-item.md): file line, then the text on it\n")
++	for _, d := range RequirementDiagnostics(it, specConfig(t)) {
++		if d.Line < 1 || d.Line > len(lines) {
++			t.Errorf("%s %s: line %d is not a line of the file", d.Code, d.Field, d.Line)
++			continue
++		}
++		if strings.Contains(d.Message, "of the body") {
++			t.Errorf("%s %s: message still counts body lines: %s", d.Code, d.Field, d.Message)
++		}
++		fmt.Fprintf(&b, "%s %s %s: %s\n    %d | %s\n", d.Code, d.Severity, d.Field, d.Message, d.Line, lines[d.Line-1])
++	}
++	compareGolden(t, "spec-lines-diagnostics.txt", []byte(b.String()))
++}
++
++// TestRequirementDiagnosticsLinesOfAnItemInMemory checks that an item with no
++// file behind it is reported on the lines of the file it would be written as.
++func TestRequirementDiagnosticsLinesOfAnItemInMemory(t *testing.T) {
++	t.Parallel()
++	_, parsed := specLinesFixture(t)
++	canonical, err := SerializeItem(parsed)
++	if err != nil {
++		t.Fatal(err)
++	}
++	fromFile, err := ParseItem(parsed.Path, canonical)
++	if err != nil {
++		t.Fatal(err)
++	}
++	inMemory := cloneItem(fromFile)
++	inMemory.BodyLine, inMemory.reqLines = 0, nil
++	withBlank := cloneItem(&inMemory)
++	withBlank.Body = "\n\n" + withBlank.Body
++
++	cfg := specConfig(t)
++	want := RequirementDiagnostics(fromFile, cfg)
++	if got := RequirementDiagnostics(&inMemory, cfg); !reflect.DeepEqual(got, want) {
++		t.Errorf("in memory:\n%v\nwant the diagnostics of the written file:\n%v", got, want)
++	}
++	// The writer trims the blank lines a body opens with; the lines stay
++	// those of the written file.
++	if got := RequirementDiagnostics(&withBlank, cfg); !reflect.DeepEqual(got, want) {
++		t.Errorf("body with leading blank lines:\n%v\nwant:\n%v", got, want)
++	}
++	if reflect.DeepEqual(want, RequirementDiagnostics(parsed, cfg)) {
++		t.Error("the fixture is canonical already: the test no longer tells the layouts apart")
++	}
++}
+diff --git a/internal/core/specapply.go b/internal/core/specapply.go
+index 9b7ea09..91f9c70 100644
+--- a/internal/core/specapply.go
++++ b/internal/core/specapply.go
+@@ -236,7 +236,7 @@ func (s *FileStore) planDone(ctx context.Context, it *Item) (*deltaPlan, error)
+ 	}
+ 	for _, f := range delta.Findings {
+ 		if f.Severity == SeverityError {
+-			return nil, p.conflict(f.Ref, "line %d of the body: %s (%s)", f.Line, f.Message, f.Code)
++			return nil, p.conflict(f.Ref, "line %d: %s (%s)", (&fileLines{item: it}).body(f.Line), f.Message, f.Code)
+ 		}
+ 	}
+ 	if err := p.checkTargets(delta); err != nil {
+@@ -584,8 +584,10 @@ func (s *FileStore) writeDone(it *Item, oldPath string, had bool, p *deltaPlan)
+ 		return err
+ 	}
+ 	it.Rev = ComputeRev(data)
++	it.setLayout(data)
+ 	for i, spec := range specs {
+ 		spec.Rev = ComputeRev(specData[i])
++		spec.setLayout(specData[i])
+ 	}
+ 	if upgrade {
+ 		s.cfg.Schema = SpecSchema
+diff --git a/internal/core/specdelta.go b/internal/core/specdelta.go
+index 6126c60..c7a6c1f 100644
+--- a/internal/core/specdelta.go
++++ b/internal/core/specdelta.go
+@@ -362,12 +362,13 @@ func SpecDeltaDiagnostics(item *Item, cfg *ProjectConfig) []Diagnostic {
+ 
+ func specDeltaDiagnostics(item *Item, delta SpecDelta, cfg *ProjectConfig) []Diagnostic {
+ 	d := &diagSet{path: item.Path}
++	lines := &fileLines{item: item}
+ 	for _, f := range delta.Findings {
+ 		field := "body"
+ 		if f.Ref != "" {
+ 			field = "body." + f.Ref
+ 		}
+-		d.add(f.Code, f.Severity, field, fmt.Sprintf("line %d of the body: %s", f.Line, f.Message))
++		d.addAt(f.Code, f.Severity, field, lines.body(f.Line), f.Message)
+ 	}
+ 	applied := cfg != nil && cfg.CategoryOf(item.Status) == CategoryDone
+ 	for _, op := range delta.Operations {
+@@ -377,12 +378,12 @@ func specDeltaDiagnostics(item *Item, delta SpecDelta, cfg *ProjectConfig) []Dia
+ 		// story reopened after its delta was applied keeps a valid body.
+ 		recorded := op.Ref != nil && hasLink(item.Links, Link{Kind: LinkImplements, Target: op.Ref.String()})
+ 		if op.Op == DeltaAdded && op.Ref != nil && cfg != nil && !applied && !recorded {
+-			d.errorf(field, CodeDeltaTarget,
+-				"line %d of the body: ADDED names the requirement %s: an added block gets its number when the %s is done; write \"### ADDED %s %s <title>\"",
+-				op.Line, op.Ref, item.Type, op.Spec, ReqSeparator)
++			d.addAt(CodeDeltaTarget, SeverityError, field, lines.body(op.Line), fmt.Sprintf(
++				"ADDED names the requirement %s: an added block gets its number when the %s is done; write \"### ADDED %s %s <title>\"",
++				op.Ref, item.Type, op.Spec, ReqSeparator))
+ 		}
+ 		for _, f := range lintDeltaOperation(op, cfg.SpecLint()) {
+-			d.add(f.Rule, f.Severity, field, fmt.Sprintf("line %d of the body: %s", f.Line, f.Message))
++			d.addAt(f.Rule, f.Severity, field, lines.body(f.Line), f.Message)
+ 		}
+ 	}
+ 	orderDiagnostics(d.out)
+diff --git a/internal/core/specdelta_test.go b/internal/core/specdelta_test.go
+index 3ee6ec5..a7a67e6 100644
+--- a/internal/core/specdelta_test.go
++++ b/internal/core/specdelta_test.go
+@@ -65,7 +65,7 @@ func TestSpecDeltaDiagnosticsGolden(t *testing.T) {
+ 	var b strings.Builder
+ 	b.WriteString("# SpecDeltaDiagnostics(spec-delta-story.md) at status in_progress, default lint\n")
+ 	for _, d := range SpecDeltaDiagnostics(it, deltaConfig()) {
+-		fmt.Fprintf(&b, "%s %s %s: %s\n", d.Field, d.Severity, d.Code, d.Message)
++		fmt.Fprintf(&b, "%s:%d %s %s %s: %s\n", filepath.Base(d.Path), d.Line, d.Field, d.Severity, d.Code, d.Message)
+ 	}
+ 	compareGolden(t, "spec-delta-diagnostics.txt", []byte(b.String()))
+ }
+diff --git a/internal/core/speclinks_test.go b/internal/core/speclinks_test.go
+index 9050626..22bb67f 100644
+--- a/internal/core/speclinks_test.go
++++ b/internal/core/speclinks_test.go
+@@ -340,6 +340,13 @@ func TestIndexReportsDanglingRequirementTargets(t *testing.T) {
+ 	if !reflect.DeepEqual(got, want) {
+ 		t.Errorf("W-REF-DANGLING findings =\n%v\nwant\n%v", got, want)
+ 	}
++	for _, d := range ix.Warnings() {
++		// A requirement-level link points at the file line of its list
++		// entry, "- { kind: supersedes, target: ACME-SP-0002.R7 }" (GIT-US-0144).
++		if d.Code == CodeWarnRefDangling && d.Field == "requirements.R3.links.supersedes" && d.Line != 18 {
++			t.Errorf("%s: line %d, want 18", d.Field, d.Line)
++		}
++	}
+ 	for _, d := range ix.Warnings() {
+ 		if d.Code == CodeLinkTargetType || d.Code == CodeSchemaFeature {
+ 			t.Errorf("unexpected finding %s: %s", d.Code, d.Message)
+diff --git a/internal/core/speclint.go b/internal/core/speclint.go
+index 5d17d78..7bd0af6 100644
+--- a/internal/core/speclint.go
++++ b/internal/core/speclint.go
+@@ -559,9 +559,9 @@ func containsWholeWord(s, w string) bool {
+ func isWordRune(r rune) bool { return r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r) }
+ 
+ // lintDiagnostics renders the lint findings of a block as diagnostics of the
+-// spec file, in the same "line N of the body" form as the parser's findings.
+-func lintDiagnostics(d *diagSet, blk RequirementBlock, cfg *SpecLintConfig) {
++// spec file, on the file line like the parser's findings.
++func lintDiagnostics(d *diagSet, lines *fileLines, blk RequirementBlock, cfg *SpecLintConfig) {
+ 	for _, f := range LintRequirement(blk, cfg) {
+-		d.add(f.Rule, f.Severity, "body."+f.Ref.String(), fmt.Sprintf("line %d of the body: %s", f.Line, f.Message))
++		d.addAt(f.Rule, f.Severity, "body."+f.Ref.String(), lines.body(f.Line), f.Message)
+ 	}
+ }
+diff --git a/internal/core/speclint_test.go b/internal/core/speclint_test.go
+index 96de712..94040e4 100644
+--- a/internal/core/speclint_test.go
++++ b/internal/core/speclint_test.go
+@@ -321,10 +321,17 @@ func TestLintSeverityGatesValidation(t *testing.T) {
+ 			if got := HasErrors(diags); got != tt.wantErrors {
+ 				t.Errorf("HasErrors() = %v, want %v; diagnostics:\n%v", got, tt.wantErrors, diags)
+ 			}
++			// An item built in memory is linted against the file it would
++			// be written as: the statement is on that file's line.
++			data, err := SerializeItem(item)
++			if err != nil {
++				t.Fatal(err)
++			}
++			wantLine := 1 + strings.Count(string(data[:strings.Index(string(data), "The system does two, fast.")]), "\n")
+ 			var codes []Code
+ 			for _, d := range diags {
+ 				codes = append(codes, d.Code)
+-				if d.Field != "body.TEST-SP-0001.R2" || !strings.HasPrefix(d.Message, "line 13 of the body: ") {
++				if d.Field != "body.TEST-SP-0001.R2" || d.Line != wantLine || strings.Contains(d.Message, "of the body") {
+ 					t.Errorf("diagnostic %v does not point at R2's statement", d)
+ 				}
+ 			}
+diff --git a/internal/core/store.go b/internal/core/store.go
+index 53a9ab6..928a935 100644
+--- a/internal/core/store.go
++++ b/internal/core/store.go
+@@ -713,7 +713,11 @@ func (s *FileStore) validateWith(it *Item, cfg *ProjectConfig) error {
+ 	if !s.Validate {
+ 		return nil
+ 	}
+-	return JoinDiagnostics(ValidateItem(it, cfg))
++	// The item is about to be written in canonical form, whatever layout the
++	// file it was read from had: its diagnostics point at that form.
++	canonical := *it
++	canonical.BodyLine, canonical.reqLines = 0, nil
++	return JoinDiagnostics(ValidateItem(&canonical, cfg))
+ }
+ 
+ // validateAndUpgrade validates an item about to be written and, when the write
+@@ -796,6 +800,7 @@ func (s *FileStore) writeItem(it *Item, oldPath string) error {
+ 		}
+ 	}
+ 	it.Rev = ComputeRev(data)
++	it.setLayout(data)
+ 	return nil
+ }
+ 
+diff --git a/internal/core/testdata/golden/spec-delta-diagnostics.txt b/internal/core/testdata/golden/spec-delta-diagnostics.txt
+index 50181b9..5f3e27c 100644
+--- a/internal/core/testdata/golden/spec-delta-diagnostics.txt
++++ b/internal/core/testdata/golden/spec-delta-diagnostics.txt
+@@ -1,12 +1,12 @@
+ # SpecDeltaDiagnostics(spec-delta-story.md) at status in_progress, default lint
+-body error E-DELTA-OP: line 73 of the body: Spec Delta heading "### CHANGED ACME-SP-0003.R2 — Unknown operation" has no operation: want "### ADDED <SPEC-ID> — <title>", "### MODIFIED <REQREF> — <title>" or "### REMOVED <REQREF> — <title>"
+-body error E-DELTA-OP: line 81 of the body: Spec Delta heading "### MODIFIED ACME-SP-0003.R3" has no " — <title>" after its target: want "### ADDED <SPEC-ID> — <title>", "### MODIFIED <REQREF> — <title>" or "### REMOVED <REQREF> — <title>"
+-body.ACME-SP-0003.R5 error E-DELTA-REASON: line 44 of the body: REMOVED ACME-SP-0003.R5 has no "Reason:" line: say why the requirement goes
+-body.ACME-SP-0003 error E-DELTA-TARGET: line 65 of the body: Supersedes: "the old rule" is not a requirement ref: want <SPEC-ID>.R<n>
+-body.ACME-SP-0003 error E-DELTA-TARGET: line 75 of the body: MODIFIED names the spec ACME-SP-0003: want the requirement it changes, <SPEC-ID>.R<n>
+-body.ACME-SP-0003.R9 error E-DELTA-TARGET: line 56 of the body: ADDED names the requirement ACME-SP-0003.R9: an added block gets its number when the story is done; write "### ADDED ACME-SP-0003 — <title>"
+-body.ACME-US-0001 error E-DELTA-TARGET: line 79 of the body: ADDED ACME-US-0001 names a story: a Spec Delta changes a spec or a requirement
+-body.ACME-SP-0003.R02 error E-ID-GRAMMAR: line 77 of the body: "ACME-SP-0003.R02" is not a requirement ref: want <KEY>-SP-<NNNN>.R<n> with an unpadded R<n>
+-body.ACME-SP-0003.R2 warning LINT-REQ-STATEMENT: line 30 of the body: the statement of MODIFIED ACME-SP-0003.R2 writes "shall" in lower case: EARS keywords are uppercase (SHALL)
+-body.ACME-SP-0003.R2 warning LINT-REQ-VAGUE: line 30 of the body: vague word "fast" in MODIFIED ACME-SP-0003.R2: state a measurable, observable condition instead
+-body.ACME-SP-0003.R6 warning W-REQ-SEPARATOR: line 48 of the body: Spec Delta heading of MODIFIED ACME-SP-0003.R6 uses "-" instead of "—"
++ACME-US-0042-harden-reserved-ranges.md:83 body error E-DELTA-OP: Spec Delta heading "### CHANGED ACME-SP-0003.R2 — Unknown operation" has no operation: want "### ADDED <SPEC-ID> — <title>", "### MODIFIED <REQREF> — <title>" or "### REMOVED <REQREF> — <title>"
++ACME-US-0042-harden-reserved-ranges.md:91 body error E-DELTA-OP: Spec Delta heading "### MODIFIED ACME-SP-0003.R3" has no " — <title>" after its target: want "### ADDED <SPEC-ID> — <title>", "### MODIFIED <REQREF> — <title>" or "### REMOVED <REQREF> — <title>"
++ACME-US-0042-harden-reserved-ranges.md:54 body.ACME-SP-0003.R5 error E-DELTA-REASON: REMOVED ACME-SP-0003.R5 has no "Reason:" line: say why the requirement goes
++ACME-US-0042-harden-reserved-ranges.md:75 body.ACME-SP-0003 error E-DELTA-TARGET: Supersedes: "the old rule" is not a requirement ref: want <SPEC-ID>.R<n>
++ACME-US-0042-harden-reserved-ranges.md:85 body.ACME-SP-0003 error E-DELTA-TARGET: MODIFIED names the spec ACME-SP-0003: want the requirement it changes, <SPEC-ID>.R<n>
++ACME-US-0042-harden-reserved-ranges.md:66 body.ACME-SP-0003.R9 error E-DELTA-TARGET: ADDED names the requirement ACME-SP-0003.R9: an added block gets its number when the story is done; write "### ADDED ACME-SP-0003 — <title>"
++ACME-US-0042-harden-reserved-ranges.md:89 body.ACME-US-0001 error E-DELTA-TARGET: ADDED ACME-US-0001 names a story: a Spec Delta changes a spec or a requirement
++ACME-US-0042-harden-reserved-ranges.md:87 body.ACME-SP-0003.R02 error E-ID-GRAMMAR: "ACME-SP-0003.R02" is not a requirement ref: want <KEY>-SP-<NNNN>.R<n> with an unpadded R<n>
++ACME-US-0042-harden-reserved-ranges.md:40 body.ACME-SP-0003.R2 warning LINT-REQ-STATEMENT: the statement of MODIFIED ACME-SP-0003.R2 writes "shall" in lower case: EARS keywords are uppercase (SHALL)
++ACME-US-0042-harden-reserved-ranges.md:40 body.ACME-SP-0003.R2 warning LINT-REQ-VAGUE: vague word "fast" in MODIFIED ACME-SP-0003.R2: state a measurable, observable condition instead
++ACME-US-0042-harden-reserved-ranges.md:58 body.ACME-SP-0003.R6 warning W-REQ-SEPARATOR: Spec Delta heading of MODIFIED ACME-SP-0003.R6 uses "-" instead of "—"
+diff --git a/internal/core/testdata/golden/spec-lines-diagnostics.txt b/internal/core/testdata/golden/spec-lines-diagnostics.txt
+new file mode 100644
+index 0000000..32ef8db
+--- /dev/null
++++ b/internal/core/testdata/golden/spec-lines-diagnostics.txt
+@@ -0,0 +1,29 @@
++# RequirementDiagnostics(spec-lines-item.md): file line, then the text on it
++E-ID-GRAMMAR error body.TEST-SP-0007.R02: "TEST-SP-0007.R02" is not a requirement ref: want <KEY>-SP-<NNNN>.R<n> with an unpadded R<n>
++    58 | ### TEST-SP-0007.R02 — Padded number
++E-LINK-TARGET-TYPE error requirements.R2.links[0].target: supersedes must target a requirement ref, not "TEST-SP-0001"
++    21 |       - {kind: supersedes, target: TEST-SP-0001}
++E-REQ-DUPLICATE error body.TEST-SP-0007.R1: TEST-SP-0007.R1 is declared twice, on lines 34 and 50
++    50 | ### TEST-SP-0007.R1 — Duplicated number
++E-REQ-FIELD error requirements.R2.links[1].kind: a requirement's links allow supersedes, superseded_by and relates_to, not "blocks"
++    22 |       - {kind: blocks, target: TEST-SP-0001.R1}
++E-REQ-FIELD error requirements.R2.trace.code[0]: "/abs/path.go" is absolute: trace paths are relative to the repository root
++    19 |       code: [/abs/path.go]
++E-REQ-FOREIGN error body.OTHER-SP-0001.R1: requirement heading names OTHER-SP-0001.R1, which belongs to OTHER-SP-0001, not to TEST-SP-0007
++    60 | ### OTHER-SP-0001.R1 — Foreign spec
++E-STATUS-UNKNOWN error requirements.R2.status: "shipped" is not declared in the workflow
++    17 |     status: shipped
++LINT-REQ-SCENARIO warning body.TEST-SP-0007.R3: TEST-SP-0007.R3 has no "#### Scenario:": want at least one, with **WHEN** and **THEN** steps
++    62 | ### TEST-SP-0007.R3 — No entry and no scenario
++LINT-REQ-VAGUE warning body.TEST-SP-0007.R2: vague word "fast" in TEST-SP-0007.R2: state a measurable, observable condition instead
++    44 | The system SHALL answer fast.
++W-REQ-HEADING warning body: level-3 heading "### Design notes" is not a requirement heading: want "### <REQREF> — <title>"
++    54 | ### Design notes
++W-REQ-NO-ENTRY warning requirements.R3: TEST-SP-0007.R3 has no requirements: entry; its status reads as the workflow's initial status
++    62 | ### TEST-SP-0007.R3 — No entry and no scenario
++W-REQ-NO-ENTRY warning requirements.R4.status: TEST-SP-0007.R4 has no status; it reads as the workflow's initial status
++    23 |   R4: {}
++W-REQ-ORPHAN-ENTRY warning requirements.R9: TEST-SP-0007.R9 has an entry but no block in the body; its number stays reserved
++    24 |   R9:
++W-REQ-SEPARATOR warning body.TEST-SP-0007.R2: heading of TEST-SP-0007.R2 uses "-" instead of "—"
++    42 | ### TEST-SP-0007.R2 - Hyphen separator and a vague word
+diff --git a/internal/core/testdata/spec-lines-item.md b/internal/core/testdata/spec-lines-item.md
+new file mode 100644
+index 0000000..e356d1d
+--- /dev/null
++++ b/internal/core/testdata/spec-lines-item.md
+@@ -0,0 +1,72 @@
++---
++id: TEST-SP-0007
++type: spec
++title: Requirement diagnostics on file lines
++status: in_progress
++priority: medium
++author: jose
++labels:
++  - core
++  - specs
++created: 2026-09-24T12:00:00Z
++updated: 2026-09-25T09:00:00Z
++requirements:
++  R1:
++    status: done
++  R2:
++    status: shipped
++    trace:
++      code: [/abs/path.go]
++    links:
++      - {kind: supersedes, target: TEST-SP-0001}
++      - {kind: blocks, target: TEST-SP-0001.R1}
++  R4: {}
++  R9:
++    status: todo
++---
++
++## Purpose
++
++Every requirement diagnostic of this spec points at a line of this file, not of its body.
++
++## Requirements
++
++### TEST-SP-0007.R1 — Well formed
++
++The system SHALL keep ids.
++
++#### Scenario: kept
++- **WHEN** an item is deleted
++- **THEN** its id stays reserved
++
++### TEST-SP-0007.R2 - Hyphen separator and a vague word
++
++The system SHALL answer fast.
++
++#### Scenario: answered
++- **WHEN** a request arrives
++- **THEN** it is answered
++
++### TEST-SP-0007.R1 — Duplicated number
++
++The system SHALL not be linted twice.
++
++### Design notes
++
++Prose, not a requirement.
++
++### TEST-SP-0007.R02 — Padded number
++
++### OTHER-SP-0001.R1 — Foreign spec
++
++### TEST-SP-0007.R3 — No entry and no scenario
++
++The system SHALL have no scenario.
++
++### TEST-SP-0007.R4 — Entry without status
++
++The system SHALL read as initial.
++
++#### Scenario: initial
++- **WHEN** the spec is read
++- **THEN** the status is the initial one
+diff --git a/internal/core/validate.go b/internal/core/validate.go
+index ddc0c88..0f63076 100644
+--- a/internal/core/validate.go
++++ b/internal/core/validate.go
+@@ -682,17 +682,23 @@ func (d *diagSet) warnf(field string, code Code, format string, args ...any) {
+ }
+ 
+ func (d *diagSet) add(code Code, severity Severity, field, message string) {
++	d.addAt(code, severity, field, 0, message)
++}
++
++// addAt adds a diagnostic on a 1-based line of the file; 0 means none.
++func (d *diagSet) addAt(code Code, severity Severity, field string, line int, message string) {
+ 	d.out = append(d.out, Diagnostic{
+ 		Code:     code,
+ 		Severity: severity,
+ 		Path:     d.path,
+ 		Field:    field,
++		Line:     line,
+ 		Message:  message,
+ 	})
+ }
+ 
+ // orderDiagnostics sorts findings by severity, then code, then field, then
+-// message, then path, so that a report is byte-identical between two runs and
++// line, then message, then path, so that a report is byte-identical between two runs and
+ // between the native and the WASM build.
+ func orderDiagnostics(diags []Diagnostic) {
+ 	sort.SliceStable(diags, func(i, j int) bool {
+@@ -706,6 +712,9 @@ func orderDiagnostics(diags []Diagnostic) {
+ 		if a.Field != b.Field {
+ 			return a.Field < b.Field
+ 		}
++		if a.Line != b.Line {
++			return a.Line < b.Line
++		}
+ 		if a.Message != b.Message {
+ 			return a.Message < b.Message
+ 		}
+diff --git a/internal/vault/speclive_test.go b/internal/vault/speclive_test.go
+index 49e88e7..7dd4dfc 100644
+--- a/internal/vault/speclive_test.go
++++ b/internal/vault/speclive_test.go
+@@ -5,6 +5,8 @@ import (
+ 	"strconv"
+ 	"strings"
+ 	"testing"
++
++	"github.com/digiogithub/git-in-track/internal/core"
+ )
+ 
+ // specLintWire is the result of spec.lint.
+@@ -154,3 +156,40 @@ func TestSpecDeltaPreview(t *testing.T) {
+ 		t.Errorf("operations = %+v, want none", ops)
+ 	}
+ }
++
++// TestSpecLintLinesAreBodyLines pins the one place the two line numberings
++// meet (GIT-US-0144): spec.lint answers on lines of the body it was sent, which
++// is the text the web editor holds, while item.validate — like doctor and the
++// CLI — answers on lines of the file, below the front matter.
++func TestSpecLintLinesAreBodyLines(t *testing.T) {
++	const body = "## Spec Delta\n\n" +
++		"### MODIFIED DEMO-SP-0001.R1 — Trim\n\nThe checkout SHALL trim input fast.\n\n" +
++		"#### Scenario: spaces\n- **WHEN** it ends in spaces\n- **THEN** they go\n"
++	v := deltaFixtureVault(t, func(s string) string {
++		return strings.Replace(s, "\nschema: 1\n", "\nschema: 2\n", 1)
++	}, body)
++
++	lint := decode[specLintWire](t, call(t, v, "spec.lint", map[string]any{"project": "DEMO", "type": "story", "body": body}))
++	diags := decode[[]core.Diagnostic](t, call(t, v, "item.validate", map[string]any{"id": "DEMO-US-0003"}))
++
++	// deltaFixtureVault writes the story as eight lines of front matter and
++	// fences, a blank line, then the body.
++	const offset = 9
++	var bodyLine, fileLine int
++	for _, f := range lint.Findings {
++		if f.Code == core.LintReqVague {
++			bodyLine = f.Line
++		}
++	}
++	for _, d := range diags {
++		if d.Code == core.LintReqVague {
++			fileLine = d.Line
++		}
++	}
++	if bodyLine != 5 {
++		t.Errorf("spec.lint: LINT-REQ-VAGUE on line %d of the body, want 5", bodyLine)
++	}
++	if fileLine != bodyLine+offset {
++		t.Errorf("item.validate: LINT-REQ-VAGUE on line %d of the file, want %d", fileLine, bodyLine+offset)
++	}
++}
+diff --git a/web/src/features/editor/spec-lint.ts b/web/src/features/editor/spec-lint.ts
+index af9b55b..2439946 100644
+--- a/web/src/features/editor/spec-lint.ts
++++ b/web/src/features/editor/spec-lint.ts
+@@ -16,6 +16,11 @@ export function lintsSpecText(type: ItemType): boolean {
+  * rule at `off` never runs, so it never reaches the editor. No grammar rule is
+  * evaluated here: the rules live in `internal/core` alone.
+  *
++ * The editor holds the body alone, so `spec.lint` answers on lines of that
++ * body and they map onto the document unchanged. The save-time diagnostics
++ * (`item.validate`, doctor) number lines of the file, front matter included,
++ * and are never mapped onto this document (GIT-US-0144).
++ *
+  * A lint that fails — a companion that predates the method, a worker still
+  * loading — underlines nothing rather than breaking the editor; the save-time
+  * validation still reports the same findings.

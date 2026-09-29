@@ -1,0 +1,660 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index d5bb40b..76b9461 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -26,17 +26,20 @@ because a commit list cannot express them.
+   `W-REQ-NO-ENTRY`, `W-REQ-ORPHAN-ENTRY`. `gintrack doctor` reports them. `gintrack item new
+   --type spec` creates one; the inbox and the YouTrack import never produce one.
+ - **Spec link kinds and requirement-ref link targets** (`GIT-US-0106`, ADR-037 §5, docs/03
+-  §12.1). `implements`/`implemented_by`, `modifies`/`modified_by` and
+-  `supersedes`/`superseded_by` are valid link kinds, with their inverses computed by the index.
++  §12.1). `implements`, `modifies`, `supersedes` and `superseded_by` are new link kinds. Spec
++  links are **one-sided** (R-LINK-8): `implements`/`modifies` are written on the story or task
++  only, and `implemented_by`/`modified_by` exist only as inverses the index computes; writing
++  one in a file is the new error `E-LINK-COMPUTED-ONLY`.
+   A link target may be a requirement ref (`ACME-SP-0003.R2`, optionally `<KEY>/`-qualified).
+-  `implements`, `modifies` and their inverses need a spec or requirement target, and an
+-  item-level `supersedes` links a spec to a spec; anything else is `E-LINK-TARGET-TYPE`. A ref
++  `implements` and `modifies` need a spec or requirement target, and an item-level
++  `supersedes` links a spec to a spec; anything else is `E-LINK-TARGET-TYPE`. A ref
+   to an unknown spec, or to a block its spec does not declare, is `W-REF-DANGLING`, for
+   item-level and requirement-level links alike. Requirements are nodes of the link graph, so the
+   index answers "which stories implement `ACME-SP-0003.R2`" (`Index.Related`). The first such
+   link raises a `schema: 1` project to `schema: 2` in the same write. `gintrack item link`
+-  accepts the new kinds and does not mirror `implements`/`modifies` onto the spec; the web
+-  editor accepts them, and `duplicated_by`, which it used to reject.
++  accepts the new kinds, never mirrors `implements`/`modifies` onto the spec, and refuses
++  `implemented_by`/`modified_by` with a pointer to the kind to write instead; the web editor
++  offers only the writable kinds, and accepts `duplicated_by`, which it used to reject.
+ 
+ ### Changed
+ 
+diff --git a/cmd/gintrack/item_link.go b/cmd/gintrack/item_link.go
+index b4df445..c960fdd 100644
+--- a/cmd/gintrack/item_link.go
++++ b/cmd/gintrack/item_link.go
+@@ -44,19 +44,20 @@ func newItemLinkCommand(flags *globalFlags) *cobra.Command {
+ 		Short: "Link two items",
+ 		Long: `Add or remove a typed relation. The kinds are blocks, blocked_by,
+ relates_to, duplicates and duplicated_by, and the spec kinds implements,
+-implemented_by, modifies, modified_by, supersedes and superseded_by.
++modifies, supersedes and superseded_by.
+ 
+ The target is an item id, or a requirement ref such as ACME-SP-0003.R2, and
+-may be qualified with another project's key (WEB/WEB-US-0031). implements,
+-modifies and their inverses need a spec or a requirement target; supersedes
+-and superseded_by link a spec to a spec. A spec kind or a spec target raises
+-the project to schema 2 on the first write (docs/03 section 21.10).
++may be qualified with another project's key (WEB/WEB-US-0031). implements and
++modifies need a spec or a requirement target; supersedes and superseded_by
++link a spec to a spec. A spec kind or a spec target raises the project to
++schema 2 on the first write (docs/03 section 21.10).
+ 
+ The inverse relation is written on the counterpart when it is an item in the
+ same workspace, so the two files never disagree about the relation between
+-them. implements, modifies and their inverses are recorded on the work item
+-only: the index computes the requirement's side, so a spec is not rewritten
+-every time a story links to it.`,
++them. Spec links are one-sided: implements and modifies are recorded on the
++story or task only, and implemented_by and modified_by exist only as the
++inverses the index computes, so they are refused here (--remove still deletes
++one written by hand).`,
+ 		Args: exactArgs(3),
+ 		RunE: func(cmd *cobra.Command, args []string) error {
+ 			return runItemLink(cmd, flags, local, args[0], args[1], args[2])
+@@ -77,6 +78,10 @@ func runItemLink(cmd *cobra.Command, flags *globalFlags, local *itemLinkFlags, r
+ 	if !kind.Valid() {
+ 		return usagef("unknown relation %q: use %s", relation, strings.Join(linkKindNames, ", "))
+ 	}
++	if kind.ComputedOnly() && !local.remove {
++		return usagef("%s is computed by the index and cannot be written (docs/03 R-LINK-8); record it on the story or task instead: gintrack item link %s %s %s",
++			kind, strings.TrimSpace(target), kind.Inverse(), strings.TrimSpace(raw))
++	}
+ 	v, err := openItemVault(cmd, flags)
+ 	if err != nil {
+ 		return err
+@@ -124,19 +129,19 @@ func runItemLink(cmd *cobra.Command, flags *globalFlags, local *itemLinkFlags, r
+ 	return nil
+ }
+ 
+-// linkKindNames lists the relation kinds in the order of docs/03 section 12.1.
++// linkKindNames lists the relation kinds a user may write, in the order of
++// docs/03 section 12.1. implemented_by and modified_by are computed only.
+ var linkKindNames = []string{
+ 	string(core.LinkBlocks), string(core.LinkBlockedBy), string(core.LinkRelatesTo),
+ 	string(core.LinkDuplicates), string(core.LinkDuplicatedBy),
+-	string(core.LinkImplements), string(core.LinkImplementedBy),
+-	string(core.LinkModifies), string(core.LinkModifiedBy),
++	string(core.LinkImplements), string(core.LinkModifies),
+ 	string(core.LinkSupersedes), string(core.LinkSupersededBy),
+ }
+ 
+ // mirrorsInverse reports whether the inverse of a kind is written on the
+-// counterpart. The work-to-requirement kinds are not: their target is a spec
+-// or a requirement, which learns about the relation from the index alone
+-// (R-LINK-1), and the mirrored side would not validate (R-LINK-6).
++// counterpart. The spec links are not: they are one-sided (R-LINK-8), their
++// target is a spec or a requirement, which learns about the relation from the
++// index alone, and the inverse kinds are computed only.
+ func mirrorsInverse(kind core.LinkKind) bool {
+ 	switch kind {
+ 	case core.LinkImplements, core.LinkImplementedBy, core.LinkModifies, core.LinkModifiedBy:
+diff --git a/cmd/gintrack/item_test.go b/cmd/gintrack/item_test.go
+index 84d6b5b..7adbd32 100644
+--- a/cmd/gintrack/item_test.go
++++ b/cmd/gintrack/item_test.go
+@@ -456,6 +456,34 @@ func TestItemLinkToARequirement(t *testing.T) {
+ 	}
+ }
+ 
++func TestItemLinkRefusesComputedOnlyKinds(t *testing.T) {
++	tests := []struct {
++		kind, want string
++	}{
++		{kind: "implemented_by", want: "implements"},
++		{kind: "modified_by", want: "modifies"},
++	}
++	for _, tt := range tests {
++		t.Run(tt.kind, func(t *testing.T) {
++			h := newHarness(t)
++			h.register()
++			before := h.readFile("docs/.pmngr/stories/DEMO-US-0002-save-payment-methods.md")
++
++			_, stderr, code := h.run("item", "link", "DEMO-US-0002", tt.kind, "DEMO-SP-0001.R2")
++			if code != exitUsage {
++				t.Errorf("exit = %d, want %d", code, exitUsage)
++			}
++			hint := "item link DEMO-SP-0001.R2 " + tt.want + " DEMO-US-0002"
++			if !strings.Contains(stderr, "computed by the index") || !strings.Contains(stderr, hint) {
++				t.Errorf("stderr does not point at %s:\n%s", tt.want, stderr)
++			}
++			if after := h.readFile("docs/.pmngr/stories/DEMO-US-0002-save-payment-methods.md"); after != before {
++				t.Errorf("a refused link changed the file:\n%s", after)
++			}
++		})
++	}
++}
++
+ func TestItemLinkRejectsAnUnknownRelation(t *testing.T) {
+ 	h := newHarness(t)
+ 	h.register()
+diff --git a/docs/.pmngr/stories/GIT-US-0106-add-spec-link-kinds-and-requirement-ref-link-targets.md b/docs/.pmngr/stories/GIT-US-0106-add-spec-link-kinds-and-requirement-ref-link-targets.md
+index 617cad4..fbddb65 100644
+--- a/docs/.pmngr/stories/GIT-US-0106-add-spec-link-kinds-and-requirement-ref-link-targets.md
++++ b/docs/.pmngr/stories/GIT-US-0106-add-spec-link-kinds-and-requirement-ref-link-targets.md
+@@ -10,7 +10,7 @@ author: claude
+ labels: [core]
+ estimate: 5
+ created: 2026-09-24T12:09:05Z
+-updated: 2026-09-24T15:38:52Z
++updated: 2026-09-24T17:23:41Z
+ links:
+   - { kind: blocked_by, target: GIT-US-0104 }
+   - { kind: blocked_by, target: GIT-US-0105 }
+@@ -31,3 +31,5 @@ As an agent, I want to link a story to the requirement it implements or modifies
+ ## Notes
+ 
+ Blocked by the ADR-037 story and the spec type story. Not `agent-ok` (data model).
++
++Maintainer decision (2026-09-24, ADR-037 third review round): spec links are one-sided. For the first criterion, `implemented_by` and `modified_by` are known kinds only as computed inverses; writing one is `E-LINK-COMPUTED-ONLY` (docs/03 R-LINK-8).
+diff --git a/docs/03-data-model.md b/docs/03-data-model.md
+index 809ac5d..a31adf2 100644
+--- a/docs/03-data-model.md
++++ b/docs/03-data-model.md
+@@ -328,7 +328,7 @@ Handles are declared in the team repository's `team.yaml` (doc 04, §3.2) and MA
+ | `type` | `epic`, `story`, `task`, `milestone`, `comment`, `spec` ([§21](#21-specs-and-requirement-blocks)) (the `board`, `sprint` and `retro` types exist only in the team repo, and are specified in [doc 04](./04-team-repository.md) §§5, 8 and 9; all three round-trip through the same byte-stable emitter as an item, so an edit to one field is a one-line diff). A sprint's stored `state` is `planned`, `active` or `closed`; the `draft`/`upcoming`/`current`/`completed` status a reader sees is derived from its dates and is never a stored value ([ADR-034](./adr/ADR-034-sprint-status-is-derived-from-dates.md)) |
+ | `priority` | `critical`, `high`, `medium`, `low` |
+ | `status` | any `id` declared in `project.yaml:workflow.statuses` |
+-| relation kind | `blocks`, `blocked_by`, `relates_to`, `duplicates`, `duplicated_by`; added by ADR-037: `implements`, `implemented_by`, `modifies`, `modified_by`, `supersedes`, `superseded_by` ([§12.1](#121-the-links-field)) |
++| relation kind | `blocks`, `blocked_by`, `relates_to`, `duplicates`, `duplicated_by`; added by ADR-037: `implements`, `modifies`, `supersedes`, `superseded_by` ([§12.1](#121-the-links-field)); `implemented_by` and `modified_by` are computed inverses only and are never written (R-LINK-8) |
+ | `estimate` | number (story points), see [§8.3](#83-estimates-and-effort) |
+ 
+ ---
+@@ -1312,9 +1312,9 @@ links:
+ | `duplicates` | `duplicated_by` | source SHOULD be closed as `cancelled` |
+ | `duplicated_by` | `duplicates` | |
+ | `implements` | `implemented_by` | story/task → requirement or spec: the work realises it (ADR-037) |
+-| `implemented_by` | `implements` | |
++| `implemented_by` | `implements` | *computed only* (R-LINK-8): the index's view from the requirement or spec; never written |
+ | `modifies` | `modified_by` | story/task → requirement or spec: the work changes an existing requirement (ADR-037) |
+-| `modified_by` | `modifies` | |
++| `modified_by` | `modifies` | *computed only* (R-LINK-8): the index's view from the requirement or spec; never written |
+ | `supersedes` | `superseded_by` | requirement → requirement, spec → spec: the source replaces the target (ADR-037) |
+ | `superseded_by` | `supersedes` | |
+ 
+@@ -1331,7 +1331,7 @@ links:
+ - **R-LINK-6** *(ADR-037.)* `target` MAY also be a requirement ref, qualified or not:
+   `<link-target> ::= [<KEY> "/"] (<ID> | <REQREF>)`. A missing spec or block is `W-REF-DANGLING`
+   (a block deleted by hand is missing even when its `requirements:` entry survives, R-REQ-6).
+-  `implements`/`modifies` (and inverses) need a spec or requirement target, `supersedes`/
++  `implements`/`modifies` need a spec or requirement target, `supersedes`/
+   `superseded_by` need a target of the source's own kind (requirement ↔ requirement, spec ↔ spec);
+   any other combination is `E-LINK-TARGET-TYPE`. Requirement-level relations are stored in
+   `requirements.R<n>.links` ([§21.4](#214-the-requirements-map)), same `{kind, target}` shape,
+@@ -1342,6 +1342,15 @@ links:
+   targets it, so "which stories implement `ACME-SP-0003.R2`" is an index lookup (the
+   `implemented_by` relations of that ref). A link to a whole spec stays on the spec; it is not
+   copied to each of its requirements.
++- **R-LINK-8** *(ADR-037, review 2026-09-24.)* **Spec links are one-sided.** `implements` and
++  `modifies` are written only on the story or task (the source), pointing at a spec or a
++  requirement ref. `implemented_by` and `modified_by` exist only as the inverses the index
++  computes (R-LINK-7): a file that writes one, in `links` or anywhere else, is
++  `E-LINK-COMPUTED-ONLY`, whatever its source or target, and the target type is not reported on
++  top. Reads (the link graph, `Index.Related`, MCP and the web app) may still return them as
++  computed relations. Unlike the other pairs, the tools never mirror these links onto the target
++  (R-LINK-1's "writing both sides is allowed" does not apply). `supersedes`/`superseded_by` are
++  unaffected.
+ 
+ ### 12.2 Convenience aliases
+ 
+@@ -1892,7 +1901,8 @@ every write and by the index (so by `gintrack doctor`):
+ | `E-REQ-STATUS` | E | `requirements.R<n>.status` is a status of the `triage` category (an unknown status is `E-STATUS-UNKNOWN`); also a spec whose own status is in the `triage` category ([§21.1](#211-front-matter-and-body)) |
+ | `E-REQ-FIELD` | E | A `requirements:` key is not `R<n>`, or `trace`/`verified`/`links` has the wrong shape (bad trace ref, `verified.rev` not a rev, `commit` not hex, `at` not a timestamp, a `links` kind other than `supersedes`/`superseded_by`/`relates_to`); also a `requirements:` map on an item that is not a spec |
+ | `E-SCHEMA-FEATURE` | E | A spec construct in a `schema: 1` project ([§21.10](#2110-schema-version-2)); `doctor --fix` raises `schema` to 2 |
+-| `E-LINK-TARGET-TYPE` | E | A link kind used with a target of the wrong type (R-LINK-6, R-REQ-13): `implements`/`modifies` or an inverse whose target is not a spec or a requirement; an item-level `supersedes`/`superseded_by` whose source is not a spec or whose target is not a spec; a requirement-level one whose target is not a requirement |
++| `E-LINK-TARGET-TYPE` | E | A link kind used with a target of the wrong type (R-LINK-6, R-REQ-13): `implements`/`modifies` whose target is not a spec or a requirement; an item-level `supersedes`/`superseded_by` whose source is not a spec or whose target is not a spec; a requirement-level one whose target is not a requirement |
++| `E-LINK-COMPUTED-ONLY` | E | A link written with `implemented_by` or `modified_by`, which exist only as computed inverses (R-LINK-8); write `implements`/`modifies` on the story or task instead. In `requirements.R<n>.links` these kinds are `E-REQ-FIELD` as before |
+ | `W-REQ-SEPARATOR` | W | Requirement heading uses ` - `, ` -- ` or ` – ` instead of ` — ` |
+ | `W-REQ-HEADING` | W | A level-3 heading under `## Requirements` that is not a requirement heading, or a heading whose ref is well formed but whose separator or title is missing |
+ | `W-REQ-NO-ENTRY` | W | A block with no `requirements:` entry, or an entry with no `status` |
+@@ -2045,8 +2055,7 @@ Outline of the shared definitions:
+       "additionalProperties": false,
+       "properties": {
+         "kind":   { "enum": ["blocks", "blocked_by", "relates_to", "duplicates", "duplicated_by",
+-                             "implements", "implemented_by", "modifies", "modified_by",
+-                             "supersedes", "superseded_by"] },
++                             "implements", "modifies", "supersedes", "superseded_by"] },
+         "target": { "$ref": "common.defs.json#/$defs/linkTarget" },
+         "note":   { "type": "string", "maxLength": 200 }
+       }
+@@ -2105,7 +2114,8 @@ Outline of the shared definitions:
+ 
+ `reqRef`, `linkTarget`, `rev`, `traceRef` and `requirement` are added by
+ [ADR-037](./adr/ADR-037-specs-with-requirement-blocks.md), together with `SP` in `id` and the six
+-new link kinds. `requirement` is open like `inbox`, for the same reason: unknown keys inside an
++new link kinds (four of them writable: `implemented_by` and `modified_by` are computed only,
++R-LINK-8, so they are absent from the `link.kind` enum). `requirement` is open like `inbox`, for the same reason: unknown keys inside an
+ entry are preserved (R-FMT-6). Which link kinds may sit in a requirement's `links`, and which target
+ type each kind accepts, depend on the source and cannot be expressed here; the Go validator reports
+ them as `E-LINK-TARGET-TYPE`.
+@@ -2280,8 +2290,9 @@ validation, and produce the `E-STATUS-UNKNOWN`, `W-LABEL-UNDECLARED`, and `E-CF-
+ > of R-REQ-13), `NextRequirementNumber` (R-REQ-5, without Spec Delta headings yet), and
+ > §21.10 in full: `schema: 2`, `E-SCHEMA-FEATURE`, the upgrade on first use and the write gate.
+ > `GIT-US-0106` implements the six spec link kinds and requirement-ref link targets of §12.1
+-> (R-LINK-6, R-LINK-7): validation, `E-LINK-TARGET-TYPE`, `W-REF-DANGLING` on a missing spec or
+-> block, and requirement nodes in the link graph.
++> (R-LINK-6, R-LINK-7, R-LINK-8): validation, `E-LINK-TARGET-TYPE`, `E-LINK-COMPUTED-ONLY` on a
++> written `implemented_by`/`modified_by`, `W-REF-DANGLING` on a missing spec or block, and
++> requirement nodes in the link graph.
+ > Not implemented yet: requirement reads and writes through the vault (`GIT-US-0107`), the grammar
+ > lint of §21.9 (`GIT-US-0108`), `## Spec Delta` (§21.8), verification and coverage (§21.6), and
+ > the marker scan (§21.7). This section is the normative format; the ADR records the reasoning,
+diff --git a/docs/07-cli-and-api.md b/docs/07-cli-and-api.md
+index 2c1f1fb..29183a6 100644
+--- a/docs/07-cli-and-api.md
++++ b/docs/07-cli-and-api.md
+@@ -991,13 +991,17 @@ as specified in the data model, so the CLI and the web app never disagree about
+ 
+ `gintrack item link <id> <relation> <target>` manages typed relations
+ (`blocks`, `blocked_by`, `relates_to`, `duplicates`, `duplicated_by`, and the spec kinds
+-`implements`, `implemented_by`, `modifies`, `modified_by`, `supersedes`, `superseded_by` of
+-data model §12.1), with `--remove` to drop one. The target is an item ID or a requirement ref
+-(`ACME-SP-0003.R2`), optionally `<KEY>/`-qualified. The inverse relation is written on the
+-counterpart item when both live in the same workspace; `--inverse=false` writes only the side
+-that was named. `implements`, `modifies` and their inverses are never mirrored: the index
+-computes the spec's side (R-LINK-1), so linking a story does not rewrite the spec. The first
+-spec kind or spec target raises the project to `schema: 2` in the same write (§21.10).
++`implements`, `modifies`, `supersedes`, `superseded_by` of data model §12.1), with `--remove`
++to drop one. The target is an item ID or a requirement ref (`ACME-SP-0003.R2`), optionally
++`<KEY>/`-qualified. The inverse relation is written on the counterpart item when both live in
++the same workspace; `--inverse=false` writes only the side that was named. Spec links are
++one-sided (R-LINK-8): `implements` and `modifies` are recorded on the story or task only and
++never mirrored, since the index computes the spec's side, so linking a story does not rewrite
++the spec. `implemented_by` and `modified_by` are refused with a usage error (exit 2) that
++names the command to run instead, e.g. `gintrack item link ACME-US-0044 implements
++ACME-SP-0003.R2`; `--remove` still drops one written by hand, which the validator reports as
++`E-LINK-COMPUTED-ONLY`. The first spec kind or spec target raises the project to `schema: 2`
++in the same write (§21.10).
+ 
+ ### 4.6 `gintrack board …` and `gintrack retro …` — **not implemented**
+ 
+diff --git a/docs/adr/ADR-037-specs-with-requirement-blocks.md b/docs/adr/ADR-037-specs-with-requirement-blocks.md
+index cc76784..440edac 100644
+--- a/docs/adr/ADR-037-specs-with-requirement-blocks.md
++++ b/docs/adr/ADR-037-specs-with-requirement-blocks.md
+@@ -1,7 +1,7 @@
+ # ADR-037 — Specs are items; requirements are addressable blocks inside them
+ 
+-- **Status:** Accepted — 2026-09-24, decided by the human maintainer after two review rounds (see
+-  "Decisions from review"). Core implemented by `GIT-US-0105` (the `spec` type, requirement
++- **Status:** Accepted — 2026-09-24, decided by the human maintainer after two review rounds, and
++  amended by a third (see "Decisions from review"). Core implemented by `GIT-US-0105` (the `spec` type, requirement
+   blocks and revs, the `requirements:` map, schema 2 and the write gate); the link kinds and
+   requirement-ref link targets of §5 by `GIT-US-0106`; lint, Spec Delta, verification and
+   markers follow in their own stories (docs/03 §21 banner).
+@@ -220,7 +220,9 @@ requirements:
+ ### 5. Link kinds and the link-target grammar
+ 
+ Three new pairs join the five kinds of docs/03 §12.1. As before, a link is stored on one side only
+-and the index computes the inverse (R-LINK-1).
++and the index computes the inverse (R-LINK-1). For `implements` and `modifies` that side is fixed:
++spec links are **one-sided**, written on the story or task, and `implemented_by`/`modified_by`
++exist only as computed inverses (third review round, below; docs/03 R-LINK-8).
+ 
+ | Kind | Inverse | Source → target | Semantics |
+ |---|---|---|---|
+@@ -236,10 +238,12 @@ The link-target grammar of R-LINK-2 is extended to accept requirement refs:
+ 
+ - A `<REQREF>` target resolves to a block; a dangling spec **or** a dangling block is
+   `W-REF-DANGLING` (a warning, as for every other target).
+-- `implements`, `modifies` and their inverses require a spec or requirement target; `supersedes`
++- `implements` and `modifies` require a spec or requirement target; `supersedes`
+   and `superseded_by` require a target of the same kind as the source (requirement → requirement,
+   spec → spec). Any other combination is `E-LINK-TARGET-TYPE`. This is statically visible from
+   the ref itself, so it is an error rather than a warning.
++- `implemented_by` and `modified_by` are never written: a file that holds one is
++  `E-LINK-COMPUTED-ONLY` (third review round). Reads still report them as computed relations.
+ - **Requirement-level links (approved).** Relations whose source is a requirement live in
+   `requirements.R<n>.links`, a list of `{kind, target}` entries with exactly the shape of an
+   item's `links` (docs/03 §12.1); item-level ones live in the item's `links`. The allowed kinds
+@@ -598,6 +602,24 @@ the ADR.
+    story is done (§9); and the minor costs listed under Consequences — the reformatter risk,
+    front-matter growth and the `LINT-*` naming.
+ 
++### Third round (2026-09-24)
++
++The human maintainer reviewed the implementation of §5 (`GIT-US-0106`) and settled how the
++work-to-requirement pairs are stored. The ADR stays **Accepted**.
++
++1. **Spec links are one-sided** (§5; docs/03 R-LINK-8). Only `implements` and `modifies` are
++   written, on the story or task that is the source, pointing at a spec or a requirement ref.
++   `implemented_by` and `modified_by` exist only as inverses the index computes (R-LINK-7), so
++   "which work implements `GIT-SP-0003.R2`" stays an index lookup. Writing either kind in a file
++   is the new error `E-LINK-COMPUTED-ONLY`, a clearer finding than `E-ENUM` (the kind is known)
++   or `E-LINK-TARGET-TYPE` (the target may be right); in `requirements.R<n>.links` they remain
++   `E-REQ-FIELD`. The tools follow: `gintrack item link` refuses the two kinds with a pointer to
++   `implements`/`modifies` and never writes an inverse for them, the web editor does not offer
++   them, and the MCP `Link.kind` description says so. A spec is therefore never rewritten
++   because a story linked to it, and the two sides cannot disagree.
++2. **`supersedes`/`superseded_by` are unchanged**: spec → spec in an item's `links`,
++   requirement → requirement in `requirements.R<n>.links`, and either side may be written.
++
+ ## Consequences
+ 
+ ### Easier
+diff --git a/internal/core/model.go b/internal/core/model.go
+index 44b5c58..91f5bff 100644
+--- a/internal/core/model.go
++++ b/internal/core/model.go
+@@ -114,9 +114,11 @@ type Rev string
+ // LinkKind is the semantic of a typed relation between two items.
+ type LinkKind string
+ 
+-// The relation kinds accepted in the links field. The last six are the spec
+-// kinds of ADR-037 section 5 (docs/03 section 12.1): their targets are specs or
+-// requirement refs, and using one raises a project to schema 2.
++// The relation kinds of docs/03 section 12.1. The last six are the spec kinds of
++// ADR-037 section 5: their targets are specs or requirement refs, and using one
++// raises a project to schema 2. implemented_by and modified_by are known kinds
++// but computed only: the index derives them from implements and modifies, and a
++// file that writes one is E-LINK-COMPUTED-ONLY (R-LINK-8).
+ const (
+ 	LinkBlocks        LinkKind = "blocks"
+ 	LinkBlockedBy     LinkKind = "blocked_by"
+@@ -131,7 +133,9 @@ const (
+ 	LinkSupersededBy  LinkKind = "superseded_by"
+ )
+ 
+-// Valid reports whether k is one of the known relation kinds.
++// Valid reports whether k is one of the known relation kinds, including the
++// computed-only ones: a graph edge may carry any of them. Whether a file may
++// write k is Writable.
+ func (k LinkKind) Valid() bool {
+ 	switch k {
+ 	case LinkBlocks, LinkBlockedBy, LinkRelatesTo, LinkDuplicates, LinkDuplicatedBy:
+@@ -141,6 +145,17 @@ func (k LinkKind) Valid() bool {
+ 	}
+ }
+ 
++// ComputedOnly reports whether k exists only as the index's inverse of a spec
++// link (R-LINK-8): implemented_by and modified_by. Spec links are one-sided and
++// are written on the story or task, never on the spec or requirement.
++func (k LinkKind) ComputedOnly() bool {
++	return k == LinkImplementedBy || k == LinkModifiedBy
++}
++
++// Writable reports whether a file's links, or a write through the vault, may
++// use k: a known kind that is not computed only.
++func (k LinkKind) Writable() bool { return k.Valid() && !k.ComputedOnly() }
++
+ // Spec reports whether k is one of the six kinds ADR-037 adds. A link of one of
+ // them is a spec construct (R-SCHEMA-2-1).
+ func (k LinkKind) Spec() bool {
+diff --git a/internal/core/requirements.go b/internal/core/requirements.go
+index 6f8dfd4..26c62e4 100644
+--- a/internal/core/requirements.go
++++ b/internal/core/requirements.go
+@@ -20,6 +20,9 @@ const (
+ 	CodeReqField       Code = "E-REQ-FIELD"
+ 	CodeSchemaFeature  Code = "E-SCHEMA-FEATURE"
+ 	CodeLinkTargetType Code = "E-LINK-TARGET-TYPE"
++	// CodeLinkComputedOnly is a link written with a kind that exists only as a
++	// computed inverse: implemented_by or modified_by (R-LINK-8).
++	CodeLinkComputedOnly Code = "E-LINK-COMPUTED-ONLY"
+ 
+ 	CodeWarnReqSeparator   Code = "W-REQ-SEPARATOR"
+ 	CodeWarnReqHeading     Code = "W-REQ-HEADING"
+diff --git a/internal/core/speclinks_test.go b/internal/core/speclinks_test.go
+index 199cabc..9050626 100644
+--- a/internal/core/speclinks_test.go
++++ b/internal/core/speclinks_test.go
+@@ -12,10 +12,11 @@ func TestLinkKindValidAndInverse(t *testing.T) {
+ 	t.Parallel()
+ 
+ 	tests := []struct {
+-		kind    LinkKind
+-		valid   bool
+-		spec    bool
+-		inverse LinkKind
++		kind     LinkKind
++		valid    bool
++		spec     bool
++		computed bool
++		inverse  LinkKind
+ 	}{
+ 		{kind: LinkBlocks, valid: true, inverse: LinkBlockedBy},
+ 		{kind: LinkBlockedBy, valid: true, inverse: LinkBlocks},
+@@ -23,9 +24,9 @@ func TestLinkKindValidAndInverse(t *testing.T) {
+ 		{kind: LinkDuplicates, valid: true, inverse: LinkDuplicatedBy},
+ 		{kind: LinkDuplicatedBy, valid: true, inverse: LinkDuplicates},
+ 		{kind: "implements", valid: true, spec: true, inverse: "implemented_by"},
+-		{kind: "implemented_by", valid: true, spec: true, inverse: "implements"},
++		{kind: "implemented_by", valid: true, spec: true, computed: true, inverse: "implements"},
+ 		{kind: "modifies", valid: true, spec: true, inverse: "modified_by"},
+-		{kind: "modified_by", valid: true, spec: true, inverse: "modifies"},
++		{kind: "modified_by", valid: true, spec: true, computed: true, inverse: "modifies"},
+ 		{kind: "supersedes", valid: true, spec: true, inverse: "superseded_by"},
+ 		{kind: "superseded_by", valid: true, spec: true, inverse: "supersedes"},
+ 		{kind: "replaces", inverse: "replaces"},
+@@ -41,6 +42,12 @@ func TestLinkKindValidAndInverse(t *testing.T) {
+ 			if got := tt.kind.Spec(); got != tt.spec {
+ 				t.Errorf("Spec() = %v, want %v", got, tt.spec)
+ 			}
++			if got := tt.kind.ComputedOnly(); got != tt.computed {
++				t.Errorf("ComputedOnly() = %v, want %v", got, tt.computed)
++			}
++			if got, want := tt.kind.Writable(), tt.valid && !tt.computed; got != want {
++				t.Errorf("Writable() = %v, want %v", got, want)
++			}
+ 			if got := tt.kind.Inverse(); got != tt.inverse {
+ 				t.Errorf("Inverse() = %q, want %q", got, tt.inverse)
+ 			}
+@@ -62,16 +69,22 @@ func TestValidateSpecLinkTargets(t *testing.T) {
+ 		target string
+ 		want   []Code
+ 	}{
+-		// implements / modifies and their inverses: spec or requirement only.
++		// implements / modifies: spec or requirement only.
+ 		{name: "story implements a requirement", source: TypeStory, kind: LinkImplements, target: "TEST-SP-0003.R2"},
+ 		{name: "story implements a whole spec", source: TypeStory, kind: LinkImplements, target: "TEST-SP-0003"},
+ 		{name: "task modifies a requirement", source: TypeTask, kind: LinkModifies, target: "TEST-SP-0003.R12"},
+ 		{name: "qualified requirement in another project", source: TypeStory, kind: LinkImplements, target: "WEB/WEB-SP-0001.R4"},
+-		{name: "implemented_by a requirement", source: TypeStory, kind: LinkImplementedBy, target: "TEST-SP-0003.R2"},
+ 		{name: "implements a story", source: TypeStory, kind: LinkImplements, target: "TEST-US-0002", want: []Code{CodeLinkTargetType}},
+ 		{name: "modifies a task", source: TypeTask, kind: LinkModifies, target: "TEST-T-0002", want: []Code{CodeLinkTargetType}},
+-		{name: "modified_by an epic", source: TypeStory, kind: LinkModifiedBy, target: "TEST-EP-0002", want: []Code{CodeLinkTargetType}},
+-		{name: "implemented_by a story", source: TypeStory, kind: LinkImplementedBy, target: "TEST-US-0002", want: []Code{CodeLinkTargetType}},
++
++		// implemented_by / modified_by are computed only (R-LINK-8): refused
++		// whatever the source and the target, and the target type is not
++		// reported on top.
++		{name: "story implemented_by a requirement", source: TypeStory, kind: LinkImplementedBy, target: "TEST-SP-0003.R2", want: []Code{CodeLinkComputedOnly}},
++		{name: "spec implemented_by a story", source: TypeSpec, kind: LinkImplementedBy, target: "TEST-US-0002", want: []Code{CodeLinkComputedOnly}},
++		{name: "spec modified_by a task", source: TypeSpec, kind: LinkModifiedBy, target: "TEST-T-0002", want: []Code{CodeLinkComputedOnly}},
++		{name: "story modified_by an epic", source: TypeStory, kind: LinkModifiedBy, target: "TEST-EP-0002", want: []Code{CodeLinkComputedOnly}},
++		{name: "implemented_by a malformed target", source: TypeStory, kind: LinkImplementedBy, target: "TEST-SP-0003.R02", want: []Code{CodeIDGrammar, CodeLinkComputedOnly}},
+ 
+ 		// supersedes / superseded_by: spec to spec at the item level.
+ 		{name: "spec supersedes a spec", source: TypeSpec, kind: LinkSupersedes, target: "TEST-SP-0002"},
+@@ -180,6 +193,31 @@ func TestStoreUpgradesSchemaOnFirstImplementsLink(t *testing.T) {
+ 	}
+ }
+ 
++func TestStoreRefusesComputedOnlyLinks(t *testing.T) {
++	t.Parallel()
++	ctx := context.Background()
++
++	for _, kind := range []LinkKind{LinkImplementedBy, LinkModifiedBy} {
++		t.Run(string(kind), func(t *testing.T) {
++			t.Parallel()
++			store, fsys := specStore(t, "1")
++			story, err := store.Create(ctx, ItemDraft{Type: TypeStory, Title: "Plain"})
++			if err != nil {
++				t.Fatalf("Create(): %v", err)
++			}
++			_, err = store.Update(ctx, story.ID, ItemPatch{AddLinks: []Link{{Kind: kind, Target: "ACME-SP-0004.R2"}}}, story.Rev)
++			if err == nil || !strings.Contains(err.Error(), string(CodeLinkComputedOnly)) {
++				t.Fatalf("Update() = %v, want %s", err, CodeLinkComputedOnly)
++			}
++			// A refused write does not raise the schema either.
++			data, _ := fsys.ReadFile("docs/.pmngr/project.yaml")
++			if strings.HasPrefix(string(data), "schema: 2") || store.Schema() != 1 {
++				t.Errorf("project.yaml = %q, store schema %d", data, store.Schema())
++			}
++		})
++	}
++}
++
+ // requirementLinkVault is a project at schema 2 with two specs, the work that
+ // implements and modifies their requirements, and three kinds of broken ref.
+ func requirementLinkVault(t *testing.T) *Index {
+diff --git a/internal/core/validate.go b/internal/core/validate.go
+index 1684ccf..99129d5 100644
+--- a/internal/core/validate.go
++++ b/internal/core/validate.go
+@@ -273,12 +273,18 @@ func validateItemLinks(d *diagSet, item *Item, cfg *ProjectConfig) {
+ 			d.errorf(field, CodeFieldType, "a relation needs a kind")
+ 		case !l.Kind.Valid():
+ 			d.errorf(field+".kind", CodeEnum, "unknown relation kind %q", l.Kind)
++		case l.Kind.ComputedOnly():
++			d.errorf(field+".kind", CodeLinkComputedOnly,
++				"%s is computed by the index and cannot be written; record %s on the story or task instead",
++				l.Kind, l.Kind.Inverse())
+ 		}
+ 		if l.Target == "" {
+ 			d.errorf(field, CodeFieldType, "a relation needs a target")
+ 			continue
+ 		}
+-		if validateLinkTarget(d, cfg, field+".target", l.Target) {
++		// A computed-only kind is already refused; its target type would only
++		// repeat the finding.
++		if validateLinkTarget(d, cfg, field+".target", l.Target) && !l.Kind.ComputedOnly() {
+ 			validateLinkTargetType(d, item, field+".target", l)
+ 		}
+ 	}
+@@ -356,15 +362,15 @@ func classifyLinkTarget(target string) linkTargetType {
+ }
+ 
+ // validateLinkTargetType applies the per-kind target rules of R-LINK-6 to an
+-// item-level link: implements, modifies and their inverses need a spec or a
+-// requirement target; supersedes and superseded_by link a spec to a spec, since
++// item-level link: implements and modifies need a spec or a requirement target
++// (their inverses are computed only, R-LINK-8); supersedes and superseded_by link a spec to a spec, since
+ // a requirement's supersession lives in requirements.R<n>.links (R-REQ-13).
+ // Every other kind MAY target a spec or a requirement. The type is visible in
+ // the ref itself, so a mismatch is E-LINK-TARGET-TYPE, not a warning.
+ func validateLinkTargetType(d *diagSet, item *Item, field string, l Link) {
+ 	t := classifyLinkTarget(l.Target)
+ 	switch l.Kind {
+-	case LinkImplements, LinkImplementedBy, LinkModifies, LinkModifiedBy:
++	case LinkImplements, LinkModifies:
+ 		if t != targetSpec && t != targetRequirement {
+ 			d.errorf(field, CodeLinkTargetType, "%s must target a spec or a requirement ref, not %q", l.Kind, l.Target)
+ 		}
+diff --git a/internal/mcp/wire.go b/internal/mcp/wire.go
+index a766258..813daff 100644
+--- a/internal/mcp/wire.go
++++ b/internal/mcp/wire.go
+@@ -45,7 +45,7 @@ type Item struct {
+ 
+ // Link is one typed relation of an item.
+ type Link struct {
+-	Kind   string `json:"kind" jsonschema:"blocks, blocked_by, relates_to, duplicates, duplicated_by, implements, implemented_by, modifies, modified_by, supersedes or superseded_by (docs/03 section 12.1)"`
++	Kind   string `json:"kind" jsonschema:"blocks, blocked_by, relates_to, duplicates, duplicated_by, implements, modifies, supersedes or superseded_by (docs/03 section 12.1). Spec links are one-sided: write implements or modifies on the story or task; implemented_by and modified_by are computed inverses that reads may return but writes refuse (E-LINK-COMPUTED-ONLY)"`
+ 	Target string `json:"target"`
+ }
+ 
+diff --git a/web/src/features/editor/front-matter.test.ts b/web/src/features/editor/front-matter.test.ts
+index e6fed9f..93e432b 100644
+--- a/web/src/features/editor/front-matter.test.ts
++++ b/web/src/features/editor/front-matter.test.ts
+@@ -5,6 +5,7 @@ import type { Item, ProjectSummary } from '@/api/provider';
+ import {
+   buildPatch,
+   hasErrors,
++  linkKinds,
+   isEmptyPatch,
+   serializeItem,
+   validateValues,
+@@ -97,6 +98,27 @@ describe('raw YAML round trip', () => {
+     }
+   });
+ 
++  it('refuses the computed-only link kinds and names the kind to write', () => {
++    for (const [kind, instead] of [
++      ['implemented_by', 'implements'],
++      ['modified_by', 'modifies'],
++    ] as const) {
++      const parsed = valuesFromYaml(`title: A\nlinks:\n  - { kind: ${kind}, target: ACME-US-0044 }\n`);
++      expect(parsed.ok).toBe(false);
++      if (!parsed.ok) {
++        expect(parsed.issues[0]?.code).toBe('E-LINK-COMPUTED-ONLY');
++        expect(parsed.issues[0]?.message).toContain(instead);
++      }
++    }
++  });
++
++  it('offers only the writable link kinds', () => {
++    expect(linkKinds).toContain('implements');
++    expect(linkKinds).toContain('modifies');
++    expect(linkKinds).not.toContain('implemented_by');
++    expect(linkKinds).not.toContain('modified_by');
++  });
++
+   it('rejects an unknown priority', () => {
+     const parsed = valuesFromYaml('title: A\npriority: urgent\n');
+     expect(parsed.ok).toBe(false);
+diff --git a/web/src/features/editor/front-matter.ts b/web/src/features/editor/front-matter.ts
+index 50fe2c1..c156cb0 100644
+--- a/web/src/features/editor/front-matter.ts
++++ b/web/src/features/editor/front-matter.ts
+@@ -15,6 +15,11 @@ import type { Link, LinkKind } from '@/core-bridge/api';
+ import type { EditorProjectSchema } from '@/features/editor/project-schema';
+ import { customFieldsFor } from '@/features/editor/project-schema';
+ 
++/**
++ * The relation kinds a user may write (docs/03-data-model.md §12.1).
++ * `implemented_by` and `modified_by` are left out: spec links are one-sided and
++ * those two exist only as inverses the index computes (R-LINK-8).
++ */
+ export const linkKinds: LinkKind[] = [
+   'blocks',
+   'blocked_by',
+@@ -22,13 +27,17 @@ export const linkKinds: LinkKind[] = [
+   'duplicates',
+   'duplicated_by',
+   'implements',
+-  'implemented_by',
+   'modifies',
+-  'modified_by',
+   'supersedes',
+   'superseded_by',
+ ];
+ 
++/** Kinds that exist only as computed inverses, mapped to the kind to write instead. */
++export const computedOnlyLinkKinds: Partial<Record<LinkKind, LinkKind>> = {
++  implemented_by: 'implements',
++  modified_by: 'modifies',
++};
++
+ export const priorities: Priority[] = ['critical', 'high', 'medium', 'low'];
+ 
+ export type FrontMatterValues = {
+@@ -154,6 +163,17 @@ function readLinks(raw: unknown, issues: Diagnostic[]): Link[] {
+     }
+     const kind = entry.kind;
+     const target = entry.target;
++    const writeInstead = typeof kind === 'string' ? computedOnlyLinkKinds[kind as LinkKind] : undefined;
++    if (writeInstead) {
++      issues.push(
++        issue(
++          'E-LINK-COMPUTED-ONLY',
++          `${String(kind)} is computed by the index and cannot be written; record ${writeInstead} on the story or task instead`,
++          'links',
++        ),
++      );
++      continue;
++    }
+     if (typeof kind !== 'string' || !linkKinds.includes(kind as LinkKind)) {
+       issues.push(
+         issue(

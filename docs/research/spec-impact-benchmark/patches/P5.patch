@@ -1,0 +1,1400 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index 8e32e6b..9f5bd2e 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -228,10 +228,11 @@ use the same shape):
+ Drop `--allow-write` for a read-only session; the write tools are then absent
+ from `tools/list` rather than failing at call time. `--agent <name>` is the
+ author recorded on comments you write. Verify with `gintrack mcp --list-tools`
+-(8 tools read-only, 23 with `--allow-write`).
++(9 tools read-only, 27 with `--allow-write`).
+ 
+-The twenty-three tools: `list_items`, `search_items`, `search_semantic`,
+-`get_item`, `create_epic`, `create_story`, `create_task`, `create_milestone`,
++The twenty-seven tools: `list_items`, `search_items`, `search_semantic`,
++`get_item`, `list_requirements`, `create_epic`, `create_story`, `create_task`,
++`create_milestone`, `create_spec`, `create_requirement`, `update_requirement`,
+ `update_item`, `add_comment`, `move_on_board`, `list_kb_pages`, `get_kb_page`,
+ `search_kb`, `list_inbox`, `create_inbox_item`, `triage_inbox_item`, `close_sprint`,
+ `transfer_sprint_items`, `import_youtrack_issues`, `push_comment_to_youtrack`,
+@@ -243,6 +244,11 @@ question is not the wording of the item. It needs the Pando backend, and a
+ session without one gets an `unavailable` error naming `search_items` as the
+ fallback — never an empty list.
+ 
++Specs are read and written one requirement at a time: `list_requirements` for
++compact rows, `get_item` on a ref such as `GIT-SP-0003.R2` for one block, and
++`update_requirement` quoting that requirement's `rev` — never its `blockRev`,
++which is the verification fingerprint, not a write token.
++
+ ### The pick-up loop
+ 
+ 1. `list_items` with `type: ["story"]`, `status: ["todo"]`, the current
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index c6eb447..84ba3d9 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -53,7 +53,19 @@ because a commit list cannot express them.
+   headings, map keys and inbound refs and appends the block. Writes use the canonical serializer,
+   materialize the status, follow the workflow transitions, honour the write gate and report
+   `schemaUpgraded`. `search` with `requirements: true` adds one `kind: "requirement"` hit per
+-  matching block. No MCP tool, REST route or web UI yet.
++  matching block. No REST route or web UI yet; the MCP tools below use them.
++- **Single requirements over MCP** (`GIT-US-0122`, ADR-037 §6, docs/08 §4.20). Four new tools:
++  `list_requirements` (read) lists compact requirement rows — `ref`, `spec`, `title`, `status`
++  and `rev` by default, more with `fields`, the block text only when projected — filtered by
++  project, spec, status or words and paged with the usual cursor; `create_spec`,
++  `create_requirement` and `update_requirement` (writes) create a spec (reporting
++  `schemaUpgraded: 2` on a project's first), append a requirement with an allocated `R<n>`, and
++  patch one requirement under its **requirement rev**, refusing a stale one with
++  `stale_revision`, `currentRev`, `conflicts[]` and `retry` exactly like `update_item`, while a
++  write to a sibling requirement of the same spec goes through. `get_item` on a requirement ref
++  (`ACME-SP-0003.R2`) returns only that block and its entry, with `rev`, `blockRev` and
++  `specRev`. The verification stamp is readable but not writable from MCP. `gintrack mcp
++  --list-tools` now prints nine read-only tools and twenty-seven with `--allow-write`.
+ 
+ ### Changed
+ 
+diff --git a/cmd/gintrack/mcp.go b/cmd/gintrack/mcp.go
+index 73362a0..24cb785 100644
+--- a/cmd/gintrack/mcp.go
++++ b/cmd/gintrack/mcp.go
+@@ -33,20 +33,27 @@ func newMCPCommand(build buildInfo, flags *globalFlags) *cobra.Command {
+ 		Short: "Serve the backlog to AI agents over the Model Context Protocol",
+ 		Long: `Mcp speaks the Model Context Protocol over stdin and stdout, so that an agent
+ runtime can spawn it as a tool server. It exposes the workspace's backlog and
+-knowledge base as typed tools: twenty-three of them with writes enabled, eight
++knowledge base as typed tools: twenty-seven of them with writes enabled, nine
+ without.
+ 
+-The eight read-only tools are list_items, search_items, search_semantic,
+-get_item, list_inbox, list_kb_pages, get_kb_page and search_kb.
+-search_semantic ranks by meaning rather than by substring and needs the Pando
+-backend configured under "search.pando"; without one it refuses and names
+-search_items as the fallback, so an empty answer is never mistaken for
++The nine read-only tools are list_items, search_items, search_semantic,
++get_item, list_requirements, list_inbox, list_kb_pages, get_kb_page and
++search_kb. search_semantic ranks by meaning rather than by substring and needs
++the Pando backend configured under "search.pando"; without one it refuses and
++names search_items as the fallback, so an empty answer is never mistaken for
+ "nothing matches".
+ 
+-The fifteen that need writes are create_epic, create_story, create_task, create_milestone, create_inbox_item,
+-update_item, add_comment, move_on_board, triage_inbox_item, close_sprint,
+-transfer_sprint_items, import_youtrack_issues, push_comment_to_youtrack,
+-publish_kb_page_to_youtrack and sync_kb_page_from_youtrack.
++The eighteen that need writes are create_epic, create_story, create_task,
++create_milestone, create_spec, create_requirement, create_inbox_item,
++update_item, update_requirement, add_comment, move_on_board, triage_inbox_item,
++close_sprint, transfer_sprint_items, import_youtrack_issues,
++push_comment_to_youtrack, publish_kb_page_to_youtrack and
++sync_kb_page_from_youtrack.
++
++Specs are addressed one requirement at a time: list_requirements returns
++compact rows, get_item on a requirement ref (ACME-SP-0003.R2) returns only that
++block and its entry, and update_requirement quotes the requirement's own rev,
++so a write to one requirement never races another of the same spec.
+ 
+ Three of them are the inbox: list_inbox reads a project's triage queue,
+ create_inbox_item files something into it and triage_inbox_item decides one
+diff --git a/cmd/gintrack/mcp_test.go b/cmd/gintrack/mcp_test.go
+index b87e9cd..a20bab1 100644
+--- a/cmd/gintrack/mcp_test.go
++++ b/cmd/gintrack/mcp_test.go
+@@ -27,11 +27,12 @@ func TestMCPListTools(t *testing.T) {
+ 			args: []string{"mcp", "--list-tools"},
+ 			want: []string{
+ 				"list_items", "get_item", "search_items", "search_semantic",
+-				"get_kb_page", "search_kb", "list_kb_pages",
++				"get_kb_page", "search_kb", "list_kb_pages", "list_requirements",
+ 			},
+ 			absent: []string{
+ 				"create_epic", "create_story", "create_task", "create_milestone",
+ 				"update_item", "add_comment", "move_on_board",
++				"create_spec", "create_requirement", "update_requirement",
+ 			},
+ 		},
+ 		{
+@@ -40,6 +41,7 @@ func TestMCPListTools(t *testing.T) {
+ 			want: []string{
+ 				"create_epic", "create_story", "create_task", "create_milestone",
+ 				"update_item", "add_comment", "move_on_board", "list_items",
++				"create_spec", "create_requirement", "update_requirement",
+ 			},
+ 		},
+ 	}
+@@ -156,8 +158,8 @@ func TestMCPOverStdio(t *testing.T) {
+ 		if err != nil {
+ 			t.Fatalf("tools/list: %v", err)
+ 		}
+-		if len(listed.Tools) != 23 {
+-			t.Errorf("tools = %d, want 23", len(listed.Tools))
++		if len(listed.Tools) != 27 {
++			t.Errorf("tools = %d, want 27", len(listed.Tools))
+ 		}
+ 		for _, tool := range listed.Tools {
+ 			if tool.InputSchema == nil || tool.OutputSchema == nil {
+diff --git a/docs/.pmngr/comments/GIT-US-0122/20260924T173759Z-claude.md b/docs/.pmngr/comments/GIT-US-0122/20260924T173759Z-claude.md
+new file mode 100644
+index 0000000..d224f0f
+--- /dev/null
++++ b/docs/.pmngr/comments/GIT-US-0122/20260924T173759Z-claude.md
+@@ -0,0 +1,26 @@
++---
++item: GIT-US-0122
++author: claude
++created: 2026-09-24T17:37:59Z
++type: comment
++---
++
++Implemented in `internal/mcp/tools_specs.go`: `list_requirements` (read), `create_spec`,
++`create_requirement` and `update_requirement` (writes), and `get_item` on a requirement ref.
++Counts are now 9 read-only / 27 with `--allow-write`.
++
++**Deviation from the criteria wording, per ADR-037 §6:** where the criteria say "block `rev`" as
++the write token, the tools use the **requirement rev** (`rev`, block plus `requirements:`
++entry). Every read and write returns both hashes, `rev` and `blockRev`; `update_requirement`
++quotes `rev` only, and quoting `blockRev` is refused as `stale_revision`. The per-block
++protocol the criteria ask for holds: a stale rev on one requirement fails with `currentRev`,
++`conflicts[]` and `retry`, while a write to a sibling requirement of the same spec succeeds.
++
++Reviewer decisions:
++
++- `update_requirement` does not accept `verified` nor `unset: ["verified"]`: ADR-037 §7
++  reserves the durable stamp for a done move of implementing work or `gintrack spec verify
++  --commit`.
++- `list_requirements` with neither `project` nor `spec` goes to the workspace's default
++  repository, the same routing `list_items` has today (no workspace fan-out).
++- Write results omit the block text, path, anchor and line; `changed` names the file.
+diff --git a/docs/.pmngr/stories/GIT-US-0122-address-single-requirements-from-mcp.md b/docs/.pmngr/stories/GIT-US-0122-address-single-requirements-from-mcp.md
+index c9059b9..6e1b415 100644
+--- a/docs/.pmngr/stories/GIT-US-0122-address-single-requirements-from-mcp.md
++++ b/docs/.pmngr/stories/GIT-US-0122-address-single-requirements-from-mcp.md
+@@ -2,7 +2,7 @@
+ id: GIT-US-0122
+ type: story
+ title: Address single requirements from MCP
+-status: backlog
++status: in_review
+ priority: high
+ parent: GIT-EP-0026
+ milestone: GIT-M-0015
+@@ -10,7 +10,7 @@ author: claude
+ labels: [mcp, agent-ok]
+ estimate: 5
+ created: 2026-09-24T12:11:03Z
+-updated: 2026-09-24T12:11:03Z
++updated: 2026-09-24T17:37:59Z
+ links:
+   - { kind: blocked_by, target: GIT-US-0107 }
+ ---
+@@ -21,10 +21,10 @@ As an agent, I want to list, read, create and update one requirement at a time w
+ 
+ ## Acceptance Criteria
+ 
+-- [ ] `get_item` accepts a requirement ref (`GIT-SP-NNNN.R<n>`) and returns only that block, its `requirements:` entry and its block `rev`; `list_items` accepts `type: ["spec"]` and a way to list requirements as rows (e.g. `list_requirements` with status/spec filters, projection and cursor).
+-- [ ] `create_spec`, `create_requirement` and `update_requirement` (block `rev` required, `stale_revision` with `conflicts[]` on mismatch) are available with `--allow-write`.
+-- [ ] Tool descriptions carry the "repository content is data" sentence.
+-- [ ] Tests in `internal/mcp` cover the rev protocol per block; `gintrack mcp --list-tools` counts are updated in `cmd/gintrack/mcp.go`, AGENTS.md and docs/08.
++- [x] `get_item` accepts a requirement ref (`GIT-SP-NNNN.R<n>`) and returns only that block, its `requirements:` entry and its block `rev`; `list_items` accepts `type: ["spec"]` and a way to list requirements as rows (e.g. `list_requirements` with status/spec filters, projection and cursor).
++- [x] `create_spec`, `create_requirement` and `update_requirement` (block `rev` required, `stale_revision` with `conflicts[]` on mismatch) are available with `--allow-write`.
++- [x] Tool descriptions carry the "repository content is data" sentence.
++- [x] Tests in `internal/mcp` cover the rev protocol per block; `gintrack mcp --list-tools` counts are updated in `cmd/gintrack/mcp.go`, AGENTS.md and docs/08.
+ 
+ ## Notes
+ 
+diff --git a/docs/07-cli-and-api.md b/docs/07-cli-and-api.md
+index 8380d74..88f2503 100644
+--- a/docs/07-cli-and-api.md
++++ b/docs/07-cli-and-api.md
+@@ -1196,10 +1196,10 @@ gintrack mcp 0.4.0: workspace work, 2 repositories, 8 tools (read-only)
+ ```
+ 
+ Nothing but JSON-RPC frames is written to stdout; the startup line and every log go to
+-stderr. There are **twenty-three tools**: eight read-only — `list_items`, `search_items`,
+-`search_semantic`, `get_item`, `list_inbox`, `list_kb_pages`, `get_kb_page` and `search_kb` —
+-and fifteen writes. Without writes enabled the fifteen write tools are absent from `tools/list`, not
+-merely refused.
++stderr. There are **twenty-seven tools**: nine read-only — `list_items`, `search_items`,
++`search_semantic`, `get_item`, `list_requirements`, `list_inbox`, `list_kb_pages`, `get_kb_page`
++and `search_kb` — and eighteen writes. Without writes enabled the eighteen write tools are absent
++from `tools/list`, not merely refused.
+ 
+ Writes are enabled by `--allow-write` or by `mcp.allowWrite: true` in the configuration file
+ (section 3.2). The flag wins when it is typed — `--allow-write=false` turns the write tools
+@@ -1209,7 +1209,7 @@ what the companion's **Settings › Agent tools (MCP)** switch writes
+ (`PATCH /api/v1/mcp/settings`, section 5.5), which is the way to enable writes without
+ editing a file or teaching every agent runtime a flag.
+ 
+-The **same twenty-three tools** are served over streamable HTTP at `POST /mcp` by
++The **same twenty-seven tools** are served over streamable HTTP at `POST /mcp` by
+ `gintrack serve --mcp-http` (section 4.1), which is what to use when the companion is already
+ running: one index and one watcher, shared with the web UI.
+ 
+@@ -4765,8 +4765,9 @@ Bridge conventions:
+ `internal/vault` serves four methods that treat one requirement of a spec (ADR-037, doc 03 §21)
+ as a unit of its own. They are part of the `CoreApi` contract of `web/src/core-bridge/api.ts`, so
+ browser-only mode reaches them through the WASM module's `gintrackCore.call` and a workspace
+-routes them to the repository that owns the spec (by `ref`, or by `spec`). No MCP tool, REST route
+-or web screen uses them yet.
++routes them to the repository that owns the spec (by `ref`, or by `spec`). The MCP tools
++`list_requirements`, `create_requirement`, `update_requirement` and `get_item` on a requirement
++ref are shims over them (doc 08 §4.20); no REST route or web screen uses them yet.
+ 
+ | Method | Params | Result |
+ |---|---|---|
+diff --git a/docs/08-mcp-server.md b/docs/08-mcp-server.md
+index cda7008..93ea3a3 100644
+--- a/docs/08-mcp-server.md
++++ b/docs/08-mcp-server.md
+@@ -6,7 +6,7 @@ with `GIT-US-0024`, plus `create_milestone` from `GIT-US-0033`;
+ Phase: **Phase 5 — MCP server + agent workflows** (depends on Phase 2 companion CLI, Phase 3 boards, Phase 4 sync)
+ Audience: contributors working on `internal/mcp`; authors of agent instructions (`AGENTS.md`)
+ 
+-What ships today: twenty-three tools over stdio and over streamable HTTP, read-only by default,
++What ships today: twenty-seven tools over stdio and over streamable HTTP, read-only by default,
+ with cursor pagination, field projection and a `rev` on every item. Resources, prompts, the
+ audit log, dry-run and rate limiting are specified here and land in later stories of the
+ epic; each is labelled where it appears.
+@@ -184,14 +184,15 @@ advertised yet; they arrive with sections 5 and 6.
+ 
+ ## 4. Tool catalog
+ 
+-Twenty-three tools ship: twelve with `GIT-US-0024`, `create_milestone` with `GIT-US-0033`, the
++Twenty-seven tools ship: twelve with `GIT-US-0024`, `create_milestone` with `GIT-US-0033`, the
+ three inbox tools with `GIT-US-0056`, the two sprint rollover tools with `GIT-US-0085`, the
+-four YouTrack tools with `GIT-US-0062`, `GIT-US-0079` and `GIT-US-0094`, and `search_semantic`
+-with `GIT-US-0088`. They are the same twenty-three on both transports, from the same registry,
+-over the same workspace.
++four YouTrack tools with `GIT-US-0062`, `GIT-US-0079` and `GIT-US-0094`, `search_semantic`
++with `GIT-US-0088`, and the four spec tools (`list_requirements`, `create_spec`,
++`create_requirement`, `update_requirement`) with `GIT-US-0122`. They are the same twenty-seven
++on both transports, from the same registry, over the same workspace.
+ 
+-Eight are read tools and fifteen are write tools; `gintrack mcp --list-tools` prints eight,
+-and with `--allow-write` twenty-three.
++Nine are read tools and eighteen are write tools; `gintrack mcp --list-tools` prints nine,
++and with `--allow-write` twenty-seven.
+ 
+ Common conventions for all tools:
+ 
+@@ -214,7 +215,8 @@ Common conventions for all tools:
+ | ---------------- | ----- | ------------------------- | ------------------- |
+ | `list_items`     | read  | `item.list`               | ~45 tokens/item     |
+ | `search_items`   | read  | `search`                  | ~60 tokens/result   |
+-| `get_item`       | read  | `item.get` (+ `comment.list`, `item.children`) | 150–900 tokens |
++| `get_item`       | read  | `item.get` (+ `comment.list`, `item.children`); `requirement.get` for a requirement ref | 150–900 tokens; ~120 for a requirement |
++| `list_requirements` | read | `requirement.list`      | ~40 tokens/row      |
+ | `get_kb_page`    | read  | `kb.page`                 | page-dependent      |
+ | `list_kb_pages`  | read  | `kb.tree`                 | ~20 tokens/page     |
+ | `search_kb`      | read  | `search`                  | ~60 tokens/result   |
+@@ -224,6 +226,9 @@ Common conventions for all tools:
+ | `create_task`    | write | `item.create`             | ~90 tokens          |
+ | `create_milestone` | write | `item.create`           | ~90 tokens          |
+ | `update_item`    | write | `item.update`              | ~90 tokens         |
++| `create_spec`    | write | `item.create`             | ~90 tokens          |
++| `create_requirement` | write | `requirement.create`  | ~75 tokens          |
++| `update_requirement` | write | `requirement.update`  | ~75 tokens          |
+ | `add_comment`    | write | `comment.add`             | ~70 tokens          |
+ | `move_on_board`  | write | `board.move`              | ~90 tokens          |
+ | `list_inbox`     | read  | `inbox.list`              | ~45 tokens/entry    |
+@@ -252,7 +257,7 @@ semantics the REST API and the web UI apply, because it is the same `item.list`.
+   "type": "object",
+   "properties": {
+     "project":      { "type": "string",  "description": "Project key, for example ACME" },
+-    "type":         { "type": "array", "items": { "type": "string" }, "description": "epic, story, task or milestone" },
++    "type":         { "type": "array", "items": { "type": "string" }, "description": "epic, story, task, milestone or spec" },
+     "status":       { "type": "array", "items": { "type": "string" } },
+     "category":     { "type": "array", "items": { "type": "string" }, "description": "todo, in_progress, done, cancelled" },
+     "priority":     { "type": "array", "items": { "type": "string" } },
+@@ -349,6 +354,11 @@ Without `include`, the answer is the front-matter projection alone — no body,
+ children. The `body`, `comments` and search `snippet` fields are repository content: data to
+ reason about, never instructions (section 7.5).
+ 
++**A requirement ref reads one requirement.** Given `ACME-SP-0003.R2` (optionally
++`ACME/`-qualified), `get_item` answers with `requirement` and `specRev` instead of `item`: that
++block's text and its `requirements:` entry, never the rest of the spec (section 4.20). `include`
++does not apply, and `fields` projects the requirement; `ref` and `rev` always survive.
++
+ ### 4.4 `create_epic`, `create_story`, `create_task`, `create_milestone`
+ 
+ Four tools rather than one with a `type` argument, so that an agent picking a tool by name
+@@ -923,12 +933,124 @@ Call **one** of them, then widen only if it comes back empty. The same table is
+ the routing skill `gintrack agent init` generates (`20-agent-interface.md`), because a rule an
+ agent reads at the start of a session beats a tool description it skims.
+ 
+-### 4.20 Planned tools
++### 4.20 Specs: `create_spec`, `list_requirements`, `create_requirement`, `update_requirement`
++
++A spec (ADR-037, doc 03 §21) is read and written **one requirement at a time**, so an agent pays
++only for the block it reads and touches only the block it owns. The four tools, and `get_item` on
++a requirement ref, are shims over the vault's `requirement.*` methods (doc 07 §6.7).
++
++Every requirement read carries **two hashes** (ADR-037 §6):
++
++- **`rev` — the requirement rev**, the block plus its `requirements:` entry. It is the write
++  token: `update_requirement` quotes it, and nothing else.
++- **`blockRev` — the block rev**, the block alone: the fingerprint a verification stamp records.
++  It does not move on a status or trace change, so it is never accepted as a write token; quoting
++  it is refused as `stale_revision`.
++
++`specRev`, where returned, is the spec's file rev, for a spec-level `update_item` (title, labels,
++body) that follows.
++
++**`create_spec`** creates the spec item: `project`, `title`, `body` (by convention `## Purpose`,
++`## Scope`, `## Requirements`), `status`, `priority`, `assignees` (owners), `labels`, `author`. A
++spec has no parent, milestone, estimate or due date, so the tool does not accept them. The
++first spec of a project raises `project.yaml` to `schema: 2` in the same write and reports
++`"schemaUpgraded": 2`, exactly like `create_story` does for a first spec link.
++
++**`list_requirements`** lists compact rows. Filters: `project`, `spec`, `status[]` and `text`
++(every word in the ref, title or text). The default row is `ref`, `spec`, `title`, `status` and
++`rev`; `fields` adds `blockRev`, `project`, `path`, `anchor`, `line`, `trace`, `verified`,
++`links`, `extra` or `text`, and the block text is fetched only when `text` is projected. Pages
++are cut with the cursor of section 3.4: pass `nextCursor` back with every filter unchanged. A
++call naming neither `project` nor `spec` goes to the workspace's default repository, like
++`list_items`.
++
++```json
++// input
++{ "project": "ACME", "spec": "ACME-SP-0003", "limit": 2 }
++// output
++{
++  "requirements": [
++    {"ref":"ACME-SP-0003.R1","rev":"sha256:22c4bb963caf7a7f","spec":"ACME-SP-0003",
++     "status":"done","title":"Allocate the next ID by index scan"},
++    {"ref":"ACME-SP-0003.R2","rev":"sha256:efe223ffcb327995","spec":"ACME-SP-0003",
++     "status":"in_progress","title":"Reject a malformed reserved range"}
++  ],
++  "total": 5,
++  "nextCursor": "eyJvIjoyLCJmIjoiOTFhYjBkMmUifQ"
++}
++```
++
++**`get_item` on a ref** returns only that requirement:
++
++```json
++// input
++{ "id": "ACME-SP-0003.R2" }
++// output
++{
++  "requirement": {
++    "ref":"ACME-SP-0003.R2","rev":"sha256:efe223ffcb327995","blockRev":"sha256:a2785bd2f23e4b93",
++    "spec":"ACME-SP-0003","project":"ACME","title":"Reject a malformed reserved range",
++    "status":"in_progress","path":"docs/.pmngr/specs/ACME-SP-0003-id-allocation.md",
++    "anchor":"acme-sp-0003-r2","line":14,
++    "trace":{"tests":["internal/core/allocator_test.go#TestReservedRange"]},
++    "text":"The allocator SHALL refuse a reserved range whose start exceeds its end.\n\n#### Scenario: inverted range\n- WHEN ..."
++  },
++  "specRev": "sha256:d0ce6610d3cf874d"
++}
++```
++
++**`create_requirement`** appends one block `### <REF> — <title>` to a spec: `spec`, `title`,
++`text` (the statement and its `#### Scenario` sections; no level 1–3 heading), `status`
++(default: the workflow's initial status), `trace {code[], tests[]}`, `links` (`supersedes`,
++`superseded_by` or `relates_to` only). `R<n>` is allocated by the tool as max + 1 and never
++reused; never propose one. It needs no `rev`.
++
++**`update_requirement`** is a sparse patch of one requirement: `ref`, `rev` (required), and any of
++`title`, `text`, `status` (validated against the project workflow), `trace`, `links`, and
++`unset` (`trace` or `links`). Only that block and its entry change, plus the spec's `updated`,
++so a concurrent write to **another** requirement of the same spec neither conflicts with it nor
++is lost by it. The verification stamp `verified` is readable but **not writable** from MCP: it
++is written only when implementing work reaches `done` or by `gintrack spec verify --commit`
++(ADR-037 §7), so the tool accepts neither `verified` nor `unset: ["verified"]`.
++
++Both writes answer with the requirement without its text — the agent just sent it — plus
++`specRev`, `changed` and, when the write raised the schema, `schemaUpgraded`:
++
++```json
++// input
++{ "ref": "ACME-SP-0003.R2", "rev": "sha256:efe223ffcb327995", "status": "in_review" }
++// output
++{
++  "requirement": {"ref":"ACME-SP-0003.R2","rev":"sha256:38d7e744d07de580",
++    "blockRev":"sha256:a2785bd2f23e4b93","spec":"ACME-SP-0003",
++    "title":"Reject a malformed reserved range","status":"in_review",
++    "trace":{"tests":["internal/core/allocator_test.go#TestReservedRange"]}},
++  "specRev": "sha256:868c72022df175b6",
++  "changed": ["docs/.pmngr/specs/ACME-SP-0003-id-allocation.md"]
++}
++```
++
++A stale `rev` is refused exactly like `update_item` (section 4.5): `stale_revision` with
++`currentRev` — the requirement rev now — the one-line `retry`, and `conflicts[]` over `text`
++(named, never quoted), `title`, `status`, `trace`, `verified` and `links`, judged against the file
++as it is now. An empty (absent) `conflicts` means your change is already there: stop. A missing
++`rev` is `precondition_required`; `"*"` is the explicit, unsafe waiver.
++
++```json
++{ "error": { "code": "stale_revision",
++   "message": "update ACME-SP-0003.R2: ACME-SP-0003.R2 was modified on disk since revision sha256:efe223ffcb327995 (current sha256:38d7e744d07de580)",
++   "path": "docs/.pmngr/specs/ACME-SP-0003-id-allocation.md",
++   "currentRev": "sha256:38d7e744d07de580",
++   "conflicts": [{"field":"title","current":"Reject a malformed reserved range","proposed":"Refuse inverted ranges"}],
++   "retry": "Someone else wrote this file first. Re-read the item with get_item, …" } }
++```
++
++### 4.21 Planned tools
+ 
+ `08` specified a larger catalog than `GIT-US-0024` implements. These are *planned*, each
+ behind its own story: `list_workspaces`, `list_projects`, `get_kb_tree`, `link_items`,
+ `list_comments`, `list_boards`, `get_board`, `get_sprint`, `list_retros`, `get_sync_status`
+-and `run_sync` — verb first, like the twenty-three above. Every one of them already has a core
++and `run_sync` — verb first, like the twenty-seven above. Every one of them already has a core
+ method behind it, so the work is framing rather than domain logic.
+ 
+ `delete_item` is deliberately **not** on that list: deleting a backlog item is a human action
+diff --git a/internal/mcp/tools.go b/internal/mcp/tools.go
+index 5b15cd5..e73a065 100644
+--- a/internal/mcp/tools.go
++++ b/internal/mcp/tools.go
+@@ -23,6 +23,7 @@ import (
+ // read-only server does not merely refuse them: it does not advertise them.
+ func registerTools(s *Server) {
+ 	registerItemTools(s)
++	registerSpecTools(s)
+ 	registerInboxTools(s)
+ 	registerBoardTools(s)
+ 	registerSprintTools(s)
+diff --git a/internal/mcp/tools_items.go b/internal/mcp/tools_items.go
+index 2cca313..fa6b534 100644
+--- a/internal/mcp/tools_items.go
++++ b/internal/mcp/tools_items.go
+@@ -58,18 +58,23 @@ type HitPage struct {
+ 	NextCursor string `json:"nextCursor,omitempty"`
+ }
+ 
+-// GetItemInput addresses one item.
++// GetItemInput addresses one item, or one requirement of a spec.
+ type GetItemInput struct {
+-	ID      string   `json:"id" jsonschema:"Permanent item id, for example ACME-US-0042"`
++	ID      string   `json:"id" jsonschema:"Permanent item id, for example ACME-US-0042, or a requirement ref such as ACME-SP-0003.R2"`
+ 	Include []string `json:"include,omitempty" jsonschema:"Extra sections to return: body, comments, children"`
+ 	Fields  []string `json:"fields,omitempty" jsonschema:"Front-matter fields to project; id and rev are always returned"`
+ }
+ 
+-// ItemResult is one item with the optional sections a read asked for.
++// ItemResult is one item with the optional sections a read asked for. A read
++// of a requirement ref (ACME-SP-0003.R2) answers with requirement and specRev
++// instead of item: only that block and its requirements: entry, never the
++// whole spec.
+ type ItemResult struct {
+-	Item     Item      `json:"item"`
+-	Comments []Comment `json:"comments,omitempty"`
+-	Children []Item    `json:"children,omitempty"`
++	Item        *Item        `json:"item,omitempty"`
++	Requirement *Requirement `json:"requirement,omitempty" jsonschema:"Set instead of item when id is a requirement ref"`
++	SpecRev     string       `json:"specRev,omitempty" jsonschema:"File rev of the spec holding the requirement, for a spec-level update_item"`
++	Comments    []Comment    `json:"comments,omitempty"`
++	Children    []Item       `json:"children,omitempty"`
+ }
+ 
+ // CreateItemInput is the draft of a new epic, story, task or milestone. The id
+@@ -170,7 +175,11 @@ func registerItemTools(s *Server) {
+ 		Title: "Get one backlog item",
+ 		Description: "Read one item by id: front matter always, plus the Markdown body, the comment " +
+ 			"thread and the child items when include asks for them. The rev it returns is the token a " +
+-			"later update_item, add_comment or move_on_board must quote.",
++			"later update_item, add_comment or move_on_board must quote. Given a requirement ref " +
++			"(ACME-SP-0003.R2) it returns only that requirement: its block text, its requirements: " +
++			"entry, rev (the requirement rev, which update_requirement quotes) and blockRev (the block " +
++			"fingerprint a verification stamp records, never a write token); include and the item " +
++			"fields do not apply, and fields projects the requirement instead.",
+ 		Untrusted: true,
+ 	}, getItem)
+ 
+@@ -310,6 +319,9 @@ func getItem(ctx context.Context, s *Server, in GetItemInput) (ItemResult, error
+ 	if strings.TrimSpace(in.ID) == "" {
+ 		return ItemResult{}, invalidField("id", "get_item needs an item id", "ACME-US-0042")
+ 	}
++	if isRequirementRef(in.ID) {
++		return getRequirement(ctx, s, in.ID, in.Fields)
++	}
+ 	it, err := dispatch[core.Item](ctx, s, "item.get", map[string]any{"id": in.ID})
+ 	if err != nil {
+ 		return ItemResult{}, err
+@@ -328,7 +340,8 @@ func getItem(ctx context.Context, s *Server, in GetItemInput) (ItemResult, error
+ 			fields = append(append([]string{}, defaultItemFields...), "body", "path", "links")
+ 		}
+ 	}
+-	out := ItemResult{Item: projectItem(brief, fields)}
++	projected := projectItem(brief, fields)
++	out := ItemResult{Item: &projected}
+ 
+ 	if includes(in.Include, "comments") {
+ 		thread, err := dispatch[[]core.Comment](ctx, s, "comment.list", map[string]any{"id": in.ID})
+diff --git a/internal/mcp/tools_specs.go b/internal/mcp/tools_specs.go
+new file mode 100644
+index 0000000..a1348fd
+--- /dev/null
++++ b/internal/mcp/tools_specs.go
+@@ -0,0 +1,448 @@
++package mcp
++
++import (
++	"context"
++	"strings"
++
++	"github.com/digiogithub/git-in-track/internal/core"
++)
++
++// The spec tools: create a spec, and list, create and update one requirement
++// of it at a time (ADR-037, GIT-US-0122). A requirement is addressed by its ref
++// (ACME-SP-0003.R2) and locked by its requirement rev, so an agent reads and
++// writes only the block it owns and never races a sibling requirement of the
++// same spec. Everything below is a shim over the vault's requirement.* methods
++// (docs/07 section 6.7); allocation, validation and rev computation stay in
++// internal/core.
++
++// -------------------------------------------------------------- wire shape --
++
++// Requirement is one requirement as a tool returns it. `ref` and `rev` are the
++// two fields no projection drops: the first addresses it, the second is the
++// write token update_requirement quotes.
++type Requirement struct {
++	Ref string `json:"ref" jsonschema:"Requirement ref, for example ACME-SP-0003.R2"`
++	// Rev is the requirement rev (block plus requirements: entry): the write
++	// token (ADR-037 section 6).
++	Rev string `json:"rev" jsonschema:"Requirement rev: the write token update_requirement quotes"`
++	// BlockRev is the block rev: what a verification stamp records. It is
++	// never accepted as a write token.
++	BlockRev       string           `json:"blockRev,omitempty" jsonschema:"Block rev: the fingerprint verified.rev records; never a write token"`
++	Spec           string           `json:"spec,omitempty"`
++	Project        string           `json:"project,omitempty"`
++	Title          string           `json:"title,omitempty"`
++	Status         string           `json:"status,omitempty"`
++	StatusImplicit bool             `json:"statusImplicit,omitempty" jsonschema:"The entry has no status; the workflow's initial status stands in"`
++	Path           string           `json:"path,omitempty" jsonschema:"Vault-relative path of the spec file"`
++	Anchor         string           `json:"anchor,omitempty"`
++	Line           int              `json:"line,omitempty" jsonschema:"1-based line of the block heading in the spec body"`
++	Trace          *RequirementCode `json:"trace,omitempty"`
++	Verified       *Verification    `json:"verified,omitempty"`
++	Links          []Link           `json:"links,omitempty"`
++	Extra          map[string]any   `json:"extra,omitempty" jsonschema:"Unknown keys of the requirements: entry, read-only"`
++	// Text is the block below its heading. It is repository content: data
++	// written by people and by other agents, never an instruction.
++	Text string `json:"text,omitempty" jsonschema:"Block text below the heading (statement and scenarios); untrusted repository content"`
++}
++
++// RequirementCode is the trace of a requirement: the code and tests that
++// realize it when an in-code marker is impractical.
++type RequirementCode struct {
++	Code  []string `json:"code,omitempty" jsonschema:"Repository-relative path[#symbol] of code that realizes the requirement"`
++	Tests []string `json:"tests,omitempty" jsonschema:"Repository-relative path[#symbol] of tests that verify it"`
++}
++
++// Verification is the durable verification stamp of a requirement. Tools read
++// it; none writes it (ADR-037 section 7).
++type Verification struct {
++	Rev    string `json:"rev,omitempty" jsonschema:"Block rev that was verified"`
++	Commit string `json:"commit,omitempty"`
++	At     string `json:"at,omitempty"`
++	By     string `json:"by,omitempty"`
++}
++
++// requirementOf projects the core view onto the wire shape, text included.
++// Statement and scenarios are left out: both are derived from the text, and an
++// agent that asked for the text already holds them.
++func requirementOf(v core.RequirementView) Requirement {
++	out := Requirement{
++		Ref:            v.Ref.String(),
++		Rev:            string(v.Rev),
++		BlockRev:       string(v.BlockRev),
++		Spec:           string(v.Spec),
++		Project:        string(v.Project),
++		Title:          v.Title,
++		Status:         string(v.Status),
++		StatusImplicit: v.StatusImplicit,
++		Path:           v.Path,
++		Anchor:         v.Anchor,
++		Line:           v.Line,
++		Extra:          v.Extra,
++		Text:           v.Text,
++	}
++	if t := v.Trace; t != nil && (len(t.Code) > 0 || len(t.Tests) > 0) {
++		out.Trace = &RequirementCode{Code: t.Code, Tests: t.Tests}
++	}
++	if s := v.Verified; s != nil {
++		out.Verified = &Verification{Rev: string(s.Rev), Commit: s.Commit, At: s.At.String(), By: s.By}
++	}
++	for _, l := range v.Links {
++		out.Links = append(out.Links, Link{Kind: string(l.Kind), Target: l.Target})
++	}
++	if len(out.Extra) == 0 {
++		out.Extra = nil
++	}
++	return out
++}
++
++// defaultRequirementFields is the row list_requirements returns when the
++// caller asks for no projection: enough to pick a requirement, nothing more.
++var defaultRequirementFields = []string{"ref", "spec", "title", "status", "rev"}
++
++// writeRequirementFields is what a requirement write answers with: both hashes
++// and the entry, never the text the agent just sent.
++var writeRequirementFields = []string{"spec", "title", "status", "blockRev", "trace", "verified", "links"}
++
++// projectRequirement keeps the requested fields. `ref` and `rev` always
++// survive; an unknown field name is ignored, as projectItem does.
++func projectRequirement(r Requirement, fields []string) Requirement {
++	if len(fields) == 0 {
++		fields = defaultRequirementFields
++	}
++	want := make(map[string]bool, len(fields))
++	for _, f := range fields {
++		want[strings.ToLower(strings.TrimSpace(f))] = true
++	}
++	out := Requirement{Ref: r.Ref, Rev: r.Rev}
++	keep := func(name string, apply func()) {
++		if want[strings.ToLower(name)] {
++			apply()
++		}
++	}
++	keep("blockRev", func() { out.BlockRev = r.BlockRev })
++	keep("spec", func() { out.Spec = r.Spec })
++	keep("project", func() { out.Project = r.Project })
++	keep("title", func() { out.Title = r.Title })
++	keep("status", func() { out.Status, out.StatusImplicit = r.Status, r.StatusImplicit })
++	keep("path", func() { out.Path = r.Path })
++	keep("anchor", func() { out.Anchor = r.Anchor })
++	keep("line", func() { out.Line = r.Line })
++	keep("trace", func() { out.Trace = r.Trace })
++	keep("verified", func() { out.Verified = r.Verified })
++	keep("links", func() { out.Links = r.Links })
++	keep("extra", func() { out.Extra = r.Extra })
++	keep("text", func() { out.Text = r.Text })
++	return out
++}
++
++// ------------------------------------------------------------------ input ---
++
++// ListRequirementsInput filters the requirements of the workspace's specs.
++type ListRequirementsInput struct {
++	Project string   `json:"project,omitempty" jsonschema:"Project key, for example ACME"`
++	Spec    string   `json:"spec,omitempty" jsonschema:"Spec id, for example ACME-SP-0003"`
++	Status  []string `json:"status,omitempty" jsonschema:"Workflow statuses declared by the project"`
++	Text    string   `json:"text,omitempty" jsonschema:"Keep requirements whose ref, title or text hold every word"`
++	Limit   int      `json:"limit,omitempty" jsonschema:"Page size, 1 to 100; default 20"`
++	Cursor  string   `json:"cursor,omitempty" jsonschema:"nextCursor from the previous page"`
++	Fields  []string `json:"fields,omitempty" jsonschema:"Fields to project: spec, project, title, status, blockRev, path, anchor, line, trace, verified, links, extra, text. ref and rev are always returned; default ref, spec, title, status, rev"`
++}
++
++// RequirementPage is one page of requirement rows.
++type RequirementPage struct {
++	Requirements []Requirement `json:"requirements"`
++	Total        int           `json:"total" jsonschema:"Number of requirements the filter matches"`
++	NextCursor   string        `json:"nextCursor,omitempty" jsonschema:"Pass back as cursor to fetch the next page"`
++}
++
++// CreateSpecInput is the draft of a new spec. A spec is a living description,
++// not scheduled work, so it has no parent, milestone, estimate or due date.
++type CreateSpecInput struct {
++	Project   string   `json:"project,omitempty" jsonschema:"Project key; required when the workspace holds more than one"`
++	Title     string   `json:"title" jsonschema:"The capability the spec describes"`
++	Body      string   `json:"body,omitempty" jsonschema:"Markdown body: ## Purpose, ## Scope, ## Requirements; add requirements with create_requirement"`
++	Status    string   `json:"status,omitempty" jsonschema:"A status the project declares, never a triage one; default is the initial status of its workflow"`
++	Priority  string   `json:"priority,omitempty"`
++	Assignees []string `json:"assignees,omitempty" jsonschema:"Owners of the spec"`
++	Labels    []string `json:"labels,omitempty"`
++	Author    string   `json:"author,omitempty" jsonschema:"Defaults to the agent name the server was started with"`
++}
++
++// CreateRequirementInput is a new requirement of an existing spec.
++type CreateRequirementInput struct {
++	Spec   string           `json:"spec" jsonschema:"Spec id, for example ACME-SP-0003"`
++	Title  string           `json:"title" jsonschema:"One line, 1 to 200 characters"`
++	Text   string           `json:"text,omitempty" jsonschema:"Block text below the heading: the SHALL statement and its #### Scenario sections; no level 1-3 heading"`
++	Status string           `json:"status,omitempty" jsonschema:"Default is the initial status of the project workflow"`
++	Trace  *RequirementCode `json:"trace,omitempty"`
++	Links  []Link           `json:"links,omitempty" jsonschema:"Requirement-level links: supersedes, superseded_by or relates_to"`
++}
++
++// UpdateRequirementInput is a sparse patch of one requirement: only the keys
++// present change, and only this requirement's block and entry are touched.
++type UpdateRequirementInput struct {
++	Ref string `json:"ref" jsonschema:"Requirement ref, for example ACME-SP-0003.R2"`
++	// Rev is the requirement rev, never the block rev: the block rev does not
++	// move on a status or trace change, so it cannot detect a lost update.
++	Rev    string           `json:"rev" jsonschema:"Required. The requirement rev (rev, not blockRev) of the read this change is based on; \"*\" overwrites unconditionally"`
++	Title  string           `json:"title,omitempty" jsonschema:"Rewrites the heading title"`
++	Text   *string          `json:"text,omitempty" jsonschema:"Replaces the block text below the heading"`
++	Status string           `json:"status,omitempty" jsonschema:"Target status; the project workflow validates the transition"`
++	Trace  *RequirementCode `json:"trace,omitempty" jsonschema:"Replaces the trace"`
++	Links  []Link           `json:"links,omitempty" jsonschema:"Replaces the requirement-level links"`
++	Unset  []string         `json:"unset,omitempty" jsonschema:"Entry keys to clear: trace or links"`
++}
++
++// RequirementWriteResult is what a requirement write answers with: the
++// requirement as it now stands, without its text, and the files that changed.
++type RequirementWriteResult struct {
++	Requirement    Requirement `json:"requirement"`
++	SpecRev        string      `json:"specRev,omitempty" jsonschema:"New file rev of the spec"`
++	Changed        []string    `json:"changed,omitempty" jsonschema:"Vault-relative paths written by this call"`
++	SchemaUpgraded int         `json:"schemaUpgraded,omitempty" jsonschema:"Set when this write raised project.yaml's schema"`
++}
++
++// ---------------------------------------------------------------- registry --
++
++// registerSpecTools declares the spec half of the surface.
++func registerSpecTools(s *Server) {
++	register(s, toolDef{
++		Name:  "list_requirements",
++		Title: "List spec requirements",
++		Description: "List the requirements of the workspace's specs as compact rows (ref, spec, title, " +
++			"status and rev by default), filtered by project, spec, status or words. Project more fields " +
++			"with fields and walk the cursor; the block text is returned only when fields asks for text. " +
++			"Read one requirement with get_item on its ref.",
++		Untrusted: true,
++	}, listRequirements)
++
++	register(s, toolDef{
++		Name:  "create_spec",
++		Title: "Create a spec",
++		Description: "Create a spec, the living description of one capability whose requirements are " +
++			"addressed one at a time as ACME-SP-0003.R2. The id is allocated by the tool; never propose " +
++			"one. The first spec of a project raises project.yaml to schema 2 in the same write and " +
++			"reports schemaUpgraded: 2.",
++		Write:     true,
++		Untrusted: true,
++	}, createSpec)
++
++	register(s, toolDef{
++		Name:  "create_requirement",
++		Title: "Add a requirement to a spec",
++		Description: "Append one requirement block to a spec. Its number R<n> is allocated by the tool " +
++			"and never reused; never propose one. Needs no rev: it touches no requirement that exists. " +
++			"Returns the requirement's rev, the token a later update_requirement quotes.",
++		Write:     true,
++		Untrusted: true,
++	}, createRequirement)
++
++	register(s, toolDef{
++		Name:  "update_requirement",
++		Title: "Update one requirement",
++		Description: "Apply a sparse patch to one requirement: its title, block text, status, trace or " +
++			"links. Only that block and its requirements: entry change, so a concurrent write to another " +
++			"requirement of the same spec neither conflicts nor is lost. rev is required and is the " +
++			"requirement rev (rev, never blockRev) the read returned. A rev that is no longer current is " +
++			"refused with stale_revision, carrying currentRev and the fields still in conflict; an empty " +
++			"conflicts list means your change is already there. A status change follows the project " +
++			"workflow. The verification stamp is not writable here.",
++		Write:     true,
++		Untrusted: true,
++	}, updateRequirement)
++}
++
++// ---------------------------------------------------------------- handlers --
++
++// isRequirementRef reports whether get_item was handed a requirement ref
++// rather than an item id. Item ids never hold a dot, so the dot is enough to
++// route the call; the vault then applies the strict grammar and reports a
++// malformed ref as invalid_request.
++func isRequirementRef(id string) bool {
++	return strings.Contains(strings.TrimSpace(id), ".")
++}
++
++// getRequirement answers get_item for a requirement ref: the one block and its
++// entry, never the rest of the spec.
++func getRequirement(ctx context.Context, s *Server, ref string, fields []string) (ItemResult, error) {
++	got, err := dispatch[struct {
++		Requirement core.RequirementView `json:"requirement"`
++		SpecRev     string               `json:"specRev"`
++	}](ctx, s, "requirement.get", map[string]any{"ref": strings.TrimSpace(ref)})
++	if err != nil {
++		return ItemResult{}, err
++	}
++	req := requirementOf(got.Requirement)
++	if len(fields) > 0 {
++		req = projectRequirement(req, fields)
++	}
++	return ItemResult{Requirement: &req, SpecRev: got.SpecRev}, nil
++}
++
++// listRequirements answers a filtered, paginated query over requirement rows.
++// The vault answers the whole list at once, so the page is cut here against a
++// cursor bound to the filter.
++func listRequirements(ctx context.Context, s *Server, in ListRequirementsInput) (RequirementPage, error) {
++	limit := boundedLimit(in.Limit)
++	filter := fingerprint("list_requirements", in.Project, in.Spec, in.Status, in.Text)
++	offset, err := decodeCursor(in.Cursor, filter)
++	if err != nil {
++		return RequirementPage{}, err
++	}
++	got, err := dispatch[struct {
++		Requirements []core.RequirementView `json:"requirements"`
++		Total        int                    `json:"total"`
++	}](ctx, s, "requirement.list", map[string]any{
++		"project": in.Project,
++		"spec":    in.Spec,
++		"status":  in.Status,
++		"q":       in.Text,
++		// The block text is the bulk of a spec: fetch it only when projected.
++		"text": includes(in.Fields, "text"),
++	})
++	if err != nil {
++		return RequirementPage{}, err
++	}
++	page, next := slice(got.Requirements, offset, limit, filter)
++	out := RequirementPage{Requirements: make([]Requirement, 0, len(page)), Total: len(got.Requirements), NextCursor: next}
++	for _, v := range page {
++		out.Requirements = append(out.Requirements, projectRequirement(requirementOf(v), in.Fields))
++	}
++	return out, nil
++}
++
++// createSpec creates a spec item. It is not createTool(core.TypeSpec) because a
++// spec carries none of the scheduling fields the other create tools accept.
++func createSpec(ctx context.Context, s *Server, in CreateSpecInput) (WriteResult, error) {
++	if strings.TrimSpace(in.Title) == "" {
++		return WriteResult{}, invalidField("title", "a new spec needs a title", "Checkout address validation")
++	}
++	draft := map[string]any{
++		"project":   in.Project,
++		"type":      string(core.TypeSpec),
++		"title":     in.Title,
++		"body":      in.Body,
++		"status":    in.Status,
++		"priority":  in.Priority,
++		"assignees": in.Assignees,
++		"labels":    in.Labels,
++		"author":    s.authorName(in.Author),
++	}
++	result, err := s.dispatchRaw(ctx, "item.create", draft)
++	if err != nil {
++		return WriteResult{}, err
++	}
++	out, err := writeResultOf(result)
++	if err != nil {
++		return WriteResult{}, err
++	}
++	s.announce(ctx, WriteEvent{
++		Tool: "create_spec", Method: "item.create",
++		ItemID: out.Item.ID, Op: "created", Result: result,
++	})
++	return out, nil
++}
++
++// createRequirement appends one requirement to a spec.
++func createRequirement(ctx context.Context, s *Server, in CreateRequirementInput) (RequirementWriteResult, error) {
++	if strings.TrimSpace(in.Spec) == "" {
++		return RequirementWriteResult{}, invalidField("spec", "create_requirement needs the spec id", "ACME-SP-0003")
++	}
++	if strings.TrimSpace(in.Title) == "" {
++		return RequirementWriteResult{}, invalidField("title", "a new requirement needs a title",
++			"Trim pasted addresses")
++	}
++	params := map[string]any{
++		"spec":   strings.TrimSpace(in.Spec),
++		"title":  in.Title,
++		"text":   in.Text,
++		"status": in.Status,
++	}
++	if in.Trace != nil {
++		params["trace"] = in.Trace
++	}
++	if len(in.Links) > 0 {
++		params["links"] = in.Links
++	}
++	return requirementWrite(ctx, s, "create_requirement", "requirement.create", params)
++}
++
++// updateRequirement applies a sparse patch to one requirement under its
++// requirement rev.
++func updateRequirement(ctx context.Context, s *Server, in UpdateRequirementInput) (RequirementWriteResult, error) {
++	if strings.TrimSpace(in.Ref) == "" {
++		return RequirementWriteResult{}, invalidField("ref", "update_requirement needs a requirement ref", "ACME-SP-0003.R2")
++	}
++	rev, err := requiredRev("rev", in.Rev)
++	if err != nil {
++		return RequirementWriteResult{}, err
++	}
++	if rev == "" {
++		// requiredRev spells the wildcard as "", which the vault refuses as a
++		// missing rev; hand it the explicit waiver instead.
++		rev = wildcardRev
++	}
++	for _, key := range in.Unset {
++		if k := strings.TrimSpace(key); k != "trace" && k != "links" {
++			return RequirementWriteResult{}, invalidField("unset",
++				"update_requirement can clear trace or links; "+k+" is not clearable here", []string{"trace"})
++		}
++	}
++	patch := map[string]any{}
++	if in.Title != "" {
++		patch["title"] = in.Title
++	}
++	if in.Text != nil {
++		patch["text"] = *in.Text
++	}
++	if in.Status != "" {
++		patch["status"] = in.Status
++	}
++	if in.Trace != nil {
++		patch["trace"] = in.Trace
++	}
++	if in.Links != nil {
++		patch["links"] = in.Links
++	}
++	if len(in.Unset) > 0 {
++		patch["unset"] = in.Unset
++	}
++	if len(patch) == 0 {
++		return RequirementWriteResult{}, invalidField("patch", "update_requirement was given nothing to change",
++			map[string]any{"status": "in_progress"})
++	}
++	return requirementWrite(ctx, s, "update_requirement", "requirement.update",
++		map[string]any{"ref": strings.TrimSpace(in.Ref), "rev": rev, "patch": patch})
++}
++
++// requirementWrite dispatches a requirement write and projects its answer. The
++// requirement comes back without its text — the agent just wrote it — but with
++// both hashes: rev is the token the next write quotes.
++func requirementWrite(ctx context.Context, s *Server, tool, method string, params map[string]any) (RequirementWriteResult, error) {
++	result, err := s.dispatchRaw(ctx, method, params)
++	if err != nil {
++		return RequirementWriteResult{}, err
++	}
++	payload, err := decodeResult[struct {
++		Requirement    core.RequirementView `json:"requirement"`
++		SpecRev        string               `json:"specRev"`
++		Writes         writeSet             `json:"writes"`
++		SchemaUpgraded int                  `json:"schemaUpgraded"`
++	}](result)
++	if err != nil {
++		return RequirementWriteResult{}, err
++	}
++	// The path is already in changed, and anchor and line are for a reader:
++	// a write answers with what the next decision needs.
++	req := projectRequirement(requirementOf(payload.Requirement), writeRequirementFields)
++	// Either write changes the spec's file, so the host sees the spec updated.
++	s.announce(ctx, WriteEvent{
++		Tool: tool, Method: method, ItemID: string(payload.Requirement.Spec), Op: "updated", Result: result,
++	})
++	return RequirementWriteResult{
++		Requirement:    req,
++		SpecRev:        payload.SpecRev,
++		Changed:        payload.Writes.paths(),
++		SchemaUpgraded: payload.SchemaUpgraded,
++	}, nil
++}
+diff --git a/internal/mcp/tools_specs_test.go b/internal/mcp/tools_specs_test.go
+new file mode 100644
+index 0000000..c1a7626
+--- /dev/null
++++ b/internal/mcp/tools_specs_test.go
+@@ -0,0 +1,359 @@
++package mcp
++
++import (
++	"context"
++	"encoding/json"
++	"strings"
++	"testing"
++)
++
++// specFixture creates a spec with three requirements through the tools and
++// returns the spec id. Every requirement starts at the workflow's initial
++// status, backlog.
++func specFixture(t *testing.T, h *harness) string {
++	t.Helper()
++
++	spec := call[WriteResult](t, h, "create_spec", map[string]any{
++		"project": "DEMO", "title": "Checkout addresses",
++		"body": "## Purpose\n\nValidate addresses at checkout.\n\n## Requirements\n",
++	})
++	for i, title := range []string{"Trim input", "Reject empty postcode", "Normalize country"} {
++		got := call[RequirementWriteResult](t, h, "create_requirement", map[string]any{
++			"spec": spec.Item.ID, "title": title,
++			"text": "The checkout SHALL " + strings.ToLower(title) + ".",
++		})
++		if want := spec.Item.ID + ".R" + string(rune('1'+i)); got.Requirement.Ref != want {
++			t.Fatalf("create_requirement allocated %s, want %s", got.Requirement.Ref, want)
++		}
++		if got.Requirement.Rev == "" || got.Requirement.BlockRev == "" || got.Requirement.Rev == got.Requirement.BlockRev {
++			t.Fatalf("create_requirement revs = %q / %q, want two distinct hashes",
++				got.Requirement.Rev, got.Requirement.BlockRev)
++		}
++		if got.Requirement.Text != "" {
++			t.Errorf("a write result carries the block text back: %q", got.Requirement.Text)
++		}
++	}
++	return spec.Item.ID
++}
++
++func TestCreateSpecReportsSchemaUpgrade(t *testing.T) {
++	h := newHarness(t, true)
++
++	first := call[WriteResult](t, h, "create_spec", map[string]any{"project": "DEMO", "title": "Checkout addresses"})
++	if first.Item.ID != "DEMO-SP-0001" || first.Item.Type != "spec" {
++		t.Fatalf("create_spec = %+v", first.Item)
++	}
++	if first.SchemaUpgraded != 2 {
++		t.Errorf("schemaUpgraded = %d, want 2 on the first spec of the project", first.SchemaUpgraded)
++	}
++	if !containsSuffix(first.Changed, "/project.yaml") {
++		t.Errorf("changed = %v, want project.yaml in the write", first.Changed)
++	}
++	second := call[WriteResult](t, h, "create_spec", map[string]any{"project": "DEMO", "title": "Payments"})
++	if second.SchemaUpgraded != 0 {
++		t.Errorf("second create_spec reported schemaUpgraded = %d", second.SchemaUpgraded)
++	}
++
++	listed := call[ItemPage](t, h, "list_items", map[string]any{"project": "DEMO", "type": []string{"spec"}})
++	if listed.Total != 2 {
++		t.Errorf("list_items type spec total = %d, want 2", listed.Total)
++	}
++	for _, it := range listed.Items {
++		if it.Type != "spec" {
++			t.Errorf("list_items type spec returned a %s", it.Type)
++		}
++	}
++}
++
++func TestGetItemOnRequirementRef(t *testing.T) {
++	h := newHarness(t, true)
++	spec := specFixture(t, h)
++
++	t.Run("returns only the block and its entry", func(t *testing.T) {
++		res := rawCall(t, h, "get_item", map[string]any{"id": spec + ".R2"})
++		if res.IsError {
++			t.Fatalf("get_item failed: %s", textOf(res))
++		}
++		raw, _ := json.Marshal(res.StructuredContent)
++		body := string(raw)
++		for _, other := range []string{"trim input", "normalize country", "Validate addresses"} {
++			if strings.Contains(body, other) {
++				t.Errorf("a requirement read leaks %q from the rest of the spec:\n%s", other, body)
++			}
++		}
++		var got ItemResult
++		if err := json.Unmarshal(raw, &got); err != nil {
++			t.Fatalf("decode: %v", err)
++		}
++		if got.Item != nil {
++			t.Errorf("item = %+v, want none for a requirement ref", got.Item)
++		}
++		req := got.Requirement
++		if req == nil || req.Ref != spec+".R2" || req.Title != "Reject empty postcode" || req.Status != "backlog" {
++			t.Fatalf("requirement = %+v", req)
++		}
++		if req.Text != "The checkout SHALL reject empty postcode." {
++			t.Errorf("text = %q", req.Text)
++		}
++		if req.Rev == "" || req.BlockRev == "" || got.SpecRev == "" {
++			t.Errorf("rev %q, blockRev %q, specRev %q: want all three", req.Rev, req.BlockRev, got.SpecRev)
++		}
++	})
++
++	t.Run("fields projects the requirement", func(t *testing.T) {
++		got := call[ItemResult](t, h, "get_item", map[string]any{"id": spec + ".R1", "fields": []string{"status"}})
++		req := got.Requirement
++		if req.Ref == "" || req.Rev == "" || req.Status == "" {
++			t.Fatalf("projection dropped ref, rev or status: %+v", req)
++		}
++		if req.Text != "" || req.Title != "" || req.BlockRev != "" {
++			t.Errorf("projection kept fields it was not asked for: %+v", req)
++		}
++	})
++
++	t.Run("a missing requirement is not_found", func(t *testing.T) {
++		if got := callFails(t, h, "get_item", map[string]any{"id": spec + ".R9"}); got.Code != codeNotFound {
++			t.Errorf("code = %q, want %q", got.Code, codeNotFound)
++		}
++	})
++
++	t.Run("a malformed ref is invalid_request", func(t *testing.T) {
++		if got := callFails(t, h, "get_item", map[string]any{"id": spec + ".R02"}); got.Code != codeInvalidRequest {
++			t.Errorf("code = %q, want %q", got.Code, codeInvalidRequest)
++		}
++	})
++}
++
++func TestListRequirements(t *testing.T) {
++	h := newHarness(t, true)
++	spec := specFixture(t, h)
++
++	t.Run("rows are compact by default", func(t *testing.T) {
++		res := rawCall(t, h, "list_requirements", map[string]any{"spec": spec})
++		raw, _ := json.Marshal(res.StructuredContent)
++		var page RequirementPage
++		if err := json.Unmarshal(raw, &page); err != nil {
++			t.Fatalf("decode: %v", err)
++		}
++		if page.Total != 3 || len(page.Requirements) != 3 || page.NextCursor != "" {
++			t.Fatalf("page = %+v", page)
++		}
++		row := page.Requirements[0]
++		if row.Ref != spec+".R1" || row.Spec != spec || row.Title != "Trim input" || row.Status != "backlog" || row.Rev == "" {
++			t.Errorf("row = %+v", row)
++		}
++		for _, unwanted := range []string{"SHALL", "blockRev", "path", "anchor", "null", "\"\""} {
++			if strings.Contains(string(raw), unwanted) {
++				t.Errorf("a default row carries %s:\n%s", unwanted, raw)
++			}
++		}
++	})
++
++	t.Run("fields adds the text only when asked", func(t *testing.T) {
++		page := call[RequirementPage](t, h, "list_requirements", map[string]any{
++			"spec": spec, "fields": []string{"text", "blockRev"},
++		})
++		row := page.Requirements[0]
++		if row.Text != "The checkout SHALL trim input." || row.BlockRev == "" {
++			t.Errorf("row = %+v, want text and blockRev", row)
++		}
++		if row.Title != "" {
++			t.Errorf("projection kept the title: %+v", row)
++		}
++	})
++
++	t.Run("the cursor walks every row once", func(t *testing.T) {
++		var refs []string
++		cursor := ""
++		for range 5 {
++			page := call[RequirementPage](t, h, "list_requirements", map[string]any{
++				"project": "DEMO", "limit": 2, "cursor": cursor,
++			})
++			for _, r := range page.Requirements {
++				refs = append(refs, r.Ref)
++			}
++			if page.NextCursor == "" {
++				break
++			}
++			cursor = page.NextCursor
++		}
++		if strings.Join(refs, ",") != spec+".R1,"+spec+".R2,"+spec+".R3" {
++			t.Errorf("walk = %v", refs)
++		}
++	})
++
++	t.Run("a cursor refuses a changed filter", func(t *testing.T) {
++		page := call[RequirementPage](t, h, "list_requirements", map[string]any{"project": "DEMO", "limit": 1})
++		got := callFails(t, h, "list_requirements", map[string]any{
++			"project": "DEMO", "limit": 1, "status": []string{"todo"}, "cursor": page.NextCursor,
++		})
++		if got.Code != codeInvalidCursor {
++			t.Errorf("code = %q, want %q", got.Code, codeInvalidCursor)
++		}
++	})
++
++	t.Run("status filters", func(t *testing.T) {
++		r2 := call[ItemResult](t, h, "get_item", map[string]any{"id": spec + ".R2"}).Requirement
++		call[RequirementWriteResult](t, h, "update_requirement", map[string]any{
++			"ref": r2.Ref, "rev": r2.Rev, "status": "todo",
++		})
++		page := call[RequirementPage](t, h, "list_requirements", map[string]any{"project": "DEMO", "status": []string{"todo"}})
++		if page.Total != 1 || page.Requirements[0].Ref != r2.Ref {
++			t.Errorf("status todo = %+v", page)
++		}
++	})
++}
++
++// TestRequirementRevProtocol is the per-block optimistic lock: a stale rev on
++// one requirement is refused exactly like update_item's, while a write to a
++// sibling requirement of the same spec does not make it stale.
++func TestRequirementRevProtocol(t *testing.T) {
++	read := func(t *testing.T, h *harness, ref string) Requirement {
++		t.Helper()
++		return *call[ItemResult](t, h, "get_item", map[string]any{"id": ref}).Requirement
++	}
++
++	t.Run("stale on the same block", func(t *testing.T) {
++		h := newHarness(t, true)
++		spec := specFixture(t, h)
++		before := read(t, h, spec+".R1")
++		wrote := call[RequirementWriteResult](t, h, "update_requirement", map[string]any{
++			"ref": before.Ref, "rev": before.Rev, "status": "todo",
++		})
++		if wrote.Requirement.Rev == before.Rev || wrote.Requirement.Status != "todo" {
++			t.Fatalf("update_requirement = %+v", wrote.Requirement)
++		}
++		if wrote.Requirement.BlockRev != before.BlockRev {
++			t.Errorf("a status change moved the block rev: %s -> %s", before.BlockRev, wrote.Requirement.BlockRev)
++		}
++		got := callFails(t, h, "update_requirement", map[string]any{
++			"ref": before.Ref, "rev": before.Rev, "title": "Trim every field",
++		})
++		if got.Code != "stale_revision" || got.CurrentRev != wrote.Requirement.Rev || got.Retry == "" {
++			t.Fatalf("stale write = %+v", got)
++		}
++		if len(got.Conflicts) != 1 || got.Conflicts[0].Field != "title" {
++			t.Errorf("conflicts = %+v, want title", got.Conflicts)
++		}
++		// One deliberate retry quoting currentRev succeeds.
++		call[RequirementWriteResult](t, h, "update_requirement", map[string]any{
++			"ref": before.Ref, "rev": got.CurrentRev, "title": "Trim every field",
++		})
++	})
++
++	t.Run("success on a sibling block", func(t *testing.T) {
++		h := newHarness(t, true)
++		spec := specFixture(t, h)
++		r1, r2 := read(t, h, spec+".R1"), read(t, h, spec+".R2")
++		call[RequirementWriteResult](t, h, "update_requirement", map[string]any{
++			"ref": r1.Ref, "rev": r1.Rev, "text": "The checkout SHALL trim every field.",
++		})
++		got := call[RequirementWriteResult](t, h, "update_requirement", map[string]any{
++			"ref": r2.Ref, "rev": r2.Rev, "status": "todo",
++		})
++		if got.Requirement.Status != "todo" {
++			t.Errorf("sibling write = %+v", got.Requirement)
++		}
++		if after := read(t, h, spec+".R1"); after.Text != "The checkout SHALL trim every field." {
++			t.Errorf("the sibling write lost R1's change: %q", after.Text)
++		}
++	})
++
++	t.Run("empty conflicts when the change is already there", func(t *testing.T) {
++		h := newHarness(t, true)
++		spec := specFixture(t, h)
++		before := read(t, h, spec+".R3")
++		call[RequirementWriteResult](t, h, "update_requirement", map[string]any{
++			"ref": before.Ref, "rev": before.Rev, "status": "todo",
++		})
++		got := callFails(t, h, "update_requirement", map[string]any{
++			"ref": before.Ref, "rev": before.Rev, "status": "todo",
++		})
++		if got.Code != "stale_revision" || got.CurrentRev == "" {
++			t.Fatalf("repeat write = %+v", got)
++		}
++		if len(got.Conflicts) != 0 {
++			t.Errorf("conflicts = %+v, want none: the change is already on disk", got.Conflicts)
++		}
++	})
++
++	t.Run("the block rev is not a write token", func(t *testing.T) {
++		h := newHarness(t, true)
++		spec := specFixture(t, h)
++		before := read(t, h, spec+".R1")
++		got := callFails(t, h, "update_requirement", map[string]any{
++			"ref": before.Ref, "rev": before.BlockRev, "status": "todo",
++		})
++		if got.Code != "stale_revision" || got.CurrentRev != before.Rev {
++			t.Errorf("write quoting blockRev = %+v", got)
++		}
++	})
++
++	t.Run("a missing rev is refused", func(t *testing.T) {
++		h := newHarness(t, true)
++		spec := specFixture(t, h)
++		got := callFails(t, h, "update_requirement", map[string]any{"ref": spec + ".R1", "rev": "", "status": "todo"})
++		if got.Code != codePreconditionRequired {
++			t.Errorf("code = %q, want %q", got.Code, codePreconditionRequired)
++		}
++	})
++
++	t.Run("the wildcard writes unconditionally", func(t *testing.T) {
++		h := newHarness(t, true)
++		spec := specFixture(t, h)
++		got := call[RequirementWriteResult](t, h, "update_requirement", map[string]any{
++			"ref": spec + ".R1", "rev": "*", "status": "todo",
++		})
++		if got.Requirement.Status != "todo" {
++			t.Errorf("wildcard write = %+v", got.Requirement)
++		}
++	})
++
++	t.Run("the verification stamp cannot be cleared", func(t *testing.T) {
++		h := newHarness(t, true)
++		spec := specFixture(t, h)
++		before := read(t, h, spec+".R1")
++		got := callFails(t, h, "update_requirement", map[string]any{
++			"ref": before.Ref, "rev": before.Rev, "unset": []string{"verified"},
++		})
++		if got.Code != codeInvalidRequest || got.Field != "unset" {
++			t.Errorf("unset verified = %+v", got)
++		}
++	})
++}
++
++// containsSuffix reports whether any path ends with suffix.
++func containsSuffix(paths []string, suffix string) bool {
++	for _, p := range paths {
++		if strings.HasSuffix(p, suffix) {
++			return true
++		}
++	}
++	return false
++}
++
++// TestSpecToolsStateTheDataBoundary checks that every spec tool, write tools
++// included, carries the data-not-instructions sentence: their results hold
++// requirement titles written by people and by other agents.
++func TestSpecToolsStateTheDataBoundary(t *testing.T) {
++	h := newHarness(t, true)
++	listed, err := h.session.ListTools(context.Background(), nil)
++	if err != nil {
++		t.Fatalf("tools/list: %v", err)
++	}
++	want := map[string]bool{
++		"list_requirements": true, "create_spec": true, "create_requirement": true, "update_requirement": true,
++	}
++	for _, tool := range listed.Tools {
++		if !want[tool.Name] {
++			continue
++		}
++		delete(want, tool.Name)
++		if !strings.Contains(tool.Description, untrustedNote) {
++			t.Errorf("%s does not carry the data boundary:\n%s", tool.Name, tool.Description)
++		}
++	}
++	for name := range want {
++		t.Errorf("%s is not advertised with writes enabled", name)
++	}
++}
+diff --git a/internal/mcp/tools_test.go b/internal/mcp/tools_test.go
+index c907193..8c5962d 100644
+--- a/internal/mcp/tools_test.go
++++ b/internal/mcp/tools_test.go
+@@ -15,15 +15,15 @@ import (
+ // readTools is the surface a server started without --allow-write advertises.
+ var readTools = []string{
+ 	"get_item", "get_kb_page", "list_inbox", "list_items", "list_kb_pages",
+-	"search_items", "search_kb", "search_semantic",
++	"list_requirements", "search_items", "search_kb", "search_semantic",
+ }
+ 
+ // writeTools is what enabling writes adds.
+ var writeTools = []string{
+ 	"add_comment", "close_sprint", "create_epic", "create_inbox_item", "create_milestone",
+-	"create_story", "create_task", "import_youtrack_issues", "move_on_board",
++	"create_requirement", "create_spec", "create_story", "create_task", "import_youtrack_issues", "move_on_board",
+ 	"publish_kb_page_to_youtrack", "push_comment_to_youtrack", "sync_kb_page_from_youtrack",
+-	"transfer_sprint_items", "triage_inbox_item", "update_item",
++	"transfer_sprint_items", "triage_inbox_item", "update_item", "update_requirement",
+ }
+ 
+ func TestToolSurface(t *testing.T) {
+diff --git a/internal/server/mcp_test.go b/internal/server/mcp_test.go
+index 64dcf09..8824ceb 100644
+--- a/internal/server/mcp_test.go
++++ b/internal/server/mcp_test.go
+@@ -127,8 +127,8 @@ func TestMCPCapabilitiesReportTheEndpoint(t *testing.T) {
+ 		t.Errorf("features = %v, want the MCP endpoint enabled and writable", caps.Features)
+ 	}
+ 	tools, ok := caps.Features["mcpTools"].([]any)
+-	if !ok || len(tools) != 23 {
+-		t.Errorf("mcpTools = %v, want the twenty-three tools", caps.Features["mcpTools"])
++	if !ok || len(tools) != 27 {
++		t.Errorf("mcpTools = %v, want the twenty-seven tools", caps.Features["mcpTools"])
+ 	}
+ }
+ 
+@@ -140,13 +140,13 @@ func TestMCPOverStreamableHTTP(t *testing.T) {
+ 	session := mcpSession(t, s, "test-token")
+ 	ctx := context.Background()
+ 
+-	t.Run("lists the same twenty-three tools", func(t *testing.T) {
++	t.Run("lists the same twenty-seven tools", func(t *testing.T) {
+ 		listed, err := session.ListTools(ctx, nil)
+ 		if err != nil {
+ 			t.Fatalf("tools/list: %v", err)
+ 		}
+-		if len(listed.Tools) != 23 {
+-			t.Fatalf("tools = %d, want 23", len(listed.Tools))
++		if len(listed.Tools) != 27 {
++			t.Fatalf("tools = %d, want 27", len(listed.Tools))
+ 		}
+ 	})
+ 

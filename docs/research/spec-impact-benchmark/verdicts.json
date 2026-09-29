@@ -1,0 +1,26 @@
+{
+  "_comment": "Hand verdicts of the 2026-09-25 benchmark (sections 5 and 9.3) and of the 2026-09-30 re-run (section 10). A ref in 'behaviour' is a requirement whose stated behaviour the replayed diff really changes (the recall truth set, 21 refs); in 'evidence' one whose verifying test now runs changed code while the rule does not change. Every other ref a report names for that PR is 'unrelated'.",
+  "behaviour": {
+    "P1": ["GIT-SP-0001.R3", "GIT-SP-0001.R4"],
+    "P2": ["GIT-SP-0003.R2", "GIT-SP-0003.R3", "GIT-SP-0003.R5"],
+    "P3": ["GIT-SP-0003.R1", "GIT-SP-0003.R2", "GIT-SP-0003.R3", "GIT-SP-0003.R6", "GIT-SP-0003.R7"],
+    "P4": ["GIT-SP-0003.R7"],
+    "P5": ["GIT-SP-0002.R7", "GIT-SP-0004.R6"],
+    "P6": [],
+    "P7": [],
+    "S1": ["GIT-SP-0001.R3", "GIT-SP-0001.R4"],
+    "S2": ["GIT-SP-0002.R1", "GIT-SP-0002.R4"],
+    "S3": ["GIT-SP-0004.R4", "GIT-SP-0004.R5"],
+    "S4": ["GIT-SP-0004.R1"],
+    "S5": ["GIT-SP-0001.R6"],
+    "C1": [],
+    "C2": []
+  },
+  "evidence": {
+    "P1": ["GIT-SP-0001.R2", "GIT-SP-0001.R5", "GIT-SP-0001.R7", "GIT-SP-0001.R8", "GIT-SP-0001.R9", "GIT-SP-0001.R10"],
+    "P2": ["GIT-SP-0003.R1", "GIT-SP-0003.R4", "GIT-SP-0003.R6"],
+    "P3": ["GIT-SP-0003.R4"],
+    "P4": ["GIT-SP-0001.R2", "GIT-SP-0001.R3", "GIT-SP-0001.R4", "GIT-SP-0003.R1", "GIT-SP-0003.R3", "GIT-SP-0003.R4", "GIT-SP-0003.R5", "GIT-SP-0003.R6"],
+    "S4": ["GIT-SP-0004.R2", "GIT-SP-0004.R6", "GIT-SP-0004.R7"]
+  }
+}

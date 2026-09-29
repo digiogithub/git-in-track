@@ -1,0 +1,13 @@
+diff --git a/internal/mcp/page.go b/internal/mcp/page.go
+index 229f747..d89a3e1 100644
+--- a/internal/mcp/page.go
++++ b/internal/mcp/page.go
+@@ -116,7 +116,7 @@ func slice[T any](all []T, offset, limit int, filter string) (page []T, next str
+ // case-insensitively so that "Body" and "body" behave alike.
+ func includes(list []string, name string) bool {
+ 	for _, entry := range list {
+-		if strings.EqualFold(strings.TrimSpace(entry), name) {
++		if strings.EqualFold(strings.Trim(strings.TrimSpace(entry), ","), name) {
+ 			return true
+ 		}
+ 	}
