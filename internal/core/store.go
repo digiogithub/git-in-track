@@ -493,6 +493,7 @@ func (s *FileStore) UpdateReport(ctx context.Context, id ItemID, patch ItemPatch
 		return nil, nil, err
 	}
 	oldPath := it.Path
+	oldTitle := it.Title
 	hadSpecConstruct := HasSpecConstruct(it)
 	// A status change is a workflow transition wherever it is spelled, so a
 	// patch that carries one is validated exactly as Move validates it. That is
@@ -513,7 +514,9 @@ func (s *FileStore) UpdateReport(ctx context.Context, id ItemID, patch ItemPatch
 	if moving {
 		s.stampTransition(it, from, it.Status, now)
 	}
-	s.retarget(it, oldPath)
+	if it.Title != oldTitle {
+		s.retarget(it, oldPath)
+	}
 	if moving && s.entersDone(it, from, it.Status) {
 		plan, err := s.planDone(ctx, it)
 		if err != nil {
@@ -699,7 +702,11 @@ func (s *FileStore) readChecked(id ItemID, expected Rev, intent conflictIntent) 
 }
 
 // retarget recomputes the file name after a title change, keeping the id
-// (R-SLUG-2). It is a no-op when renaming is disabled or the slug is unchanged.
+// (R-SLUG-2). Callers invoke it only when the title actually changed: a stale
+// or over-long slug is warning W-SLUG-STALE, never a reason to rename on an
+// unrelated update (GIT-US-0171). It is a no-op when renaming is disabled or
+// the slug is unchanged.
+// Implements: GIT-US-0171
 func (s *FileStore) retarget(it *Item, oldPath string) {
 	if !s.RenameOnTitleChange {
 		return
