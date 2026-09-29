@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path"
 	"runtime"
 	"sort"
@@ -111,6 +112,7 @@ func runDoctor(cmd *cobra.Command, flags *globalFlags, local *doctorFlags) error
 	}
 	payload := doctorPayload{Config: append(checkConfig(res), checkGit(res.Config)...)}
 	payload.Config = append(payload.Config, checkJujutsu(res.Config)...)
+	payload.Config = append(payload.Config, checkPando(res.Config, exec.LookPath))
 
 	repos := res.Config.WorkspaceRepos(res.Workspace)
 	if local.repo != "" {
@@ -179,6 +181,17 @@ func checkGit(cfg *config.Config) []checkResult {
 		result.Fix = "fix git.messageTemplate in " + "the configuration file"
 	}
 	return []checkResult{result}
+}
+
+// checkPando reports the resolved Pando mode and the ADR-039 rule that produced
+// it. A missing binary is never a finding: the tiers answer unavailable.
+func checkPando(cfg *config.Config, lookPath func(string) (string, error)) checkResult {
+	r := config.ResolvePandoMode(cfg.Search.Pando, lookPath)
+	message := "pando mode " + r.String()
+	if r.Binary != "" {
+		message += " [" + r.Binary + "]"
+	}
+	return checkResult{Scope: "pando", Severity: "ok", Message: message}
 }
 
 // checkJujutsu reports the jj binary when any registered repository is managed

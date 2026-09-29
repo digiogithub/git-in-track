@@ -96,6 +96,14 @@ search labels the row with it, so a code hit is never mistaken for a backlog ite
 
 ## 1. Configuring Pando
 
+Which Pando gintrack talks to is decided by `search.pando.mode` (`auto`, `managed`, `external`
+or `off`) and resolved by the six rules of docs/07 §3.3: with `mcpUrl` set, `auto` keeps the
+hand-run (external) setup exactly as described below; without it, a `pando` binary on PATH
+resolves to managed mode and none resolves to off, which is not an error. `mode: managed` may
+not be combined with `mcpUrl`, `mcpToken`, `restUrl`, `restToken` or `projectId`. The per-repository
+opt-in is `repos[].semanticSearch` in the machine-local configuration file. Running the managed
+instances is ADR-039 work that lands separately; this section describes the keys only.
+
 `gintrack agent init` writes this into the repository's `.pando.toml`, and `--kb-path`
 overrides the directory for a layout it cannot guess (docs/07 §4.18):
 
