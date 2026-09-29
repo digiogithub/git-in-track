@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -895,6 +896,58 @@ func TestStaleItemUpdateConflicts(t *testing.T) {
 			}
 			if strings.Join(got, ",") != strings.Join(tt.want, ",") {
 				t.Errorf("conflicts = %+v, want fields %v", e.Conflicts, tt.want)
+			}
+		})
+	}
+}
+
+// Verifies: GIT-US-0171
+func TestVaultItemUpdateKeepsAStaleFileName(t *testing.T) {
+	t.Parallel()
+
+	const id = "DEMO-US-0001"
+	cases := []struct {
+		name       string
+		patch      map[string]any
+		wantRename bool
+	}{
+		{"status-only update keeps the file name", map[string]any{"set": map[string]any{"priority": "high"}}, false},
+		{"a title change renames the file", map[string]any{"set": map[string]any{"title": "A brand new title"}}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			v := NewInMemory()
+			v.SetClock(func() time.Time { return time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC) })
+			files := fixtureFiles(t)
+			stale := ""
+			for _, f := range files {
+				if strings.Contains(f["path"], "/"+id+"-") {
+					stale = path.Join(path.Dir(f["path"]), id+"-a-stale-slug.md")
+					f["path"] = stale
+				}
+			}
+			if stale == "" {
+				t.Fatalf("fixture has no file for %s", id)
+			}
+			call(t, v, "vault.load", map[string]any{"files": files})
+			cur := decode[struct {
+				Rev string `json:"rev"`
+			}](t, call(t, v, "item.get", map[string]any{"id": id}))
+
+			updated := decode[struct {
+				Item struct {
+					Path string `json:"path"`
+				} `json:"item"`
+				Writes WriteSet `json:"writes"`
+			}](t, call(t, v, "item.update", map[string]any{"id": id, "rev": cur.Rev, "patch": tc.patch}))
+
+			renamed := updated.Item.Path != stale
+			if renamed != tc.wantRename {
+				t.Errorf("path = %s (was %s), renamed = %v, want %v", updated.Item.Path, stale, renamed, tc.wantRename)
+			}
+			if !tc.wantRename && len(updated.Writes.Removed) != 0 {
+				t.Errorf("an update that keeps the title removed files: %v", updated.Writes.Removed)
 			}
 		})
 	}

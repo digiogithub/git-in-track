@@ -286,7 +286,10 @@ Examples:
   never an error.
 - **R-SLUG-2** Renaming an item title SHOULD rename the file (`git mv`) so browsing stays pleasant;
   the CLI does this by default and the web app offers it as a checkbox. Tools MUST tolerate a
-  refusal to rename.
+  refusal to rename. The rename is triggered only by a change to `title`: an update that leaves the
+  title as it was (a status move, a label edit, a body edit, a resent identical title) MUST keep the
+  existing filename, even when its slug is stale or longer than 60 bytes. Such a file only carries
+  `W-SLUG-STALE`; it is renamed by a real title change or by `gintrack doctor --fix`.
 - **R-SLUG-3** The ID prefix of the filename MUST match the `id` field. Mismatch is error
   `E-ID-FILENAME`.
 - **R-SLUG-4** Two files with the same `id` anywhere under `.pmngr/` is error `E-ID-DUPLICATE`

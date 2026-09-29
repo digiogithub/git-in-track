@@ -390,6 +390,62 @@ func TestStoreUpdateRenamesOnTitleChange(t *testing.T) {
 	}
 }
 
+// Verifies: GIT-US-0171
+func TestStoreUpdateKeepsTheFileNameWhenTheTitleIsUnchanged(t *testing.T) {
+	t.Parallel()
+
+	const title = "Export the embedded spec templates to files for customisation"
+	const dir = "docs/.pmngr/stories/"
+	status := Status("todo")
+	sameTitle := title
+	newTitle := "Login with Entra ID"
+	cases := []struct {
+		name     string
+		fileName string
+		patch    ItemPatch
+		wantName string
+	}{
+		{"status-only on an over-long slug", "ACME-US-0001-export-the-embedded-spec-templates-to-files-for-customisation.md", ItemPatch{Status: &status}, "ACME-US-0001-export-the-embedded-spec-templates-to-files-for-customisation.md"},
+		{"status-only on a stale short slug", "ACME-US-0001-old-name.md", ItemPatch{Status: &status}, "ACME-US-0001-old-name.md"},
+		{"same title resent keeps the name", "ACME-US-0001-old-name.md", ItemPatch{Title: &sameTitle}, "ACME-US-0001-old-name.md"},
+		{"title change renames per R-SLUG-2", "ACME-US-0001-old-name.md", ItemPatch{Title: &newTitle}, "ACME-US-0001-login-with-entra-id.md"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			store, fsys, _ := newTestStore(t)
+			ctx := context.Background()
+			it, err := store.Create(ctx, ItemDraft{Type: TypeStory, Title: title, Author: "jose"})
+			if err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			old := dir + tc.fileName
+			if err := fsys.Rename(it.Path, old); err != nil {
+				t.Fatalf("Rename fixture: %v", err)
+			}
+			cur, err := store.Get(ctx, it.ID)
+			if err != nil {
+				t.Fatalf("Get: %v", err)
+			}
+			updated, err := store.Update(ctx, it.ID, tc.patch, cur.Rev)
+			if err != nil {
+				t.Fatalf("Update: %v", err)
+			}
+			if got := path.Base(updated.Path); got != tc.wantName {
+				t.Errorf("file name = %s, want %s", got, tc.wantName)
+			}
+			if _, err := fsys.Stat(dir + tc.wantName); err != nil {
+				t.Errorf("expected file missing: %v", err)
+			}
+			if tc.wantName != tc.fileName {
+				if _, err := fsys.Stat(old); !errors.Is(err, ErrNotExist) {
+					t.Errorf("old file %s survived the rename", old)
+				}
+			}
+		})
+	}
+}
+
 func TestStoreDelete(t *testing.T) {
 	t.Parallel()
 
