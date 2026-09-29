@@ -363,6 +363,7 @@ func newLinkedYouTrackServer(t *testing.T, root string, link *config.YouTrackLin
 	if err != nil {
 		t.Fatalf("New(): %v", err)
 	}
+	hermeticYouTrack(s)
 	return s
 }
 

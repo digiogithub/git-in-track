@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/digiogithub/git-in-track/internal/config"
+	"github.com/digiogithub/git-in-track/internal/youtrack"
 )
 
 // ytToken is the credential every assertion in this file hunts for in the
@@ -110,6 +112,7 @@ func newYouTrackServer(t *testing.T, link *config.YouTrackLink, token string, wi
 	if err != nil {
 		t.Fatalf("New(): %v", err)
 	}
+	hermeticYouTrack(s)
 	return s, root, configPath
 }
 
@@ -620,6 +623,7 @@ func TestYouTrackTokenSourceReportsTheEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New(): %v", err)
 	}
+	hermeticYouTrack(s)
 	var body ytSettingsBody
 	rec := send(t, s, request{method: http.MethodGet, target: "/api/v1/youtrack/settings"})
 	decode(t, rec, http.StatusOK, &body)
@@ -628,5 +632,18 @@ func TestYouTrackTokenSourceReportsTheEnvironment(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "s3cr3t-value") {
 		t.Errorf("the response leaked the token: %s", rec.Body.String())
+	}
+}
+
+// hermeticYouTrack makes every YouTrack client the server builds retry without
+// waiting: the delay seam returns at once, so a stubbed 5xx or 429 exercises the
+// retry path in microseconds instead of sleeping through the real backoff
+// (about 8.5s for a persistent 500). It is applied to every test server that
+// reaches a stub instance.
+func hermeticYouTrack(s *Server) {
+	s.youtrack.mu.Lock()
+	defer s.youtrack.mu.Unlock()
+	s.youtrack.tuneClient = func(o *youtrack.Options) {
+		o.Sleep = func(ctx context.Context, _ time.Duration) error { return ctx.Err() }
 	}
 }

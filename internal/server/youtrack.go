@@ -71,6 +71,21 @@ type youtrackState struct {
 	// exercised against a fake instance with no network and no clock. Nil means
 	// the cached client of the project (youtrackState.jobClientFor).
 	jobClient func(project string) (youtrackJobClient, vault.YouTrackLink, error)
+
+	// tuneClient, when set, adjusts the options of every client this state
+	// builds. It is a test seam: the shipped client backs off for seconds on a
+	// 5xx or a 429, and a test that provokes one must not wait on a real clock.
+	// Nil in production.
+	tuneClient func(*youtrack.Options)
+}
+
+// newClient builds a client for one instance, applying the test seam.
+func (y *youtrackState) newClient(baseURL, token string) (*youtrack.Client, error) {
+	opts := youtrack.Options{BaseURL: baseURL, Token: token}
+	if y.tuneClient != nil {
+		y.tuneClient(&opts)
+	}
+	return youtrack.New(opts) //nolint:wrapcheck // the client redacts the token on every error path
 }
 
 // newYouTrackState builds the YouTrack layer over the mounted repositories.
@@ -445,7 +460,7 @@ func (y *youtrackState) clientFor(projectKey string) (*youtrack.Client, *config.
 	if cached, ok := y.clients[projectKey]; ok && y.clientKeys[projectKey] == want {
 		return cached, found.link, nil
 	}
-	client, err := youtrack.New(youtrack.Options{BaseURL: found.link.URL, Token: token})
+	client, err := y.newClient(found.link.URL, token)
 	if err != nil {
 		return nil, nil, err //nolint:wrapcheck // the client redacts the token on every error path
 	}
@@ -608,7 +623,7 @@ func (s *Server) youtrackProbeClient(key string, body youtrackTestRequest) (*you
 		}
 		return nil, nil, fmt.Errorf("%w: a URL and a token are needed to test a connection", errYouTrackNotConfigured)
 	}
-	client, err := youtrack.New(youtrack.Options{BaseURL: baseURL, Token: token})
+	client, err := s.youtrack.newClient(baseURL, token)
 	if err != nil {
 		return nil, nil, err //nolint:wrapcheck // the client redacts the token on every error path
 	}

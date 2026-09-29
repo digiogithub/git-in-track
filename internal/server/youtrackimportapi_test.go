@@ -57,6 +57,7 @@ func newImportAPIServer(t *testing.T, fake *fakeYouTrack, stubURL string) *Serve
 	if err != nil {
 		t.Fatalf("New(): %v", err)
 	}
+	hermeticYouTrack(s)
 	if fake != nil {
 		s.youtrack.mu.Lock()
 		s.youtrack.jobClient = func(string) (youtrackJobClient, vault.YouTrackLink, error) {
