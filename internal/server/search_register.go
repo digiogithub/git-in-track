@@ -115,7 +115,8 @@ func codeProjectID(m *mount) string {
 // start — or an explicit reindex — is what re-registers; re-registering on
 // every PATCH would turn a typo in a URL into a burst of indexing jobs.
 func (s *searchState) startRegistration(ctx context.Context) {
-	if s == nil || !s.registering.CompareAndSwap(false, true) {
+	// A managed instance registers its own project once it is ready.
+	if s == nil || s.managed != nil || !s.registering.CompareAndSwap(false, true) {
 		return
 	}
 	go s.registerCodeProjects(ctx)
@@ -155,31 +156,57 @@ func (s *searchState) registerCodeProjects(ctx context.Context) {
 	}
 
 	for _, p := range projects {
-		if prev, ok := known[p.id]; ok && sameRoot(prev.RootPath, p.root) {
+		s.registerKnown(ctx, client, known, p, false)
+	}
+}
+
+// registerProject registers one repository with the client's Pando, the way
+// the registration pass does, and reports whether Pando accepted it or already
+// held it. A managed instance calls it once it is ready. With quiet set, a
+// project the instance already holds leaves the recorded status alone, so a
+// restart does not overwrite "indexing" with "already registered".
+func (s *searchState) registerProject(ctx context.Context, client pandoAPI, p codeProject, quiet bool) bool {
+	known := make(map[string]pando.Project)
+	if existing, err := client.ListProjects(ctx); err != nil {
+		s.log.Debug("could not list the Pando code projects", "error", err)
+	} else {
+		for _, k := range existing {
+			known[k.ProjectID] = k
+		}
+	}
+	return s.registerKnown(ctx, client, known, p, quiet)
+}
+
+// registerKnown is the body of the registration of one project against the
+// projects Pando already holds.
+func (s *searchState) registerKnown(ctx context.Context, client pandoAPI, known map[string]pando.Project, p codeProject, quiet bool) bool {
+	if prev, ok := known[p.id]; ok && sameRoot(prev.RootPath, p.root) {
+		if !quiet {
 			s.noteCodeIndex(p.repo, codeIndexView{
 				Project: p.id, Status: codeIndexStatusRegistered,
 				Note: "Already registered with Pando; it was not reindexed. " +
 					"Use Reindex to ask for a fresh pass.",
 			})
-			continue
 		}
-		job, err := client.IndexProject(ctx, p.root, p.id)
-		if err != nil {
-			s.log.Warn("the repository could not be registered with Pando",
-				"repo", p.repo, "project", p.id, "error", err)
-			s.noteCodeIndex(p.repo, codeIndexView{
-				Project: p.id, Status: codeIndexStatusUnavailable,
-				Note: "Pando did not accept the code project, so there is no code search: " + err.Error(),
-			})
-			continue
-		}
-		s.log.Info("registered the repository with Pando as a code project",
-			"repo", p.repo, "project", p.id, "root", p.root, "job", job)
-		s.noteCodeIndex(p.repo, codeIndexView{
-			Project: p.id, Status: codeIndexStatusIndexing, Job: job,
-			Note: "Indexing the repository root; code search answers as the index fills.",
-		})
+		return true
 	}
+	job, err := client.IndexProject(ctx, p.root, p.id)
+	if err != nil {
+		s.log.Warn("the repository could not be registered with Pando",
+			"repo", p.repo, "project", p.id, "error", err)
+		s.noteCodeIndex(p.repo, codeIndexView{
+			Project: p.id, Status: codeIndexStatusUnavailable,
+			Note: "Pando did not accept the code project, so there is no code search: " + err.Error(),
+		})
+		return false
+	}
+	s.log.Info("registered the repository with Pando as a code project",
+		"repo", p.repo, "project", p.id, "root", p.root, "job", job)
+	s.noteCodeIndex(p.repo, codeIndexView{
+		Project: p.id, Status: codeIndexStatusIndexing, Job: job,
+		Note: "Indexing the repository root; code search answers as the index fills.",
+	})
+	return true
 }
 
 // sameRoot reports whether Pando's record of a project points at the tree this

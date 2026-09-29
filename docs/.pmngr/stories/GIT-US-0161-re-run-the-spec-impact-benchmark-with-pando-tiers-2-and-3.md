@@ -2,7 +2,7 @@
 id: GIT-US-0161
 type: story
 title: Re-run the spec impact benchmark with Pando tiers 2 and 3
-status: todo
+status: done
 priority: low
 parent: GIT-EP-0029
 milestone: GIT-M-0015
@@ -10,7 +10,9 @@ author: mcp
 labels: [docs, agent-ok]
 estimate: 2
 created: 2026-09-24T23:18:51Z
-updated: 2026-09-25T11:15:00Z
+updated: 2026-09-29T18:43:56Z
+started: 2026-09-29T18:43:17Z
+closed: 2026-09-29T18:43:56Z
 ---
 
 ## Description
@@ -19,6 +21,6 @@ The GIT-US-0137 benchmark (PR #76) ran without Pando, so only tier 1 was measure
 
 ## Acceptance Criteria
 
-- [ ] The same PR set is run with Pando configured and the repository already indexed. Indexing jobs are not polled during the run.
-- [ ] The benchmark doc gains tier 2 and tier 3 columns: hits, precision and tokens.
-- [ ] A follow-up is filed if tier 2 or tier 3 hurts the budget or precision.
+- [x] The same PR set is run with Pando configured and the repository already indexed. Indexing jobs are not polled during the run.
+- [x] The benchmark doc gains tier 2 and tier 3 columns: hits, precision and tokens.
+- [x] A follow-up is filed if tier 2 or tier 3 hurts the budget or precision.

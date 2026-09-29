@@ -1,6 +1,7 @@
 package trace
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 	"testing/fstest"
@@ -117,20 +118,22 @@ func TestDeclReferences(t *testing.T) {
 	render := func(refs []declRef) []string {
 		out := []string{}
 		for _, r := range refs {
-			out = append(out, r.path+"#"+r.symbol+" "+r.name)
+			out = append(out, fmt.Sprintf("%s#%s %s %d", r.path, r.symbol, r.name, r.users))
 		}
 		return out
 	}
 
+	// Each reference carries the users of its name in the whole package:
+	// untraced.go's function counts, though it is not returned (GIT-US-0168).
 	t.Run("a const", func(t *testing.T) {
 		t.Parallel()
 		got := render(declReferences(tree, "internal/page/page.go", "page", []string{"maxPageSize"}, traced))
 		want := []string{
-			"internal/page/other.go#elsewhere maxPageSize",
-			"internal/page/page.go#boundedLimit maxPageSize",
-			"internal/page/page.go#closure maxPageSize",
-			"internal/page/page.go#mapKey maxPageSize",
-			"internal/page/page.go#shadowedInBlock maxPageSize",
+			"internal/page/other.go#elsewhere maxPageSize 6",
+			"internal/page/page.go#boundedLimit maxPageSize 6",
+			"internal/page/page.go#closure maxPageSize 6",
+			"internal/page/page.go#mapKey maxPageSize 6",
+			"internal/page/page.go#shadowedInBlock maxPageSize 6",
 		}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("declReferences() = %q\nwant %q", got, want)
@@ -140,9 +143,9 @@ func TestDeclReferences(t *testing.T) {
 		t.Parallel()
 		got := render(declReferences(tree, "internal/page/page.go", "page", []string{"Limit", "hi"}, traced))
 		want := []string{
-			"internal/page/page.go#Limit.Clamp Limit",
-			"internal/page/page.go#Limit.Clamp hi",
-			"internal/page/page.go#typed Limit",
+			"internal/page/page.go#Limit.Clamp Limit 2",
+			"internal/page/page.go#Limit.Clamp hi 1",
+			"internal/page/page.go#typed Limit 2",
 		}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("declReferences() = %q\nwant %q", got, want)

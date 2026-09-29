@@ -643,6 +643,10 @@ export type ImpactResult = {
     status: 'ok' | 'unavailable' | 'error' | 'skipped';
     hits: number;
     truncated?: boolean;
+    /** Tier 1: requirements only a widely used declaration reached, left out (GIT-US-0168). */
+    dropped?: number;
+    /** Tier 1: the widely used declarations behind `dropped`. */
+    droppedVia?: string[];
     message?: string;
   }[];
   hits: ImpactHit[];

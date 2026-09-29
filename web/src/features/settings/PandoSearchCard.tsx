@@ -33,6 +33,7 @@ import { useCallback, useEffect, useId, useState } from 'react';
 import {
   ProviderError,
   type SearchCodeIndex,
+  type SearchIndexedRepo,
   type SearchReindexPhase,
   type SearchSettings,
   type SearchSettingsPatch,
@@ -149,6 +150,66 @@ function CodeIndexCell({ code }: { code: SearchCodeIndex | undefined }) {
   );
 }
 
+/**
+ * One managed Pando instance: its state, version and last error, with a
+ * restart control (GIT-US-0177, ADR-039).
+ */
+function ManagedInstanceRow({
+  repo,
+  restarting,
+  onRestart,
+}: {
+  repo: SearchIndexedRepo;
+  restarting: boolean;
+  onRestart: () => void;
+}) {
+  const managed = repo.managed;
+  if (managed === undefined) return null;
+  const tone =
+    managed.state === 'ready'
+      ? 'success'
+      : managed.state === 'failed'
+        ? 'destructive'
+        : managed.state === 'starting' || managed.state === 'restarting'
+          ? 'info'
+          : managed.state === 'skipped'
+            ? 'warning'
+            : 'outline';
+  const canRestart = managed.optedIn && managed.state !== 'disabled' && managed.state !== 'skipped';
+  return (
+    <TableRow>
+      <TableCell className="font-medium">{repo.repo}</TableCell>
+      <TableCell>
+        <Badge variant={tone} size="sm">
+          {managed.state}
+        </Badge>
+      </TableCell>
+      <TableCell>{managed.version ?? '—'}</TableCell>
+      <TableCell className="text-2xs">
+        {managed.error === undefined || managed.error === '' ? (
+          <span className="text-muted-foreground">—</span>
+        ) : (
+          <span className="text-destructive">{managed.error}</span>
+        )}
+      </TableCell>
+      <TableCell>
+        {canRestart ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={restarting}
+            aria-label={`Restart Pando for ${repo.repo}`}
+            onClick={onRestart}
+          >
+            {restarting ? 'Restarting…' : 'Restart'}
+          </Button>
+        ) : null}
+      </TableCell>
+    </TableRow>
+  );
+}
+
 export function PandoSearchCard() {
   const provider = useOptionalProvider();
   if (!provider?.capabilities.searchSettings) return null;
@@ -168,6 +229,7 @@ function PandoSearchSettings() {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [starting, setStarting] = useState(false);
+  const [restartingRepo, setRestartingRepo] = useState<string | null>(null);
   /** The last `search.progress` frame, so the button reports live work. */
   const [progress, setProgress] = useState<{
     phase: SearchReindexPhase;
@@ -262,6 +324,21 @@ function PandoSearchSettings() {
       })
       .finally(() => {
         setStarting(false);
+      });
+  };
+
+  const restartManaged = (repo: string) => {
+    setRestartingRepo(repo);
+    setError(null);
+    provider
+      .restartManagedSearch(repo)
+      .then(() => load())
+      .catch((cause: unknown) => {
+        setError(searchSettingsMessage(cause));
+        toast({ title: 'The restart did not start', variant: 'destructive' });
+      })
+      .finally(() => {
+        setRestartingRepo(null);
       });
   };
 
@@ -426,6 +503,51 @@ function PandoSearchSettings() {
             </span>
           )}
         </p>
+
+        {settings.mode === 'managed' ? (
+          <div className="space-y-2" data-testid="pando-managed">
+            <h3 className="font-medium">Managed Pando</h3>
+            <p className="text-muted-foreground">
+              This companion runs one Pando per repository that opted in to semantic search
+              {settings.binary === undefined || settings.binary === '' ? '' : ` (${settings.binary})`}
+              {settings.maxInstances === undefined ? '' : `, up to ${String(settings.maxInstances)} at a time`}.
+              Turn a repository on or off from the workspace list.
+            </p>
+            {settings.indexed.some((repo) => repo.managed?.optedIn === true) ? (
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Repository</TableHead>
+                      <TableHead>State</TableHead>
+                      <TableHead>Pando version</TableHead>
+                      <TableHead>Last error</TableHead>
+                      <TableHead>
+                        <span className="sr-only">Actions</span>
+                      </TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {settings.indexed
+                      .filter((repo) => repo.managed?.optedIn === true)
+                      .map((repo) => (
+                        <ManagedInstanceRow
+                          key={repo.repo}
+                          repo={repo}
+                          restarting={restartingRepo === repo.repo}
+                          onRestart={() => {
+                            restartManaged(repo.repo);
+                          }}
+                        />
+                      ))}
+                  </TableBody>
+                </Table>
+              </div>
+            ) : (
+              <p className="text-muted-foreground">No repository has opted in yet.</p>
+            )}
+          </div>
+        ) : null}
 
         <div className="space-y-2">
           <h3 className="font-medium">What Pando indexes</h3>

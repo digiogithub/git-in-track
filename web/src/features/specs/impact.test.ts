@@ -71,6 +71,7 @@ describe('tierStatusText', () => {
   it.each([
     [{ tier: 1 as const, status: 'ok' as const, hits: 0 }, undefined],
     [{ tier: 2 as const, status: 'ok' as const, hits: 0, truncated: true }, 'Partial'],
+    [{ tier: 1 as const, status: 'ok' as const, hits: 1, dropped: 14, droppedVia: ['Item'] }, '14 requirements reached only through Item'],
     [{ tier: 3 as const, status: 'skipped' as const, hits: 0 }, 'Skipped'],
     [{ tier: 2 as const, status: 'unavailable' as const, hits: 0, message: 'down' }, 'down'],
     [{ tier: 3 as const, status: 'error' as const, hits: 0, message: 'not indexed' }, 'Error'],

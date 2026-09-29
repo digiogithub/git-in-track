@@ -37,9 +37,29 @@ const (
 	DefaultCallBudget = 10 * time.Second
 	// maxQueryNames caps the symbol names in the tier-3 query text.
 	maxQueryNames = 12
+	// DefaultMaxDeclUsers bounds the decl: reach of tier 1: a changed
+	// package-level const, var or type that more functions of its package use
+	// reaches none of them (GIT-US-0168). The requirements only it reached
+	// are counted in the tier's Dropped. A type used everywhere, such as
+	// core.Item, says little about which requirement a change affects.
+	DefaultMaxDeclUsers = 10
 	// maxReasons caps the reasons of one hit; the rest are counted in "+n".
 	maxReasons = 4
+	// maxDefinitions is the page of definitions tier 2 asks code_find_symbol
+	// for when it pins a name: enough to tell one from several.
+	maxDefinitions = 50
+	// maxGraphProbes caps the changed files tier 2 asks code_related_files
+	// about when no changed name has a caller (GIT-US-0167).
+	maxGraphProbes = 5
 )
+
+// NoCallEdges is the fixed message of a tier 2 that found no call edge in
+// the Pando code project: every changed name answered "No callers found" and
+// no changed file is coupled to another. Pando answers that way both for a
+// symbol nothing calls and for a project indexed without its code graph, so
+// an empty answer is only trusted once the graph is shown to exist.
+const NoCallEdges = "the Pando code project has no call edges: " +
+	"index the repository root with [TokenOptimization] BuildCodeGraph = true"
 
 // Differ lists the files that changed between two revisions, or between a
 // revision and the working tree (gitops.WorkingTree). gitops.Backend is one.
@@ -59,6 +79,25 @@ type CommitLister interface {
 // one.
 type CallGraph interface {
 	ImpactAnalysis(ctx context.Context, projectID string, symbols []string, o pando.ImpactOptions) (pando.ImpactResult, error)
+}
+
+// SymbolFinder pins a name to its definitions (code_find_symbol);
+// *pando.Client is one. Pando resolves a callee by name, so a CallGraph that
+// is also a SymbolFinder lets tier 2 drop the callers of a name that an
+// unchanged definition shares (GIT-US-0166). Without one, every caller of
+// the name is kept.
+type SymbolFinder interface {
+	FindSymbol(ctx context.Context, projectID, name string, o pando.FindSymbolOptions) ([]pando.Symbol, error)
+}
+
+// FileRelator ranks the files coupled to one file (code_related_files);
+// *pando.Client is one. A CallGraph that is also a FileRelator lets tier 2
+// tell a project without call edges from a diff nothing calls (GIT-US-0167):
+// when no changed name has a caller, the changed files are probed, and a
+// project where none is coupled to another answers `unavailable`
+// (NoCallEdges). Without one, an empty answer is taken as it comes.
+type FileRelator interface {
+	RelatedFiles(ctx context.Context, projectID, path string, o pando.RelatedFilesOptions) (pando.RelatedFilesResult, error)
 }
 
 // Coverage computes the coverage rows of requirements; *trace.Coverage is
@@ -89,6 +128,10 @@ type Options struct {
 	MaxSymbols int
 	// CallBudget bounds tier 2; 0 is DefaultCallBudget.
 	CallBudget time.Duration
+	// MaxDeclUsers bounds the decl: reach of tier 1 by the users of the
+	// changed declaration; 0 is DefaultMaxDeclUsers, a negative value no
+	// bound.
+	MaxDeclUsers int
 }
 
 // Resolver answers impact queries over one repository.
@@ -103,6 +146,9 @@ func New(opts Options) *Resolver {
 	}
 	if opts.CallBudget <= 0 {
 		opts.CallBudget = DefaultCallBudget
+	}
+	if opts.MaxDeclUsers == 0 {
+		opts.MaxDeclUsers = DefaultMaxDeclUsers
 	}
 	return &Resolver{opts: opts}
 }
@@ -123,11 +169,20 @@ type hitState struct {
 	touched   bool // a code or test edge the diff changes, directly or through a call
 	behaviour bool // a reason reached the requirement through its code or the story
 	tested    bool // a reason reached it through a test that verifies it
+	shared    bool // a call reached it through a caller that carries several requirements
 	reasons   [4][]string
 }
 
+// kindShared is the kind of a tier-2 reason whose production caller carries
+// the code edges of several requirements (GIT-US-0166): the call says the
+// caller runs changed code, not which of its rules changed. It never
+// overrides a test-only verdict; alone, it is behaviour. It is never
+// rendered.
+const kindShared core.ImpactKind = "shared"
+
 // kind is the hit's ImpactKind: behaviour as soon as one reason is, test-only
-// when every certain reason came through a verifying test, empty for a
+// when every other certain reason came through a verifying test, behaviour
+// when the only reasons are calls from shared callers, empty for a
 // candidate.
 func (h *hitState) kind() core.ImpactKind {
 	switch {
@@ -135,6 +190,8 @@ func (h *hitState) kind() core.ImpactKind {
 		return core.ImpactKindBehaviour
 	case h.tested:
 		return core.ImpactKindTestOnly
+	case h.shared:
+		return core.ImpactKindBehaviour
 	}
 	return ""
 }
@@ -159,6 +216,7 @@ func (c *collector) add(ref core.RequirementRef, tier int, reason string, touche
 	h.touched = h.touched || touched
 	h.behaviour = h.behaviour || kind == core.ImpactKindBehaviour
 	h.tested = h.tested || kind == core.ImpactKindTestOnly
+	h.shared = h.shared || kind == kindShared
 	for _, r := range h.reasons[tier] {
 		if r == reason {
 			return h
@@ -213,15 +271,10 @@ func (r *Resolver) Impact(ctx context.Context, ix *core.Index, q core.ImpactQuer
 	if err != nil {
 		return core.ImpactResult{}, fmt.Errorf("trace graph: %w", err)
 	}
+	var wide map[core.RequirementRef][]string
 	if q.Wants(core.ImpactTierDirect) {
 		tiers[0].Status = core.ImpactTierOK
-		for _, h := range touching {
-			reason := h.Reason + ":" + h.TraceRef()
-			if h.Reason == "decl" && h.Changed != "" {
-				reason += " uses " + h.Changed
-			}
-			col.add(h.Ref, core.ImpactTierDirect, reason, true, roleKind(h.Role))
-		}
+		wide = r.direct(touching, col)
 		storyHits(ix, q.Story, col)
 	}
 
@@ -243,6 +296,7 @@ func (r *Resolver) Impact(ctx context.Context, ix *core.Index, q core.ImpactQuer
 		h := col.add(s.ref, core.ImpactTierSemantic, "semantic", false, "")
 		h.score = s.score
 	}
+	tiers[0].Dropped, tiers[0].DroppedVia = dropped(wide, col)
 
 	var headSHA string
 	for _, h := range col.hits {
@@ -262,6 +316,51 @@ func (r *Resolver) Impact(ctx context.Context, ix *core.Index, q core.ImpactQuer
 	res.Tiers = tiers
 	res.Hits = hits
 	return res, nil
+}
+
+// direct adds the tier-1 hits of the touched trace edges. A decl: reason
+// through a declaration more functions of its package use than the bound is
+// left out: the returned map holds, for each requirement it would have
+// reached, the names of those declarations (GIT-US-0168).
+func (r *Resolver) direct(touching []core.TraceHit, col *collector) map[core.RequirementRef][]string {
+	wide := map[core.RequirementRef][]string{}
+	for _, h := range touching {
+		if h.Reason == "decl" && r.opts.MaxDeclUsers > 0 && h.Users > r.opts.MaxDeclUsers {
+			wide[h.Ref] = append(wide[h.Ref], h.Changed)
+			continue
+		}
+		reason := h.Reason + ":" + h.TraceRef()
+		if h.Reason == "decl" && h.Changed != "" {
+			reason += " uses " + h.Changed
+		}
+		col.add(h.Ref, core.ImpactTierDirect, reason, true, roleKind(h.Role))
+	}
+	return wide
+}
+
+// dropped counts the requirements only a widely used declaration reached —
+// no reason of any tier reached them otherwise — and names those
+// declarations, sorted and deduplicated.
+func dropped(wide map[core.RequirementRef][]string, col *collector) (n int, via []string) {
+	names := map[string]bool{}
+	for ref, via := range wide {
+		if _, reported := col.hits[ref]; reported {
+			continue
+		}
+		n++
+		for _, name := range via {
+			names[name] = true
+		}
+	}
+	if n == 0 {
+		return 0, nil
+	}
+	via = make([]string, 0, len(names))
+	for name := range names {
+		via = append(via, name)
+	}
+	sort.Strings(via)
+	return n, via
 }
 
 // headCommit returns the full commit id the diff ends at, "" when there is
@@ -390,7 +489,17 @@ func isTestPath(p string) bool {
 }
 
 // transitive runs tier 2: the callers of each changed symbol, mapped to the
-// traced symbols that enclose them.
+// traced symbols that enclose them. Three rules keep it precise
+// (GIT-US-0166, docs/03 R-IMP-3):
+//
+//   - a name that an unchanged definition shares is pinned first, when the
+//     client can (SymbolFinder), and its callers are not taken: Pando
+//     resolves callees by name, so they may call the other definition. A
+//     failing pin turns pinning off for the rest of the query;
+//   - a caller in a test file is test evidence (test-only), whatever marker
+//     it carries;
+//   - a production caller that carries the code edges of several
+//     requirements gives kindShared, which does not flip a test-only hit.
 func (r *Resolver) transitive(ctx context.Context, q core.ImpactQuery, symbols []changedSymbol,
 	graph *trace.Graph, tree fs.FS, col *collector,
 ) core.ImpactTier {
@@ -436,8 +545,26 @@ func (r *Resolver) transitive(ctx context.Context, q core.ImpactQuery, symbols [
 		kind   core.ImpactKind
 	}
 	var found []pending
+	callers := 0
 	lines := newLineMapper(tree)
+	finder, _ := client.(SymbolFinder)
+	changed := map[string]bool{}
+	for _, s := range symbols {
+		changed[s.path+"#"+s.symbol] = true
+	}
 	for _, name := range names {
+		if finder != nil {
+			defs, err := finder.FindSymbol(ctx, r.opts.ProjectID, name, pando.FindSymbolOptions{Limit: maxDefinitions})
+			switch {
+			case err != nil:
+				// A Pando without code_find_symbol still has callers: stop
+				// pinning and keep every caller, as without a finder. A Pando
+				// that cannot answer fails on the caller call below.
+				finder = nil
+			case sharedName(name, defs, changed, lines):
+				continue
+			}
+		}
 		// One call per symbol, so each caller is attributed to the symbol it
 		// was reached from.
 		out, err := client.ImpactAnalysis(ctx, r.opts.ProjectID, []string{name},
@@ -448,22 +575,119 @@ func (r *Resolver) transitive(ctx context.Context, q core.ImpactQuery, symbols [
 			return tier
 		}
 		tier.Truncated = tier.Truncated || out.Truncated
+		callers += len(out.Callers)
 		for _, c := range out.Callers {
 			p, ok := repoPath(c.FilePath)
 			if !ok {
 				continue
 			}
 			sym := lines.symbolAt(p, c.StartLine)
-			for _, e := range graph.ForSymbol(p, sym) {
+			edges := graph.ForSymbol(p, sym)
+			shared := codeRefs(edges) > 1
+			for _, e := range edges {
 				reason := "call:" + e.TraceRef() + " calls " + name + " d" + strconv.Itoa(max(c.Depth, 1))
-				found = append(found, pending{ref: e.Ref, reason: reason, kind: roleKind(e.Role)})
+				kind := roleKind(e.Role)
+				switch {
+				case isTestPath(p):
+					kind = core.ImpactKindTestOnly
+				case shared && kind == core.ImpactKindBehaviour:
+					kind = kindShared
+				}
+				found = append(found, pending{ref: e.Ref, reason: reason, kind: kind})
 			}
+		}
+	}
+	if len(names) > 0 && callers == 0 {
+		if status, message := r.probeGraph(ctx, client, symbols); status != core.ImpactTierOK {
+			tier.Status, tier.Message, tier.Truncated = status, message, false
+			return tier
 		}
 	}
 	for _, f := range found {
 		col.add(f.ref, core.ImpactTierTransitive, f.reason, true, f.kind)
 	}
 	return tier
+}
+
+// probeGraph checks that the Pando code project has call edges, once tier 2
+// found no caller of any changed name. It asks code_related_files about the
+// changed files, test files included (a test calls the code it tests), in
+// sorted order and at most maxGraphProbes of them: the first coupled file
+// proves the graph, and the empty answers were real. No coupled file gives
+// `unavailable` with NoCallEdges, a Pando that cannot answer the probe gives
+// its own fixed reason, and a client that cannot probe leaves the tier ok.
+func (r *Resolver) probeGraph(ctx context.Context, client CallGraph, symbols []changedSymbol) (status core.ImpactTierStatus, message string) {
+	relator, ok := client.(FileRelator)
+	if !ok {
+		return core.ImpactTierOK, ""
+	}
+	seen := map[string]bool{}
+	var files []string
+	for _, s := range symbols {
+		if !seen[s.path] {
+			seen[s.path] = true
+			files = append(files, s.path)
+		}
+	}
+	sort.Strings(files)
+	if len(files) > maxGraphProbes {
+		files = files[:maxGraphProbes]
+	}
+	for _, p := range files {
+		res, err := relator.RelatedFiles(ctx, r.opts.ProjectID, p, pando.RelatedFilesOptions{Limit: 1})
+		switch {
+		case err == nil && len(res.Files) > 0:
+			return core.ImpactTierOK, ""
+		case err != nil && (pando.IsUnavailable(err) || errors.Is(err, context.DeadlineExceeded)):
+			return pandoFailure(err)
+		}
+		// Any other failure is no evidence of a graph: try the next file.
+	}
+	return core.ImpactTierUnavailable, NoCallEdges
+}
+
+// sharedName reports whether a definition the diff did not change shares
+// name with a changed one: several callable definitions of that name, one of
+// which does not map (by file and start line) onto a changed symbol. Pando's
+// call edges cannot tell those definitions apart, so their callers are
+// dropped. A single definition, or several that all changed, is not shared.
+func sharedName(name string, defs []pando.Symbol, changed map[string]bool, lines *lineMapper) bool {
+	n, unchanged := 0, false
+	for _, d := range defs {
+		if d.Name != name || !callable(d.SymbolType) {
+			continue
+		}
+		n++
+		p, ok := repoPath(d.FilePath)
+		if !ok || !changed[p+"#"+lines.symbolAt(p, d.StartLine)] {
+			unchanged = true
+		}
+	}
+	return n > 1 && unchanged
+}
+
+// callable reports whether a code_find_symbol symbol type can be a callee:
+// every type but the ones that name data or a namespace. An unknown type
+// counts, so a name is never taken for unique because of a type Pando added.
+func callable(symbolType string) bool {
+	switch strings.ToLower(symbolType) {
+	case "field", "property", "variable", "constant", "struct", "interface", "type",
+		"enum", "module", "package", "namespace", "import":
+		return false
+	}
+	return true
+}
+
+// codeRefs counts the distinct requirements the code edges of a caller
+// carry.
+func codeRefs(edges []core.TraceEdge) int {
+	seen := map[core.RequirementRef]bool{}
+	for _, e := range edges {
+		if e.Role == core.TraceRoleCode {
+			seen[e.Ref] = true
+		}
+	}
+	return len(seen)
 }
 
 // pandoFailure is the status and message of a tier whose Pando call failed.
@@ -534,8 +758,8 @@ type semanticHit struct {
 	score float64
 }
 
-// semantic runs tier 3: requirement blocks ranked near the changed symbol
-// names and the story title.
+// semantic runs tier 3: requirement blocks ranked near what the story and
+// the changed declarations say (queryText).
 func (r *Resolver) semantic(ctx context.Context, ix *core.Index, q core.ImpactQuery, symbols []changedSymbol) (core.ImpactTier, []semanticHit) {
 	tier := core.ImpactTier{Tier: core.ImpactTierSemantic, Status: core.ImpactTierOK}
 	var searcher vault.SemanticSearcher
@@ -547,7 +771,7 @@ func (r *Resolver) semantic(ctx context.Context, ix *core.Index, q core.ImpactQu
 		tier.Message = "no Pando semantic search is configured"
 		return tier, nil
 	}
-	text := queryText(ix, q, symbols)
+	text := queryText(ix, q, symbols, r.opts.Engine.Tree())
 	if text == "" {
 		return tier, nil
 	}
@@ -575,36 +799,6 @@ func (r *Resolver) semantic(ctx context.Context, ix *core.Index, q core.ImpactQu
 		out = append(out, semanticHit{ref: ref, score: math.Round(h.Score*1000) / 1000})
 	}
 	return tier, out
-}
-
-// queryText is the tier-3 query: the story title, the caller's title and the
-// changed symbol names, split into words.
-func queryText(ix *core.Index, q core.ImpactQuery, symbols []changedSymbol) string {
-	var parts []string
-	if q.Story != "" {
-		if it, err := ix.Item(q.Story); err == nil {
-			parts = append(parts, strings.TrimSpace(it.Title))
-		}
-	}
-	if t := strings.TrimSpace(q.Title); t != "" {
-		parts = append(parts, t)
-	}
-	seen := map[string]bool{}
-	var names []string
-	for _, s := range symbols {
-		n := pandoName(s.symbol)
-		if n == "" || seen[n] {
-			continue
-		}
-		seen[n] = true
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	if len(names) > maxQueryNames {
-		names = names[:maxQueryNames]
-	}
-	parts = append(parts, names...)
-	return strings.TrimSpace(strings.Join(parts, " "))
 }
 
 // render turns the collected hits into the sorted answer: title, coverage

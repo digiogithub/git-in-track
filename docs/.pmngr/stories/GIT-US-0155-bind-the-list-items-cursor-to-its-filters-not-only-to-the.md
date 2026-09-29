@@ -2,13 +2,14 @@
 id: GIT-US-0155
 type: story
 title: Bind the list_items cursor to its filters, not only to the sort
-status: in_review
+status: done
 priority: medium
 author: mcp
 labels: [mcp, agent-ok]
 estimate: 2
 created: 2026-09-24T23:02:40Z
-updated: 2026-09-25T11:15:00Z
+updated: 2026-09-29T18:43:17Z
+closed: 2026-09-29T18:43:17Z
 ---
 
 ## Description
@@ -19,5 +20,5 @@ While writing the MCP pagination spec (GIT-US-0136, PR #74), the agent found tha
 
 - [x] A failing test: walking `list_items` with a cursor and changing `status`, `type`, `label` or `milestone` is accepted today.
 - [x] The cursor fingerprint covers every filter and the sort. A mismatch is refused with the existing cursor error, the same way the other paginated tools behave.
-- [ ] `list_requirements`, `spec_coverage` and the other cursor tools are checked for the same gap.
+- [x] `list_requirements`, `spec_coverage` and the other cursor tools are checked for the same gap.
 - [x] docs/08 matches the behaviour. If GIT-SP-0004 is merged by then, its requirement is updated with a MODIFIED Spec Delta.

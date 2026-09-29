@@ -10,6 +10,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -437,7 +438,8 @@ func TestImpactTiers(t *testing.T) {
 			t.Errorf("hits = %+v, want four (no foreign or item candidate)", res.Hits)
 		}
 		if sem.query.Kind != core.SearchKindRequirement ||
-			sem.query.Q != "Reserve the numbers a delta names NextID" {
+			sem.query.Q != "Reserve the numbers a delta names\n"+
+				"Reserve numbers: The allocator SHALL reserve every number a delta names, applied or not.\nnext id" {
 			t.Errorf("semantic query = %+v", sem.query)
 		}
 		if strings.Join(graph.asked, ",") != "NextID" {
@@ -1018,4 +1020,114 @@ func TestImpactBenchmarkMisses(t *testing.T) {
 		}
 	}
 	checkGolden(t, "impact_benchmark_misses.golden.json", bytes.ReplaceAll(append(a, '\n'), []byte(base), []byte("<base>")))
+}
+
+// fxResult is a widely used type of the fixture's mcp package: eleven
+// functions use Result, above the default bound of the decl reach
+// (GIT-US-0168). Two of them are traced: pageResult, to the requirement
+// boundedLimit already reaches, which also uses the narrowly used
+// maxPageSize, and registerResultTools, to a requirement nothing else
+// reaches. Its file sorts before page.go, so the diff reaches pageResult
+// through the wide name first and must keep the narrow one.
+var fxResult = func() string {
+	var b strings.Builder
+	b.WriteString(`package mcp
+
+// Result is what every tool answers.
+type Result struct {
+	Text string
+}
+
+// Implements: ACME-SP-0002.R1
+func pageResult() Result {
+	_ = maxPageSize
+	return Result{}
+}
+
+// Implements: ACME-SP-0002.R2
+func registerResultTools() Result { return Result{} }
+`)
+	for i := 1; i <= 9; i++ {
+		fmt.Fprintf(&b, "\nfunc tool%02d() Result { return Result{} }\n", i)
+	}
+	return b.String()
+}()
+
+// TestImpactDeclReachBounded covers the bound of the decl reach through a
+// widely used declaration (GIT-US-0168, docs/03 R-IMP-2).
+func TestImpactDeclReachBounded(t *testing.T) {
+	f := newFixture(t)
+	f.write(fxPagingSpecPath, fxPagingSpec)
+	f.write("src/mcp/page.go", fxPage)
+	f.write("src/mcp/answer.go", fxResult)
+	base := f.commit("mcp surface")
+	if _, err := f.vlt.Reload(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// One change to a narrowly used const (2 users) and one to a widely used
+	// type (11 users).
+	f.write("src/mcp/page.go", strings.Replace(fxPage, "maxPageSize     = 100", "maxPageSize     = 200", 1))
+	f.write("src/mcp/answer.go", strings.Replace(fxResult, "\tText string\n", "\tText  string\n\tCount int\n", 1))
+
+	for _, tc := range []struct {
+		name       string
+		max        int
+		want       map[string]string
+		dropped    int
+		droppedVia []string
+		golden     string
+	}{
+		{
+			name: "the default bound drops the widely used type's reach and counts it",
+			want: map[string]string{
+				"ACME-SP-0002.R1": "decl:src/mcp/answer.go#pageResult uses maxPageSize, decl:src/mcp/page.go#boundedLimit uses maxPageSize",
+			},
+			dropped:    1,
+			droppedVia: []string{"Result"},
+			golden:     "impact_decl_bounded.golden.json",
+		},
+		{
+			name: "a bound above the type's users keeps its reach",
+			max:  11,
+			want: map[string]string{
+				"ACME-SP-0002.R1": "decl:src/mcp/answer.go#pageResult uses maxPageSize, decl:src/mcp/page.go#boundedLimit uses maxPageSize",
+				"ACME-SP-0002.R2": "decl:src/mcp/answer.go#registerResultTools uses Result",
+			},
+		},
+		{
+			name: "a negative bound is no bound",
+			max:  -1,
+			want: map[string]string{
+				"ACME-SP-0002.R1": "decl:src/mcp/answer.go#pageResult uses maxPageSize, decl:src/mcp/page.go#boundedLimit uses maxPageSize",
+				"ACME-SP-0002.R2": "decl:src/mcp/answer.go#registerResultTools uses Result",
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := f.resolver(nil, nil)
+			r.opts.MaxDeclUsers = tc.max
+			if tc.max == 0 {
+				r = f.resolver(nil, nil)
+			}
+			res := f.impact(r, core.ImpactQuery{Base: base, Tiers: []int{1}})
+			got := map[string]string{}
+			for _, h := range res.Hits {
+				got[h.Ref.String()] = strings.Join(h.Reasons, ", ")
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("hits = %q\nwant %q", got, tc.want)
+			}
+			t1 := res.Tiers[0]
+			if t1.Dropped != tc.dropped || !reflect.DeepEqual(t1.DroppedVia, tc.droppedVia) {
+				t.Errorf("tier 1 dropped %d via %q, want %d via %q", t1.Dropped, t1.DroppedVia, tc.dropped, tc.droppedVia)
+			}
+			if tc.golden != "" {
+				a, err := json.MarshalIndent(res, "", "  ")
+				if err != nil {
+					t.Fatal(err)
+				}
+				checkGolden(t, tc.golden, bytes.ReplaceAll(append(a, '\n'), []byte(base), []byte("<base>")))
+			}
+		})
+	}
 }

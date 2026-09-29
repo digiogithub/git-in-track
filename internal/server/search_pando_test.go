@@ -31,6 +31,11 @@ type fakePando struct {
 	lastQuery string
 	lastOpts  pando.KBSearchOptions
 	searches  int
+	// kbOpts records the options of every knowledge-base search in order.
+	kbOpts []pando.KBSearchOptions
+	// honourPrefix applies a search's PathPrefix to hits' FilePath the way
+	// Pando does in SQL; off, the fake answers the same hits to any prefix.
+	honourPrefix bool
 
 	indexed  []string
 	indexErr error
@@ -56,7 +61,17 @@ func (f *fakePando) Health(context.Context) error { return f.healthErr }
 func (f *fakePando) SearchKB(ctx context.Context, q string, o pando.KBSearchOptions) ([]pando.KBHit, error) {
 	f.mu.Lock()
 	f.lastQuery, f.lastOpts, f.searches = q, o, f.searches+1
+	f.kbOpts = append(f.kbOpts, o)
 	block, hits, err := f.block, f.hits, f.searchErr
+	if f.honourPrefix && o.PathPrefix != "" {
+		var kept []pando.KBHit
+		for _, h := range hits {
+			if strings.HasPrefix(h.FilePath, o.PathPrefix) {
+				kept = append(kept, h)
+			}
+		}
+		hits = kept
+	}
 	f.mu.Unlock()
 	if block != nil {
 		select {

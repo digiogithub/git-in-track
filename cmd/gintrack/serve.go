@@ -199,6 +199,8 @@ func runServe(cmd *cobra.Command, build buildInfo, flags *serveFlags) error {
 		// indexes the repository itself, so there is nothing else to point it
 		// at from here (GIT-EP-0020).
 		Search: searchSettings(cfg),
+		// Where the managed Pando instances keep `pando/<key>/` (ADR-039).
+		CacheDir: cfg.CacheDir(res.Path),
 		// The public tunnel. Only the startup path may turn it on implicitly;
 		// a toggle made in the web UI is never written back to the file.
 		Tunnel: config.Tunnel{Enabled: tunnelOn, Provider: cfg.Server.Tunnel.Provider},
@@ -285,6 +287,8 @@ func mountList(cfg *config.Config, workspace string, extra []string) ([]server.R
 			Role:        string(repo.Role),
 			DocsFolder:  repo.DocsFolder,
 			DocsFolders: repo.DeclaredDocsFolders(),
+			// The machine-local opt-in to a managed Pando (ADR-039).
+			SemanticSearch: repo.SemanticSearch,
 		})
 	}
 	return repos, nil

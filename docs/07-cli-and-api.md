@@ -357,6 +357,38 @@ Effective value = flag > environment variable > config file > built-in default.
 | `GINTRACK_LOG_FORMAT`    | `log.format`        |
 | `NO_COLOR`               | disables ANSI color |
 
+#### Pando keys and mode resolution (ADR-039)
+
+These keys live in the configuration file only. `search.pando.mode` is `auto` (default),
+`managed`, `external` or `off`. `search.pando.managed` holds `binary` (a name on PATH or an
+absolute path, default `pando`), `maxInstances` (0-64, 0 means 4), `minVersion` (empty keeps the
+version floor; gintrack has no built-in one yet, so an empty value accepts any) and `logLevel` (`debug|info|warn|error`, default `info`).
+`repos[].semanticSearch: true` is the machine-local opt-in of one repository to a managed Pando;
+it is never stored in a repository.
+
+The effective mode is decided when the configuration is loaded. The first matching rule wins:
+
+| # | Configuration | Effective mode |
+|---|---|---|
+| 1 | `mode: off` | off: "Pando is turned off". Nothing is started or contacted, an `mcpUrl` included: no client is built, and search and impact tiers 2 and 3 answer `unavailable` naming `search.pando.mode: off` |
+| 2 | `mode: external` | external, as before; without `mcpUrl`, "Pando is not configured" |
+| 3 | `mode: managed` | managed; without a binary, managed-but-unavailable |
+| 4 | `auto` and `mcpUrl` set | external: an explicit endpoint beats a binary on PATH |
+| 5 | `auto`, no `mcpUrl`, binary found | managed |
+| 6 | `auto`, no `mcpUrl`, no binary | off: "no Pando binary was found" |
+
+`mode: managed` together with `mcpUrl`, `mcpToken`, `restUrl`, `restToken` or `projectId` is
+refused at load time, one error per key. A missing binary is never an error: the configuration
+loads and Pando-backed answers are `unavailable`. `gintrack doctor` prints the resolved mode and
+rule number (`pando mode managed (rule 5): ...`). The version floor is checked by the
+supervisor when it starts an instance, not by this resolution.
+
+In managed mode `gintrack serve` starts one supervised Pando per repository whose
+`semanticSearch` is true, at most `maxInstances` of them; the remaining opted-in repositories
+report `skipped` with the reason (docs/21 §1.1). `gintrack serve` keeps the instances under
+`<cacheDir>/pando/<key>/`, where `cacheDir` is `index.cacheDir` or the directory of the
+configuration file, and stops them when it stops.
+
 Global flags available on every command: `--config`, `--workspace/-w`,
 `--quiet/-q`, `--verbose/-v`, `--log-level`, `--no-color`, `--help/-h`. Naming a
 workspace that does not exist creates it. `--json` is declared by every command
@@ -2189,6 +2221,45 @@ or an empty workspace; `5` when a `project.yaml` changed between the plan and th
 
 ---
 
+### 4.23 `gintrack pando status|start|stop|restart|reset`
+
+The managed Pando instances of ADR-039: in managed mode `gintrack serve` supervises one Pando
+per repository with `semanticSearch: true`. `gintrack mcp` and `gintrack spec` (impact tiers 2
+and 3, `search_semantic`) never start one and never proxy Pando's tools: they read the
+instance's `state.json`, its 0600 token file, check that the pids are alive and that the port
+answers, and otherwise report `unavailable` with "managed Pando is not running — start
+`gintrack serve`". External and off modes are unchanged.
+
+```
+gintrack pando status [--repo <id>] [--json]
+gintrack pando start|stop|restart|reset [--repo <id>] [--companion-url <url>] [--token <t>] [--json]
+```
+
+`status` works without a server. It prints the effective mode and the rule that chose it, then
+for each project repository the `state`, `pid`, `port`, `version`, `mcpUrl` and `tokenFile`.
+**The token is never printed**; an agent reads it from `tokenFile`. A state file whose
+supervising `gintrack serve` (or whose Pando child) is gone is reported as `stopped (stale)`;
+an opted-in repository with no instance directory is `not running`, an opted-out one
+`disabled`. `--repo` with an unknown id exits `4`.
+
+The other four verbs act through the running `serve`: they `POST` to
+`/api/v1/search/managed/{repo}/{verb}` at `--companion-url` (default: the configured bind
+address and port, as `gintrack agent init`) with `--token` (default `server.token`). With no
+server they fail with exit `1` and "gintrack serve is not running at <url>"; nothing is
+started. Without `--repo` they act on every repository that opted in. The opt-in itself is not
+changed, so a repository stopped here comes back with the next `serve`.
+
+| Verb | Effect |
+|------|--------|
+| `start` | Starts the instance (works for a repository that has not opted in, until `serve` exits). |
+| `stop` | Stops it and keeps its index and data. |
+| `restart` | Bounces the child without counting a crash and asks for a fresh code index. |
+| `reset` | Stops it, deletes `<cacheDir>/pando/<key>/data` (the index) and starts it again. |
+
+**Exit codes**: `0` ok; `1` serve unreachable, token refused or another failure; `2` no
+repository opted in and no `--repo`; `4` unknown repository; `5` the instance cannot take the
+verb (none running for `restart`, or supervised by another `gintrack serve`).
+
 ## 5. Local REST API
 
 Base URL: `http://127.0.0.1:7317/api/v1`. All requests and responses are JSON
@@ -3467,6 +3538,7 @@ mounted repository, whether it answered, and a button to reindex.
 GET   /api/v1/search/settings
 PATCH /api/v1/search/settings   {"mcpUrl":"http://127.0.0.1:9777/mcp","projectId":"acme-api"}
 POST  /api/v1/search/reindex
+POST  /api/v1/search/managed/{repo}/start|stop|restart|reset
 ```
 
 `GET` answers:
@@ -3481,6 +3553,9 @@ POST  /api/v1/search/reindex
   "allowRemote":false,
   "reachable":true,
   "reachableError":"",
+  "mode":"external",
+  "modeRule":4,
+  "modeReason":"search.pando.mcpUrl is set, and an explicit endpoint beats a binary on PATH",
   "indexed":[
     {"repo":"acme-api","root":"/home/dana/src/acme-api","docs":["docs"],
      "items":412,"pages":38,"comments":167,
@@ -3512,11 +3587,32 @@ POST  /api/v1/search/reindex
   `unavailable` (Pando refused or did not answer). `note` says it in words, so
   the reason there is no code search is readable in the UI rather than only in
   the log. The field is absent until that pass has run.
+- `mode`, `modeRule` and `modeReason` are the resolved Pando mode (`managed`, `external` or
+  `off`), the number of the rule of docs/07 §3.3 that chose it and why, in words
+  (ADR-039). In `managed` mode the response also carries `binary` (the resolved `pando`
+  path, when one was found) and `maxInstances`, `configured` is true once an instance exists,
+  `mcpUrl`, `restUrl` and `projectId` are absent (the endpoint is generated and never
+  reported), and `reachable` is true while at least one instance is `ready` (it is read from
+  the supervisors, not probed). Each `indexed[]` row gains
+
+  ```json
+  "managed":{"optedIn":true,"state":"ready","pid":48120,"port":41873,
+             "version":"pando v1.1.1","since":"2026-09-29T10:02:11Z","crashes":0,"error":""}
+  ```
+
+  `state` is the supervisor's (`stopped`, `starting`, `ready`, `restarting`, `failed`) or
+  `disabled` (the repository has not opted in and has no instance) or `skipped` (it opted in
+  but no instance was started; `error` says why: the `maxInstances` cap, or no binary).
+  `error` also carries the last crash or refusal of a `failed` instance. Neither the token
+  nor the endpoint is ever reported; an agent that wants them reads the instance directory.
+  Outside managed mode `managed` is absent.
 - Neither Pando token is ever reported. They are resolved from
   `GINTRACK_PANDO_MCP_TOKEN` / `GINTRACK_PANDO_REST_TOKEN` or the configuration
   file (docs/07 §3.3) and stay in the companion process.
 
-`PATCH` takes any subset of `mcpUrl`, `restUrl`, `projectId` and `allowRemote`;
+`PATCH` takes any subset of `mcpUrl`, `restUrl`, `projectId` and `allowRemote`; while the
+mode is `managed` a non-empty `mcpUrl`, `restUrl` or `projectId` is refused with
+`invalid_request` (400), because the managed Pando generates its own endpoint;
 an absent field is left alone, and an unknown one — `corpusDir` included — is
 ignored and changes nothing. **Tokens are not patchable**: a credential enters
 the process from the environment or the file, never over the API. The change is
@@ -3540,6 +3636,14 @@ the documentation folder and reindexes an edit as it happens.
 {"jobId":"reindex-1","startedAt":"2026-09-15T10:04:00Z","phase":"code","repos":[]}
 ```
 
+`POST /api/v1/search/managed/{repo}/start|stop|restart|reset` is the lifecycle control of one
+repository's managed Pando (`gintrack pando`, §4.23). It answers `200` with
+`{"repo","action","managed":{optedIn,state,pid,port,version,since,crashes,error}}` and never the
+endpoint or token. `404` unknown repository; `400` `search_not_configured` when Pando is not in
+managed mode; `409` `managed_instance_refused` when there is nothing to restart or another
+`gintrack serve` supervises the instance. `start` and `stop` do not change
+`repos[].semanticSearch`; `reset` deletes only the instance's `data` directory.
+
 Poll `GET /api/v1/search/settings`, whose `reindex` field carries the running job
 and, afterwards, the last finished one:
 
@@ -3560,6 +3664,15 @@ and, afterwards, the last finished one:
   it never claims a reindex that did not happen. With `restUrl` configured the
   job calls the route and `kb` carries the real
   `scanned/added/updated/unchanged/deleted` counts.
+- **Managed mode (ADR-039).** There is no Pando REST process, so the `kb` phase **restarts the
+  instance** (or every instance, or the one in `repo`) and Pando's `KBAutoImport` performs a
+  full sync as it comes back; `kbNote` says "Restarted N managed Pando instance(s)…", and `kb`
+  carries no counts. A restart interrupts the code index the child was running, so the
+  supervising server hands the source tree to the fresh child again once it is ready. The
+  `code` phase goes to each repository's own instance: one that is not `ready` reports
+  `codeError` with the reason and its `indexed[].code` reads `unavailable`. A repository
+  that has no instance, or a workspace where none is enabled, answers `search_not_configured`
+  (400).
 - A second call while one is running is refused with `search_reindex_running`
   (409) and the running job is untouched. A companion with no Pando endpoint
   answers `search_not_configured` (400).
@@ -3583,6 +3696,31 @@ POST /api/v1/search/reindex
 202
 {"jobId":"reindex-2","scope":"acme-api","startedAt":"2026-09-17T10:00:00Z","phase":"code","repos":[]}
 ```
+
+#### The managed opt-in (GIT-US-0177, ADR-039)
+
+```http
+PUT /api/v1/search/managed/{repo}/opt-in
+{"enabled":false,"deleteIndex":true}
+
+200
+{"repo":"acme-api","optedIn":false,"persisted":true,"indexDeleted":true,
+ "managed":{"optedIn":false,"state":"disabled"}}
+```
+
+Companion-only, managed mode only. It saves `repos[].semanticSearch` of the repository in the
+machine-local configuration file, then starts (`enabled: true`) or stops (`enabled: false`) its
+Pando instance and answers the resulting `managed` row of the settings. The file is written
+first: when the write fails the answer is `500` and the running state is untouched. The write is
+guarded, so a configuration file another process changed meanwhile is refused instead of
+overwritten. `deleteIndex` is valid only with `enabled: false` and removes the instance directory
+(`<cacheDir>/pando/<key>/`, Pando's index included) after the instance has stopped; an instance
+another `serve` supervises is stopped-not-owned and its directory is left alone
+(`indexDeleted: false`). `persisted: false` means this process has no configuration file, or the
+file does not list the repository (`serve --repo`): the choice lasts until the process exits.
+Errors: `search_not_managed` (`409`) outside managed mode, `repo_not_registered` (`404`) for an id
+this companion does not serve, `invalid_request` (`400`) for `deleteIndex` with `enabled: true`.
+Restarting an instance is `POST /api/v1/search/managed/{repo}/restart`.
 
 > **Operations: the embedding model is pinned configuration.** Pando skips any
 > chunk whose vector length differs from the query's — silently, with no
@@ -5474,7 +5612,7 @@ without history, installs none, where the method fails with `unavailable`.
 
 | Method | Params | Result |
 |---|---|---|
-| `impact.query` | `{base?, head?, story?, title?, tiers?: (1 \| 2 \| 3)[], depth?, limit?}` | `{impact: {base, head?, files, symbols, tiers: {tier, status, hits, truncated?, message?}[], hits: {ref, title, tier, kind?, candidate?, score?, status?, suspect?, reasons, pending?}[]}}` |
+| `impact.query` | `{base?, head?, story?, title?, tiers?: (1 \| 2 \| 3)[], depth?, limit?}` | `{impact: {base, head?, files, symbols, tiers: {tier, status, hits, truncated?, dropped?, droppedVia?, message?}[], hits: {ref, title, tier, kind?, candidate?, score?, status?, suspect?, reasons, pending?}[]}}` |
 
 `base` defaults to `HEAD` and an empty `head` is the working tree, so `{}` asks what the
 uncommitted changes affect. `status` of a tier is `ok`, `unavailable` (no Pando, or Pando not

@@ -1,0 +1,27 @@
+---
+id: GIT-US-0170
+type: story
+title: Re-measure the spec impact benchmark after the tier 1–3 precision work
+status: backlog
+priority: low
+parent: GIT-EP-0029
+milestone: GIT-M-0015
+author: mcp
+labels: [docs, agent-ok]
+created: 2026-09-29T17:49:23Z
+updated: 2026-09-29T17:49:23Z
+---
+
+## Description
+
+GIT-US-0165 (tier 3 story-based query, spec-only search), GIT-US-0166 (tier 2 shared names and test callers), GIT-US-0167 (tier 2 unavailable without a code graph) and GIT-US-0168 (tier 1 declaration-reach bound) all change precision and token cost, but none re-ran the GIT-US-0161 benchmark against a live Pando: the replay patches and hand edits of that benchmark were kept outside the repository. GIT-US-0165 acceptance criterion 4 (re-measure and record) is therefore open.
+
+## Acceptance Criteria
+
+- [ ] The benchmark PR set (P1–P5) and its hand edits are committed under `docs/research/` (or a testdata folder) so a re-run is reproducible without private files.
+- [ ] The benchmark is re-run with Pando tiers 2 and 3 on a code graph built with `BuildCodeGraph = true`, and precision, recall and tokens per tier are recorded next to the 2026-09-25 numbers.
+- [ ] The doc notes that the long tier-3 query gets no full-text hits (Pando's full-text search requires every word) and whether that hurts recall.
+
+## Notes
+
+Follow-up from GIT-US-0165 (AC4 not met there).

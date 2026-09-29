@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -625,6 +626,32 @@ func TestDoctorReportsTheGitBackend(t *testing.T) {
 			}
 			if results[0].Severity != tc.severity {
 				t.Errorf("severity = %q, want %q", results[0].Severity, tc.severity)
+			}
+		})
+	}
+}
+
+func TestCheckPandoReportsModeAndRule(t *testing.T) {
+	found := func(string) (string, error) { return "/bin/pando", nil }
+	missing := func(string) (string, error) { return "", errors.New("missing") }
+	tests := []struct {
+		name   string
+		search config.SearchPando
+		look   func(string) (string, error)
+		want   string
+	}{
+		{"external", config.SearchPando{MCPURL: "http://127.0.0.1:9/mcp"}, found, "pando mode external (rule 4)"},
+		{"managed", config.SearchPando{}, found, "pando mode managed (rule 5)"},
+		{"missing binary is not an error", config.SearchPando{}, missing, "pando mode off (rule 6)"},
+		{"off", config.SearchPando{Mode: "off"}, found, "pando mode off (rule 1)"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config.Default()
+			cfg.Search.Pando = tc.search
+			got := checkPando(cfg, tc.look)
+			if got.Severity != "ok" || !strings.HasPrefix(got.Message, tc.want) {
+				t.Fatalf("got %+v, want prefix %q", got, tc.want)
 			}
 		})
 	}

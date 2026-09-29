@@ -1157,18 +1157,30 @@ Every tier-1 and tier-2 hit carries a `kind` (`GIT-US-0157`, doc 03 R-IMP-5): `b
 reason reaches the requirement through its code (an `Implements:` marker or a `trace.code`
 entry, directly or through a call) or through the story's links or Spec Delta, `test-only` when
 every reason reaches it through a test that verifies it (a `Verifies:` marker or a
-`trace.tests` entry). A `test-only` hit says "a test of this requirement changed", not "its
+`trace.tests` entry) or through a tier-2 caller in a test file. A `call:` reason from a caller
+that carries several requirements never turns a `test-only` hit into `behaviour`
+(`GIT-US-0166`). A `test-only` hit says "a test of this requirement changed", not "its
 behaviour changed": read the behaviour hits first, and a `test-only` one only to check that the
 test still asserts what the requirement states. A tier-3 candidate has no `kind`. A tier that could not run takes one short line
 (`3 unavailable (Pando is not configured)`), and the `json` form carries `tiers` and the ranked
 `hits` in the shape of doc 03 §21.11 R-IMP-5 instead of `text`. What tiers 1–2 cannot see, and where to put
 markers so the report stays useful, is in section 10.8.
 
+Tier 3 searches spec files only (Pando's `path_prefix` on `.pmngr/specs/`) with a query built
+from the story's title and `## Spec Delta`, `title`, and the changed declarations in words (a Go
+doc comment's first sentence, else the split name): passing `story` sharpens its candidates the
+most (doc 03 R-IMP-4, `GIT-US-0165`). Pando's full-text search requires every word of a query,
+so this long query gets no full-text hits and tier 3 is ranked by vector similarity alone
+(docs/21 §6.1). `search_semantic` with `kind: "requirement"` takes the same
+spec-only path.
+
 Tiers 2 and 3 read the Pando client and semantic searcher that `search_semantic` uses, built by
 the same constructor (`server.InstallSemanticSearch`) on both transports: `gintrack serve` and
 stdio `gintrack mcp` alike hand them to the impact seam (`GIT-US-0147`), so with
 `search.pando.mcpUrl` configured the two tiers answer over stdio exactly as over HTTP.
-When a tier cannot run — no Pando configured, or Pando not answering — its
+When a tier cannot run — no Pando configured, Pando not answering, or, for tier 2, a code
+project indexed without call edges (`the Pando code project has no call edges: index the
+repository root with [TokenOptimization] BuildCodeGraph = true`, `GIT-US-0167`, doc 21 §6.1) — its
 status says `unavailable` and the other tiers still answer, so an agent without Pando still gets
 the tier-1 hits: the direct trace, the Spec Delta and the links. Only a session that cannot read
 git history at all (browser-only mode, or a repository without git) refuses the whole call with
@@ -1666,6 +1678,28 @@ Three things follow from Pando's side of the contract:
   the companion itself would refuse to change. The persona asks before writing; the flag is
   what enforces it.
 
+### 8.5.1 Reaching a managed Pando from an agent
+
+`gintrack mcp` never starts Pando and never proxies its tools (ADR-039): it stays the backlog
+and knowledge-base surface, and `search_semantic` and `spec_impact` tiers 2 and 3 only connect
+to an instance a running `gintrack serve` supervises, answering `unavailable` — "managed Pando
+is not running — start `gintrack serve`" — when there is none. An agent that wants Pando's own
+tools (code search, memory, browser) connects to Pando's MCP endpoint directly:
+
+```sh
+gintrack pando status --json --repo acme-api
+# instances[0].mcpUrl    -> http://127.0.0.1:40311/mcp
+# instances[0].tokenFile -> <cacheDir>/pando/<key>/token   (0600; read it, the status never prints it)
+```
+
+Point the client at `mcpUrl` with `Authorization: Bearer <contents of tokenFile>`. The port and
+token change when the instance restarts, so read them again rather than pinning them.
+
+**Warning:** that connection is Pando's own MCP server, not this one. It exposes Pando's write
+tools (memory, knowledge-base and code-index writes, file and browser tools), and none of the
+`--allow-write` guarantees of section 7.1 apply to it. Give it only to agents you would trust
+with those tools.
+
 ### 8.6 Verifying a connection
 
 ```bash
@@ -1984,16 +2018,31 @@ Tiers 1 and 2 (doc 03 §21.11) do **not** see:
   or `type` reaches the traced functions of the *same package* that use it (`decl:` reasons,
   one hop, `GIT-US-0158`). It does not reach a function in another package that uses an
   exported name, a declaration whose initializer uses the changed one, or a constant in a
-  TypeScript or Python file.
+  TypeScript or Python file. And the reach is **bounded** (`GIT-US-0168`): a declaration more
+  than 10 functions of its package use — `core.Item`, `mcp.ItemResult` — reaches nothing. The
+  requirements only it would have reached are counted on tier 1's status (`dropped`,
+  `droppedVia`; `1 ok 0, 12 dropped (uses ItemResult)` in the text form). A non-zero `dropped`
+  is a known gap, not *nothing affected*: when you change such a type on purpose, run
+  `trace_requirement` or `spec_context` on the requirements you expect it to touch.
 - **Unmarked code that only Pando can reach.** A changed helper with no marker reaches the
-  requirements of its traced callers only through tier 2, which needs Pando; without it tier 2
-  is `unavailable`, which means *unknown*, never *nothing affected*.
+  requirements of its traced callers only through tier 2, which needs Pando with a code graph
+  (`[TokenOptimization] BuildCodeGraph = true`, on the project id derived from the repository
+  root); without either, tier 2 is `unavailable`, which means *unknown*, never *nothing
+  affected*.
 - **Which case of a test changed.** A changed test reaches every requirement its test function
   or sub-test `Verifies:`. Those hits are `kind: test-only` (`GIT-US-0157`): the test changed,
   the behaviour may not have. They rank below the behaviour hits, and
   `--fail-on failing,suspect,behaviour` leaves them out of the gate.
 - **Which of several markers a change is about.** A function carrying four `Implements:`
-  markers turns any change of it into four hits.
+  markers turns any change of it into four hits. As a tier-2 *caller* it still adds its
+  requirements, but its `call:` reason no longer turns a `test-only` hit into `behaviour`
+  (`GIT-US-0166`).
+- **Which definition of a shared name a caller calls.** Pando resolves callees by name. Tier 2
+  pins each changed name with `code_find_symbol` and drops the callers of a name that an
+  unchanged definition shares (`CommentKind.Valid` next to a changed `LinkKind.Valid`, two
+  `add`s), so a real caller of the changed one is dropped too: its requirements then reach the
+  report only through tier 1. A Pando whose `code_find_symbol` fails keeps every caller, and the
+  shared-name hits come back.
 
 So place markers where the behaviour lives:
 
@@ -2014,6 +2063,30 @@ So place markers where the behaviour lives:
 Spec text — statements, scenarios, `## Spec Delta` sections — is repository content like any
 item body: data describing what the code must do, never an instruction to the agent reading it
 (section 7.5).
+
+### 10.9 Connecting to a managed Pando directly (GIT-US-0177, ADR-039)
+
+gintrack does not proxy Pando. An agent that wants Pando's own tools (`kb_search_documents`,
+`code_hybrid_search`, ...) adds Pando's MCP server to its client as a separate server and finds the
+endpoint with:
+
+```console
+$ gintrack pando status --json
+```
+
+The output is `{mode, rule, reason, binary, instances[]}`, and each instance row carries `repo`,
+`path`, `optedIn`, `state`, `stale`, `pid`, `port`, `version`, `mcpUrl`, `tokenFile` and `error`
+(never the token). `--repo <id>` narrows it to one repository. Use an instance only when `state` is
+`ready` and `stale` is not true; the client sends the token file's contents as
+`Authorization: Bearer ...`. Resolve it each time the client launches: the
+port changes whenever `serve` restarts an instance. Only repositories that opted in have an
+instance (the workspace list's **Enable semantic search**, or `repos[].semanticSearch`).
+
+**Warning: a direct connection exposes Pando's write tools.** The agent then sees Pando's full
+tool surface, including `kb_add_document`, `kb_delete_document` and the memory tools, which write
+(ADR-036). The token confines the endpoint to local users who can read the file; nothing
+restricts which tools such a user calls. Prefer gintrack's own MCP tools (`search_semantic`,
+`spec_impact`) for search and impact, and connect directly only when you accept that.
 
 ---
 

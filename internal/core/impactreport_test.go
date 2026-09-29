@@ -323,6 +323,25 @@ func TestImpactReportEdges(t *testing.T) {
 			t.Errorf("text = %q, want %q", r.Text, want)
 		}
 	})
+	t.Run("the tier line counts the dropped decl reach", func(t *testing.T) {
+		t.Parallel()
+		for _, tc := range []struct {
+			tier ImpactTier
+			want string
+		}{
+			{ImpactTier{Tier: 1, Status: ImpactTierOK, Hits: 1, Dropped: 14, DroppedVia: []string{"Item"}}, "tiers: 1 ok 1, 14 dropped (uses Item)\n"},
+			{ImpactTier{Tier: 1, Status: ImpactTierOK, Hits: 0, Dropped: 2, DroppedVia: []string{"Item", "ItemResult"}}, "tiers: 1 ok 0, 2 dropped (uses Item, ItemResult)\n"},
+			{ImpactTier{Tier: 1, Status: ImpactTierOK, Hits: 3}, "tiers: 1 ok 3\n"},
+		} {
+			r, err := RenderImpactReport(ImpactResult{Base: "HEAD", Tiers: []ImpactTier{tc.tier}}, ImpactReportOptions{Format: ImpactReportText})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.SplitN(r.Text, "\n", 2)[1]; got != tc.want {
+				t.Errorf("tier line = %q, want %q", got, tc.want)
+			}
+		}
+	})
 	t.Run("a hit over a tiny budget still advances", func(t *testing.T) {
 		t.Parallel()
 		r, err := RenderImpactReport(largeImpactResult(5), ImpactReportOptions{Budget: 10})

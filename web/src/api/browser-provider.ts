@@ -1736,6 +1736,14 @@ export class BrowserProvider implements DataProvider {
     return Promise.reject(new ProviderError('not_supported', BROWSER_SEARCH_REASON));
   }
 
+  setSemanticSearch(): Promise<never> {
+    return Promise.reject(new ProviderError('not_supported', BROWSER_SEARCH_REASON));
+  }
+
+  restartManagedSearch(): Promise<never> {
+    return Promise.reject(new ProviderError('not_supported', BROWSER_SEARCH_REASON));
+  }
+
   // ------------------------------------------------------------------ agent
 
   /**
