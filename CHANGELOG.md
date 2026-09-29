@@ -23,6 +23,15 @@ because a commit list cannot express them.
   - a caller in a test file gives `test-only` reasons, whatever marker it carries;
   - a production caller carrying several requirements no longer turns a `test-only` hit into
     `behaviour`.
+- **Impact tier 1 bounds its reach through widely used declarations** (`GIT-US-0168`, docs/03
+  §21.7 and R-IMP-2, docs/08 §10.8). A changed package-level `const`, `var` or `type` that more
+  than 10 functions of its package use no longer adds `decl:` reasons: in the spec impact
+  benchmark, `uses Item` added 14 hits to one PR and `uses ItemResult` 12 to another, none of
+  them a behaviour change. The requirements only such a declaration reached are counted, never
+  silently lost: tier 1's status gains `dropped` and `droppedVia`, the text form prints
+  `1 ok <n>, <d> dropped (uses <names>)`, and the web impact view says so under tier 1. Each
+  `decl` trace hit now carries `users`, and an edge several changed names reach keeps the least
+  used one. The benchmark's worst tier-1 report (P4) falls from 1,340 to 173 tokens.
 
 ### Fixed
 

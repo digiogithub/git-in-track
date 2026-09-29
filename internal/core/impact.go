@@ -89,6 +89,14 @@ type ImpactTier struct {
 	// Truncated reports that the tier's input or its backend's answer was cut
 	// at a bound, so the tier may reach more than it reports.
 	Truncated bool `json:"truncated,omitempty"`
+	// Dropped counts, on tier 1, the requirements only a widely used
+	// package-level declaration reached — a decl: reason through a name more
+	// functions of its package use than the bound — and that no other reason
+	// of any tier reached, so the report leaves them out (GIT-US-0168,
+	// R-IMP-2). They are counted, never silently lost.
+	Dropped int `json:"dropped,omitempty"`
+	// DroppedVia names those declarations, sorted.
+	DroppedVia []string `json:"droppedVia,omitempty"`
 	// Message says why a tier is unavailable or failed.
 	Message string `json:"message,omitempty"`
 }

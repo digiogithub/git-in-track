@@ -253,14 +253,14 @@ func (g *Graph) Touching(changes []core.TraceChange, tree fs.FS) []core.TraceHit
 // marker deleted with its line or its file — is a hit too, with the reason
 // "removed". A nil prev is Touching.
 func (g *Graph) TouchingSince(prev *Graph, changes []core.TraceChange, tree fs.FS) []core.TraceHit {
-	seen := map[edgeKey]bool{}
+	seen := map[edgeKey]int{} // the index of the edge's hit in out
 	var out []core.TraceHit
 	hit := func(e core.TraceEdge, reason, changed string) {
 		k := edgeKey{e.Ref, e.Role, e.Path, e.Symbol}
-		if seen[k] {
+		if _, ok := seen[k]; ok {
 			return
 		}
-		seen[k] = true
+		seen[k] = len(out)
 		out = append(out, core.TraceHit{TraceEdge: cloneEdges([]core.TraceEdge{e})[0], Reason: reason, Changed: changed})
 	}
 	for _, c := range changes {
@@ -302,13 +302,24 @@ func (g *Graph) TouchingSince(prev *Graph, changes []core.TraceChange, tree fs.F
 	}
 	// A second pass, so a direct reason always wins over a declaration one:
 	// a changed package-level const, var or type reaches the traced functions
-	// of its package that use it (GIT-US-0158).
+	// of its package that use it (GIT-US-0158). An edge several changed names
+	// reach keeps the least used one, so a narrow declaration is never hidden
+	// behind a widely used one when impact bounds the reach (GIT-US-0168).
 	for _, c := range changes {
 		for _, r := range g.declTouches(c, tree) {
 			for _, e := range g.byPath[r.path] {
-				if e.Symbol == "" || symbolsOverlap(e.Symbol, r.symbol) {
-					hit(e, "decl", r.name)
+				if e.Symbol != "" && !symbolsOverlap(e.Symbol, r.symbol) {
+					continue
 				}
+				k := edgeKey{e.Ref, e.Role, e.Path, e.Symbol}
+				if i, ok := seen[k]; ok {
+					if h := &out[i]; h.Reason == "decl" && (r.users < h.Users || r.users == h.Users && r.name < h.Changed) {
+						h.Changed, h.Users = r.name, r.users
+					}
+					continue
+				}
+				hit(e, "decl", r.name)
+				out[len(out)-1].Users = r.users
 			}
 		}
 	}

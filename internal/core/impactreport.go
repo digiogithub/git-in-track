@@ -166,7 +166,7 @@ const (
 // impactText renders the text form of a page:
 //
 //	impact <base>..<head|worktree>: <files> files, <symbols> symbols, <total> hits[, showing a-b]
-//	tiers: 1 ok 7; 2 ok 3; 3 unavailable (<message>)
+//	tiers: 1 ok 7[, <n> dropped (uses <names>)]; 2 ok 3; 3 unavailable (<message>)
 //	<ref> t<tier>[~score] <status|-> [suspect] [test-only] "<title>" <reason>[ +n]
 //	...
 //	truncated: <n>, cursor: <token>
@@ -189,6 +189,9 @@ func impactText(r ImpactReport, tiers []ImpactTier, hits []ImpactHit) string {
 				part += " " + strconv.Itoa(t.Hits)
 				if t.Truncated {
 					part += " (partial)"
+				}
+				if t.Dropped > 0 {
+					part += fmt.Sprintf(", %d dropped (uses %s)", t.Dropped, strings.Join(t.DroppedVia, ", "))
 				}
 			}
 			if t.Message != "" && (t.Status == ImpactTierUnavailable || t.Status == ImpactTierError) {

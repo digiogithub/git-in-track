@@ -1988,7 +1988,12 @@ Tiers 1 and 2 (doc 03 §21.11) do **not** see:
   or `type` reaches the traced functions of the *same package* that use it (`decl:` reasons,
   one hop, `GIT-US-0158`). It does not reach a function in another package that uses an
   exported name, a declaration whose initializer uses the changed one, or a constant in a
-  TypeScript or Python file.
+  TypeScript or Python file. And the reach is **bounded** (`GIT-US-0168`): a declaration more
+  than 10 functions of its package use — `core.Item`, `mcp.ItemResult` — reaches nothing. The
+  requirements only it would have reached are counted on tier 1's status (`dropped`,
+  `droppedVia`; `1 ok 0, 12 dropped (uses ItemResult)` in the text form). A non-zero `dropped`
+  is a known gap, not *nothing affected*: when you change such a type on purpose, run
+  `trace_requirement` or `spec_context` on the requirements you expect it to touch.
 - **Unmarked code that only Pando can reach.** A changed helper with no marker reaches the
   requirements of its traced callers only through tier 2, which needs Pando with a code graph
   (`[TokenOptimization] BuildCodeGraph = true`, on the project id derived from the repository
