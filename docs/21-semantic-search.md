@@ -177,6 +177,18 @@ further:
    clipped to the part of the chunk inside the block, so a chunk straddling two requirements
    never shows the neighbour's text as the reason this one matched.
 
+**A requirement query searches spec files only (`GIT-US-0165`).** A query of kind
+`requirement` sends Pando's `path_prefix` filter, `.pmngr/specs/` — the specs folder relative to
+`KBPath`, the documentation folder (§1) — which Pando applies in SQL to both search legs, so the
+top chunks are spec chunks rather than the docs pages, stories and comments that quote the same
+words (before this, 9 of 224 top-16 chunks came from spec files in the `GIT-US-0161` benchmark).
+It skips the code leg, which skips dot-directories and so never holds a spec. A deployment whose
+`KBPath` is not the documentation folder reports spec paths under another prefix and would match
+nothing, so an empty prefixed answer is asked once more without the prefix; the resolver's kind
+filter still keeps only requirement rows. The vector leg always ranks some chunk, so an empty
+prefixed answer means no spec is indexed there, never that no spec is relevant. Pando still only
+reads: nothing is written into `docs/.pmngr/specs/` (ADR-036).
+
 Rows are merged by ref, so several chunks of one block are one row and chunks of two blocks are
 two rows. A chunk of the spec outside every block — its purpose, its notes — stays a hit on the
 spec itself (`kind: "item"`), and so does every spec hit of a query scoped to `kind: "item"`;
@@ -387,7 +399,14 @@ traced symbols of the trace graph. Because `code_impact_analysis` resolves a cal
 an unchanged definition shares; a failing pin turns pinning off, never the tier. A caller in a
 test file is test evidence, and a caller carrying several requirements does not turn a
 `test-only` hit into `behaviour` (docs/03 R-IMP-3). Tier 3 sends one `search.semantic` query of kind
-`requirement` (§2.1) built from the story title and the changed symbol names; its hits are
+`requirement` (§2.1) built from the story title, the operations of its `## Spec Delta`, the
+caller's `title` and the changed declarations in words — a Go doc comment's first sentence, else
+the name split into words — never from bare identifiers, which match prose *about* the code
+(docs pages, stories, comments) better than the EARS statement of a requirement
+(`GIT-US-0165`, docs/03 R-IMP-4). That query is long on purpose, and it has a cost: Pando's
+full-text leg quotes every word of the query and FTS5 requires all of them in one chunk, so a
+story-based query almost never matches there and the vector leg does all the ranking. The query is
+capped at 1,000 bytes because a longer one buys nothing for either leg. Its hits are
 `candidate`s with a score and never raise a tier-1 or tier-2 hit. Both read the client at call
 time, so a settings change applies to the next query. An `IsUnavailable` error, or no Pando at
 all, makes the tier `unavailable`; any other error makes it `error`; tier 1 answers regardless.

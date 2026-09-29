@@ -160,3 +160,41 @@ func TestMCPStdioSpecImpactPando(t *testing.T) {
 		t.Error("tier 2 never called code_impact_analysis on the configured Pando")
 	}
 }
+
+// TestSpecImpactTier3Query is the fake-Pando half of GIT-US-0165: tier 3 asks
+// kb_search_documents for the specs folder alone (path_prefix), with a query
+// built from the story and the changed declaration in words; the fake finds
+// nothing under the prefix, so the search is asked again, once, unfiltered.
+// The code index never holds a spec, so code_hybrid_search is not called.
+func TestSpecImpactTier3Query(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	h := newHarness(t)
+	root := gitSpecRepo(t, h)
+	touchNextID(t, root)
+	fake := newFakeSemanticPando(t)
+	fake.usePando(t, h.Config)
+
+	got := decode[specImpactPayload](t, h.mustRun("spec", "impact", "--since", "HEAD",
+		"--story", "ACME-US-0001", "--tiers", "3", "--json"))
+	if s := tierStatus(got.Report.Tiers, core.ImpactTierSemantic); s != core.ImpactTierOK {
+		t.Fatalf("tier 3 = %q, want ok (%+v)", s, got.Report.Tiers)
+	}
+	calls := fake.kbSearches()
+	if len(calls) != 2 {
+		t.Fatalf("kb_search_documents calls = %v, want the prefixed one and its unfiltered retry", calls)
+	}
+	if p, _ := calls[0]["path_prefix"].(string); p != ".pmngr/specs/" {
+		t.Errorf("first call path_prefix = %q, want .pmngr/specs/", p)
+	}
+	if _, ok := calls[1]["path_prefix"]; ok {
+		t.Errorf("the retry still carries a path_prefix: %v", calls[1])
+	}
+	if q, _ := calls[0]["query"].(string); q != "Story ACME-US-0001\nnext id" {
+		t.Errorf("query = %q, want the story title and the changed declaration in words", q)
+	}
+	if n := fake.called("code_hybrid_search"); n != 0 {
+		t.Errorf("code_hybrid_search called %d times for a requirement query", n)
+	}
+}

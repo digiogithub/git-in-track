@@ -438,7 +438,8 @@ func TestImpactTiers(t *testing.T) {
 			t.Errorf("hits = %+v, want four (no foreign or item candidate)", res.Hits)
 		}
 		if sem.query.Kind != core.SearchKindRequirement ||
-			sem.query.Q != "Reserve the numbers a delta names NextID" {
+			sem.query.Q != "Reserve the numbers a delta names\n"+
+				"Reserve numbers: The allocator SHALL reserve every number a delta names, applied or not.\nnext id" {
 			t.Errorf("semantic query = %+v", sem.query)
 		}
 		if strings.Join(graph.asked, ",") != "NextID" {

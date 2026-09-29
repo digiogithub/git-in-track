@@ -758,8 +758,8 @@ type semanticHit struct {
 	score float64
 }
 
-// semantic runs tier 3: requirement blocks ranked near the changed symbol
-// names and the story title.
+// semantic runs tier 3: requirement blocks ranked near what the story and
+// the changed declarations say (queryText).
 func (r *Resolver) semantic(ctx context.Context, ix *core.Index, q core.ImpactQuery, symbols []changedSymbol) (core.ImpactTier, []semanticHit) {
 	tier := core.ImpactTier{Tier: core.ImpactTierSemantic, Status: core.ImpactTierOK}
 	var searcher vault.SemanticSearcher
@@ -771,7 +771,7 @@ func (r *Resolver) semantic(ctx context.Context, ix *core.Index, q core.ImpactQu
 		tier.Message = "no Pando semantic search is configured"
 		return tier, nil
 	}
-	text := queryText(ix, q, symbols)
+	text := queryText(ix, q, symbols, r.opts.Engine.Tree())
 	if text == "" {
 		return tier, nil
 	}
@@ -799,36 +799,6 @@ func (r *Resolver) semantic(ctx context.Context, ix *core.Index, q core.ImpactQu
 		out = append(out, semanticHit{ref: ref, score: math.Round(h.Score*1000) / 1000})
 	}
 	return tier, out
-}
-
-// queryText is the tier-3 query: the story title, the caller's title and the
-// changed symbol names, split into words.
-func queryText(ix *core.Index, q core.ImpactQuery, symbols []changedSymbol) string {
-	var parts []string
-	if q.Story != "" {
-		if it, err := ix.Item(q.Story); err == nil {
-			parts = append(parts, strings.TrimSpace(it.Title))
-		}
-	}
-	if t := strings.TrimSpace(q.Title); t != "" {
-		parts = append(parts, t)
-	}
-	seen := map[string]bool{}
-	var names []string
-	for _, s := range symbols {
-		n := pandoName(s.symbol)
-		if n == "" || seen[n] {
-			continue
-		}
-		seen[n] = true
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	if len(names) > maxQueryNames {
-		names = names[:maxQueryNames]
-	}
-	parts = append(parts, names...)
-	return strings.TrimSpace(strings.Join(parts, " "))
 }
 
 // render turns the collected hits into the sorted answer: title, coverage

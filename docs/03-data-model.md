@@ -3098,8 +3098,15 @@ answers `unavailable`.
   `unavailable` with the fixed message `the Pando code project has no call edges: index the
   repository root with [TokenOptimization] BuildCodeGraph = true`. A client without
   `code_related_files` takes the empty answer as it comes.
-- **R-IMP-4 Tier 3, semantic.** One semantic search of kind `requirement` (docs/21 §2.1) with the
-  story title, `title` and up to 12 changed symbol names. A hit becomes a `candidate` with a
+- **R-IMP-4 Tier 3, semantic.** One semantic search of kind `requirement` (docs/21 §2.1), which
+  searches spec files only: Pando's `path_prefix` filter on `.pmngr/specs/`, asked again once
+  without it when nothing is indexed under that prefix, and no code search (`GIT-US-0165`).
+  The query is one part per line: the story title, each operation of its `## Spec Delta`
+  (`<title>: <statement>`, a REMOVED one with its `Reason:`), `title`, then up to 12 changed
+  declarations in words — the first sentence of a Go declaration's doc comment, marker lines
+  dropped, else the name split into lower-case words (`nextNumber` → `next number`) — with
+  declarations in test files only when nothing else changed; at most 1,000 bytes, cut on a word
+  boundary. A hit becomes a `candidate` with a
   `score` (rounded to three decimals) and the reason `semantic`, only when tiers 1–2 did not
   reach the requirement: a candidate never adds to or overrides their certainty.
 - **R-IMP-5 Hit.** `{ref, title, tier, kind?, candidate?, score?, status?, suspect?, reasons[],
