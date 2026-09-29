@@ -59,19 +59,24 @@
 // that refusal: it is not a policy the rest of the companion gets a vote on.
 //
 // The reason is what Pando's MCP HTTP transport is. It now requires a bearer
-// token, which is why Options.Token exists — but it still serves CORS `*` and
-// runs with global auto-approve, and it exposes far more than search: the tool
-// set includes file writes, shell execution and agent spawning. A companion
-// that could be pointed at a remote Pando would be a remote-code-execution
-// gadget wearing a search feature's clothes. Remote Pando needs a design that
-// does not exist yet; until it does, the answer is no.
+// token, which is why Options.Token exists, and its CORS allow-list
+// (MCPServer.HttpAllowedOrigins) is empty by default, so a browser page is
+// refused. It still runs with global auto-approve and exposes far more than
+// search: the tool set includes file writes, shell execution and agent
+// spawning. A companion that could be pointed at a remote Pando would be a
+// remote-code-execution gadget wearing a search feature's clothes. Remote
+// Pando needs a design that does not exist yet; until it does, the answer is no.
 //
-// And the honest caveat, which belongs in the operator's head and not only in
-// this comment: **loopback binding is not a boundary against the user's own
-// browser.** While Pando's MCP CORS policy is `*`, any web page the user
-// visits can reach 127.0.0.1:9777 from their browser, with no companion
-// involved at all. Binding to loopback keeps the *network* out; it does not
-// keep a hostile page out. The fix is Pando's, not this package's.
+// Loopback binding is not a boundary against the user's own browser if the
+// allow-list is widened. Pando added the bearer token and dropped the
+// wildcard CORS policy in commit 13f01347b (2026-09-14), first released in
+// Pando v0.715.6; earlier versions served CORS `*`. From then on
+// MCPServer.HttpAllowedOrigins is empty by default: no Access-Control-*
+// headers are sent and preflight requests are refused, so a page the user
+// visits cannot read Pando's MCP endpoint. Adding an origin to that list (or
+// "*") re-opens it to that page, which then still needs the token. The
+// companion never needs it: it is not a browser. A browser-only session does
+// not call Pando at all; it has no MCP client. Do not widen the list for it.
 //
 // # Result parsing
 //
