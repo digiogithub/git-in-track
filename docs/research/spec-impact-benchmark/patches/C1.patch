@@ -1,0 +1,1466 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 9b607de..c083325 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -21,6 +21,13 @@ because a commit list cannot express them.
+   The document is kept as opaque text, and a missing, blocked or failing IndexedDB reads as an
+   empty cache. It is groundwork: browser-only mode still has no ingest and no coverage host, so
+   nothing records into it or reads from it yet.
++- **Branch and recent-commit pickers in the impact view** (`GIT-US-0149`, docs/05, docs/06
++  §7.5, docs/07). A new read-only `GET /api/v1/git/refs?repo=<id>&limit=<n>` lists a
++  repository's local and remote branches and its last `n` commits (sha, subject, date), backed
++  by a new `gitops.Backend.Branches` on go-git, system git and jj (bookmarks listed as
++  branches, remote bookmarks as `origin/main`, without writing an operation). The web provider
++  gains `listGitRefs` — `unavailable` in browser-only mode — and the impact view's *Base* and
++  *Head* fields suggest those branches and commits while still accepting any typed ref.
+ - **Spec templates and duplicate detection on create** (`GIT-US-0111`, docs/03 §21.1,
+   docs/07). The core ships a spec template (`## Purpose`, `## Scope`, `## Glossary` and one
+   example requirement block) and a requirement-block template in `internal/core/templates/`,
+diff --git a/docs/.pmngr/comments/GIT-US-0149/20260924T225250Z-claude.md b/docs/.pmngr/comments/GIT-US-0149/20260924T225250Z-claude.md
+new file mode 100644
+index 0000000..dc78ce9
+--- /dev/null
++++ b/docs/.pmngr/comments/GIT-US-0149/20260924T225250Z-claude.md
+@@ -0,0 +1,15 @@
++---
++item: GIT-US-0149
++author: claude
++created: 2026-09-24T22:52:50Z
++type: comment
++---
++
++Implemented in the jj change described `feat(server): list branches and recent commits for impact pickers`.
++
++- `gitops.Backend.Branches` on go-git, system git and jj (bookmarks as branches, remote bookmarks as `origin/main`, the `git` pseudo-remote and `origin/HEAD` left out, no jj operation written), with table tests per backend.
++- `GET /api/v1/git/refs?repo=<id>&limit=<n>` in the existing `/git` subtree: branches plus the last N commits from `Commits`; `503 unavailable` without git history. No auth or path-validation change.
++- Web: `listGitRefs` on the providers (browser-only rejects with `unavailable`), `useGitRefs`, and the impact view's Base/Head datalists now offer branches and labelled recent commits, still free text, falling back to the sync-status suggestions.
++- Docs: 05, 06 §7.5, 07, CHANGELOG. GIT-US-0131's first criterion ticked.
++
++Verified: make lint, make test, make wasm, vite build.
+diff --git a/docs/.pmngr/stories/GIT-US-0131-impact-view-for-a-branch-or-ref-range.md b/docs/.pmngr/stories/GIT-US-0131-impact-view-for-a-branch-or-ref-range.md
+index dee978b..7f70472 100644
+--- a/docs/.pmngr/stories/GIT-US-0131-impact-view-for-a-branch-or-ref-range.md
++++ b/docs/.pmngr/stories/GIT-US-0131-impact-view-for-a-branch-or-ref-range.md
+@@ -22,7 +22,7 @@ As a reviewer of a PR, I want to pick a base and head (or the worktree) and see
+ 
+ ## Acceptance Criteria
+ 
+-- [ ] Impact view (`/p/$project/specs/impact`) with base/head pickers (branches, recent commits, worktree) in companion mode.
++- [x] Impact view (`/p/$project/specs/impact`) with base/head pickers (branches, recent commits, worktree) in companion mode. (via GIT-US-0149)
+ - [x] Hits grouped by tier (direct, transitive, candidate with score), each with reason, coverage status and suspect; candidates visually distinct from certain hits.
+ - [x] `unavailable` states: whole view in browser-only mode, tiers 2–3 when Pando is missing.
+ - [x] Vitest tests for grouping and unavailable states; docs/05 updated.
+diff --git a/docs/05-web-app.md b/docs/05-web-app.md
+index 02869f2..115ef98 100644
+--- a/docs/05-web-app.md
++++ b/docs/05-web-app.md
+@@ -458,14 +458,17 @@ provider's hint to run `gintrack serve`.
+ a diff affects (doc 03 §21.11), lazily loaded (`features/specs/ImpactView.tsx`, the pure model in
+ `features/specs/impact.ts`), from `queryImpact` — the same resolver as `spec_impact` and
+ `impact.report`. *What it looks like:* under a *← Specs* back link and the title, a **range form**
+-with a *Base* and a *Head* field and *Show impact*. Both fields take any revision (a branch, a tag,
+-a commit) and suggest, through a native `<datalist>`, the repository's current branch and its
+-upstream from `getSyncStatus`, the default `main` and `HEAD`, `HEAD~1`, `HEAD~2`, `HEAD~5`; the
+-head also offers `worktree`, the working tree with uncommitted changes, which is what an empty
+-head means (R-IMP-1). The range lives in the URL (`?base=v1.0&head=HEAD~1`): base defaults to
+-`main`, and a head of `worktree` is left out of both the URL and the query. No companion route
+-lists refs or recent commits, so the pickers are free text with suggestions rather than closed
+-lists. Under the form a summary line (`main..worktree: 3 files, 4 symbols, 3 requirements`), then
++with a *Base* and a *Head* picker and *Show impact*. Both pickers are comboboxes over a native
++`<datalist>` backed by `listGitRefs` (`GET /api/v1/git/refs`, GIT-US-0149): the default `main`,
++the repository's current branch and its upstream from `getSyncStatus`, every other local and
++remote branch (a jj repository's bookmarks, named `origin/main` like git's), `HEAD` and the last
++20 commits by their 12-character id, each labelled with its subject and date. The head also
++offers `worktree` first, the working tree with uncommitted changes, which is what an empty head
++means (R-IMP-1). The pickers stay free text: a tag or any other revision can be typed. When the
++listing answers `unavailable` (browser-only mode, a repository without git history) or fails,
++they fall back silently to the sync-status branch and upstream plus `HEAD`, `HEAD~1`, `HEAD~2`
++and `HEAD~5`. The range lives in the URL (`?base=v1.0&head=HEAD~1`): base defaults to `main`,
++and a head of `worktree` is left out of both the URL and the query. Under the form a summary line (`main..worktree: 3 files, 4 symbols, 3 requirements`), then
+ three sections — **Tier 1 · Direct**, **Tier 2 · Transitive**, **Tier 3 · Candidates** — always
+ in that order. A hit whose `candidate` is set is shown in tier 3 whatever its `tier`, so a guess
+ never sits among the certain hits; candidates are ranked by `score` (highest first), drawn with a
+@@ -974,6 +977,9 @@ export interface DataProvider {
+   listCoverage(project: string, filter?: CoverageFilter): Promise<CoverageList>;
+   queryImpact(project: string, query?: ImpactQuery): Promise<ImpactResult>;
+   getImpactReport(project: string, query?: ImpactReportQuery): Promise<ImpactReport>;
++  // The ref pickers of the impact view (GIT-US-0149): branches and the last
++  // `limit` commits of one repository; `unavailable` in browser-only mode.
++  listGitRefs(repoId: string, opts?: { limit?: number }): Promise<GitRefs>;
+   // The editor's live lint and Spec Delta preview (GIT-US-0132, §8.7): pure reads
+   // of the text the editor holds, answered by the core in both modes.
+   lintSpecText(project: string, input: SpecLintInput): Promise<SpecLintFinding[]>;
+@@ -993,7 +999,8 @@ coverage and impact, and the companion for impact on a repository without histor
+ renders it as a state with a hint to run the companion, never as an error. The specs page
+ (GIT-US-0128, §3.1) consumes `listSpecs`, `listRequirements`, `listCoverage` and
+ `createRequirement`; the requirement detail (GIT-US-0129) adds `getRequirement`,
+-`updateRequirement` and `traceRequirement`, and the impact view (GIT-US-0131) `queryImpact`;
++`updateRequirement` and `traceRequirement`, and the impact view (GIT-US-0131) `queryImpact`
++and, for its pickers, `listGitRefs` (GIT-US-0149);
+ `getImpactReport` is the ranked, token-budgeted form agents and the CLI page through. A
+ refused conditional write surfaces as a `ProviderError` with `code: 'stale_revision'` that also
+ carries `currentRev` and `conflicts[]` (`{field, current?, proposed?}`) when the runtime reported
+diff --git a/docs/06-git-sync.md b/docs/06-git-sync.md
+index f4ff3ba..adeeb9e 100644
+--- a/docs/06-git-sync.md
++++ b/docs/06-git-sync.md
+@@ -784,7 +784,8 @@ and `Commits`) and the structured conflict surface added by GIT-US-0022
+ (`ConflictFile` and `ResolvePath`, §5.7). GIT-US-0039 restated every one of
+ those in terms both git and jj have (§14.8); `Undo` and `Resume` are what
+ GIT-US-0021 called `Abort` and `Continue`. GIT-US-0112 added the read-only
+-`ChangedFiles` diff primitive (§7.4).
++`ChangedFiles` diff primitive (§7.4), and GIT-US-0149 the read-only
++`Branches` listing (§7.5).
+ 
+ A third go-git gap matters to sync, on top of the two below: **go-git has no
+ rebase, and its merge is fast-forward only.** The go-git backend therefore
+@@ -891,6 +892,27 @@ suspect detection and impact sets on. It is native only: `internal/core` and
+   computed once, in shared code, so the three backends return the same list on
+   the same history rather than three diff engines' opinions of it.
+ 
++### 7.5 Branches (GIT-US-0149)
++
++`Backend.Branches(ctx)` lists the local and remote-tracking branches, each with
++the commit it points at — local first, then remote-tracking, each sorted by
++name. It is what the base and head pickers of the impact view offer, next to
++the recent commits `Commits` already lists (`GET /api/v1/git/refs`, docs/07).
++
++- **One spelling.** A remote-tracking branch is named `origin/main` on every
++  backend, so every name is a ref `ChangedFiles` and `Commits` accept. On a jj
++  repository the bookmarks are the branches: a local bookmark is a local
++  branch, and the remote bookmark `main@origin` is listed as `origin/main`
++  (§14.5 translates it back). The `git` pseudo-remote of a colocated
++  repository, a conflicted bookmark and a deleted one are left out; so are
++  symbolic refs such as `origin/HEAD`.
++- **Current.** `current` marks git's checked-out branch — none on a detached
++  HEAD — and, on jj, the bookmark the line of work publishes to (§14.3).
++- **A read.** go-git walks its reference store, system git runs
++  `for-each-ref refs/heads refs/remotes`, and jj runs
++  `bookmark list --all-remotes` with `--ignore-working-copy`: nothing is
++  fetched, snapshotted or written.
++
+ ---
+ 
+ ## 8. Credentials
+diff --git a/docs/07-cli-and-api.md b/docs/07-cli-and-api.md
+index 85c0842..56c144a 100644
+--- a/docs/07-cli-and-api.md
++++ b/docs/07-cli-and-api.md
+@@ -3607,6 +3607,7 @@ There is no migration — adding a status in the `triage` category to
+ GET   /api/v1/git/settings                   effective commit-on-save settings
+ PATCH /api/v1/git/settings                   {"commitOnSave":true,"messageTemplate":"…"}
+ GET   /api/v1/git/status?repo=ACME           backend, identity, branch, dirty set
++GET   /api/v1/git/refs?repo=ACME&limit=20    branches and the last N commits (ref pickers)
+ POST  /api/v1/git/commit                     {} flushes what is batched, or
+                                              {"repo":"ACME","paths":[…],"message":"…"}
+ GET   /api/v1/git/cors-proxy                 where the CORS proxy is, and its allow-list
+@@ -4402,6 +4403,33 @@ A repository that is not a git working tree answers `"git": false` with a
+ `reason`, which is a normal state for a folder someone opened without cloning
+ it, not an error.
+ 
++`GET /api/v1/git/refs?repo=<id>&limit=<n>` (GIT-US-0149) lists what the base and
++head pickers of the impact view offer: the repository's branches — local first,
++then remote-tracking, each by name, named `origin/main` whatever the backend; a
++jj repository lists its bookmarks the same way (doc 06 §7.5) — and the last `n`
++commits reachable from `HEAD` (jj: `@`), newest first. `limit` defaults to 20,
++accepts 0 to 200 and `0` lists branches only. It is a read on every backend —
++go-git, system git and jj — and sits behind the same bearer token as the rest
++of `/git`. `repo` is required (`400 invalid_request` without it), an unknown one
++is `404 repo_not_registered`, and a repository with no git history is
++`503 unavailable`, which browser-only mode also answers without a request. A
++repository without a commit yet answers two empty lists.
++
++```json
++GET /api/v1/git/refs?repo=acme-api&limit=2
++200
++{ "repo": "acme-api", "backend": "system",
++  "branches": [
++    { "name": "main", "sha": "4e5f1c2…", "current": true },
++    { "name": "feat/sso", "sha": "9a0b7d3…" },
++    { "name": "origin/main", "remote": "origin", "sha": "1c2d3e4…" } ],
++  "commits": [
++    { "sha": "4e5f1c2…", "subject": "feat(web): login with SSO",
++      "author": "Jose <jose@digio.es>", "date": "2026-09-04T10:31:55Z" },
++    { "sha": "1c2d3e4…", "subject": "fix(core): trim titles",
++      "author": "Jose <jose@digio.es>", "date": "2026-09-03T17:02:10Z" } ] }
++```
++
+ Commit-on-save is **debounced**, so a commit cannot be part of the write
+ response that triggered it. The write responses therefore carry no `commit`
+ field; the outcome arrives on the event stream as `git.commit`:
+@@ -4980,7 +5008,12 @@ Integrate(ctx, IntegrateRequest) (IntegrateResult, error)   // rebase or merge
+ Push(ctx, PushRequest) (PushResult, error)                  // req.Target, not a branch
+ Undo(ctx) error                                             // git: --abort; jj: jj undo
+ Resume(ctx) (IntegrateResult, error)                        // git: --continue; jj: nothing
+-Commits(ctx, LogRequest) ([]Commit, error)                  // dry-run previews
++Commits(ctx, LogRequest) ([]Commit, error)                  // dry-run previews,
++                                                            // the ref pickers
++// The read-only listings (GIT-US-0112, GIT-US-0149, doc 06 sections 7.4, 7.5).
++ChangedFiles(ctx, from, to string) ([]FileChange, error)    // to "" = working tree
++Branches(ctx) ([]Branch, error)                             // local, then origin/…;
++                                                            // jj: the bookmarks
+ 
+ // The structured conflict surface (GIT-US-0022, doc 06 section 5.7).
+ ConflictFile(ctx, path string) (ConflictVersions, error)    // the three sides, however
+diff --git a/internal/gitops/branches.go b/internal/gitops/branches.go
+new file mode 100644
+index 0000000..df43592
+--- /dev/null
++++ b/internal/gitops/branches.go
+@@ -0,0 +1,50 @@
++package gitops
++
++import (
++	"sort"
++	"strings"
++)
++
++// This file is the branch listing of GIT-US-0149: the local and remote
++// branches a ref picker offers, next to the recent commits Commits already
++// lists. It is a read — no backend fetches, snapshots or writes to answer it.
++
++// Branch is one local or remote-tracking branch — a jj bookmark on a jj
++// repository.
++type Branch struct {
++	// Name is what the other methods accept as a ref: `main` for a local
++	// branch, `origin/main` for a remote-tracking one, whatever the VCS.
++	Name string `json:"name"`
++	// Remote names the remote of a remote-tracking branch, empty for a local
++	// one.
++	Remote string `json:"remote,omitempty"`
++	// SHA is the commit the branch points at.
++	SHA string `json:"sha"`
++	// Current marks the checked-out branch (git) or the bookmark the line of
++	// work publishes to (jj).
++	Current bool `json:"current,omitempty"`
++}
++
++// sortBranches orders a listing the way every backend returns it: local
++// branches first, then remote-tracking ones, each by name.
++func sortBranches(branches []Branch) []Branch {
++	sort.Slice(branches, func(i, j int) bool {
++		a, b := branches[i], branches[j]
++		if (a.Remote == "") != (b.Remote == "") {
++			return a.Remote == ""
++		}
++		return a.Name < b.Name
++	})
++	return branches
++}
++
++// remoteBranch splits a short remote-tracking name (`origin/main`) into its
++// remote and branch halves, or reports false for a name that is not one — the
++// symbolic `origin/HEAD` included, which names no branch of its own.
++func remoteBranch(short string) (remote, name string, ok bool) {
++	remote, name, ok = strings.Cut(short, "/")
++	if !ok || remote == "" || name == "" || name == "HEAD" {
++		return "", "", false
++	}
++	return remote, name, true
++}
+diff --git a/internal/gitops/branches_gogit.go b/internal/gitops/branches_gogit.go
+new file mode 100644
+index 0000000..80e057d
+--- /dev/null
++++ b/internal/gitops/branches_gogit.go
+@@ -0,0 +1,42 @@
++package gitops
++
++import (
++	"context"
++
++	"github.com/go-git/go-git/v5/plumbing"
++)
++
++// Branches lists the local and remote-tracking branches, local first, each
++// sorted by name (GIT-US-0149). Symbolic refs such as `origin/HEAD` are not
++// branches of their own and are left out.
++func (b *goGitBackend) Branches(_ context.Context) ([]Branch, error) {
++	current := ""
++	if head, err := b.repo.Storer.Reference(plumbing.HEAD); err == nil &&
++		head.Type() == plumbing.SymbolicReference && head.Target().IsBranch() {
++		current = head.Target().Short()
++	}
++	refs, err := b.repo.References()
++	if err != nil {
++		return nil, wrap("branches", CodeCommitFailed, err, "list the refs of %s", b.path)
++	}
++	out := []Branch{}
++	err = refs.ForEach(func(ref *plumbing.Reference) error {
++		if ref.Type() != plumbing.HashReference {
++			return nil
++		}
++		switch name := ref.Name(); {
++		case name.IsBranch():
++			out = append(out, Branch{Name: name.Short(), SHA: ref.Hash().String(),
++				Current: name.Short() == current})
++		case name.IsRemote():
++			if remote, _, ok := remoteBranch(name.Short()); ok {
++				out = append(out, Branch{Name: name.Short(), Remote: remote, SHA: ref.Hash().String()})
++			}
++		}
++		return nil
++	})
++	if err != nil {
++		return nil, wrap("branches", CodeCommitFailed, err, "list the refs of %s", b.path)
++	}
++	return sortBranches(out), nil
++}
+diff --git a/internal/gitops/branches_jj.go b/internal/gitops/branches_jj.go
+new file mode 100644
+index 0000000..236a0a7
+--- /dev/null
++++ b/internal/gitops/branches_jj.go
+@@ -0,0 +1,43 @@
++package gitops
++
++import (
++	"context"
++	"strings"
++)
++
++// Branches lists the bookmarks as branches (GIT-US-0149): a local bookmark is
++// a local branch, and a remote bookmark `main@origin` is the remote-tracking
++// branch `origin/main`, spelled the git way every other method accepts and
++// revsetOf translates back. The `git` pseudo-remote of a colocated repository
++// is the local git repository jj exports to, not a host, and is left out; so
++// is a conflicted or deleted bookmark, which names no single commit. The read
++// runs with --ignore-working-copy, like every read of this backend: listing
++// branches never writes an operation.
++func (b *jujutsuBackend) Branches(ctx context.Context) ([]Branch, error) {
++	raw, err := b.run(ctx, "bookmark", "list", "--all-remotes",
++		"-T", `name ++ "`+jujutsuFieldSeparator+`" ++ if(remote, remote, "") ++ "`+
++			jujutsuFieldSeparator+`" ++ if(normal_target, normal_target.commit_id(), "") ++ "\n"`)
++	if err != nil {
++		return nil, wrap("branches", CodeCommitFailed, err, "list the bookmarks of %s", b.path)
++	}
++	current := ""
++	if line, lineErr := b.line(ctx); lineErr == nil && line.Kind == LineBookmark {
++		current = line.Name
++	}
++	out := []Branch{}
++	for _, line := range strings.Split(raw, "\n") {
++		fields := strings.Split(strings.TrimRight(line, "\r"), jujutsuFieldSeparator)
++		if len(fields) < 3 || fields[0] == "" || fields[2] == "" {
++			continue
++		}
++		name, remote, sha := fields[0], fields[1], fields[2]
++		switch remote {
++		case "":
++			out = append(out, Branch{Name: name, SHA: sha, Current: name == current})
++		case jujutsuGitRemote:
++		default:
++			out = append(out, Branch{Name: remote + "/" + name, Remote: remote, SHA: sha})
++		}
++	}
++	return sortBranches(out), nil
++}
+diff --git a/internal/gitops/branches_system.go b/internal/gitops/branches_system.go
+new file mode 100644
+index 0000000..8d86e29
+--- /dev/null
++++ b/internal/gitops/branches_system.go
+@@ -0,0 +1,36 @@
++package gitops
++
++import (
++	"context"
++	"strings"
++)
++
++// Branches lists the local and remote-tracking branches, local first, each
++// sorted by name (GIT-US-0149). `for-each-ref` reads refs only, so it is safe
++// to run while an integration is in progress; symbolic refs such as
++// `origin/HEAD` are left out.
++func (b *systemBackend) Branches(ctx context.Context) ([]Branch, error) {
++	raw, err := b.run(ctx, "for-each-ref",
++		"--format=%(refname)"+commitFieldSeparator+"%(objectname)"+commitFieldSeparator+
++			"%(symref)"+commitFieldSeparator+"%(HEAD)",
++		"refs/heads", "refs/remotes")
++	if err != nil {
++		return nil, wrap("branches", CodeCommitFailed, err, "list the branches of %s", b.path)
++	}
++	out := []Branch{}
++	for _, line := range strings.Split(raw, "\n") {
++		fields := strings.Split(strings.TrimRight(line, "\r"), commitFieldSeparator)
++		if len(fields) < 4 || fields[0] == "" || fields[2] != "" {
++			continue
++		}
++		if name, ok := strings.CutPrefix(fields[0], "refs/heads/"); ok {
++			out = append(out, Branch{Name: name, SHA: fields[1], Current: fields[3] == "*"})
++			continue
++		}
++		short := strings.TrimPrefix(fields[0], "refs/remotes/")
++		if remote, _, ok := remoteBranch(short); ok {
++			out = append(out, Branch{Name: short, Remote: remote, SHA: fields[1]})
++		}
++	}
++	return sortBranches(out), nil
++}
+diff --git a/internal/gitops/branches_test.go b/internal/gitops/branches_test.go
+new file mode 100644
+index 0000000..33d2057
+--- /dev/null
++++ b/internal/gitops/branches_test.go
+@@ -0,0 +1,139 @@
++package gitops
++
++import (
++	"reflect"
++	"strings"
++	"testing"
++)
++
++// The branch listing of GIT-US-0149. The same history is read by every
++// backend, and every backend has to name the branches the same way.
++
++func TestBranches(t *testing.T) {
++	dir, baseSHA := changesFixture(t)
++	mainSHA := headOf(t, dir)
++	g := gitRunner(t, dir)
++	g("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
++	g("branch", "feat/x", baseSHA)
++
++	onMain := []Branch{
++		{Name: "base", SHA: baseSHA},
++		{Name: "feat/x", SHA: baseSHA},
++		{Name: "main", SHA: mainSHA, Current: true},
++		{Name: "origin/main", Remote: "origin", SHA: baseSHA},
++	}
++	detached := []Branch{
++		{Name: "base", SHA: baseSHA},
++		{Name: "feat/x", SHA: baseSHA},
++		{Name: "main", SHA: mainSHA},
++		{Name: "origin/main", Remote: "origin", SHA: baseSHA},
++	}
++	tests := []struct {
++		name  string
++		setup func()
++		want  []Branch
++	}{
++		{name: "on a branch", want: onMain},
++		{name: "detached HEAD marks no branch current", setup: func() {
++			g("checkout", "--detach", "HEAD")
++		}, want: detached},
++	}
++	for _, tc := range tests {
++		t.Run(tc.name, func(t *testing.T) {
++			if tc.setup != nil {
++				tc.setup()
++			}
++			for _, kind := range backends(t) {
++				t.Run(string(kind), func(t *testing.T) {
++					got, err := open(t, dir, kind).Branches(t.Context())
++					if err != nil {
++						t.Fatalf("Branches: %v", err)
++					}
++					if !reflect.DeepEqual(got, tc.want) {
++						t.Errorf("Branches =\n%+v\nwant\n%+v", got, tc.want)
++					}
++				})
++			}
++		})
++	}
++}
++
++func TestBranchesOfAnEmptyRepository(t *testing.T) {
++	dir := t.TempDir()
++	gitRunner(t, dir)("init", "--initial-branch=main")
++	for _, kind := range backends(t) {
++		t.Run(string(kind), func(t *testing.T) {
++			got, err := open(t, dir, kind).Branches(t.Context())
++			if err != nil {
++				t.Fatalf("Branches: %v", err)
++			}
++			if len(got) != 0 {
++				t.Errorf("an unborn branch is not listed, got %+v", got)
++			}
++		})
++	}
++}
++
++// TestJujutsuBranches lists bookmarks as branches in both layouts, without
++// writing an operation, and names remote bookmarks the git way.
++func TestJujutsuBranches(t *testing.T) {
++	for _, colocated := range []bool{true, false} {
++		name := "non-colocated"
++		if colocated {
++			name = "colocated"
++		}
++		t.Run(name, func(t *testing.T) {
++			f := newJujutsuFixture(t, colocated)
++			f.write("a.md", "a\n")
++			f.commit("chore: base")
++			f.bookmark("base", "@-")
++			f.remote()
++			f.run("git", "push", "--allow-new", "-b", "base")
++			f.write("b.md", "b\n")
++			f.commit("feat: main")
++			f.bookmark("main", "@-")
++			id := func(rev string) string {
++				return strings.TrimSpace(f.run("log", "--no-graph", "-r", rev, "-T", "commit_id"))
++			}
++			baseID, mainID := id("base"), id("main")
++			before := f.operations()
++
++			got, err := f.backend().Branches(t.Context())
++			if err != nil {
++				t.Fatalf("Branches: %v", err)
++			}
++			want := []Branch{
++				{Name: "base", SHA: baseID},
++				{Name: "main", SHA: mainID, Current: true},
++				{Name: "origin/base", Remote: "origin", SHA: baseID},
++			}
++			if !reflect.DeepEqual(got, want) {
++				t.Errorf("Branches =\n%+v\nwant\n%+v", got, want)
++			}
++			if after := f.operations(); !equalStrings(before, after) {
++				t.Errorf("listing the branches wrote an operation: %v -> %v", before, after)
++			}
++		})
++	}
++}
++
++func TestRemoteBranch(t *testing.T) {
++	tests := []struct {
++		short, remote, name string
++		ok                  bool
++	}{
++		{short: "origin/main", remote: "origin", name: "main", ok: true},
++		{short: "origin/feat/x", remote: "origin", name: "feat/x", ok: true},
++		{short: "origin/HEAD"},
++		{short: "origin"},
++		{short: "/main"},
++	}
++	for _, tc := range tests {
++		t.Run(tc.short, func(t *testing.T) {
++			remote, name, ok := remoteBranch(tc.short)
++			if remote != tc.remote || name != tc.name || ok != tc.ok {
++				t.Errorf("remoteBranch(%q) = %q, %q, %v", tc.short, remote, name, ok)
++			}
++		})
++	}
++}
+diff --git a/internal/gitops/gitops.go b/internal/gitops/gitops.go
+index 02edd50..9a380eb 100644
+--- a/internal/gitops/gitops.go
++++ b/internal/gitops/gitops.go
+@@ -289,6 +289,12 @@ type Backend interface {
+ 	// history, and none of them writes anything: a jj backend does not
+ 	// snapshot the working copy to answer.
+ 	ChangedFiles(ctx context.Context, from, to string) ([]FileChange, error)
++	// Branches lists the local and remote-tracking branches — the bookmarks of
++	// a jj repository — local first, each sorted by name, with the commit each
++	// points at (GIT-US-0149). A remote-tracking branch is named the git way,
++	// `origin/main`, on every backend, so each name is a ref ChangedFiles and
++	// Commits accept. Like ChangedFiles it writes nothing.
++	Branches(ctx context.Context) ([]Branch, error)
+ 
+ 	// ConflictFile reads the three sides of a conflicted path — the merge base,
+ 	// the user's own side and the incoming one — however the backend can
+diff --git a/internal/gitops/sync_test.go b/internal/gitops/sync_test.go
+index aed365d..5ff1603 100644
+--- a/internal/gitops/sync_test.go
++++ b/internal/gitops/sync_test.go
+@@ -510,6 +510,8 @@ func (s *stubBackend) Identity(context.Context) (Identity, error) {
+ 
+ func (s *stubBackend) Status(context.Context) (Status, error) { return Status{Clean: true}, nil }
+ 
++func (s *stubBackend) Branches(context.Context) ([]Branch, error) { return []Branch{}, nil }
++
+ func (s *stubBackend) ChangedFiles(context.Context, string, string) ([]FileChange, error) {
+ 	return []FileChange{}, nil
+ }
+diff --git a/internal/server/git.go b/internal/server/git.go
+index 1bd7799..c384014 100644
+--- a/internal/server/git.go
++++ b/internal/server/git.go
+@@ -359,6 +359,9 @@ func (s *Server) mountGit(r chi.Router) {
+ 	r.Get("/settings", s.handleGitSettings)
+ 	r.Patch("/settings", s.handleGitSettingsPatch)
+ 	r.Get("/status", s.handleGitStatus)
++	// The branches and recent commits of one repository, for the ref pickers
++	// of the impact view (GIT-US-0149). A read: it writes nothing.
++	r.Get("/refs", s.handleGitRefs)
+ 	r.Post("/commit", s.handleGitCommit)
+ 	// Where the companion's CORS proxy is and which hosts it will speak to, so
+ 	// that browser-only mode can adopt it without the user typing a URL
+diff --git a/internal/server/gitrefs.go b/internal/server/gitrefs.go
+new file mode 100644
+index 0000000..d47d5a1
+--- /dev/null
++++ b/internal/server/gitrefs.go
+@@ -0,0 +1,82 @@
++package server
++
++import (
++	"net/http"
++	"strconv"
++
++	"github.com/digiogithub/git-in-track/internal/gitops"
++)
++
++// The ref listing of GIT-US-0149: the branches and the recent commits the base
++// and head pickers of the impact view offer. It is a read over the
++// repository's backend — git, system git or jj alike — and writes nothing.
++
++// Bounds of the `limit` of GET /api/v1/git/refs.
++const (
++	defaultRefCommits = 20
++	maxRefCommits     = 200
++)
++
++// gitRefsResponse is the body of GET /api/v1/git/refs.
++type gitRefsResponse struct {
++	Repo    string `json:"repo"`
++	Backend string `json:"backend"`
++	// Branches are the local branches, then the remote-tracking ones, each by
++	// name; a jj repository lists its bookmarks.
++	Branches []gitops.Branch `json:"branches"`
++	// Commits are the last commits reachable from HEAD (jj: `@`), newest
++	// first.
++	Commits []gitops.Commit `json:"commits"`
++}
++
++// handleGitRefs serves GET /api/v1/git/refs?repo=<id>&limit=<n>.
++func (s *Server) handleGitRefs(w http.ResponseWriter, r *http.Request) {
++	q := r.URL.Query()
++	repo := q.Get("repo")
++	if repo == "" {
++		failProblem(w, r, codeInvalidRequest, "A ref listing needs ?repo=<id>.")
++		return
++	}
++	limit := defaultRefCommits
++	if v := q.Get("limit"); v != "" {
++		n, err := strconv.Atoi(v)
++		if err != nil || n < 0 || n > maxRefCommits {
++			failProblem(w, r, codeInvalidRequest,
++				"limit must be a number of commits from 0 to "+strconv.Itoa(maxRefCommits)+".")
++			return
++		}
++		limit = n
++	}
++	m, ok := s.repos.lookup(repo)
++	if !ok {
++		failProblem(w, r, codeRepoNotRegistered, "No repository is registered as "+repo+".")
++		return
++	}
++	backend, ok := s.git.backendFor(m.id)
++	if !ok {
++		failProblem(w, r, codeUnavailable,
++			"Repository "+m.id+" has no git history to list refs from: "+s.git.reasonFor(m.id))
++		return
++	}
++	branches, err := backend.Branches(r.Context())
++	if err != nil {
++		writeGitError(w, r, err)
++		return
++	}
++	commits := []gitops.Commit{}
++	if limit > 0 {
++		recent, logErr := backend.Commits(r.Context(), gitops.LogRequest{To: "HEAD", Limit: limit})
++		switch {
++		case logErr == nil:
++			commits = recent
++		case len(branches) > 0:
++			writeGitError(w, r, logErr)
++			return
++		}
++		// No branch and no readable HEAD is a repository without a commit
++		// yet: an empty listing, not a failure.
++	}
++	writeJSON(w, r, http.StatusOK, gitRefsResponse{
++		Repo: m.id, Backend: backend.Name(), Branches: branches, Commits: commits,
++	})
++}
+diff --git a/internal/server/gitrefs_test.go b/internal/server/gitrefs_test.go
+new file mode 100644
+index 0000000..b65c7de
+--- /dev/null
++++ b/internal/server/gitrefs_test.go
+@@ -0,0 +1,131 @@
++package server
++
++import (
++	"net/http"
++	"testing"
++	"time"
++
++	"github.com/digiogithub/git-in-track/internal/config"
++	"github.com/digiogithub/git-in-track/internal/gitops"
++)
++
++// GET /api/v1/git/refs, the ref listing of GIT-US-0149.
++
++// gitRefsBody is the documented shape of GET /api/v1/git/refs.
++type gitRefsBody struct {
++	Repo     string `json:"repo"`
++	Backend  string `json:"backend"`
++	Branches []struct {
++		Name    string `json:"name"`
++		Remote  string `json:"remote"`
++		SHA     string `json:"sha"`
++		Current bool   `json:"current"`
++	} `json:"branches"`
++	Commits []struct {
++		SHA     string `json:"sha"`
++		Subject string `json:"subject"`
++		Date    string `json:"date"`
++	} `json:"commits"`
++}
++
++func TestGitRefs(t *testing.T) {
++	for _, backend := range []string{string(gitops.KindGoGit), string(gitops.KindSystem)} {
++		t.Run(backend, func(t *testing.T) {
++			settings := config.Default().Git
++			settings.Backend = config.Backend(backend)
++			s, root := newGitServer(t, settings)
++			if got, ok := s.git.backendFor(testRepoID); !ok || got.Name() != backend {
++				t.Skipf("the %s backend is not usable here", backend)
++			}
++			before := gitLog(t, root)
++
++			var body gitRefsBody
++			decode(t, send(t, s, request{method: http.MethodGet,
++				target: "/api/v1/git/refs?repo=" + testRepoID}), http.StatusOK, &body)
++			if body.Repo != testRepoID || body.Backend != backend {
++				t.Errorf("repo, backend = %q, %q", body.Repo, body.Backend)
++			}
++			if len(body.Branches) != 1 || body.Branches[0].Name != "main" || !body.Branches[0].Current ||
++				body.Branches[0].SHA == "" {
++				t.Errorf("branches = %+v, want the current main", body.Branches)
++			}
++			if len(body.Commits) != 1 || body.Commits[0].Subject != "chore: seed the fixture" ||
++				body.Commits[0].SHA != body.Branches[0].SHA || body.Commits[0].Date == "" {
++				t.Errorf("commits = %+v, want the seed commit", body.Commits)
++			}
++			if after := gitLog(t, root); len(after) != len(before) {
++				t.Errorf("listing refs committed: %v -> %v", before, after)
++			}
++
++			decode(t, send(t, s, request{method: http.MethodGet,
++				target: "/api/v1/git/refs?repo=" + testRepoID + "&limit=0"}), http.StatusOK, &body)
++			if len(body.Commits) != 0 || len(body.Branches) != 1 {
++				t.Errorf("limit=0 lists branches only, got %+v", body)
++			}
++		})
++	}
++
++	t.Run("jj bookmarks are branches", func(t *testing.T) {
++		s, _ := newJujutsuServer(t, config.Default().Git)
++		var body gitRefsBody
++		decode(t, send(t, s, request{method: http.MethodGet,
++			target: "/api/v1/git/refs?repo=" + testRepoID + "&limit=5"}), http.StatusOK, &body)
++		if body.Backend != string(gitops.KindJujutsu) {
++			t.Fatalf("backend = %q, want jj", body.Backend)
++		}
++		if len(body.Branches) != 1 || body.Branches[0].Name != "main" || !body.Branches[0].Current {
++			t.Errorf("branches = %+v, want the main bookmark", body.Branches)
++		}
++		if len(body.Commits) == 0 {
++			t.Error("a jj repository lists its recent commits")
++		}
++	})
++
++	problems := []struct {
++		name   string
++		target string
++		want   int
++	}{
++		{name: "the repository is required", target: "/api/v1/git/refs", want: http.StatusBadRequest},
++		{name: "an unknown repository", target: "/api/v1/git/refs?repo=nope", want: http.StatusNotFound},
++		{name: "a limit that is not a number", target: "/api/v1/git/refs?repo=" + testRepoID + "&limit=x", want: http.StatusBadRequest},
++		{name: "a limit out of range", target: "/api/v1/git/refs?repo=" + testRepoID + "&limit=1000", want: http.StatusBadRequest},
++	}
++	for _, tc := range problems {
++		t.Run(tc.name, func(t *testing.T) {
++			s, _ := newGitServer(t, config.Default().Git)
++			decode(t, send(t, s, request{method: http.MethodGet, target: tc.target}), tc.want, nil)
++		})
++	}
++
++	t.Run("a folder without git is unavailable", func(t *testing.T) {
++		root := copyTree(t, fixtureRoot)
++		s, err := New(Options{
++			Token: "test-token", Version: "0.0.1-test", Workspace: "test",
++			Repos: []Repo{{ID: testRepoID, Path: root, Role: "project", DocsFolder: "docs"}},
++			Now:   func() time.Time { return time.Date(2026, 9, 4, 10, 0, 0, 0, time.UTC) },
++			Git:   config.Default().Git,
++		})
++		if err != nil {
++			t.Fatalf("New(): %v", err)
++		}
++		t.Cleanup(func() { s.git.close(t.Context()) })
++		var problem struct {
++			Code string `json:"code"`
++		}
++		decode(t, send(t, s, request{method: http.MethodGet,
++			target: "/api/v1/git/refs?repo=" + testRepoID}), http.StatusServiceUnavailable, &problem)
++		if problem.Code != "unavailable" {
++			t.Errorf("code = %q, want unavailable", problem.Code)
++		}
++	})
++
++	t.Run("the route needs the bearer token", func(t *testing.T) {
++		s, _ := newGitServer(t, config.Default().Git)
++		rec := send(t, s, request{method: http.MethodGet, target: "/api/v1/git/refs?repo=" + testRepoID,
++			header: map[string]string{"Authorization": "Bearer wrong"}})
++		if rec.Code != http.StatusUnauthorized {
++			t.Errorf("status = %d, want 401", rec.Code)
++		}
++	})
++}
+diff --git a/web/src/api/browser-provider.test.ts b/web/src/api/browser-provider.test.ts
+index aab87cb..d98a3f2 100644
+--- a/web/src/api/browser-provider.test.ts
++++ b/web/src/api/browser-provider.test.ts
+@@ -997,7 +997,7 @@ describe('BrowserProvider specs (GIT-US-0127)', () => {
+     });
+   });
+ 
+-  it('answers trace, coverage and impact with unavailable without calling the core', async () => {
++  it('answers trace, coverage, impact and the ref listing with unavailable without calling the core', async () => {
+     const { provider, call } = await mount();
+     const before = call.mock.calls.length;
+ 
+@@ -1006,6 +1006,7 @@ describe('BrowserProvider specs (GIT-US-0127)', () => {
+       provider.listCoverage('ACME'),
+       provider.queryImpact('ACME', { base: 'main' }),
+       provider.getImpactReport('ACME', { budget: 500 }),
++      provider.listGitRefs('repo-1', { limit: 20 }),
+     ]) {
+       await expect(pending).rejects.toMatchObject({ name: 'ProviderError', code: 'unavailable' });
+     }
+diff --git a/web/src/api/browser-provider.ts b/web/src/api/browser-provider.ts
+index be66039..7ce259d 100644
+--- a/web/src/api/browser-provider.ts
++++ b/web/src/api/browser-provider.ts
+@@ -87,6 +87,7 @@ import type {
+   Unsubscribe,
+   UpdateOp,
+   GitCommit,
++  GitRefs,
+   GitRepoStatus,
+   GitSettings,
+   GitSettingsPatch,
+@@ -126,7 +127,12 @@ import type {
+   SpecFilter,
+   TracedRequirement,
+ } from '@/api/provider';
+-import { BROWSER_SPEC_ANALYSIS_REASON, ProviderError, teamScope } from '@/api/provider';
++import {
++  BROWSER_GIT_REFS_REASON,
++  BROWSER_SPEC_ANALYSIS_REASON,
++  ProviderError,
++  teamScope,
++} from '@/api/provider';
+ import { hydrateOrBuild } from '@/cache/index-cache';
+ import type {
+   ConflictResolutionParams,
+@@ -1274,6 +1280,14 @@ export class BrowserProvider implements DataProvider {
+     }
+   }
+ 
++  /**
++   * Browser-only mode lists no refs: the impact view they pick for is a
++   * companion answer, and its pickers fall back to free text (GIT-US-0149).
++   */
++  listGitRefs(_repoId: string, _opts?: { limit?: number }): Promise<GitRefs> {
++    return Promise.reject(new ProviderError('unavailable', BROWSER_GIT_REFS_REASON));
++  }
++
+   /**
+    * Browser-only mode has no git backend to inspect yet, so every mounted
+    * repository reports why rather than pretending to be a working tree.
+diff --git a/web/src/api/companion-provider.test.ts b/web/src/api/companion-provider.test.ts
+index 8329cac..9b17849 100644
+--- a/web/src/api/companion-provider.test.ts
++++ b/web/src/api/companion-provider.test.ts
+@@ -1084,6 +1084,35 @@ describe('CompanionProvider git surface (story GIT-US-0020)', () => {
+     expect(repos[0]).toMatchObject({ repo: 'acme', git: true, backend: 'system' });
+   });
+ 
++  it('lists the branches and recent commits of one repository', async () => {
++    const fetchImpl = vi.fn().mockResolvedValue(
++      response({
++        repo: 'acme',
++        backend: 'jj',
++        branches: [{ name: 'origin/main', remote: 'origin', sha: 'abc123' }],
++        commits: [{ sha: 'abc123', subject: 'feat: x', date: '2026-09-02T10:00:00Z' }],
++      }),
++    );
++    const refs = await provider(fetchImpl).listGitRefs('acme', { limit: 5 });
++
++    expect(lastCall(fetchImpl).url).toBe(`${BASE}/api/v1/git/refs?repo=acme&limit=5`);
++    expect(refs.backend).toBe('jj');
++    expect(refs.branches).toEqual([{ name: 'origin/main', remote: 'origin', sha: 'abc123' }]);
++    expect(refs.commits[0]).toMatchObject({ sha: 'abc123', subject: 'feat: x' });
++  });
++
++  it('maps a repository without git history onto unavailable refs', async () => {
++    const fetchImpl = vi
++      .fn()
++      .mockResolvedValue(
++        response({ code: 'unavailable', status: 503, detail: 'no git history' }, { status: 503 }),
++      );
++    await expect(provider(fetchImpl).listGitRefs('acme')).rejects.toMatchObject({
++      name: 'ProviderError',
++      code: 'unavailable',
++    });
++  });
++
+   it('flushes the batched edits with an empty commit request', async () => {
+     const fetchImpl = vi
+       .fn()
+diff --git a/web/src/api/companion-provider.ts b/web/src/api/companion-provider.ts
+index d93c043..0433744 100644
+--- a/web/src/api/companion-provider.ts
++++ b/web/src/api/companion-provider.ts
+@@ -92,6 +92,8 @@ import type {
+   Priority,
+   ProjectSummary,
+   GitCommit,
++  GitBranch,
++  GitRefs,
+   GitRepoStatus,
+   GitSettings,
+   GitSettingsPatch,
+@@ -126,6 +128,7 @@ import type {
+   SprintResult,
+   SprintSummary,
+   SprintView,
++  SyncCommit,
+   SyncOptions,
+   SyncRepoStatus,
+   SyncResult,
+@@ -2655,6 +2658,20 @@ export class CompanionProvider implements DataProvider {
+     return asArray(record ? record['repos'] : body) as GitRepoStatus[];
+   }
+ 
++  /** `GET /api/v1/git/refs` (GIT-US-0149). */
++  async listGitRefs(repoId: string, opts: { limit?: number } = {}): Promise<GitRefs> {
++    const body = asRecord(
++      await this.#json(`${API_PREFIX}/git/refs${buildQuery({ repo: repoId, limit: opts.limit })}`),
++    );
++    if (body === null) throw malformed('git refs');
++    return {
++      repo: typeof body['repo'] === 'string' ? body['repo'] : repoId,
++      backend: typeof body['backend'] === 'string' ? body['backend'] : '',
++      branches: asArray(body['branches']) as GitBranch[],
++      commits: asArray(body['commits']) as SyncCommit[],
++    };
++  }
++
+   // ------------------------------------------------ semantic search settings
+ 
+   /** `GET /api/v1/search/settings` (docs/07, story GIT-US-0091). */
+diff --git a/web/src/api/fake-provider.ts b/web/src/api/fake-provider.ts
+index 49c494d..9e033a7 100644
+--- a/web/src/api/fake-provider.ts
++++ b/web/src/api/fake-provider.ts
+@@ -58,6 +58,7 @@ import type {
+   DataProvider,
+   Diagnostic,
+   GitCommit,
++  GitRefs,
+   GitRepoStatus,
+   GitSettings,
+   GitSettingsPatch,
+@@ -4647,6 +4648,41 @@ export class FakeProvider implements DataProvider {
+     );
+   }
+ 
++  /**
++   * What `listGitRefs` answers: `main` and `origin/main` with two commits
++   * unless a test moves it; an `Error` is thrown instead (GIT-US-0149).
++   */
++  gitRefs: GitRefs | Error | null = null;
++
++  listGitRefs(repoId: string, opts: { limit?: number } = {}): Promise<GitRefs> {
++    if (this.gitRefs instanceof Error) return Promise.reject(this.gitRefs);
++    const refs: GitRefs = this.gitRefs ?? {
++      repo: repoId,
++      backend: 'go-git',
++      branches: [
++        { name: 'main', sha: 'c0ffee0000000000000000000000000000000002', current: true },
++        { name: 'origin/main', remote: 'origin', sha: 'c0ffee0000000000000000000000000000000001' },
++      ],
++      commits: [
++        {
++          sha: 'c0ffee0000000000000000000000000000000002',
++          subject: 'feat: second',
++          date: '2026-09-02T10:00:00Z',
++        },
++        {
++          sha: 'c0ffee0000000000000000000000000000000001',
++          subject: 'chore: first',
++          date: '2026-09-01T10:00:00Z',
++        },
++      ],
++    };
++    const limit = opts.limit;
++    return Promise.resolve({
++      ...refs,
++      commits: limit === undefined ? refs.commits : refs.commits.slice(0, limit),
++    });
++  }
++
+   commitNow(
+     input: { repoId?: string; paths?: string[]; message?: string } = {},
+   ): Promise<GitCommit[]> {
+diff --git a/web/src/api/provider.ts b/web/src/api/provider.ts
+index 41ec890..ca00eef 100644
+--- a/web/src/api/provider.ts
++++ b/web/src/api/provider.ts
+@@ -717,6 +717,30 @@ export type GitRepoStatus = {
+   };
+ };
+ 
++/** One local or remote-tracking branch (a jj bookmark) of `GET /api/v1/git/refs`. */
++export type GitBranch = {
++  /** `main`, or `origin/main` for a remote-tracking branch, whatever the VCS. */
++  name: string;
++  /** The remote of a remote-tracking branch; absent for a local one. */
++  remote?: string;
++  sha: string;
++  /** The checked-out branch, or the bookmark the jj line of work publishes to. */
++  current?: boolean;
++};
++
++/**
++ * The branches and recent commits of one repository (`GET /api/v1/git/refs`,
++ * GIT-US-0149): what the base and head pickers of the impact view offer.
++ */
++export type GitRefs = {
++  repo: string;
++  backend: string;
++  /** Local branches first, then remote-tracking ones, each by name. */
++  branches: GitBranch[];
++  /** The last commits reachable from `HEAD` (jj: `@`), newest first. */
++  commits: SyncCommit[];
++};
++
+ /** One commit made by commit-on-save or by an explicit commit. */
+ export type GitCommit = {
+   repo: string;
+@@ -2063,6 +2087,12 @@ export interface DataProvider {
+   updateGitSettings(patch: GitSettingsPatch): Promise<GitSettings>;
+   /** Per-repository git state: backend, identity and dirty set. */
+   getGitStatus(repoId?: string): Promise<GitRepoStatus[]>;
++  /**
++   * The branches and the last `limit` commits (default 20) of one repository,
++   * for the ref pickers of the impact view (GIT-US-0149). `unavailable` in
++   * browser-only mode and on a repository without git history.
++   */
++  listGitRefs(repoId: string, opts?: { limit?: number }): Promise<GitRefs>;
+ 
+   // semantic search settings (`GET|PATCH /api/v1/search/settings`, GIT-US-0091)
+   /**
+@@ -2441,6 +2471,10 @@ export type ImpactReportQuery = ImpactQuery & {
+ };
+ 
+ /** Why browser-only mode has no trace, coverage or impact (GIT-US-0127). */
++/** Why browser-only mode has no ref listing for the impact pickers (GIT-US-0149). */
++export const BROWSER_GIT_REFS_REASON =
++  'Listing branches and commits needs the git history the companion reads. Run `gintrack serve` to pick refs; typing one still works.';
++
+ export const BROWSER_SPEC_ANALYSIS_REASON =
+   'Requirement trace, coverage and impact are not available in browser-only mode: they need the code scanner, test results and git history of the companion. Run `gintrack serve` to see them.';
+ 
+diff --git a/web/src/features/specs/ImpactView.test.tsx b/web/src/features/specs/ImpactView.test.tsx
+index 7bb9e92..35643dc 100644
+--- a/web/src/features/specs/ImpactView.test.tsx
++++ b/web/src/features/specs/ImpactView.test.tsx
+@@ -12,9 +12,13 @@ import userEvent from '@testing-library/user-event';
+ import { describe, expect, it, vi } from 'vitest';
+ 
+ import { DataProviderProvider } from '@/api/DataProviderProvider';
+-import { FakeProvider, sampleItems } from '@/api/fake-provider';
++import { FakeProvider, sampleItems, sampleProject } from '@/api/fake-provider';
+ import type { ImpactResult } from '@/api/provider';
+-import { BROWSER_SPEC_ANALYSIS_REASON } from '@/api/provider';
++import {
++  BROWSER_GIT_REFS_REASON,
++  BROWSER_SPEC_ANALYSIS_REASON,
++  ProviderError,
++} from '@/api/provider';
+ import { ToastProvider } from '@/components/ui/toast';
+ import { validateImpactSearch } from '@/features/specs/impact';
+ import { ImpactView } from '@/features/specs/ImpactView';
+@@ -59,11 +63,19 @@ const impact: ImpactResult = {
+   ],
+ };
+ 
+-function renderImpact(path: string, analysis: { impact?: ImpactResult } | null = { impact }) {
++function renderImpact(
++  path: string,
++  analysis: { impact?: ImpactResult } | null = { impact },
++  setup?: (provider: FakeProvider) => void,
++) {
+   const provider = new FakeProvider({
+     items: sampleItems,
++    projects: [{ ...sampleProject, vaultId: 'repo-1' }],
+     ...(analysis ? { specAnalysis: analysis } : {}),
+   });
++  // A companion: the ref pickers only load where git answers at all.
++  Object.assign(provider.capabilities, { git: true });
++  setup?.(provider);
+   const spy = vi.spyOn(provider, 'queryImpact');
+   const queryClient = new QueryClient({
+     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+@@ -107,7 +119,7 @@ function renderImpact(path: string, analysis: { impact?: ImpactResult } | null =
+       </DataProviderProvider>
+     </QueryClientProvider>,
+   );
+-  return { router, spy };
++  return { router, spy, provider };
+ }
+ 
+ function tier(n: 1 | 2 | 3): HTMLElement {
+@@ -122,6 +134,23 @@ function hit(ref: string): HTMLElement {
+   return row;
+ }
+ 
++/** The values a picker's datalist offers, in order. */
++function options(label: 'Base' | 'Head'): string[] {
++  return datalistOf(label).map((option) => option.value);
++}
++
++/** The label of one offered value. */
++function optionLabel(label: 'Base' | 'Head', value: string): string | undefined {
++  return datalistOf(label).find((option) => option.value === value)?.label;
++}
++
++function datalistOf(label: 'Base' | 'Head'): HTMLOptionElement[] {
++  const input = screen.getByLabelText(label);
++  const list = document.getElementById(input.getAttribute('list') ?? '');
++  if (!list) throw new Error(`no datalist for ${label}`);
++  return [...list.querySelectorAll('option')];
++}
++
+ describe('ImpactView', () => {
+   it('groups hits by tier with reasons, coverage, suspect and pending items', async () => {
+     const { spy } = renderImpact('/p/ACME/specs/impact');
+@@ -206,6 +235,57 @@ describe('ImpactView', () => {
+     expect(spy).toHaveBeenLastCalledWith('ACME', { base: 'release' });
+   });
+ 
++  it('offers the branches and recent commits of the ref listing in both pickers', async () => {
++    const { provider } = renderImpact('/p/ACME/specs/impact');
++    const refs = vi.spyOn(provider, 'listGitRefs');
++    await screen.findByText('main..worktree');
++
++    await waitFor(() => expect(options('Base')).toContain('origin/main'));
++    expect(refs).toHaveBeenCalledWith('repo-1', { limit: 20 });
++    const base = options('Base');
++    expect(base[0]).toBe('main');
++    expect(base).toContain('c0ffee000000');
++    // The sync status names the upstream; the listing adds every other branch.
++    expect(optionLabel('Base', 'origin/main')).toBe('upstream');
++    expect(optionLabel('Head', 'c0ffee000000')).toBe('feat: second · 2026-09-02');
++    const head = options('Head');
++    expect(head[0]).toBe('worktree');
++    // The listing replaces the HEAD~n guesses of the fallback.
++    expect(head).not.toContain('HEAD~1');
++  });
++
++  it('applies a picked commit and still accepts a ref typed by hand', async () => {
++    const { router, spy } = renderImpact('/p/ACME/specs/impact');
++    await waitFor(() => expect(options('Base')).toContain('c0ffee000000'));
++
++    const user = userEvent.setup();
++    await user.clear(screen.getByLabelText('Base'));
++    await user.type(screen.getByLabelText('Base'), 'c0ffee000000');
++    await user.click(screen.getByRole('button', { name: 'Show impact' }));
++    await waitFor(() => expect(router.state.location.search).toEqual({ base: 'c0ffee000000' }));
++    expect(spy).toHaveBeenLastCalledWith('ACME', { base: 'c0ffee000000' });
++
++    // A tag the listing does not offer is still a valid ref.
++    await user.clear(screen.getByLabelText('Base'));
++    await user.type(screen.getByLabelText('Base'), 'v2.0');
++    await user.click(screen.getByRole('button', { name: 'Show impact' }));
++    await waitFor(() => expect(router.state.location.search).toEqual({ base: 'v2.0' }));
++    expect(spy).toHaveBeenLastCalledWith('ACME', { base: 'v2.0' });
++  });
++
++  it('falls back to the sync-status suggestions when the ref listing is unavailable', async () => {
++    renderImpact('/p/ACME/specs/impact', { impact }, (provider) => {
++      provider.gitRefs = new ProviderError('unavailable', BROWSER_GIT_REFS_REASON);
++    });
++    await screen.findByText('main..worktree');
++
++    await waitFor(() => expect(options('Head')).toContain('HEAD~1'));
++    expect(options('Base')).not.toContain('c0ffee000000');
++    expect(screen.queryByText(BROWSER_GIT_REFS_REASON)).not.toBeInTheDocument();
++    // Free text still works without any listing.
++    expect(screen.getByLabelText('Base')).toBeEnabled();
++  });
++
+   it('reports tiers 2 and 3 unavailable without Pando, keeping tier 1', async () => {
+     renderImpact('/p/ACME/specs/impact', {
+       impact: {
+diff --git a/web/src/features/specs/ImpactView.tsx b/web/src/features/specs/ImpactView.tsx
+index 8e40019..fa46f72 100644
+--- a/web/src/features/specs/ImpactView.tsx
++++ b/web/src/features/specs/ImpactView.tsx
+@@ -26,9 +26,10 @@ import {
+   WORKTREE,
+   type ImpactHit,
+   type ImpactSearch,
++  type RefSuggestions,
+   type TierGroup,
+ } from '@/features/specs/impact';
+-import { useImpact, useRefStatus } from '@/features/specs/queries';
++import { useGitRefs, useImpact, useRefStatus } from '@/features/specs/queries';
+ import { requirementRouteParams } from '@/features/specs/trace-groups';
+ import { cn } from '@/lib/cn';
+ 
+@@ -64,8 +65,15 @@ export function ImpactView() {
+   const failed = unavailable ? undefined : impactQuery.error;
+ 
+   // The pickers only matter where impact answers at all: companion mode.
+-  const refStatus = useRefStatus(project?.vaultId, provider.capabilities.git && !unavailable);
+-  const suggestions = useMemo(() => refSuggestions(refStatus.data), [refStatus.data]);
++  // The companion's ref listing backs them (GIT-US-0149); the sync status is
++  // the fallback when it answers `unavailable`.
++  const pickable = provider.capabilities.git && !unavailable;
++  const refStatus = useRefStatus(project?.vaultId, pickable);
++  const gitRefs = useGitRefs(project?.vaultId, pickable);
++  const suggestions = useMemo(
++    () => refSuggestions(refStatus.data, gitRefs.data),
++    [refStatus.data, gitRefs.data],
++  );
+ 
+   const groups = useMemo(
+     () => (impactQuery.data ? groupByTier(impactQuery.data) : []),
+@@ -163,7 +171,11 @@ export function ImpactView() {
+   );
+ }
+ 
+-/** The base and head pickers: free refs with suggestions, the working tree as the default head. */
++/**
++ * The base and head pickers: comboboxes offering the repository's branches and
++ * recent commits, still accepting any ref typed by hand, with the working
++ * tree as the default head.
++ */
+ function RangeForm({
+   base,
+   head,
+@@ -172,7 +184,7 @@ function RangeForm({
+ }: {
+   base: string;
+   head: string | undefined;
+-  suggestions: { base: string[]; head: string[] };
++  suggestions: RefSuggestions;
+   onApply: (next: ImpactSearch) => void;
+ }) {
+   const id = useId();
+@@ -206,7 +218,7 @@ function RangeForm({
+         />
+         <datalist id={`${id}-base-refs`}>
+           {suggestions.base.map((ref) => (
+-            <option key={ref} value={ref} />
++            <option key={ref.value} value={ref.value} label={ref.label} />
+           ))}
+         </datalist>
+       </div>
+@@ -225,7 +237,7 @@ function RangeForm({
+         />
+         <datalist id={`${id}-head-refs`}>
+           {suggestions.head.map((ref) => (
+-            <option key={ref} value={ref} label={ref === WORKTREE ? 'working tree' : undefined} />
++            <option key={ref.value} value={ref.value} label={ref.label} />
+           ))}
+         </datalist>
+       </div>
+@@ -234,7 +246,8 @@ function RangeForm({
+         Show impact
+       </Button>
+       <p id={`${id}-head-hint`} className="w-full text-xs text-muted-foreground">
+-        A branch, tag or commit (<code className="font-mono">HEAD~1</code>). Head{' '}
++        Pick a branch or a recent commit, or type any ref — a tag,{' '}
++        <code className="font-mono">HEAD~1</code>. Head{' '}
+         <code className="font-mono">{WORKTREE}</code> is the working tree, uncommitted changes
+         included; another head is exact only when it is <code className="font-mono">HEAD</code> of a
+         clean tree.
+diff --git a/web/src/features/specs/impact.test.ts b/web/src/features/specs/impact.test.ts
+index 1f99c2b..68a6db6 100644
+--- a/web/src/features/specs/impact.test.ts
++++ b/web/src/features/specs/impact.test.ts
+@@ -1,6 +1,6 @@
+ import { describe, expect, it } from 'vitest';
+ 
+-import type { ImpactResult, SyncRepoStatus } from '@/api/provider';
++import type { GitRefs, ImpactResult, SyncRepoStatus } from '@/api/provider';
+ import {
+   formatRange,
+   groupByTier,
+@@ -126,8 +126,37 @@ describe('range', () => {
+       },
+     ] satisfies SyncRepoStatus[];
+     const got = refSuggestions(rows);
+-    expect(got.base.slice(0, 3)).toEqual(['main', 'feat/x', 'origin/feat/x']);
+-    expect(got.head[0]).toBe('worktree');
+-    expect(got.head).toContain('HEAD~1');
++    expect(got.base.slice(0, 3).map((o) => o.value)).toEqual(['main', 'feat/x', 'origin/feat/x']);
++    expect(got.head[0]).toEqual({ value: 'worktree', label: 'working tree' });
++    expect(got.head.map((o) => o.value)).toContain('HEAD~1');
++  });
++
++  it('suggests every branch and the recent commits of the ref listing', () => {
++    const refs = {
++      repo: 'r',
++      backend: 'jj',
++      branches: [
++        { name: 'main', sha: 'a'.repeat(40), current: true },
++        { name: 'feat/y', sha: 'b'.repeat(40) },
++        { name: 'origin/main', remote: 'origin', sha: 'c'.repeat(40) },
++      ],
++      commits: [
++        { sha: '0123456789abcdef0123', subject: 'feat: add y', date: '2026-09-02T10:00:00Z' },
++        { sha: 'fedcba9876543210fedc', subject: '' },
++      ],
++    } satisfies GitRefs;
++    const got = refSuggestions(undefined, refs);
++    expect(got.base).toEqual([
++      { value: 'main' },
++      { value: 'feat/y', label: 'branch' },
++      { value: 'origin/main', label: 'remote branch' },
++      { value: 'HEAD' },
++      { value: '0123456789ab', label: 'feat: add y · 2026-09-02' },
++      { value: 'fedcba987654', label: '(no description)' },
++    ]);
++    // The listing replaces the HEAD~n guesses; the working tree leads the head.
++    expect(got.head[0]?.value).toBe('worktree');
++    expect(got.head.map((o) => o.value)).not.toContain('HEAD~1');
++    expect(got.head.find((o) => o.value === 'main')?.label).toBe('current branch');
+   });
+ });
+diff --git a/web/src/features/specs/impact.ts b/web/src/features/specs/impact.ts
+index 1032130..41891a7 100644
+--- a/web/src/features/specs/impact.ts
++++ b/web/src/features/specs/impact.ts
+@@ -12,7 +12,7 @@
+ import type { SearchSchemaInput } from '@tanstack/react-router';
+ import { z } from 'zod';
+ 
+-import type { ImpactResult, SyncRepoStatus } from '@/api/provider';
++import type { GitRefs, ImpactResult, SyncCommit, SyncRepoStatus } from '@/api/provider';
+ 
+ /** One requirement a diff affects (doc 03 §21.11 R-IMP-5). */
+ export type ImpactHit = ImpactResult['hits'][number];
+@@ -159,26 +159,68 @@ export function readReason(reason: string): ReadReason {
+   return { kind: reasonKinds[key] ?? key, text: reason.slice(colon + 1), title: reason };
+ }
+ 
++/** One entry of a ref picker: the ref it fills in, and what it is. */
++export type RefOption = { value: string; label?: string };
++
+ /** The ref suggestions of the base picker, then the head picker. */
+-export type RefSuggestions = { base: string[]; head: string[] };
++export type RefSuggestions = { base: RefOption[]; head: RefOption[] };
++
++/** How many characters of a commit id a picker fills in; every backend resolves the prefix. */
++export const SHORT_SHA = 12;
++
++/** A commit read aloud in the picker: `subject · 2026-09-02`. */
++function commitLabel(commit: SyncCommit): string {
++  const subject = commit.subject.trim() || '(no description)';
++  const day = commit.date ? commit.date.slice(0, 10) : '';
++  return day ? `${subject} · ${day}` : subject;
++}
+ 
+ /**
+- * What the pickers offer: the current branch and its upstream from the sync
+- * status, the default branch, `HEAD` and its recent ancestors, and — for the
+- * head — the working tree first.
++ * What the pickers offer (GIT-US-0149). With the ref listing of the companion
++ * (`GET /api/v1/git/refs`): the default branch, every local and remote
++ * branch — a jj repository's bookmarks — and the recent commits by short id,
++ * labelled with their subject and date; for the head, the working tree first.
++ * Without it (`unavailable`, or not loaded yet), the current branch and its
++ * upstream from the sync status and `HEAD` with a few ancestors. The inputs
++ * stay free text either way: a tag or any other ref can still be typed.
+  */
+-export function refSuggestions(rows: readonly SyncRepoStatus[] | undefined): RefSuggestions {
+-  const branches: string[] = [];
++export function refSuggestions(
++  rows: readonly SyncRepoStatus[] | undefined,
++  refs?: GitRefs,
++): RefSuggestions {
++  const options: RefOption[] = [];
+   for (const row of rows ?? []) {
+     const status = row.status;
+     if (!status) continue;
+-    if (!status.detached && status.branch && status.branch !== '@') branches.push(status.branch);
+-    if (status.upstream) branches.push(status.upstream);
++    if (!status.detached && status.branch && status.branch !== '@') {
++      options.push({ value: status.branch, label: 'current branch' });
++    }
++    if (status.upstream) options.push({ value: status.upstream, label: 'upstream' });
+   }
+-  const recent = ['HEAD', 'HEAD~1', 'HEAD~2', 'HEAD~5'];
+-  const unique = (values: string[]) => [...new Set(values.filter(Boolean))];
++  for (const branch of refs?.branches ?? []) {
++    options.push({
++      value: branch.name,
++      label: branch.current ? 'current branch' : branch.remote ? 'remote branch' : 'branch',
++    });
++  }
++  const commits = refs?.commits ?? [];
++  if (commits.length > 0) {
++    options.push({ value: 'HEAD' });
++    for (const commit of commits) {
++      options.push({ value: commit.sha.slice(0, SHORT_SHA), label: commitLabel(commit) });
++    }
++  } else {
++    for (const value of ['HEAD', 'HEAD~1', 'HEAD~2', 'HEAD~5']) options.push({ value });
++  }
++  const unique = (values: RefOption[]): RefOption[] => {
++    const seen = new Map<string, RefOption>();
++    for (const option of values) {
++      if (option.value && !seen.has(option.value)) seen.set(option.value, option);
++    }
++    return [...seen.values()];
++  };
+   return {
+-    base: unique([DEFAULT_BASE, ...branches, ...recent]),
+-    head: unique([WORKTREE, ...branches, ...recent]),
++    base: unique([{ value: DEFAULT_BASE }, ...options]),
++    head: unique([{ value: WORKTREE, label: 'working tree' }, ...options]),
+   };
+ }
+diff --git a/web/src/features/specs/queries.ts b/web/src/features/specs/queries.ts
+index 4c5bd58..f61026e 100644
+--- a/web/src/features/specs/queries.ts
++++ b/web/src/features/specs/queries.ts
+@@ -11,6 +11,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+ import type {
+   CoverageList,
+   CoverageRow,
++  GitRefs,
+   ImpactQuery,
+   ImpactResult,
+   Item,
+@@ -196,3 +197,20 @@ export function useRefStatus(repoId: string | undefined, enabled: boolean) {
+     staleTime: 30_000,
+   });
+ }
++
++/**
++ * The branches and recent commits of the project's repository (GIT-US-0149),
++ * which the ref pickers offer. `unavailable` — browser-only mode, or a
++ * repository without git history — leaves the pickers on their fallback
++ * suggestions; it is a state, never retried, and never shown.
++ */
++export function useGitRefs(repoId: string | undefined, enabled: boolean) {
++  const provider = useProvider();
++  return useQuery({
++    queryKey: ['git', 'refs', repoId ?? ''] as const,
++    queryFn: (): Promise<GitRefs> => provider.listGitRefs(repoId ?? '', { limit: 20 }),
++    enabled: enabled && repoId !== undefined && repoId !== '',
++    retry: false,
++    staleTime: 30_000,
++  });
++}

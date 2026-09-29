@@ -1,0 +1,13 @@
+diff --git a/internal/mcp/page.go b/internal/mcp/page.go
+index 229f747..98102bb 100644
+--- a/internal/mcp/page.go
++++ b/internal/mcp/page.go
+@@ -23,7 +23,7 @@ import (
+ // cursor, which keeps a single result inside a sane token budget.
+ const (
+ 	defaultPageSize = 20
+-	maxPageSize     = 100
++	maxPageSize     = 200
+ )
+ 
+ // boundedLimit clamps a requested page size into the documented range. Zero and

@@ -1,0 +1,13 @@
+diff --git a/internal/core/allocator.go b/internal/core/allocator.go
+index f450cf5..ce239ee 100644
+--- a/internal/core/allocator.go
++++ b/internal/core/allocator.go
+@@ -231,7 +231,7 @@ func (a *Allocator) nextNumber(ctx context.Context, t ItemType, code TypeCode) (
+ 	}
+ 
+ 	maxSeen := maxInt(numbers[code])
+-	if hint := a.cfg.IDAllocation.Counters[t]; hint > maxSeen {
++	if hint := a.cfg.IDAllocation.Counters[t]; a.cfg.IDAllocation.WriteCounters && hint > maxSeen {
+ 		maxSeen = hint
+ 	}
+ 	// Reserved ranges participate in max_seen so that a client that never sees

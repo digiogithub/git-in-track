@@ -1,0 +1,12 @@
+diff --git a/internal/mcp/tools_items.go b/internal/mcp/tools_items.go
+index 1c6a6ec..8f0ef31 100644
+--- a/internal/mcp/tools_items.go
++++ b/internal/mcp/tools_items.go
+@@ -262,6 +262,7 @@ func listItems(ctx context.Context, s *Server, in ListItemsInput) (ItemPage, err
+ 		"order":        sortOrder(in.Order),
+ 		"limit":        limit,
+ 		"cursor":       in.Cursor,
++		"fields":       in.Fields,
+ 	}
+ 	page, err := dispatch[struct {
+ 		Items      []core.Item `json:"items"`

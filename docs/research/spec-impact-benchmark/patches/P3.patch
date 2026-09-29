@@ -1,0 +1,1247 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 5d887b9..d5bb40b 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -25,6 +25,18 @@ because a commit list cannot express them.
+   `E-LINK-TARGET-TYPE` (requirement-level links), `W-REQ-SEPARATOR`, `W-REQ-HEADING`,
+   `W-REQ-NO-ENTRY`, `W-REQ-ORPHAN-ENTRY`. `gintrack doctor` reports them. `gintrack item new
+   --type spec` creates one; the inbox and the YouTrack import never produce one.
++- **Spec link kinds and requirement-ref link targets** (`GIT-US-0106`, ADR-037 §5, docs/03
++  §12.1). `implements`/`implemented_by`, `modifies`/`modified_by` and
++  `supersedes`/`superseded_by` are valid link kinds, with their inverses computed by the index.
++  A link target may be a requirement ref (`ACME-SP-0003.R2`, optionally `<KEY>/`-qualified).
++  `implements`, `modifies` and their inverses need a spec or requirement target, and an
++  item-level `supersedes` links a spec to a spec; anything else is `E-LINK-TARGET-TYPE`. A ref
++  to an unknown spec, or to a block its spec does not declare, is `W-REF-DANGLING`, for
++  item-level and requirement-level links alike. Requirements are nodes of the link graph, so the
++  index answers "which stories implement `ACME-SP-0003.R2`" (`Index.Related`). The first such
++  link raises a `schema: 1` project to `schema: 2` in the same write. `gintrack item link`
++  accepts the new kinds and does not mirror `implements`/`modifies` onto the spec; the web
++  editor accepts them, and `duplicated_by`, which it used to reject.
+ 
+ ### Changed
+ 
+diff --git a/cmd/gintrack/item_link.go b/cmd/gintrack/item_link.go
+index 83f70df..b4df445 100644
+--- a/cmd/gintrack/item_link.go
++++ b/cmd/gintrack/item_link.go
+@@ -42,10 +42,21 @@ func newItemLinkCommand(flags *globalFlags) *cobra.Command {
+ 	cmd := &cobra.Command{
+ 		Use:   "link <id> <relation> <target>",
+ 		Short: "Link two items",
+-		Long: `Add or remove a typed relation: blocks, blocked_by, relates_to or duplicates.
+-
+-The inverse relation is written on the counterpart when it lives in the same
+-workspace, so the two files never disagree about the relation between them.`,
++		Long: `Add or remove a typed relation. The kinds are blocks, blocked_by,
++relates_to, duplicates and duplicated_by, and the spec kinds implements,
++implemented_by, modifies, modified_by, supersedes and superseded_by.
++
++The target is an item id, or a requirement ref such as ACME-SP-0003.R2, and
++may be qualified with another project's key (WEB/WEB-US-0031). implements,
++modifies and their inverses need a spec or a requirement target; supersedes
++and superseded_by link a spec to a spec. A spec kind or a spec target raises
++the project to schema 2 on the first write (docs/03 section 21.10).
++
++The inverse relation is written on the counterpart when it is an item in the
++same workspace, so the two files never disagree about the relation between
++them. implements, modifies and their inverses are recorded on the work item
++only: the index computes the requirement's side, so a spec is not rewritten
++every time a story links to it.`,
+ 		Args: exactArgs(3),
+ 		RunE: func(cmd *cobra.Command, args []string) error {
+ 			return runItemLink(cmd, flags, local, args[0], args[1], args[2])
+@@ -64,7 +75,7 @@ workspace, so the two files never disagree about the relation between them.`,
+ func runItemLink(cmd *cobra.Command, flags *globalFlags, local *itemLinkFlags, raw, relation, target string) error {
+ 	kind := core.LinkKind(strings.TrimSpace(relation))
+ 	if !kind.Valid() {
+-		return usagef("unknown relation %q: use blocks, blocked_by, relates_to or duplicates", relation)
++		return usagef("unknown relation %q: use %s", relation, strings.Join(linkKindNames, ", "))
+ 	}
+ 	v, err := openItemVault(cmd, flags)
+ 	if err != nil {
+@@ -86,7 +97,7 @@ func runItemLink(cmd *cobra.Command, flags *globalFlags, local *itemLinkFlags, r
+ 	}
+ 
+ 	payload := linkPayload{ID: it.ID, Kind: kind, Target: link.Target, Removed: local.remove, Rev: it.Rev, DryRun: local.dryRun}
+-	if local.inverse {
++	if local.inverse && mirrorsInverse(kind) {
+ 		side, err := writeInverse(cmd, v, local, core.ItemID(link.Target), core.Link{Kind: kind.Inverse(), Target: string(id)})
+ 		if err != nil {
+ 			return err
+@@ -113,6 +124,28 @@ func runItemLink(cmd *cobra.Command, flags *globalFlags, local *itemLinkFlags, r
+ 	return nil
+ }
+ 
++// linkKindNames lists the relation kinds in the order of docs/03 section 12.1.
++var linkKindNames = []string{
++	string(core.LinkBlocks), string(core.LinkBlockedBy), string(core.LinkRelatesTo),
++	string(core.LinkDuplicates), string(core.LinkDuplicatedBy),
++	string(core.LinkImplements), string(core.LinkImplementedBy),
++	string(core.LinkModifies), string(core.LinkModifiedBy),
++	string(core.LinkSupersedes), string(core.LinkSupersededBy),
++}
++
++// mirrorsInverse reports whether the inverse of a kind is written on the
++// counterpart. The work-to-requirement kinds are not: their target is a spec
++// or a requirement, which learns about the relation from the index alone
++// (R-LINK-1), and the mirrored side would not validate (R-LINK-6).
++func mirrorsInverse(kind core.LinkKind) bool {
++	switch kind {
++	case core.LinkImplements, core.LinkImplementedBy, core.LinkModifies, core.LinkModifiedBy:
++		return false
++	default:
++		return true
++	}
++}
++
+ // linkPatch turns a relation into the patch that adds or removes it.
+ func linkPatch(link core.Link, remove bool) core.ItemPatch {
+ 	if remove {
+diff --git a/cmd/gintrack/item_test.go b/cmd/gintrack/item_test.go
+index 23c80fa..84d6b5b 100644
+--- a/cmd/gintrack/item_test.go
++++ b/cmd/gintrack/item_test.go
+@@ -432,6 +432,30 @@ func TestItemLinkJSON(t *testing.T) {
+ 	}
+ }
+ 
++func TestItemLinkToARequirement(t *testing.T) {
++	h := newHarness(t)
++	h.register()
++
++	payload := decode[linkPayload](t, h.mustRun("item", "link", "DEMO-US-0002", "implements", "DEMO-SP-0001.R2", "--json"))
++	if payload.Kind != "implements" || payload.Target != "DEMO-SP-0001.R2" {
++		t.Fatalf("payload = %+v", payload)
++	}
++	if payload.Inverse != nil {
++		t.Errorf("implements must not be mirrored onto the spec: inverse = %+v", payload.Inverse)
++	}
++	story := h.readFile("docs/.pmngr/stories/DEMO-US-0002-save-payment-methods.md")
++	if !strings.Contains(story, "{ kind: implements, target: DEMO-SP-0001.R2 }") {
++		t.Errorf("the relation is missing:\n%s", story)
++	}
++	if project := h.readFile("docs/.pmngr/project.yaml"); !strings.Contains(project, "schema: 2") {
++		t.Errorf("the first spec link did not raise the schema:\n%s", project)
++	}
++
++	if _, _, code := h.run("item", "link", "DEMO-US-0002", "implements", "DEMO-T-0001"); code == 0 {
++		t.Error("implements accepted a task as its target")
++	}
++}
++
+ func TestItemLinkRejectsAnUnknownRelation(t *testing.T) {
+ 	h := newHarness(t)
+ 	h.register()
+diff --git a/docs/.pmngr/stories/GIT-US-0106-add-spec-link-kinds-and-requirement-ref-link-targets.md b/docs/.pmngr/stories/GIT-US-0106-add-spec-link-kinds-and-requirement-ref-link-targets.md
+index 0cde696..617cad4 100644
+--- a/docs/.pmngr/stories/GIT-US-0106-add-spec-link-kinds-and-requirement-ref-link-targets.md
++++ b/docs/.pmngr/stories/GIT-US-0106-add-spec-link-kinds-and-requirement-ref-link-targets.md
+@@ -2,7 +2,7 @@
+ id: GIT-US-0106
+ type: story
+ title: Add spec link kinds and requirement-ref link targets
+-status: backlog
++status: in_review
+ priority: high
+ parent: GIT-EP-0022
+ milestone: GIT-M-0015
+@@ -10,7 +10,7 @@ author: claude
+ labels: [core]
+ estimate: 5
+ created: 2026-09-24T12:09:05Z
+-updated: 2026-09-24T12:09:05Z
++updated: 2026-09-24T15:38:52Z
+ links:
+   - { kind: blocked_by, target: GIT-US-0104 }
+   - { kind: blocked_by, target: GIT-US-0105 }
+@@ -22,11 +22,11 @@ As an agent, I want to link a story to the requirement it implements or modifies
+ 
+ ## Acceptance Criteria
+ 
+-- [ ] `implements`/`implemented_by`, `modifies`/`modified_by` and `supersedes`/`superseded_by` are valid link kinds with their inverses computed by the index.
+-- [ ] `validateLinkTarget` in `internal/core/validate.go` accepts `GIT-SP-NNNN.R<n>` and reports a dangling target when the spec or the block does not exist.
+-- [ ] Backlinks resolve to the requirement block: the index answers "which stories implement GIT-SP-NNNN.R<n>".
+-- [ ] Table-driven tests in `internal/core` cover each kind and the target grammar; `make wasm` passes.
+-- [ ] docs/03 link-kind table matches the implementation.
++- [x] `implements`/`implemented_by`, `modifies`/`modified_by` and `supersedes`/`superseded_by` are valid link kinds with their inverses computed by the index.
++- [x] `validateLinkTarget` in `internal/core/validate.go` accepts `GIT-SP-NNNN.R<n>` and reports a dangling target when the spec or the block does not exist.
++- [x] Backlinks resolve to the requirement block: the index answers "which stories implement GIT-SP-NNNN.R<n>".
++- [x] Table-driven tests in `internal/core` cover each kind and the target grammar; `make wasm` passes.
++- [x] docs/03 link-kind table matches the implementation.
+ 
+ ## Notes
+ 
+diff --git a/docs/03-data-model.md b/docs/03-data-model.md
+index 7d0c5a4..809ac5d 100644
+--- a/docs/03-data-model.md
++++ b/docs/03-data-model.md
+@@ -1329,13 +1329,19 @@ links:
+ - **R-LINK-5** `parent` and `milestone` are *not* links; they are dedicated fields because they are
+   hierarchical and are indexed differently.
+ - **R-LINK-6** *(ADR-037.)* `target` MAY also be a requirement ref, qualified or not:
+-  `<link-target> ::= [<KEY> "/"] (<ID> | <REQREF>)`. A missing spec or block is `W-REF-DANGLING`.
++  `<link-target> ::= [<KEY> "/"] (<ID> | <REQREF>)`. A missing spec or block is `W-REF-DANGLING`
++  (a block deleted by hand is missing even when its `requirements:` entry survives, R-REQ-6).
+   `implements`/`modifies` (and inverses) need a spec or requirement target, `supersedes`/
+   `superseded_by` need a target of the source's own kind (requirement ↔ requirement, spec ↔ spec);
+   any other combination is `E-LINK-TARGET-TYPE`. Requirement-level relations are stored in
+   `requirements.R<n>.links` ([§21.4](#214-the-requirements-map)), same `{kind, target}` shape,
+   restricted to `supersedes`, `superseded_by` and `relates_to` (R-REQ-13). Using any of the new
+   kinds or a spec/requirement target requires `schema: 2` ([§21.10](#2110-schema-version-2)).
++- **R-LINK-7** *(ADR-037.)* A requirement is a node of the link graph: the links of its
++  `requirements:` entry leave from its ref, and the index computes the inverse of every link that
++  targets it, so "which stories implement `ACME-SP-0003.R2`" is an index lookup (the
++  `implemented_by` relations of that ref). A link to a whole spec stays on the spec; it is not
++  copied to each of its requirements.
+ 
+ ### 12.2 Convenience aliases
+ 
+@@ -1858,7 +1864,7 @@ Severity: **E** = error (blocks writes to the affected item; `doctor` exits non-
+ | `E-INBOX-SNOOZE` | E | `inbox.snoozed_until` missing on a snoozed item, or present on any other |
+ | `E-INBOX-DUPLICATE` | E | `inbox.duplicate_of` is not an item id, names the item itself, or is missing on a `duplicate` |
+ | `W-SLUG-STALE` | W | Filename slug ≠ slug(title) |
+-| `W-REF-DANGLING` | W | `parent`/`milestone`/`links.target` points at an unknown ID |
++| `W-REF-DANGLING` | W | `parent`/`milestone`/`links.target` (item-level or `requirements.R<n>.links`) points at an unknown ID, or a requirement ref names an unknown spec or a block its spec does not declare (R-LINK-6) |
+ | `W-REF-CYCLE-BLOCK` | W | Cycle in `blocks`/`blocked_by` |
+ | `W-WORKFLOW-TRANSITION` | W | Current status unreachable per declared transitions (informational on files) |
+ | `W-PERSON-UNKNOWN` | W | Handle not found in `people`/`team.yaml` |
+@@ -1886,7 +1892,7 @@ every write and by the index (so by `gintrack doctor`):
+ | `E-REQ-STATUS` | E | `requirements.R<n>.status` is a status of the `triage` category (an unknown status is `E-STATUS-UNKNOWN`); also a spec whose own status is in the `triage` category ([§21.1](#211-front-matter-and-body)) |
+ | `E-REQ-FIELD` | E | A `requirements:` key is not `R<n>`, or `trace`/`verified`/`links` has the wrong shape (bad trace ref, `verified.rev` not a rev, `commit` not hex, `at` not a timestamp, a `links` kind other than `supersedes`/`superseded_by`/`relates_to`); also a `requirements:` map on an item that is not a spec |
+ | `E-SCHEMA-FEATURE` | E | A spec construct in a `schema: 1` project ([§21.10](#2110-schema-version-2)); `doctor --fix` raises `schema` to 2 |
+-| `E-LINK-TARGET-TYPE` | E | A link kind used with a target of the wrong type (R-LINK-6). Emitted for requirement-level links (R-REQ-13) only until the item-level spec link kinds land (`GIT-US-0106`) |
++| `E-LINK-TARGET-TYPE` | E | A link kind used with a target of the wrong type (R-LINK-6, R-REQ-13): `implements`/`modifies` or an inverse whose target is not a spec or a requirement; an item-level `supersedes`/`superseded_by` whose source is not a spec or whose target is not a spec; a requirement-level one whose target is not a requirement |
+ | `W-REQ-SEPARATOR` | W | Requirement heading uses ` - `, ` -- ` or ` – ` instead of ` — ` |
+ | `W-REQ-HEADING` | W | A level-3 heading under `## Requirements` that is not a requirement heading, or a heading whose ref is well formed but whose separator or title is missing |
+ | `W-REQ-NO-ENTRY` | W | A block with no `requirements:` entry, or an entry with no `status` |
+@@ -2273,8 +2279,10 @@ validation, and produce the `E-STATUS-UNKNOWN`, `W-LABEL-UNDECLARED`, and `E-CF-
+ > the `requirements:` map, the validation of §21.1–21.4 (including the requirement-level `links`
+ > of R-REQ-13), `NextRequirementNumber` (R-REQ-5, without Spec Delta headings yet), and
+ > §21.10 in full: `schema: 2`, `E-SCHEMA-FEATURE`, the upgrade on first use and the write gate.
+-> Not implemented yet: the item-level link kinds and requirement-ref link targets of §12.1
+-> (`GIT-US-0106`), requirement reads and writes through the vault (`GIT-US-0107`), the grammar
++> `GIT-US-0106` implements the six spec link kinds and requirement-ref link targets of §12.1
++> (R-LINK-6, R-LINK-7): validation, `E-LINK-TARGET-TYPE`, `W-REF-DANGLING` on a missing spec or
++> block, and requirement nodes in the link graph.
++> Not implemented yet: requirement reads and writes through the vault (`GIT-US-0107`), the grammar
+ > lint of §21.9 (`GIT-US-0108`), `## Spec Delta` (§21.8), verification and coverage (§21.6), and
+ > the marker scan (§21.7). This section is the normative format; the ADR records the reasoning,
+ > the consequences and the alternatives rejected. Using specs raises the project to `schema: 2`
+diff --git a/docs/07-cli-and-api.md b/docs/07-cli-and-api.md
+index 555252e..2c1f1fb 100644
+--- a/docs/07-cli-and-api.md
++++ b/docs/07-cli-and-api.md
+@@ -990,9 +990,14 @@ Comments are written to `.pmngr/comments/<ITEM-ID>/<YYYYMMDDTHHMMSSZ>-<author>.m
+ as specified in the data model, so the CLI and the web app never disagree about layout.
+ 
+ `gintrack item link <id> <relation> <target>` manages typed relations
+-(`blocks`, `blocked_by`, `relates_to`, `duplicates`), with `--remove` to drop one. The
+-inverse relation is written on the counterpart item when both live in the same workspace;
+-`--inverse=false` writes only the side that was named.
++(`blocks`, `blocked_by`, `relates_to`, `duplicates`, `duplicated_by`, and the spec kinds
++`implements`, `implemented_by`, `modifies`, `modified_by`, `supersedes`, `superseded_by` of
++data model §12.1), with `--remove` to drop one. The target is an item ID or a requirement ref
++(`ACME-SP-0003.R2`), optionally `<KEY>/`-qualified. The inverse relation is written on the
++counterpart item when both live in the same workspace; `--inverse=false` writes only the side
++that was named. `implements`, `modifies` and their inverses are never mirrored: the index
++computes the spec's side (R-LINK-1), so linking a story does not rewrite the spec. The first
++spec kind or spec target raises the project to `schema: 2` in the same write (§21.10).
+ 
+ ### 4.6 `gintrack board …` and `gintrack retro …` — **not implemented**
+ 
+diff --git a/docs/adr/ADR-037-specs-with-requirement-blocks.md b/docs/adr/ADR-037-specs-with-requirement-blocks.md
+index 7322e86..cc76784 100644
+--- a/docs/adr/ADR-037-specs-with-requirement-blocks.md
++++ b/docs/adr/ADR-037-specs-with-requirement-blocks.md
+@@ -2,8 +2,9 @@
+ 
+ - **Status:** Accepted — 2026-09-24, decided by the human maintainer after two review rounds (see
+   "Decisions from review"). Core implemented by `GIT-US-0105` (the `spec` type, requirement
+-  blocks and revs, the `requirements:` map, schema 2 and the write gate); link kinds, lint,
+-  Spec Delta, verification and markers follow in their own stories (docs/03 §21 banner).
++  blocks and revs, the `requirements:` map, schema 2 and the write gate); the link kinds and
++  requirement-ref link targets of §5 by `GIT-US-0106`; lint, Spec Delta, verification and
++  markers follow in their own stories (docs/03 §21 banner).
+ - **Date:** 2026-09-24
+ - **Phase:** 11 (Spec-driven development)
+ - **Related:** [ADR-001](ADR-001-markdown-yaml-storage.md), [ADR-003](ADR-003-shared-go-core-wasm.md),
+diff --git a/internal/core/frontmatter_test.go b/internal/core/frontmatter_test.go
+index 318fbe1..41e135c 100644
+--- a/internal/core/frontmatter_test.go
++++ b/internal/core/frontmatter_test.go
+@@ -347,6 +347,12 @@ func TestSerializeItemGolden(t *testing.T) {
+ 			path:   "specs/ACME-SP-0003-item-id-allocation.md",
+ 			golden: "spec-item.md",
+ 		},
++		{
++			name:   "spec link kinds and requirement-ref targets round-trip",
++			source: "spec-links-story.md",
++			path:   "stories/ACME-US-0044-allocate-ids-by-index-scan.md",
++			golden: "spec-links-story.md",
++		},
+ 	}
+ 
+ 	for _, tt := range tests {
+diff --git a/internal/core/graph.go b/internal/core/graph.go
+index c3e6686..525a433 100644
+--- a/internal/core/graph.go
++++ b/internal/core/graph.go
+@@ -36,6 +36,9 @@ func (n NodeID) Value() string {
+ 
+ // GraphLink is one typed relation edge. Computed reports an edge the index
+ // derived from the inverse kind: links are stored on one side only (R-LINK-1).
++// From and To are item ids or requirement refs ("ACME-SP-0003.R2", R-LINK-6):
++// a requirement is a node of the link graph in its own right, the source of the
++// links in its requirements: entry and the target of the links that name it.
+ type GraphLink struct {
+ 	Kind     LinkKind `json:"kind"`
+ 	From     ItemID   `json:"from"`
+@@ -102,7 +105,8 @@ func (g *Graph) addMilestone(item, milestone ItemID) {
+ 	g.milestone[milestone] = append(g.milestone[milestone], item)
+ }
+ 
+-// addLink records a declared relation and its computed inverse.
++// addLink records a declared relation and its computed inverse. from is an item
++// id or, for a link of a requirements: entry, the requirement ref.
+ func (g *Graph) addLink(from ItemID, l Link) {
+ 	target := ItemID(bareTarget(l.Target))
+ 	if from == "" || target == "" || !l.Kind.Valid() {
+@@ -177,6 +181,11 @@ func (g *Graph) AllLinks(id ItemID) []GraphLink {
+ 	return sortLinks(out)
+ }
+ 
++// Related returns the nodes that stand in relation kind to id, declared on
++// either side: Related("ACME-SP-0003.R2", LinkImplementedBy) answers which
++// stories and tasks implement that requirement.
++func (g *Graph) Related(id ItemID, kind LinkKind) []ItemID { return g.targetsOfKind(id, kind) }
++
+ // Blocking returns the items this item blocks, declared or inferred.
+ func (g *Graph) Blocking(id ItemID) []ItemID { return g.targetsOfKind(id, LinkBlocks) }
+ 
+@@ -232,7 +241,7 @@ func bareTarget(target string) string {
+ }
+ 
+ // targetProject returns the project a link target belongs to: the qualifier when
+-// present, otherwise the key embedded in the item id.
++// present, otherwise the key embedded in the item id or requirement ref.
+ func targetProject(target string) ProjectKey {
+ 	t := strings.TrimSpace(target)
+ 	if i := strings.Index(t, "/"); i > 0 {
+@@ -240,7 +249,7 @@ func targetProject(target string) ProjectKey {
+ 			return key
+ 		}
+ 	}
+-	if key, _, _, err := ParseItemID(t); err == nil {
++	if key, ok := linkTargetKey(t); ok {
+ 		return key
+ 	}
+ 	return ""
+diff --git a/internal/core/index.go b/internal/core/index.go
+index 30f6783..5f24993 100644
+--- a/internal/core/index.go
++++ b/internal/core/index.go
+@@ -425,6 +425,17 @@ func (ix *Index) Warnings() []Warning {
+ 	return append([]Warning(nil), ix.diagnostics...)
+ }
+ 
++// Related returns the item ids and requirement refs that stand in relation kind
++// to target, an item id or a requirement ref, whichever side declared it (the
++// inverse is computed, R-LINK-1). Related("ACME-SP-0003.R2", LinkImplementedBy)
++// lists the stories and tasks that implement the requirement, sorted. A
++// "<KEY>/" qualifier on target is ignored.
++func (ix *Index) Related(target string, kind LinkKind) []ItemID {
++	ix.mu.RLock()
++	defer ix.mu.RUnlock()
++	return ix.graph.Related(ItemID(bareTarget(target)), kind)
++}
++
+ // LinkGraph returns the current link graph.
+ func (ix *Index) LinkGraph() *Graph {
+ 	ix.mu.RLock()
+@@ -1154,6 +1165,7 @@ func (ix *Index) rebuild() {
+ 		for _, l := range it.Links {
+ 			graph.addLink(it.ID, l)
+ 		}
++		addRequirementLinks(graph, it)
+ 	}
+ 	ix.resolveReferences(graph)
+ 	graph.finish()
+@@ -1245,12 +1257,22 @@ func (ix *Index) resolveReferences(graph *Graph) {
+ // checkReferentialIntegrity reports dangling parents, milestones and link
+ // targets, and comment folders with no item (W-REF-DANGLING, W-CMT-ORPHAN).
+ func (ix *Index) checkReferentialIntegrity() {
++	blocks := map[ItemID]map[int]bool{}
+ 	dangling := func(it *Item, field string, target string) {
+ 		if target == "" {
+ 			return
+ 		}
+-		bare := ItemID(bareTarget(target))
+-		if _, ok := ix.byID[bare]; ok {
++		bare := bareTarget(target)
++		what := "item"
++		if ref, err := ParseRequirementRef(bare); err == nil {
++			what = "spec"
++			if spec, ok := ix.byID[ref.Spec]; ok && spec.Type == TypeSpec {
++				if ix.hasRequirementBlock(blocks, spec, ref.Number) {
++					return
++				}
++				what = "requirement"
++			}
++		} else if _, ok := ix.byID[ItemID(bare)]; ok {
+ 			return
+ 		}
+ 		// A qualified reference into a project this vault does not hold is a
+@@ -1260,7 +1282,7 @@ func (ix *Index) checkReferentialIntegrity() {
+ 		}
+ 		ix.derivedDiags = append(ix.derivedDiags, Diagnostic{
+ 			Code: idxCodeRefDangling, Severity: SeverityWarning, Path: it.Path, Field: field,
+-			Message: fmt.Sprintf("%s points at unknown item %s", field, target),
++			Message: fmt.Sprintf("%s points at unknown %s %s", field, what, target),
+ 		})
+ 	}
+ 	for _, id := range sortedIDs(ix.byID) {
+@@ -1275,6 +1297,13 @@ func (ix *Index) checkReferentialIntegrity() {
+ 		for _, l := range it.Links {
+ 			dangling(it, "links."+string(l.Kind), l.Target)
+ 		}
++		for _, key := range it.Requirements.Keys() {
++			if e := it.Requirements[key]; e != nil {
++				for _, l := range e.Links {
++					dangling(it, "requirements."+key+".links."+string(l.Kind), l.Target)
++				}
++			}
++		}
+ 		if it.Inbox != nil && it.Inbox.DuplicateOf != "" {
+ 			if _, ok := ix.byID[ItemID(bareTarget(string(it.Inbox.DuplicateOf)))]; !ok {
+ 				ix.derivedDiags = append(ix.derivedDiags, Diagnostic{
+diff --git a/internal/core/indexspec.go b/internal/core/indexspec.go
+index 1d9e84c..2101e18 100644
+--- a/internal/core/indexspec.go
++++ b/internal/core/indexspec.go
+@@ -92,3 +92,38 @@ func (ix *Index) NextRequirementNumber(spec ItemID) (int, error) {
+ 	}
+ 	return NextRequirementNumber(it, ix.requirementRefsTo(spec)), nil
+ }
++
++// addRequirementLinks records the links of a spec's requirements: entries, whose
++// source is the requirement ref rather than the spec (R-REQ-13).
++func addRequirementLinks(g *Graph, it *Item) {
++	if it.Type != TypeSpec {
++		return
++	}
++	for _, key := range it.Requirements.Keys() {
++		e := it.Requirements[key]
++		n, ok := ParseRequirementKey(key)
++		if e == nil || !ok {
++			continue
++		}
++		from := ItemID(RequirementRef{Spec: it.ID, Number: n}.String())
++		for _, l := range e.Links {
++			g.addLink(from, l)
++		}
++	}
++}
++
++// hasRequirementBlock reports whether a spec's body declares the block R<n>. A
++// requirement whose block was deleted by hand is dangling even when its
++// requirements: entry survives (R-REQ-6). cache holds the parsed block numbers
++// of each spec for the duration of one integrity check.
++func (ix *Index) hasRequirementBlock(cache map[ItemID]map[int]bool, spec *Item, n int) bool {
++	nums, ok := cache[spec.ID]
++	if !ok {
++		nums = map[int]bool{}
++		for _, b := range ParseSpecBody(spec.ID, spec.Body).Blocks {
++			nums[b.Ref.Number] = true
++		}
++		cache[spec.ID] = nums
++	}
++	return nums[n]
++}
+diff --git a/internal/core/model.go b/internal/core/model.go
+index f5fddcb..44b5c58 100644
+--- a/internal/core/model.go
++++ b/internal/core/model.go
+@@ -114,13 +114,21 @@ type Rev string
+ // LinkKind is the semantic of a typed relation between two items.
+ type LinkKind string
+ 
+-// The relation kinds accepted in the links field.
++// The relation kinds accepted in the links field. The last six are the spec
++// kinds of ADR-037 section 5 (docs/03 section 12.1): their targets are specs or
++// requirement refs, and using one raises a project to schema 2.
+ const (
+-	LinkBlocks       LinkKind = "blocks"
+-	LinkBlockedBy    LinkKind = "blocked_by"
+-	LinkRelatesTo    LinkKind = "relates_to"
+-	LinkDuplicates   LinkKind = "duplicates"
+-	LinkDuplicatedBy LinkKind = "duplicated_by"
++	LinkBlocks        LinkKind = "blocks"
++	LinkBlockedBy     LinkKind = "blocked_by"
++	LinkRelatesTo     LinkKind = "relates_to"
++	LinkDuplicates    LinkKind = "duplicates"
++	LinkDuplicatedBy  LinkKind = "duplicated_by"
++	LinkImplements    LinkKind = "implements"
++	LinkImplementedBy LinkKind = "implemented_by"
++	LinkModifies      LinkKind = "modifies"
++	LinkModifiedBy    LinkKind = "modified_by"
++	LinkSupersedes    LinkKind = "supersedes"
++	LinkSupersededBy  LinkKind = "superseded_by"
+ )
+ 
+ // Valid reports whether k is one of the known relation kinds.
+@@ -128,6 +136,17 @@ func (k LinkKind) Valid() bool {
+ 	switch k {
+ 	case LinkBlocks, LinkBlockedBy, LinkRelatesTo, LinkDuplicates, LinkDuplicatedBy:
+ 		return true
++	default:
++		return k.Spec()
++	}
++}
++
++// Spec reports whether k is one of the six kinds ADR-037 adds. A link of one of
++// them is a spec construct (R-SCHEMA-2-1).
++func (k LinkKind) Spec() bool {
++	switch k {
++	case LinkImplements, LinkImplementedBy, LinkModifies, LinkModifiedBy, LinkSupersedes, LinkSupersededBy:
++		return true
+ 	default:
+ 		return false
+ 	}
+@@ -144,6 +163,18 @@ func (k LinkKind) Inverse() LinkKind {
+ 		return LinkDuplicatedBy
+ 	case LinkDuplicatedBy:
+ 		return LinkDuplicates
++	case LinkImplements:
++		return LinkImplementedBy
++	case LinkImplementedBy:
++		return LinkImplements
++	case LinkModifies:
++		return LinkModifiedBy
++	case LinkModifiedBy:
++		return LinkModifies
++	case LinkSupersedes:
++		return LinkSupersededBy
++	case LinkSupersededBy:
++		return LinkSupersedes
+ 	case LinkRelatesTo:
+ 		return LinkRelatesTo
+ 	default:
+diff --git a/internal/core/requirements.go b/internal/core/requirements.go
+index f7e16d8..6f8dfd4 100644
+--- a/internal/core/requirements.go
++++ b/internal/core/requirements.go
+@@ -66,23 +66,6 @@ type Verification struct {
+ 	Extra  map[string]any `json:"extra,omitempty"`
+ }
+ 
+-// The requirement-level link kinds (R-REQ-13). They are plain strings here:
+-// the item-level link kinds of ADR-037 section 5 belong to their own story, and
+-// a requirement's links are validated by this file alone.
+-const (
+-	reqLinkSupersedes   = "supersedes"
+-	reqLinkSupersededBy = "superseded_by"
+-	reqLinkRelatesTo    = "relates_to"
+-)
+-
+-// specLinkKinds are the six link kinds ADR-037 adds. Any link of one of these
+-// kinds is a spec construct (R-SCHEMA-2-1).
+-var specLinkKinds = map[string]bool{
+-	"implements": true, "implemented_by": true,
+-	"modifies": true, "modified_by": true,
+-	"supersedes": true, "superseded_by": true,
+-}
+-
+ // requirementKnownKeys, traceKnownKeys and verifiedKnownKeys are the keys a
+ // requirement entry understands; everything else is preserved in Extra.
+ var (
+@@ -732,16 +715,13 @@ func validateRequirementEntry(d *diagSet, field string, e *Requirement, cfg *Pro
+ 	}
+ 	for i, l := range e.Links {
+ 		f := fmt.Sprintf("%s.links[%d]", field, i)
+-		target := bareTarget(l.Target)
+-		switch string(l.Kind) {
+-		case reqLinkSupersedes, reqLinkSupersededBy:
+-			if !IsRequirementRef(target) {
++		switch l.Kind {
++		case LinkSupersedes, LinkSupersededBy:
++			if validateLinkTarget(d, cfg, f+".target", l.Target) && classifyLinkTarget(l.Target) != targetRequirement {
+ 				d.errorf(f+".target", CodeLinkTargetType, "%s must target a requirement ref, not %q", l.Kind, l.Target)
+ 			}
+-		case reqLinkRelatesTo:
+-			if !IsRequirementRef(target) && !ItemID(target).Valid() {
+-				d.errorf(f+".target", CodeIDGrammar, "%q is neither a requirement ref nor an item id", l.Target)
+-			}
++		case LinkRelatesTo:
++			validateLinkTarget(d, cfg, f+".target", l.Target)
+ 		default:
+ 			d.errorf(f+".kind", CodeReqField,
+ 				"a requirement's links allow supersedes, superseded_by and relates_to, not %q", l.Kind)
+@@ -803,13 +783,11 @@ func HasSpecConstruct(item *Item) bool {
+ 	return false
+ }
+ 
+-// linksHaveSpecConstruct reports whether any link is a spec construct. A kind
+-// counts once this build knows it as an item-level kind; until then it is
+-// E-ENUM, which already refuses the write, and reporting E-SCHEMA-FEATURE on
+-// top would only repeat it.
++// linksHaveSpecConstruct reports whether any link is a spec construct: one of
++// the six spec kinds, or a spec or requirement target.
+ func linksHaveSpecConstruct(links []Link) bool {
+ 	for _, l := range links {
+-		if (l.Kind.Valid() && specLinkKinds[string(l.Kind)]) || isSpecTarget(l.Target) {
++		if l.Kind.Spec() || isSpecTarget(l.Target) {
+ 			return true
+ 		}
+ 	}
+@@ -818,12 +796,8 @@ func linksHaveSpecConstruct(links []Link) bool {
+ 
+ // isSpecTarget reports whether a link target names a spec or a requirement.
+ func isSpecTarget(target string) bool {
+-	bare := bareTarget(target)
+-	if IsRequirementRef(bare) {
+-		return true
+-	}
+-	_, code, _, err := ParseItemID(bare)
+-	return err == nil && code == CodeSpec
++	t := classifyLinkTarget(target)
++	return t == targetSpec || t == targetRequirement
+ }
+ 
+ // validateSchemaFeature applies E-SCHEMA-FEATURE: a spec construct in a project
+diff --git a/internal/core/speclinks_test.go b/internal/core/speclinks_test.go
+new file mode 100644
+index 0000000..199cabc
+--- /dev/null
++++ b/internal/core/speclinks_test.go
+@@ -0,0 +1,310 @@
++package core
++
++import (
++	"context"
++	"reflect"
++	"sort"
++	"strings"
++	"testing"
++)
++
++func TestLinkKindValidAndInverse(t *testing.T) {
++	t.Parallel()
++
++	tests := []struct {
++		kind    LinkKind
++		valid   bool
++		spec    bool
++		inverse LinkKind
++	}{
++		{kind: LinkBlocks, valid: true, inverse: LinkBlockedBy},
++		{kind: LinkBlockedBy, valid: true, inverse: LinkBlocks},
++		{kind: LinkRelatesTo, valid: true, inverse: LinkRelatesTo},
++		{kind: LinkDuplicates, valid: true, inverse: LinkDuplicatedBy},
++		{kind: LinkDuplicatedBy, valid: true, inverse: LinkDuplicates},
++		{kind: "implements", valid: true, spec: true, inverse: "implemented_by"},
++		{kind: "implemented_by", valid: true, spec: true, inverse: "implements"},
++		{kind: "modifies", valid: true, spec: true, inverse: "modified_by"},
++		{kind: "modified_by", valid: true, spec: true, inverse: "modifies"},
++		{kind: "supersedes", valid: true, spec: true, inverse: "superseded_by"},
++		{kind: "superseded_by", valid: true, spec: true, inverse: "supersedes"},
++		{kind: "replaces", inverse: "replaces"},
++		{kind: "Implements", inverse: "Implements"},
++		{kind: "", inverse: ""},
++	}
++	for _, tt := range tests {
++		t.Run(string(tt.kind), func(t *testing.T) {
++			t.Parallel()
++			if got := tt.kind.Valid(); got != tt.valid {
++				t.Errorf("Valid() = %v, want %v", got, tt.valid)
++			}
++			if got := tt.kind.Spec(); got != tt.spec {
++				t.Errorf("Spec() = %v, want %v", got, tt.spec)
++			}
++			if got := tt.kind.Inverse(); got != tt.inverse {
++				t.Errorf("Inverse() = %q, want %q", got, tt.inverse)
++			}
++			if tt.valid && tt.kind.Inverse().Inverse() != tt.kind {
++				t.Errorf("the inverse of the inverse of %q is not itself", tt.kind)
++			}
++		})
++	}
++}
++
++func TestValidateSpecLinkTargets(t *testing.T) {
++	t.Parallel()
++	cfg := specConfig(t) // key TEST, schema 2
++
++	tests := []struct {
++		name   string
++		source ItemType
++		kind   LinkKind
++		target string
++		want   []Code
++	}{
++		// implements / modifies and their inverses: spec or requirement only.
++		{name: "story implements a requirement", source: TypeStory, kind: LinkImplements, target: "TEST-SP-0003.R2"},
++		{name: "story implements a whole spec", source: TypeStory, kind: LinkImplements, target: "TEST-SP-0003"},
++		{name: "task modifies a requirement", source: TypeTask, kind: LinkModifies, target: "TEST-SP-0003.R12"},
++		{name: "qualified requirement in another project", source: TypeStory, kind: LinkImplements, target: "WEB/WEB-SP-0001.R4"},
++		{name: "implemented_by a requirement", source: TypeStory, kind: LinkImplementedBy, target: "TEST-SP-0003.R2"},
++		{name: "implements a story", source: TypeStory, kind: LinkImplements, target: "TEST-US-0002", want: []Code{CodeLinkTargetType}},
++		{name: "modifies a task", source: TypeTask, kind: LinkModifies, target: "TEST-T-0002", want: []Code{CodeLinkTargetType}},
++		{name: "modified_by an epic", source: TypeStory, kind: LinkModifiedBy, target: "TEST-EP-0002", want: []Code{CodeLinkTargetType}},
++		{name: "implemented_by a story", source: TypeStory, kind: LinkImplementedBy, target: "TEST-US-0002", want: []Code{CodeLinkTargetType}},
++
++		// supersedes / superseded_by: spec to spec at the item level.
++		{name: "spec supersedes a spec", source: TypeSpec, kind: LinkSupersedes, target: "TEST-SP-0002"},
++		{name: "spec superseded_by a qualified spec", source: TypeSpec, kind: LinkSupersededBy, target: "WEB/WEB-SP-0009"},
++		{name: "spec supersedes a requirement", source: TypeSpec, kind: LinkSupersedes, target: "TEST-SP-0002.R1", want: []Code{CodeLinkTargetType}},
++		{name: "spec supersedes a story", source: TypeSpec, kind: LinkSupersedes, target: "TEST-US-0002", want: []Code{CodeLinkTargetType}},
++		{name: "story supersedes a story", source: TypeStory, kind: LinkSupersedes, target: "TEST-US-0002", want: []Code{CodeLinkTargetType}},
++		{name: "story superseded_by a spec", source: TypeStory, kind: LinkSupersededBy, target: "TEST-SP-0002", want: []Code{CodeLinkTargetType}},
++
++		// The existing kinds MAY target a spec or a requirement.
++		{name: "relates_to a requirement", source: TypeStory, kind: LinkRelatesTo, target: "TEST-SP-0003.R2"},
++		{name: "blocked_by a spec", source: TypeTask, kind: LinkBlockedBy, target: "TEST-SP-0003"},
++		{name: "duplicates a requirement", source: TypeStory, kind: LinkDuplicates, target: "TEST-SP-0003.R1"},
++
++		// The target grammar.
++		{name: "padded requirement number", source: TypeStory, kind: LinkImplements, target: "TEST-SP-0003.R02", want: []Code{CodeIDGrammar}},
++		{name: "lower-case r", source: TypeStory, kind: LinkImplements, target: "TEST-SP-0003.r2", want: []Code{CodeIDGrammar}},
++		{name: "R0", source: TypeStory, kind: LinkImplements, target: "TEST-SP-0003.R0", want: []Code{CodeIDGrammar}},
++		{name: "requirement of a story", source: TypeStory, kind: LinkRelatesTo, target: "TEST-US-0003.R2", want: []Code{CodeIDGrammar}},
++		{name: "missing number", source: TypeStory, kind: LinkImplements, target: "TEST-SP-0003.R", want: []Code{CodeIDGrammar}},
++		{name: "bad qualifier", source: TypeStory, kind: LinkImplements, target: "web/WEB-SP-0003.R2", want: []Code{CodeIDGrammar}},
++		{name: "unqualified foreign requirement", source: TypeStory, kind: LinkImplements, target: "WEB-SP-0003.R2", want: []Code{CodeIDKey}},
++		{name: "qualifier does not match", source: TypeStory, kind: LinkImplements, target: "WEB/TEST-SP-0003.R2", want: []Code{CodeIDKey}},
++	}
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			t.Parallel()
++			var item *Item
++			switch tt.source {
++			case TypeSpec:
++				item = validSpec(t)
++				item.Requirements = item.Requirements.Clone()
++			default:
++				item = validStory(t)
++				if tt.source == TypeTask {
++					item.Type, item.ID, item.Parent, item.Custom = TypeTask, "TEST-T-0009", "TEST-US-0002", nil
++					item.Path = "docs/.pmngr/tasks/TEST-T-0009-a-clean-story.md"
++				}
++			}
++			item.Links = []Link{{Kind: tt.kind, Target: tt.target}}
++			got := sortedCodes(ValidateItem(item, cfg))
++			want := append([]Code{}, tt.want...)
++			sort.Slice(want, func(i, j int) bool { return want[i] < want[j] })
++			if !reflect.DeepEqual(got, want) {
++				t.Errorf("codes = %v, want %v\ndiagnostics:\n%s", got, want, render(ValidateItem(item, cfg)))
++			}
++		})
++	}
++}
++
++func TestSchemaFeatureOnSpecLinkKinds(t *testing.T) {
++	t.Parallel()
++	cfg := testConfig(t) // schema 1
++
++	tests := []struct {
++		name string
++		link Link
++		want bool
++	}{
++		{name: "implements a requirement", link: Link{Kind: LinkImplements, Target: "TEST-SP-0001.R2"}, want: true},
++		{name: "modifies a spec", link: Link{Kind: LinkModifies, Target: "TEST-SP-0001"}, want: true},
++		{name: "relates_to a requirement", link: Link{Kind: LinkRelatesTo, Target: "TEST-SP-0001.R2"}, want: true},
++		{name: "relates_to a qualified requirement", link: Link{Kind: LinkRelatesTo, Target: "WEB/WEB-SP-0001.R2"}, want: true},
++		// A spec kind is a spec construct whatever its target; the wrong target
++		// is reported separately as E-LINK-TARGET-TYPE.
++		{name: "supersedes a story", link: Link{Kind: LinkSupersedes, Target: "TEST-US-0002"}, want: true},
++		{name: "blocks a task", link: Link{Kind: LinkBlocks, Target: "TEST-T-0002"}, want: false},
++	}
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			t.Parallel()
++			item := validStory(t)
++			item.Links = []Link{tt.link}
++			if _, got := SchemaFeatureDiagnostic(item, cfg); got != tt.want {
++				t.Errorf("E-SCHEMA-FEATURE = %v, want %v", got, tt.want)
++			}
++		})
++	}
++}
++
++func TestStoreUpgradesSchemaOnFirstImplementsLink(t *testing.T) {
++	t.Parallel()
++	ctx := context.Background()
++
++	store, fsys := specStore(t, "1")
++	story, err := store.Create(ctx, ItemDraft{Type: TypeStory, Title: "Plain"})
++	if err != nil {
++		t.Fatalf("Create(): %v", err)
++	}
++	link := Link{Kind: LinkImplements, Target: "ACME-SP-0004.R2"}
++	updated, err := store.Update(ctx, story.ID, ItemPatch{AddLinks: []Link{link}}, story.Rev)
++	if err != nil {
++		t.Fatalf("Update(): %v", err)
++	}
++	if len(updated.Links) != 1 || updated.Links[0] != link {
++		t.Errorf("links = %+v", updated.Links)
++	}
++	data, _ := fsys.ReadFile("docs/.pmngr/project.yaml")
++	if !strings.HasPrefix(string(data), "schema: 2\n") || store.Schema() != 2 {
++		t.Errorf("project.yaml = %q, store schema %d", data, store.Schema())
++	}
++
++	// A wrong target type is refused, and refused before anything is written.
++	if _, err := store.Update(ctx, story.ID, ItemPatch{AddLinks: []Link{{Kind: LinkImplements, Target: "ACME-US-0001"}}}, ""); err == nil {
++		t.Error("Update() accepted implements with a story target")
++	}
++}
++
++// requirementLinkVault is a project at schema 2 with two specs, the work that
++// implements and modifies their requirements, and three kinds of broken ref.
++func requirementLinkVault(t *testing.T) *Index {
++	t.Helper()
++	fsys := NewMemFS()
++	files := map[string]string{
++		"docs/.pmngr/project.yaml": "schema: 2\nkey: ACME\nname: Acme\nworkflow:\n  statuses:\n" +
++			"    - {id: todo, category: todo}\n    - {id: done, category: done}\n",
++		"docs/.pmngr/specs/ACME-SP-0001-allocation.md": "---\nid: ACME-SP-0001\ntype: spec\ntitle: Allocation\nstatus: todo\n" +
++			"created: 2026-01-01T00:00:00Z\nupdated: 2026-01-01T00:00:00Z\n" +
++			"requirements:\n  R1:\n    status: done\n  R2:\n    status: todo\n    links:\n" +
++			"      - { kind: supersedes, target: ACME-SP-0002.R1 }\n" +
++			"  R3:\n    status: todo\n    links:\n      - { kind: supersedes, target: ACME-SP-0002.R7 }\n---\n\n" +
++			"## Requirements\n\n### ACME-SP-0001.R1 — One\n\nThe system SHALL do one.\n\n" +
++			"### ACME-SP-0001.R2 — Two\n\nThe system SHALL do two.\n\n" +
++			"### ACME-SP-0001.R3 — Three\n\nThe system SHALL do three.\n",
++		"docs/.pmngr/specs/ACME-SP-0002-legacy.md": "---\nid: ACME-SP-0002\ntype: spec\ntitle: Legacy\nstatus: done\n" +
++			"created: 2026-01-01T00:00:00Z\nupdated: 2026-01-01T00:00:00Z\n" +
++			"requirements:\n  R1:\n    status: cancelled\n  R2:\n    status: done\n---\n\n" +
++			"## Requirements\n\n### ACME-SP-0002.R1 — Old\n\nThe system SHALL do the old thing.\n",
++		"docs/.pmngr/stories/ACME-US-0001-build-it.md": "---\nid: ACME-US-0001\ntype: story\ntitle: Build it\nstatus: todo\n" +
++			"created: 2026-01-01T00:00:00Z\nupdated: 2026-01-01T00:00:00Z\n" +
++			"links:\n  - { kind: implements, target: ACME-SP-0001.R2 }\n  - { kind: implements, target: ACME-SP-0001.R1 }\n---\n",
++		"docs/.pmngr/tasks/ACME-T-0001-change-it.md": "---\nid: ACME-T-0001\ntype: task\ntitle: Change it\nstatus: todo\n" +
++			"parent: ACME-US-0001\ncreated: 2026-01-01T00:00:00Z\nupdated: 2026-01-01T00:00:00Z\n" +
++			"links:\n  - { kind: modifies, target: ACME-SP-0001.R2 }\n  - { kind: implements, target: ACME-SP-0001 }\n---\n",
++		"docs/.pmngr/stories/ACME-US-0002-broken-refs.md": "---\nid: ACME-US-0002\ntype: story\ntitle: Broken refs\nstatus: todo\n" +
++			"created: 2026-01-01T00:00:00Z\nupdated: 2026-01-01T00:00:00Z\n" +
++			"links:\n  - { kind: implements, target: ACME-SP-0001.R9 }\n  - { kind: implements, target: ACME-SP-0099.R1 }\n" +
++			"  - { kind: implements, target: WEB/WEB-SP-0001.R1 }\n  - { kind: relates_to, target: ACME-SP-0002.R2 }\n---\n",
++	}
++	for p, data := range files {
++		if err := fsys.MkdirAll(p[:strings.LastIndex(p, "/")]); err != nil {
++			t.Fatal(err)
++		}
++		if err := fsys.WriteFile(p, []byte(data)); err != nil {
++			t.Fatal(err)
++		}
++	}
++	projects, err := DiscoverProjects(fsys, ".")
++	if err != nil {
++		t.Fatal(err)
++	}
++	ix := NewIndex(fsys, projects)
++	if _, err := ix.Build(context.Background(), true); err != nil {
++		t.Fatalf("Build(): %v", err)
++	}
++	return ix
++}
++
++func TestIndexResolvesRequirementLinks(t *testing.T) {
++	t.Parallel()
++	ix := requirementLinkVault(t)
++
++	tests := []struct {
++		name   string
++		target string
++		kind   LinkKind
++		want   []ItemID
++	}{
++		{name: "which work implements R2", target: "ACME-SP-0001.R2", kind: LinkImplementedBy, want: []ItemID{"ACME-US-0001"}},
++		{name: "which work modifies R2", target: "ACME-SP-0001.R2", kind: LinkModifiedBy, want: []ItemID{"ACME-T-0001"}},
++		{name: "which work implements R1", target: "ACME-SP-0001.R1", kind: LinkImplementedBy, want: []ItemID{"ACME-US-0001"}},
++		{name: "a qualified target", target: "ACME/ACME-SP-0001.R1", kind: LinkImplementedBy, want: []ItemID{"ACME-US-0001"}},
++		{name: "whole-spec links stay on the spec", target: "ACME-SP-0001", kind: LinkImplementedBy, want: []ItemID{"ACME-T-0001"}},
++		{name: "nothing implements R3", target: "ACME-SP-0001.R3", kind: LinkImplementedBy},
++		{name: "what a story implements", target: "ACME-US-0001", kind: LinkImplements, want: []ItemID{"ACME-SP-0001.R1", "ACME-SP-0001.R2"}},
++		{name: "a requirement's own supersedes", target: "ACME-SP-0001.R2", kind: LinkSupersedes, want: []ItemID{"ACME-SP-0002.R1"}},
++		{name: "the superseded requirement sees its successor", target: "ACME-SP-0002.R1", kind: LinkSupersededBy, want: []ItemID{"ACME-SP-0001.R2"}},
++	}
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			t.Parallel()
++			if got := ix.Related(tt.target, tt.kind); !reflect.DeepEqual(got, tt.want) {
++				t.Errorf("Related(%s, %s) = %v, want %v", tt.target, tt.kind, got, tt.want)
++			}
++		})
++	}
++
++	computed := ix.LinkGraph().InverseLinks("ACME-SP-0001.R2")
++	if len(computed) != 2 {
++		t.Fatalf("inverse links of R2 = %+v", computed)
++	}
++	for _, l := range computed {
++		if !l.Computed || l.From != "ACME-SP-0001.R2" {
++			t.Errorf("inverse link %+v is not a computed edge from the requirement", l)
++		}
++	}
++}
++
++func TestIndexReportsDanglingRequirementTargets(t *testing.T) {
++	t.Parallel()
++	ix := requirementLinkVault(t)
++
++	type finding struct{ path, field, what string }
++	var got []finding
++	for _, d := range ix.Warnings() {
++		if d.Code != CodeWarnRefDangling {
++			continue
++		}
++		what := "?"
++		for _, w := range []string{"unknown requirement", "unknown spec", "unknown item"} {
++			if strings.Contains(d.Message, w) {
++				what = w
++			}
++		}
++		got = append(got, finding{d.Path, d.Field, what})
++	}
++	sort.Slice(got, func(i, j int) bool { return got[i].path+got[i].what < got[j].path+got[j].what })
++	want := []finding{
++		// ACME-SP-0002.R7 has neither a block nor an entry.
++		{"docs/.pmngr/specs/ACME-SP-0001-allocation.md", "requirements.R3.links.supersedes", "unknown requirement"},
++		// R9 has no block in an existing spec.
++		{"docs/.pmngr/stories/ACME-US-0002-broken-refs.md", "links.implements", "unknown requirement"},
++		// R2 has an entry but no block: its block was deleted by hand (R-REQ-6).
++		{"docs/.pmngr/stories/ACME-US-0002-broken-refs.md", "links.relates_to", "unknown requirement"},
++		// SP-0099 does not exist. WEB/WEB-SP-0001.R1 is remote, not dangling.
++		{"docs/.pmngr/stories/ACME-US-0002-broken-refs.md", "links.implements", "unknown spec"},
++	}
++	if !reflect.DeepEqual(got, want) {
++		t.Errorf("W-REF-DANGLING findings =\n%v\nwant\n%v", got, want)
++	}
++	for _, d := range ix.Warnings() {
++		if d.Code == CodeLinkTargetType || d.Code == CodeSchemaFeature {
++			t.Errorf("unexpected finding %s: %s", d.Code, d.Message)
++		}
++	}
++}
+diff --git a/internal/core/testdata/golden/spec-links-story.md b/internal/core/testdata/golden/spec-links-story.md
+new file mode 100644
+index 0000000..01c301a
+--- /dev/null
++++ b/internal/core/testdata/golden/spec-links-story.md
+@@ -0,0 +1,18 @@
++---
++id: ACME-US-0044
++type: story
++title: Allocate ids by index scan
++status: in_progress
++created: 2026-09-24T12:00:00Z
++updated: 2026-09-24T13:00:00Z
++links:
++  - { kind: implements, target: ACME-SP-0003.R2 }
++  - { kind: modifies, target: ACME-SP-0003.R10, note: tightens the allocation rule }
++  - { kind: implements, target: WEB/WEB-SP-0001.R4 }
++  - { kind: relates_to, target: ACME-SP-0003 }
++  - { kind: duplicated_by, target: ACME-US-0050 }
++---
++
++## Description
++
++Implement the allocation requirement.
+diff --git a/internal/core/testdata/spec-links-story.md b/internal/core/testdata/spec-links-story.md
+new file mode 100644
+index 0000000..0e9726d
+--- /dev/null
++++ b/internal/core/testdata/spec-links-story.md
+@@ -0,0 +1,20 @@
++---
++links:
++  - {target: ACME-SP-0003.R2, kind: implements}
++  - kind: modifies
++    target: ACME-SP-0003.R10
++    note: tightens the allocation rule
++  - { kind: implements, target: WEB/WEB-SP-0001.R4 }
++  - { kind: relates_to, target: ACME-SP-0003 }
++  - { kind: duplicated_by, target: ACME-US-0050 }
++title: Allocate ids by index scan
++id: ACME-US-0044
++type: story
++status: in_progress
++created: 2026-09-24T12:00:00Z
++updated: 2026-09-24T13:00:00Z
++---
++
++## Description
++
++Implement the allocation requirement.
+diff --git a/internal/core/validate.go b/internal/core/validate.go
+index 6c6d703..1684ccf 100644
+--- a/internal/core/validate.go
++++ b/internal/core/validate.go
+@@ -278,36 +278,106 @@ func validateItemLinks(d *diagSet, item *Item, cfg *ProjectConfig) {
+ 			d.errorf(field, CodeFieldType, "a relation needs a target")
+ 			continue
+ 		}
+-		validateLinkTarget(d, cfg, field+".target", l.Target)
++		if validateLinkTarget(d, cfg, field+".target", l.Target) {
++			validateLinkTargetType(d, item, field+".target", l)
++		}
+ 	}
+ }
+ 
+-// validateLinkTarget accepts the bare form "ACME-US-0042", which implies the
+-// current project, and the qualified form "WEB/WEB-US-0031" (R-LINK-2).
+-func validateLinkTarget(d *diagSet, cfg *ProjectConfig, field, target string) {
++// validateLinkTarget applies the link-target grammar of R-LINK-2 and R-LINK-6:
++// an item id or a requirement ref, bare ("ACME-US-0042", "ACME-SP-0003.R2"),
++// which implies the current project, or qualified ("WEB/WEB-US-0031",
++// "WEB/WEB-SP-0001.R4"). It reports whether the target is well formed, so the
++// caller can go on to check its type.
++func validateLinkTarget(d *diagSet, cfg *ProjectConfig, field, target string) bool {
+ 	qualifier := ProjectKey("")
+ 	id := target
+ 	if before, after, found := strings.Cut(target, "/"); found {
+ 		qualifier, id = ProjectKey(before), after
+ 		if !ValidProjectKey(qualifier) {
+ 			d.errorf(field, CodeIDGrammar, "%q does not match <KEY>/<ID>", target)
+-			return
++			return false
+ 		}
+ 	}
+-	key, _, _, err := ParseItemID(id)
+-	if err != nil {
+-		d.errorf(field, CodeIDGrammar, "%q does not match <KEY>-<EP|US|T|M|SP>-<NNNN>", target)
+-		return
++	key, ok := linkTargetKey(id)
++	if !ok {
++		d.errorf(field, CodeIDGrammar, "%q does not match <KEY>-<EP|US|T|M|SP>-<NNNN> or <KEY>-SP-<NNNN>.R<n>", target)
++		return false
+ 	}
+ 	if qualifier != "" {
+ 		if key != qualifier {
+ 			d.errorf(field, CodeIDKey, "%q is qualified with project %q but its id belongs to %q", target, qualifier, key)
+ 		}
+-		return
++		return true
+ 	}
+ 	if cfg != nil && cfg.Key != "" && key != cfg.Key {
+ 		d.errorf(field, CodeIDKey, "%q belongs to project %q; qualify it as %q to link across projects", target, key, key.String()+"/"+id)
+ 	}
++	return true
++}
++
++// linkTargetKey returns the project key of an unqualified link target, an item
++// id or a requirement ref, and whether the target matches either grammar.
++func linkTargetKey(id string) (ProjectKey, bool) {
++	if ref, err := ParseRequirementRef(id); err == nil {
++		key, _, _, _ := ParseItemID(string(ref.Spec))
++		return key, true
++	}
++	key, _, _, err := ParseItemID(id)
++	return key, err == nil
++}
++
++// linkTargetType is what a link target names, read from its grammar alone.
++type linkTargetType int
++
++const (
++	targetMalformed linkTargetType = iota
++	targetItem
++	targetSpec
++	targetRequirement
++)
++
++// classifyLinkTarget tells an item id, a spec id and a requirement ref apart,
++// qualified or not.
++func classifyLinkTarget(target string) linkTargetType {
++	bare := bareTarget(target)
++	if IsRequirementRef(bare) {
++		return targetRequirement
++	}
++	_, code, _, err := ParseItemID(bare)
++	switch {
++	case err != nil:
++		return targetMalformed
++	case code == CodeSpec:
++		return targetSpec
++	default:
++		return targetItem
++	}
++}
++
++// validateLinkTargetType applies the per-kind target rules of R-LINK-6 to an
++// item-level link: implements, modifies and their inverses need a spec or a
++// requirement target; supersedes and superseded_by link a spec to a spec, since
++// a requirement's supersession lives in requirements.R<n>.links (R-REQ-13).
++// Every other kind MAY target a spec or a requirement. The type is visible in
++// the ref itself, so a mismatch is E-LINK-TARGET-TYPE, not a warning.
++func validateLinkTargetType(d *diagSet, item *Item, field string, l Link) {
++	t := classifyLinkTarget(l.Target)
++	switch l.Kind {
++	case LinkImplements, LinkImplementedBy, LinkModifies, LinkModifiedBy:
++		if t != targetSpec && t != targetRequirement {
++			d.errorf(field, CodeLinkTargetType, "%s must target a spec or a requirement ref, not %q", l.Kind, l.Target)
++		}
++	case LinkSupersedes, LinkSupersededBy:
++		switch {
++		case item.Type != TypeSpec:
++			d.errorf(field, CodeLinkTargetType,
++				"%s links a spec to a spec or a requirement to a requirement, not a %s to %q", l.Kind, item.Type, l.Target)
++		case t != targetSpec:
++			d.errorf(field, CodeLinkTargetType,
++				"a spec's %s must target a spec, not %q; a requirement's goes in requirements.R<n>.links", l.Kind, l.Target)
++		}
++	}
+ }
+ 
+ // validateDates applies R-TIME-1 (canonical instants) and E-DATE-ORDER.
+diff --git a/internal/core/validate_test.go b/internal/core/validate_test.go
+index d3ce421..3fe57f1 100644
+--- a/internal/core/validate_test.go
++++ b/internal/core/validate_test.go
+@@ -240,7 +240,7 @@ func TestValidateItemRules(t *testing.T) {
+ 		},
+ 		{
+ 			name:   "unknown link kind",
+-			mutate: func(it *Item) { it.Links = []Link{{Kind: "supersedes", Target: "TEST-US-0002"}} },
++			mutate: func(it *Item) { it.Links = []Link{{Kind: "replaces", Target: "TEST-US-0002"}} },
+ 			want:   []Code{CodeEnum},
+ 		},
+ 		{
+diff --git a/internal/mcp/wire.go b/internal/mcp/wire.go
+index 88fe06f..a766258 100644
+--- a/internal/mcp/wire.go
++++ b/internal/mcp/wire.go
+@@ -45,7 +45,7 @@ type Item struct {
+ 
+ // Link is one typed relation of an item.
+ type Link struct {
+-	Kind   string `json:"kind" jsonschema:"blocks, blocked_by, relates_to or duplicates"`
++	Kind   string `json:"kind" jsonschema:"blocks, blocked_by, relates_to, duplicates, duplicated_by, implements, implemented_by, modifies, modified_by, supersedes or superseded_by (docs/03 section 12.1)"`
+ 	Target string `json:"target"`
+ }
+ 
+diff --git a/web/src/core-bridge/api.ts b/web/src/core-bridge/api.ts
+index 2e15ba7..45bf5ea 100644
+--- a/web/src/core-bridge/api.ts
++++ b/web/src/core-bridge/api.ts
+@@ -15,7 +15,19 @@
+ 
+ export type ItemType = 'epic' | 'story' | 'task' | 'milestone' | 'spec' | 'comment';
+ export type Priority = 'critical' | 'high' | 'medium' | 'low';
+-export type LinkKind = 'blocks' | 'blocked_by' | 'relates_to' | 'duplicates';
++/** Relation kinds of docs/03-data-model.md §12.1; the last six are ADR-037's spec kinds. */
++export type LinkKind =
++  | 'blocks'
++  | 'blocked_by'
++  | 'relates_to'
++  | 'duplicates'
++  | 'duplicated_by'
++  | 'implements'
++  | 'implemented_by'
++  | 'modifies'
++  | 'modified_by'
++  | 'supersedes'
++  | 'superseded_by';
+ export type Severity = 'error' | 'warning' | 'info';
+ 
+ export type Link = { kind: LinkKind; target: string; note?: string };
+diff --git a/web/src/features/backlog/item-meta.test.ts b/web/src/features/backlog/item-meta.test.ts
+index d44a5b6..c51e6e7 100644
+--- a/web/src/features/backlog/item-meta.test.ts
++++ b/web/src/features/backlog/item-meta.test.ts
+@@ -72,4 +72,11 @@ describe('linkKindInverse', () => {
+     expect(linkKindInverse('duplicates')).toBe('Duplicated by');
+     expect(linkKindInverse('relates_to')).toBe('Relates to');
+   });
++
++  it('names the inverse of the spec link kinds', () => {
++    expect(linkKindInverse('duplicated_by')).toBe('Duplicates');
++    expect(linkKindInverse('implements')).toBe('Implemented by');
++    expect(linkKindInverse('modified_by')).toBe('Modifies');
++    expect(linkKindInverse('supersedes')).toBe('Superseded by');
++  });
+ });
+diff --git a/web/src/features/backlog/item-meta.ts b/web/src/features/backlog/item-meta.ts
+index 1650b7b..0787bed 100644
+--- a/web/src/features/backlog/item-meta.ts
++++ b/web/src/features/backlog/item-meta.ts
+@@ -88,6 +88,13 @@ const linkKindNames: Record<LinkKind, string> = {
+   blocked_by: 'Blocked by',
+   relates_to: 'Relates to',
+   duplicates: 'Duplicates',
++  duplicated_by: 'Duplicated by',
++  implements: 'Implements',
++  implemented_by: 'Implemented by',
++  modifies: 'Modifies',
++  modified_by: 'Modified by',
++  supersedes: 'Supersedes',
++  superseded_by: 'Superseded by',
+ };
+ 
+ /** Inverse of a typed relation (docs/03-data-model.md §12.1). */
+@@ -96,6 +103,13 @@ const linkKindInverses: Record<LinkKind, string> = {
+   blocked_by: 'Blocks',
+   relates_to: 'Relates to',
+   duplicates: 'Duplicated by',
++  duplicated_by: 'Duplicates',
++  implements: 'Implemented by',
++  implemented_by: 'Implements',
++  modifies: 'Modified by',
++  modified_by: 'Modifies',
++  supersedes: 'Superseded by',
++  superseded_by: 'Supersedes',
+ };
+ 
+ export function linkKindName(kind: LinkKind): string {
+diff --git a/web/src/features/editor/front-matter.test.ts b/web/src/features/editor/front-matter.test.ts
+index e2b7bc7..e6fed9f 100644
+--- a/web/src/features/editor/front-matter.test.ts
++++ b/web/src/features/editor/front-matter.test.ts
+@@ -83,6 +83,20 @@ describe('raw YAML round trip', () => {
+     if (!parsed.ok) expect(parsed.issues[0]?.code).toBe('E-FM-YAML');
+   });
+ 
++  it('keeps the spec link kinds and requirement-ref targets', () => {
++    const parsed = valuesFromYaml(
++      'title: A\nlinks:\n  - { kind: implements, target: ACME-SP-0003.R2 }\n' +
++        '  - { kind: duplicated_by, target: ACME-US-0050 }\n',
++    );
++    expect(parsed.ok).toBe(true);
++    if (parsed.ok) {
++      expect(parsed.values.links).toEqual([
++        { kind: 'implements', target: 'ACME-SP-0003.R2' },
++        { kind: 'duplicated_by', target: 'ACME-US-0050' },
++      ]);
++    }
++  });
++
+   it('rejects an unknown priority', () => {
+     const parsed = valuesFromYaml('title: A\npriority: urgent\n');
+     expect(parsed.ok).toBe(false);
+diff --git a/web/src/features/editor/front-matter.ts b/web/src/features/editor/front-matter.ts
+index 925607c..50fe2c1 100644
+--- a/web/src/features/editor/front-matter.ts
++++ b/web/src/features/editor/front-matter.ts
+@@ -15,7 +15,19 @@ import type { Link, LinkKind } from '@/core-bridge/api';
+ import type { EditorProjectSchema } from '@/features/editor/project-schema';
+ import { customFieldsFor } from '@/features/editor/project-schema';
+ 
+-export const linkKinds: LinkKind[] = ['blocks', 'blocked_by', 'relates_to', 'duplicates'];
++export const linkKinds: LinkKind[] = [
++  'blocks',
++  'blocked_by',
++  'relates_to',
++  'duplicates',
++  'duplicated_by',
++  'implements',
++  'implemented_by',
++  'modifies',
++  'modified_by',
++  'supersedes',
++  'superseded_by',
++];
+ 
+ export const priorities: Priority[] = ['critical', 'high', 'medium', 'low'];
+ 
