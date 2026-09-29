@@ -1,0 +1,869 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 6ebcb0d..032f3dd 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -305,6 +305,17 @@ because a commit list cannot express them.
+ 
+ ### Fixed
+ 
++- **`suspect` clears once a changed requirement is re-verified at head** (`GIT-US-0148`,
++  docs/03 R-REQ-12a rule 6, R-IMP-5). The impact query flagged every passing requirement whose
++  traced code the diff touched as `suspect`, so with `--fail-on suspect` every pull request that
++  edited traced code tripped the CI gate, even after its tests were re-run. A touched passing
++  requirement is now suspect only when it was **not re-verified at the diff's head commit**: it
++  is cleared when every linked test passed in results ingested at head, or when its
++  `verified.commit` is head on the current block rev. A failing re-run makes it `failing`; a
++  pending `MODIFIED` Spec Delta alone clears nothing. For a working-tree head, the head commit is
++  `HEAD` only while the tree differs from it in `.pmngr/` backlog files at most. Coverage rows
++  (`coverage.list`, `gintrack spec coverage --json`) gain `commit`, the commit a passing row's
++  evidence verified the current text at. The known limitation in docs/09 is gone.
+ - **`search_semantic` works over stdio `gintrack mcp`** (GIT-US-0121). Only `gintrack serve`
+   installed the semantic searcher, so an agent spawning `gintrack mcp` always got
+   `unavailable` even with `search.pando.mcpUrl` configured. The stdio server now installs the
+diff --git a/cmd/gintrack/spec_cmds_test.go b/cmd/gintrack/spec_cmds_test.go
+index 6271bea..b4a7147 100644
+--- a/cmd/gintrack/spec_cmds_test.go
++++ b/cmd/gintrack/spec_cmds_test.go
+@@ -175,6 +175,52 @@ func TestSpecImpactFailOn(t *testing.T) {
+ 	})
+ }
+ 
++// TestSpecImpactGateClearsAtHead is the gate of GIT-US-0148 end to end: a
++// pull request that edits the traced code of a passing requirement trips
++// `--fail-on suspect` until the linked tests are re-run and ingested at its
++// head, and a failing re-run still trips it as failing.
++func TestSpecImpactGateClearsAtHead(t *testing.T) {
++	h := newHarness(t)
++	root := gitSpecRepo(t, h)
++	ingest(t, h, root, r1Passes) // R1 passed on main.
++
++	gitIn(t, root, "checkout", "-b", "pr")
++	src := filepath.Join(root, "src", "alloc.go")
++	data, err := os.ReadFile(src)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(src, []byte(strings.Replace(string(data), "return 1", "return 1 + 0", 1)), 0o644); err != nil {
++		t.Fatal(err)
++	}
++	gitIn(t, root, "commit", "-am", "fix: change NextID")
++	gate := []string{"spec", "impact", "--since", "main", "--tiers", "1,2", "--format", "text", "--fail-on", "failing,suspect"}
++
++	t.Run("tests not re-run: suspect trips the gate", func(t *testing.T) {
++		_, stderr, code := h.run(gate...)
++		if code != exitGate || !strings.Contains(stderr, "ACME-SP-0001.R1  suspect") {
++			t.Fatalf("exit %d, want %d with R1 suspect\n%s", code, exitGate, stderr)
++		}
++	})
++	t.Run("tests re-run and ingested at head: the gate passes", func(t *testing.T) {
++		ingest(t, h, root, r1Passes)
++		stdout, stderr, code := h.run(gate...)
++		if code != exitOK {
++			t.Fatalf("exit %d, want 0\n%s\n%s", code, stdout, stderr)
++		}
++		if !strings.Contains(stdout, "ACME-SP-0001.R1 t1 passing") || strings.Contains(stdout, "suspect") {
++			t.Errorf("R1 is not a plain passing hit:\n%s", stdout)
++		}
++	})
++	t.Run("a failing re-run at head still trips the gate", func(t *testing.T) {
++		ingest(t, h, root, r1Fails)
++		_, stderr, code := h.run(gate...)
++		if code != exitGate || !strings.Contains(stderr, "ACME-SP-0001.R1  failing") {
++			t.Fatalf("exit %d, want %d with R1 failing\n%s", code, exitGate, stderr)
++		}
++	})
++}
++
+ func TestSpecVerifyCoverageTrace(t *testing.T) {
+ 	h := newHarness(t)
+ 	root := gitSpecRepo(t, h)
+diff --git a/docs/.pmngr/comments/GIT-US-0148/20260924T213532Z-claude.md b/docs/.pmngr/comments/GIT-US-0148/20260924T213532Z-claude.md
+new file mode 100644
+index 0000000..1773b4a
+--- /dev/null
++++ b/docs/.pmngr/comments/GIT-US-0148/20260924T213532Z-claude.md
+@@ -0,0 +1,24 @@
++---
++item: GIT-US-0148
++author: claude
++created: 2026-09-24T21:35:32Z
++type: comment
++---
++
++Implemented in the jj change on top of the Phase 11 stack. The rule:
++
++- A touched (tier 1 or 2) `passing` requirement is `suspect` unless its coverage row's new
++  `commit` (docs/03 R-REQ-12a rule 6) equals the diff's **head commit**. A passing row carries
++  `commit` when every matched result was ingested at one and the same commit (none without a
++  commit), or when the stamp decides and `verified.rev` is the current block rev.
++- Head commit: `--head <rev>` resolved to its commit; for the working tree, `HEAD` (what
++  `spec ingest` records by default) only while the tree differs from `HEAD` in `.pmngr/`
++  backlog files at most. Any other uncommitted or untracked file: no head commit, stays suspect.
++- `failing` wins and is never flagged suspect; a pending MODIFIED Spec Delta clears nothing
++  on its own — it clears when its linked tests pass at head, like any other requirement.
++- No clock is read: same diff, history, tree and ingested results give the same answer.
++
++Tests: `TestImpactSuspectAtHead` (14 cases), a new golden `impact_reverified.golden.json`,
++`TestClassifyCommit`, and the end-to-end `TestSpecImpactGateClearsAtHead` (real git repo:
++not re-run trips the gate, re-run at head passes, failing re-run trips as failing).
++Docs: docs/03 R-REQ-12a, R-IMP-5, R-IMP-7; docs/07; docs/09 (limitation removed); CHANGELOG.
+diff --git a/docs/03-data-model.md b/docs/03-data-model.md
+index 79ceaf8..eb81f2b 100644
+--- a/docs/03-data-model.md
++++ b/docs/03-data-model.md
+@@ -2530,7 +2530,8 @@ Two hashes per requirement, both `"sha256:" + lowercase_hex(sha256(x))[0:16]` li
+   `coverage` or test-result key; the marker scan is a derived cache too.
+ - **R-REQ-12a Coverage as implemented (`GIT-US-0116`).** One compact row per requirement,
+   `{ref, status, reasons[], tests[{test, result}]}`, computed natively and reached through a host
+-  seam (`coverage.list`, docs/07 §6.7); a browser-only session answers `unavailable`. The rules,
++  seam (`coverage.list`, docs/07 §6.7), plus `commit` on a passing row (rule 6); a browser-only
++  session answers `unavailable`. The rules,
+   applied in this order:
+   1. **Evidence.** A run — the linked tests' aggregate `pass` or `fail` — counts when it is later
+      than `verified.at` and, if its source records the tested block rev, that rev is the current
+@@ -2549,6 +2550,13 @@ Two hashes per requirement, both `"sha256:" + lowercase_hex(sha256(x))[0:16]` li
+      `unchecked` and the row is `passing`.
+   5. Otherwise `untested`: `no-tests` (no `Verifies:` marker or `trace.tests` entry), `partial`,
+      or `no-results`.
++  6. **Verified at** (`GIT-US-0148`). A `passing` row also carries `commit`, the one full commit
++     id at which its evidence verified the current text: the commit of a counting `pass` run when
++     **every** matched result was ingested at that same commit (none without a commit, not from
++     several), or the stamp's `commit` when the stamp decides and its `rev` is the current block
++     rev. Any other row — several commits, a result without a commit, a stamp without `rev` or
++     `commit`, any state but `passing` — has none. The impact query compares it with the diff's
++     head (R-IMP-5); it is what clears the `suspect` flag of a requirement re-verified there.
+   A **`partial`** aggregate (some linked tests passed, none failed, some have no result) is never
+   a pass: it is not evidence, and it adds `partial` to whatever the stamp decides. The last
+   reason names the evidence that decided, `results` or `stamp`. Each linked test's `result` is its
+@@ -2858,17 +2866,37 @@ answers `unavailable`.
+ - **R-IMP-5 Hit.** `{ref, title, tier, candidate?, score?, status?, suspect?, reasons[],
+   pending?[]}`, one per requirement at its strongest tier, with the reasons of every tier that
+   reached it with certainty, sorted by tier and text, at most four then `+<n>`. `status` is the
+-  coverage state (R-REQ-12a). `suspect` is set when the state is `suspect`, or when it is
+-  `passing` and the diff changes a traced edge directly (tier 1) or through a call (tier 2) —
+-  this is how suspect covers transitive changes. `pending` lists the open items whose unapplied
+-  Spec Delta modifies the requirement.
++  coverage state (R-REQ-12a). `pending` lists the open items whose unapplied Spec Delta modifies
++  the requirement. `suspect` means **changed and not re-verified** (`GIT-US-0148`):
++  1. state `suspect` → set;
++  2. state `passing`, and the diff changes a traced edge directly (tier 1) or through a call
++     (tier 2) — this is how suspect covers transitive changes — → set, **unless** the row's
++     verified-at `commit` (R-REQ-12a rule 6) is the diff's **head commit**: every linked test
++     passed in results ingested at head, or `verified.commit` is head with `verified.rev` equal to
++     the current block rev;
++  3. any other state → never set: `failing` wins (a linked test that failed at head makes the
++     hit `failing`, which `--fail-on failing` catches), and `untested` or a tier-3 candidate is
++     not a verified requirement to begin with.
++
++  A pending `MODIFIED` Spec Delta clears nothing by itself: with one, the requirement is still
++  suspect until its linked tests pass at head, exactly as without one — the delta records that
++  the behavior changes on purpose, the re-run proves the code does what the new text says.
++  The **head commit** is `head` resolved to its commit when `head` is a revision. For the working
++  tree it is `HEAD` — the commit `gintrack spec ingest` records by default — **only while the
++  working tree differs from `HEAD` in backlog files at most** (a project's `.pmngr/` folder: a
++  status move, a comment, a `verified:` stamp not committed yet); any other uncommitted or
++  untracked, non-ignored file means tests may have run on code no commit holds, so there is no
++  head commit and every touched passing requirement stays suspect until the change is committed
++  and the tests are re-run and ingested. Results ingested without a commit never count. The rule
++  reads no clock: the same diff, history, working tree and ingested results give the same flags
++  (R-IMP-7).
+ - **R-IMP-6 Result.** `{base, head?, files, symbols, tiers: {tier, status, hits, truncated?,
+   message?}[], hits}`. A tier's `status` is `ok`, `unavailable` (no Pando, or Pando unreachable,
+   unauthorized or timing out: `pando.IsUnavailable`), `error` (Pando's tool failed, e.g. a project
+   not indexed) or `skipped` (not asked for); tier 1 always answers when the query does. Hits are
+   sorted by tier, then spec and number.
+-- **R-IMP-7 Determinism.** Tiers 1 and 2 are deterministic: the same diff, index and Pando answer
+-  give a byte-identical result (golden test). No timestamp or map order reaches it.
++- **R-IMP-7 Determinism.** Tiers 1 and 2 are deterministic: the same diff, index, ingested
++  results and Pando answer give a byte-identical result (golden tests). No timestamp or map order reaches it.
+ - **R-IMP-8 Report ranking** (`GIT-US-0120`). The report agents read (`impact.report`, docs/07
+   §6.7, rendered by `core.RenderImpactReport` for MCP, CLI and HTTP alike) ranks the hits:
+   `failing` first, then suspect, then by tier — tier-3 candidates last, highest `score` first —
+diff --git a/docs/07-cli-and-api.md b/docs/07-cli-and-api.md
+index a77dce3..16062e9 100644
+--- a/docs/07-cli-and-api.md
++++ b/docs/07-cli-and-api.md
+@@ -1935,7 +1935,12 @@ $ echo $?
+ **`--fail-on`** is evaluated over **every** hit of the result, not only the page the budget let
+ through, so a small `--budget` never hides an offender. `suspect` matches the `suspect`
+ coverage state and also the `suspect` flag the impact query raises on a passing requirement
+-whose traced code the diff changes directly or transitively. Tier-3 semantic candidates never
++whose traced code the diff changes directly or transitively — unless its linked tests passed in
++results ingested at the diff's head commit, or its `verified:` stamp names that commit on the
++current text (docs/03 R-IMP-5). So a change to traced code clears the gate once the tests are
++re-run at head and recorded with `gintrack spec ingest`, whose default `--commit` is the
++checkout's `HEAD`; with a working-tree head the tree must not differ from `HEAD` outside the
++backlog folders. Tier-3 semantic candidates never
+ trip the gate: they are neighbors, not traces. The report is always printed first, on stdout;
+ the offenders follow on stderr, one per line (`<ref>  <state>  <title>`), then the error line.
+ 
+@@ -5159,7 +5164,7 @@ installs one per repository; a browser-only session installs none, where both fa
+ 
+ | Method | Params | Result |
+ |---|---|---|
+-| `coverage.list` | `{project?, spec?, refs?: string[], status?: ("untested" \| "passing" \| "failing" \| "suspect")[]}` | `{coverage: {ref, status, reasons?: string[], tests?: {test, result}[]}[], total}` |
++| `coverage.list` | `{project?, spec?, refs?: string[], status?: ("untested" \| "passing" \| "failing" \| "suspect")[]}` | `{coverage: {ref, status, reasons?: string[], tests?: {test, result}[], commit?}[], total}` |
+ | `requirement.stamp` | `{refs?: string[], spec?, by, rev?}` | `{stamped: {ref, verified: {rev, commit, at, by}}[], unstamped: {ref, reason}[], writes}` |
+ 
+ A coverage row is deliberately compact — about 40 tokens with one linked test, plus about 15 per
+diff --git a/docs/09-ci-cd-and-releases.md b/docs/09-ci-cd-and-releases.md
+index 26571ca..a165a51 100644
+--- a/docs/09-ci-cd-and-releases.md
++++ b/docs/09-ci-cd-and-releases.md
+@@ -148,23 +148,34 @@ script's defaults for experiments; CI uses the defaults.
+ 
+ **When the gate trips.** A `failing` requirement is fixed, not acknowledged: fix the code or the
+ test, or — when the requirement itself is wrong — change it. A `suspect` one passed before but
+-no longer proves the current code or text:
+-
+-- **The behavior changed on purpose** — add a `## Spec Delta` to the story with
+-  `### MODIFIED <REF> — <title>` and the new text (docs/03 §21.8). The spec changes when the story
+-  reaches `done`; until then the report lists the story under the hit's `pending`.
+-- **The behavior did not change** — rerun the linked tests, ingest them and re-verify:
++has not been re-verified since the change (docs/03 R-REQ-12a, R-IMP-5). `suspect` means
++*changed and not re-verified*: a passing requirement whose traced code the pull request touches
++is **not** suspect when its linked tests all passed in results ingested at the diff's head
++commit, or when its `verified:` stamp names that commit on the current block rev. The gate
++itself runs the whole suite at the checkout's `HEAD` and ingests it there (`spec ingest`
++records `HEAD` by default), so in CI a touched requirement whose tests pass is `passing`, not
++suspect; what remains suspect is what the run could not re-verify:
++
++- **The linked tests did not run or did not report** — a `Verifies:` marker or `trace.tests`
++  entry that names a test the suites no longer have, or a suite that reported nothing: fix the
++  trace so the requirement's tests run, and the next gate run clears it.
++- **The text or code drifted from its evidence** (the coverage state `suspect`: `text`,
++  `code:<ref>`, `commit-unknown`) — rerun the linked tests, ingest them and re-verify:
+   `verify_requirement` over MCP, or `gintrack spec verify <REF>` (dry) then
+   `gintrack spec verify --commit <REF>`, which stamps `verified:` with the commit and the current
+   block rev (docs/03 §21.6, ADR-037 §7). A stamp on the current text clears a `text` suspect.
++- **The behavior changed on purpose** — add a `## Spec Delta` to the story with
++  `### MODIFIED <REF> — <title>` and the new text (docs/03 §21.8), and make the linked tests
++  prove the new behavior. The delta alone clears nothing: the requirement stops being suspect
++  when its tests pass at head. The spec changes when the story reaches `done`; until then the
++  report lists the story under the hit's `pending`.
+ - **Neither is clear** — ask a human on the story, naming the ref.
+ 
+-> **Known limitation.** `--fail-on suspect` also matches the `suspect` **flag** the impact query
+-> raises on a *passing* requirement whose traced code the diff touches (docs/03 R-IMP-5). That
+-> flag is computed from the diff alone: neither a pending `MODIFIED` delta nor a fresh stamp
+-> clears it while the pull request still changes the traced code, so a PR that edits traced code
+-> of a passing requirement trips the gate until the gate's semantics are refined in a follow-up.
+-> The coverage **state** `suspect` (docs/03 R-REQ-12a) is cleared as described above.
++**Locally**, the same rule applies to `gintrack spec impact --fail-on suspect` against the
++working tree: commit the change, rerun the linked tests and `gintrack spec ingest` their report
++at that commit. While the working tree holds uncommitted or untracked changes outside the
++backlog folders (`.pmngr/`: status moves, comments and stamps are fine), there is no head commit
++the results could prove, and every touched passing requirement stays suspect.
+ 
+ ### Notes on the CI workflow
+ 
+diff --git a/internal/core/reqcoverage.go b/internal/core/reqcoverage.go
+index 6c3e5e8..e04faed 100644
+--- a/internal/core/reqcoverage.go
++++ b/internal/core/reqcoverage.go
+@@ -63,6 +63,13 @@ type CoverageRow struct {
+ 	Status  CoverageStatus `json:"status"`
+ 	Reasons []string       `json:"reasons,omitempty"`
+ 	Tests   []CoverageTest `json:"tests,omitempty"`
++	// Commit is the one full commit id at which a passing row's evidence
++	// verified the current text: the commit every matched result was
++	// ingested at, or the stamp's commit when the stamp's rev is the current
++	// block rev. Empty for any other row. The impact query compares it with
++	// the diff's head to clear the suspect flag of a re-verified requirement
++	// (docs/03 R-REQ-12a rule 6, R-IMP-5).
++	Commit string `json:"commit,omitempty"`
+ }
+ 
+ // StampEvidence is what a coverage host offers a stamp writer for one
+diff --git a/internal/impact/impact.go b/internal/impact/impact.go
+index 0baa56a..0b1a18e 100644
+--- a/internal/impact/impact.go
++++ b/internal/impact/impact.go
+@@ -47,6 +47,14 @@ type Differ interface {
+ 	ChangedFiles(ctx context.Context, from, to string) ([]gitops.FileChange, error)
+ }
+ 
++// CommitLister resolves a revision to its commit; gitops.Backend is one. A
++// Differ that is also a CommitLister lets the resolver name the diff's head
++// commit, which clears the suspect flag of a requirement re-verified there
++// (GIT-US-0148); without one every touched passing requirement is suspect.
++type CommitLister interface {
++	Commits(ctx context.Context, req gitops.LogRequest) ([]gitops.Commit, error)
++}
++
+ // CallGraph is the slice of the Pando client tier 2 uses; *pando.Client is
+ // one.
+ type CallGraph interface {
+@@ -207,7 +215,15 @@ func (r *Resolver) Impact(ctx context.Context, ix *core.Index, q core.ImpactQuer
+ 		h.score = s.score
+ 	}
+ 
+-	hits, err := r.render(ctx, ix, col)
++	var headSHA string
++	for _, h := range col.hits {
++		if h.touched {
++			// Only a touched hit needs the head commit: one more diff.
++			headSHA = r.headCommit(ctx, ix, q.Head)
++			break
++		}
++	}
++	hits, err := r.render(ctx, ix, col, headSHA)
+ 	if err != nil {
+ 		return core.ImpactResult{}, err
+ 	}
+@@ -219,6 +235,59 @@ func (r *Resolver) Impact(ctx context.Context, ix *core.Index, q core.ImpactQuer
+ 	return res, nil
+ }
+ 
++// headCommit returns the full commit id the diff ends at, "" when there is
++// none to compare evidence with (GIT-US-0148, docs/03 R-IMP-5):
++//
++//   - a revision head is the commit it names;
++//   - the working-tree head is HEAD — the commit `gintrack spec ingest`
++//     records by default — but only while the working tree differs from
++//     HEAD in backlog files at most (a project's .pmngr folder: a status
++//     move, a comment, a verified: stamp): tests run on uncommitted code are
++//     not evidence of any commit, so a tree with any other uncommitted change
++//     has no head commit.
++//
++// Nothing here reads a clock, so the answer is a function of the history
++// and the working tree alone.
++func (r *Resolver) headCommit(ctx context.Context, ix *core.Index, head string) string {
++	lister, ok := r.opts.Differ.(CommitLister)
++	if !ok {
++		return ""
++	}
++	commits, err := lister.Commits(ctx, gitops.LogRequest{To: head, Limit: 1})
++	if err != nil || len(commits) == 0 || commits[0].SHA == "" {
++		return ""
++	}
++	sha := commits[0].SHA
++	if head == "" || head == gitops.WorkingTree {
++		dirty, err := r.opts.Differ.ChangedFiles(ctx, sha, gitops.WorkingTree)
++		if err != nil {
++			return ""
++		}
++		for _, f := range dirty {
++			if !isBacklogPath(ix, f.Path) || (f.OldPath != "" && !isBacklogPath(ix, f.OldPath)) {
++				return ""
++			}
++		}
++	}
++	return sha
++}
++
++// isBacklogPath reports whether p lies in the backlog folder of one of the
++// index's projects.
++func isBacklogPath(ix *core.Index, p string) bool {
++	p = path.Clean(strings.ReplaceAll(p, "\\", "/"))
++	for _, pr := range ix.Projects() {
++		b := path.Clean(pr.BacklogPath)
++		if b == "." || b == "" {
++			continue
++		}
++		if strings.HasPrefix(p, b+"/") {
++			return true
++		}
++	}
++	return false
++}
++
+ // storyHits adds the requirements the story names in its links and its
+ // unapplied Spec Delta: "delta:<id>" for a pending modifies, "<kind>:<id>"
+ // for a declared implements or modifies. A whole-spec link names no single
+@@ -501,8 +570,9 @@ func queryText(ix *core.Index, q core.ImpactQuery, symbols []changedSymbol) stri
+ }
+ 
+ // render turns the collected hits into the sorted answer: title, coverage
+-// status, suspect, capped reasons and the pending Spec Deltas.
+-func (r *Resolver) render(ctx context.Context, ix *core.Index, col *collector) ([]core.ImpactHit, error) {
++// status, suspect, capped reasons and the pending Spec Deltas. head is the
++// diff's head commit, "" when there is none.
++func (r *Resolver) render(ctx context.Context, ix *core.Index, col *collector, head string) ([]core.ImpactHit, error) {
+ 	refs := make([]core.RequirementRef, 0, len(col.hits))
+ 	for ref := range col.hits {
+ 		refs = append(refs, ref)
+@@ -549,7 +619,7 @@ func (r *Resolver) render(ctx context.Context, ix *core.Index, col *collector) (
+ 		}
+ 		if rows != nil {
+ 			h.Status = rows[i].Status
+-			h.Suspect = h.Status == core.CoverageSuspect || (h.Status == core.CoveragePassing && st.touched)
++			h.Suspect = suspect(rows[i], st.touched, head)
+ 		}
+ 		var reasons []string
+ 		for t := core.ImpactTierDirect; t <= core.ImpactTierSemantic; t++ {
+@@ -568,6 +638,23 @@ func (r *Resolver) render(ctx context.Context, ix *core.Index, col *collector) (
+ 	return out, nil
+ }
+ 
++// suspect decides a hit's suspect flag (docs/03 R-IMP-5): a suspect
++// coverage state always is; a passing one is when the diff touches a traced
++// edge of it, directly or through a call, unless its evidence verified the
++// current text at the diff's head commit — every linked test passed in
++// results ingested at head, or its stamp names head on the current block
++// rev (CoverageRow.Commit). A failing, untested or candidate hit never is:
++// failing wins, and the gate trips on it as failing.
++func suspect(row core.CoverageRow, touched bool, head string) bool {
++	switch row.Status {
++	case core.CoverageSuspect:
++		return true
++	case core.CoveragePassing:
++		return touched && (head == "" || row.Commit != head)
++	}
++	return false
++}
++
+ // pendingDeltas lists the open items whose unapplied Spec Delta modifies ref.
+ func pendingDeltas(g *core.Graph, ref core.RequirementRef) []core.ItemID {
+ 	if g == nil {
+diff --git a/internal/impact/impact_test.go b/internal/impact/impact_test.go
+index edc9c08..209a35f 100644
+--- a/internal/impact/impact_test.go
++++ b/internal/impact/impact_test.go
+@@ -360,8 +360,29 @@ func TestImpactGolden(t *testing.T) {
+ 		t.Fatalf("two runs differ:\n%s\n%s", a, b)
+ 	}
+ 	// The base commit id is the only varying part across machines; pin it.
++	checkGolden(t, "impact_tiers12.golden.json", bytes.ReplaceAll(append(a, '\n'), []byte(f.base), []byte("<base>")))
++}
++
++// TestImpactGoldenReverified pins the answer once the diff is committed and
++// the linked tests re-ran and were ingested at its head (GIT-US-0148): the
++// touched requirements are passing and not suspect.
++func TestImpactGoldenReverified(t *testing.T) {
++	f := newFixture(t)
++	head := f.commit("change NextID")
++	f.ingestAt(head, map[string]trace.Outcome{"TestNextID": trace.OutcomePass, "TestFormat": trace.OutcomePass})
++	res := f.impact(f.resolver(fixtureGraph(), nil), core.ImpactQuery{Base: f.base, Story: "ACME-US-0001", Tiers: []int{1, 2}})
++	a, err := json.MarshalIndent(res, "", "  ")
++	if err != nil {
++		t.Fatal(err)
++	}
+ 	got := bytes.ReplaceAll(append(a, '\n'), []byte(f.base), []byte("<base>"))
+-	golden := filepath.Join("testdata", "impact_tiers12.golden.json")
++	checkGolden(t, "impact_reverified.golden.json", bytes.ReplaceAll(got, []byte(head), []byte("<head>")))
++}
++
++// checkGolden compares got with testdata/name, rewriting it under -update.
++func checkGolden(t *testing.T, name string, got []byte) {
++	t.Helper()
++	golden := filepath.Join("testdata", name)
+ 	if *update {
+ 		if err := os.WriteFile(golden, got, 0o644); err != nil {
+ 			t.Fatal(err)
+@@ -572,3 +593,181 @@ func TestNotImportedByCoreOrVault(t *testing.T) {
+ 		}
+ 	}
+ }
++
++// ingestAt records the given outcomes of the fixture's two tests at commit,
++// a day after the initial results, as `gintrack spec ingest` would.
++func (f *fixture) ingestAt(commit string, outcomes map[string]trace.Outcome) {
++	f.t.Helper()
++	at := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
++	var results []trace.TestResult
++	for symbol, o := range outcomes {
++		results = append(results, trace.TestResult{
++			ID: "example.com/acme/src#" + symbol, Format: trace.FormatGoTest, Path: "src/alloc_test.go",
++			Symbol: symbol, Result: o, Commit: commit, At: at,
++		})
++	}
++	if _, err := f.store.Merge(f.root, results); err != nil {
++		f.t.Fatal(err)
++	}
++}
++
++// TestImpactSuspectAtHead pins when a passing requirement the diff touches
++// is suspect (GIT-US-0148, docs/03 R-IMP-5): unless its linked tests all
++// passed in results ingested at the diff's head commit, or its stamp names
++// that commit on the current text. Failing wins; a pending Spec Delta alone
++// clears nothing.
++func TestImpactSuspectAtHead(t *testing.T) {
++	both := map[string]trace.Outcome{"TestNextID": trace.OutcomePass, "TestFormat": trace.OutcomePass}
++	type state struct {
++		status  core.CoverageStatus
++		suspect bool
++	}
++	for _, tc := range []struct {
++		name string
++		// setup commits (or not) the diff and ingests; it returns the head
++		// of the query, "" for the working tree.
++		setup  func(t *testing.T, f *fixture) string
++		r1, r2 state
++	}{
++		{"uncommitted diff, results at HEAD: a dirty tree has no head commit", func(t *testing.T, f *fixture) string {
++			return ""
++		}, state{core.CoverageSuspect, true}, state{core.CoveragePassing, true}},
++		{"committed diff, tests not re-run", func(t *testing.T, f *fixture) string {
++			f.commit("change NextID")
++			return ""
++		}, state{core.CoverageSuspect, true}, state{core.CoveragePassing, true}},
++		{"committed diff, tests re-run and ingested at head", func(t *testing.T, f *fixture) string {
++			f.ingestAt(f.commit("change NextID"), both)
++			return ""
++		}, state{core.CoveragePassing, false}, state{core.CoveragePassing, false}},
++		{"head named as a revision", func(t *testing.T, f *fixture) string {
++			head := f.commit("change NextID")
++			f.ingestAt(head, both)
++			return head
++		}, state{core.CoveragePassing, false}, state{core.CoveragePassing, false}},
++		{"head named as a revision the results were not taken at", func(t *testing.T, f *fixture) string {
++			head := f.commit("change NextID")
++			f.write("src/report.go", strings.Replace(fxReport, `"report"`, `"reports"`, 1))
++			f.ingestAt(f.commit("change Report"), both)
++			return head
++		}, state{core.CoveragePassing, true}, state{core.CoveragePassing, true}},
++		{"re-run at head, a linked test fails", func(t *testing.T, f *fixture) string {
++			f.ingestAt(f.commit("change NextID"), map[string]trace.Outcome{"TestNextID": trace.OutcomeFail, "TestFormat": trace.OutcomePass})
++			return ""
++		}, state{core.CoverageFailing, false}, state{core.CoveragePassing, false}},
++		{"only one requirement's tests re-run at head", func(t *testing.T, f *fixture) string {
++			f.ingestAt(f.commit("change NextID"), map[string]trace.Outcome{"TestNextID": trace.OutcomePass})
++			return ""
++		}, state{core.CoveragePassing, false}, state{core.CoveragePassing, true}},
++		{"re-run at head, results without a commit", func(t *testing.T, f *fixture) string {
++			f.commit("change NextID")
++			f.ingestAt("", both)
++			return ""
++		}, state{core.CoveragePassing, true}, state{core.CoveragePassing, true}},
++		{"re-run at head, an uncommitted backlog edit", func(t *testing.T, f *fixture) string {
++			f.ingestAt(f.commit("change NextID"), both)
++			f.write(fxStoryPath, strings.Replace(fxStory, "status: in_progress", "status: done", 1))
++			return ""
++		}, state{core.CoveragePassing, false}, state{core.CoveragePassing, false}},
++		{"re-run at head, then an uncommitted code edit", func(t *testing.T, f *fixture) string {
++			f.ingestAt(f.commit("change NextID"), both)
++			f.write("src/report.go", strings.Replace(fxReport, `"report"`, `"reports"`, 1))
++			return ""
++		}, state{core.CoveragePassing, true}, state{core.CoveragePassing, true}},
++		{"a stamp at head on the current text, no local results", func(t *testing.T, f *fixture) string {
++			f.ingestAt(f.commit("change NextID"), both)
++			stamp(t, f, "ACME-SP-0001.R1", "ACME-SP-0001.R2")
++			if err := os.Remove(f.store.Path()); err != nil {
++				t.Fatal(err)
++			}
++			return ""
++		}, state{core.CoveragePassing, false}, state{core.CoveragePassing, false}},
++		{"a stamp at the base, no local results", func(t *testing.T, f *fixture) string {
++			stamp(t, f, "ACME-SP-0001.R2")
++			if err := os.Remove(f.store.Path()); err != nil {
++				t.Fatal(err)
++			}
++			f.commit("change NextID and stamp R2")
++			return ""
++		}, state{core.CoverageUntested, false}, state{core.CoveragePassing, true}},
++		{"a pending MODIFIED delta, tests not re-run", func(t *testing.T, f *fixture) string {
++			f.commit("change NextID")
++			modifyR1(t, f)
++			return ""
++		}, state{core.CoverageSuspect, true}, state{core.CoveragePassing, true}},
++		{"a pending MODIFIED delta, tests re-run at head", func(t *testing.T, f *fixture) string {
++			f.ingestAt(f.commit("change NextID"), both)
++			modifyR1(t, f)
++			return ""
++		}, state{core.CoveragePassing, false}, state{core.CoveragePassing, false}},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			f := newFixture(t)
++			head := tc.setup(t, f)
++			if _, err := f.vlt.Reload(context.Background()); err != nil {
++				t.Fatal(err)
++			}
++			q := core.ImpactQuery{Base: f.base, Head: head, Tiers: []int{1, 2}}
++			first := f.impact(f.resolver(fixtureGraph(), nil), q)
++			got := map[string]state{}
++			for _, h := range first.Hits {
++				got[h.Ref.String()] = state{h.Status, h.Suspect}
++			}
++			if got["ACME-SP-0001.R1"] != tc.r1 || got["ACME-SP-0001.R2"] != tc.r2 {
++				t.Errorf("R1, R2 = %+v, %+v, want %+v, %+v (hits %+v)",
++					got["ACME-SP-0001.R1"], got["ACME-SP-0001.R2"], tc.r1, tc.r2, first.Hits)
++			}
++			// Deterministic: the same diff and the same results, the same answer.
++			again := f.impact(f.resolver(fixtureGraph(), nil), q)
++			a, _ := json.Marshal(first)
++			b, _ := json.Marshal(again)
++			if !bytes.Equal(a, b) {
++				t.Errorf("two runs differ:\n%s\n%s", a, b)
++			}
++		})
++	}
++}
++
++// stamp writes the verified: stamp of refs from the ingested results, as
++// `gintrack spec verify --commit` does.
++func stamp(t *testing.T, f *fixture, refs ...string) {
++	t.Helper()
++	params, err := json.Marshal(map[string]any{"refs": refs, "by": "ci"})
++	if err != nil {
++		t.Fatal(err)
++	}
++	var env struct {
++		OK     bool            `json:"ok"`
++		Result json.RawMessage `json:"result"`
++	}
++	out := f.vlt.Call("requirement.stamp", string(params))
++	if err := json.Unmarshal([]byte(out), &env); err != nil || !env.OK {
++		t.Fatalf("requirement.stamp: %v %s", err, out)
++	}
++	if !strings.Contains(string(env.Result), `"verified"`) {
++		t.Fatalf("requirement.stamp wrote nothing: %s", env.Result)
++	}
++}
++
++// modifyR1 adds an open story whose unapplied Spec Delta modifies R1.
++func modifyR1(t *testing.T, f *fixture) {
++	t.Helper()
++	f.write("docs/.pmngr/stories/ACME-US-0002-allocate-by-scan-again.md", `---
++id: ACME-US-0002
++type: story
++title: Allocate by scan again
++status: in_progress
++created: 2026-01-01T00:00:00Z
++updated: 2026-01-01T00:00:00Z
++---
++
++## Spec Delta
++
++### MODIFIED ACME-SP-0001.R1 — Allocate by scan
++
++The allocator SHALL allocate max + 2.
++`)
++	if _, err := f.vlt.Reload(context.Background()); err != nil {
++		t.Fatal(err)
++	}
++}
+diff --git a/internal/impact/testdata/impact_reverified.golden.json b/internal/impact/testdata/impact_reverified.golden.json
+new file mode 100644
+index 0000000..e6dcc3f
+--- /dev/null
++++ b/internal/impact/testdata/impact_reverified.golden.json
+@@ -0,0 +1,54 @@
++{
++  "base": "<base>",
++  "files": 1,
++  "symbols": 1,
++  "tiers": [
++    {
++      "tier": 1,
++      "status": "ok",
++      "hits": 2
++    },
++    {
++      "tier": 2,
++      "status": "ok",
++      "hits": 1
++    },
++    {
++      "tier": 3,
++      "status": "skipped",
++      "hits": 0
++    }
++  ],
++  "hits": [
++    {
++      "ref": "ACME-SP-0001.R1",
++      "title": "Allocate by scan",
++      "tier": 1,
++      "status": "passing",
++      "reasons": [
++        "symbol:src/alloc.go#NextID"
++      ]
++    },
++    {
++      "ref": "ACME-SP-0001.R4",
++      "title": "Reserve numbers",
++      "tier": 1,
++      "status": "untested",
++      "reasons": [
++        "delta:ACME-US-0001"
++      ],
++      "pending": [
++        "ACME-US-0001"
++      ]
++    },
++    {
++      "ref": "ACME-SP-0001.R2",
++      "title": "Format ids",
++      "tier": 2,
++      "status": "passing",
++      "reasons": [
++        "call:src/format.go#Format calls NextID d1"
++      ]
++    }
++  ]
++}
+diff --git a/internal/trace/reqcoverage.go b/internal/trace/reqcoverage.go
+index bc7732c..3a8bf52 100644
+--- a/internal/trace/reqcoverage.go
++++ b/internal/trace/reqcoverage.go
+@@ -35,6 +35,8 @@ type Evidence struct {
+ 	Rev core.Rev
+ 	// Commits are the distinct commits the results were taken at, sorted.
+ 	Commits []string
++	// Uncommitted is set when some result records no commit.
++	Uncommitted bool
+ 	// At is when the newest result was recorded (UTC); zero when none.
+ 	At time.Time
+ 	// By is who ran the tests; empty when the source does not record it.
+@@ -68,7 +70,9 @@ func (r ResultEvidence) Evidence(_ context.Context, _ *Graph, reqs []core.Traced
+ 	out := make([]Evidence, 0, len(reqs))
+ 	for _, tr := range reqs {
+ 		rr := set.MatchRequirement(tr)
+-		out = append(out, Evidence{Result: rr.Result, Commits: rr.Commits, At: rr.Latest, Tests: rr.Tests})
++		out = append(out, Evidence{
++			Result: rr.Result, Commits: rr.Commits, Uncommitted: rr.Uncommitted, At: rr.Latest, Tests: rr.Tests,
++		})
+ 	}
+ 	return out, nil
+ }
+@@ -311,6 +315,12 @@ const maxDriftReasons = 3
+ // result — is not a pass: it never counts as evidence, and it adds "partial"
+ // to whatever the stamp decides. The reasons also say which evidence decided:
+ // "results" or "stamp".
++//
++// A passing row also names the one commit its evidence verified the current
++// text at (CoverageRow.Commit): the commit of a counting pass run whose every
++// matched result records that same commit, or the stamp's commit when the
++// stamp's rev is the current block rev. The impact query clears the suspect
++// flag of a touched requirement whose Commit is the diff's head (GIT-US-0148).
+ func Classify(in CoverageInput, driftSince DriftFunc) (core.CoverageRow, error) {
+ 	ev := in.Evidence
+ 	row := core.CoverageRow{Ref: in.Ref}
+@@ -338,6 +348,9 @@ func Classify(in CoverageInput, driftSince DriftFunc) (core.CoverageRow, error)
+ 			return core.CoverageRow{}, err
+ 		}
+ 		row.Reasons = append(row.Reasons, core.CoverageReasonResults)
++		if row.Status == core.CoveragePassing && len(ev.Commits) == 1 && !ev.Uncommitted {
++			row.Commit = ev.Commits[0]
++		}
+ 	case in.Stamp != nil:
+ 		var commits []string
+ 		if in.Stamp.Commit != "" {
+@@ -347,6 +360,9 @@ func Classify(in CoverageInput, driftSince DriftFunc) (core.CoverageRow, error)
+ 			return core.CoverageRow{}, err
+ 		}
+ 		row.Reasons = append(row.Reasons, core.CoverageReasonStamp)
++		if row.Status == core.CoveragePassing && in.Stamp.Commit != "" && in.Stamp.Rev == in.BlockRev {
++			row.Commit = in.Stamp.Commit
++		}
+ 	default:
+ 		row.Status = core.CoverageUntested
+ 		switch {
+diff --git a/internal/trace/reqcoverage_test.go b/internal/trace/reqcoverage_test.go
+index e00dfed..42fe46e 100644
+--- a/internal/trace/reqcoverage_test.go
++++ b/internal/trace/reqcoverage_test.go
+@@ -411,7 +411,7 @@ func TestCoverageRowShape(t *testing.T) {
+ 	if err := json.Unmarshal(r.call("coverage.list", map[string]any{"refs": []string{"ACME-SP-0001.R1"}}), &got); err != nil {
+ 		t.Fatal(err)
+ 	}
+-	want := `{"ref":"ACME-SP-0001.R1","status":"passing","reasons":["results"],"tests":[{"test":"src/alloc_test.go#TestNextID","result":"pass"}]}`
++	want := `{"ref":"ACME-SP-0001.R1","status":"passing","reasons":["results"],"tests":[{"test":"src/alloc_test.go#TestNextID","result":"pass"}],"commit":"` + c1 + `"}`
+ 	if len(got.Coverage) != 1 || string(got.Coverage[0]) != want {
+ 		t.Errorf("row = %s\nwant  %s", got.Coverage, want)
+ 	}
+@@ -481,6 +481,63 @@ func TestClassify(t *testing.T) {
+ 	}
+ }
+ 
++// TestClassifyCommit pins the commit a passing row's evidence verified the
++// current text at, which the impact query compares with the diff's head
++// (GIT-US-0148): one commit for every matched result, or a stamp on the
++// current text; nothing for any other row.
++func TestClassifyCommit(t *testing.T) {
++	t.Parallel()
++	ref := core.RequirementRef{Spec: "ACME-SP-0001", Number: 1}
++	t0 := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
++	noDrift := func(string) ([]string, error) { return nil, nil }
++	drifted := func(string) ([]string, error) { return []string{"code:a.go#F"}, nil }
++	pass := func(commits ...string) Evidence {
++		return Evidence{Result: RequirementPass, Commits: commits, At: t0.Add(time.Hour)}
++	}
++	for _, tc := range []struct {
++		name   string
++		in     CoverageInput
++		drift  DriftFunc
++		status core.CoverageStatus
++		commit string
++	}{
++		{"results at one commit", CoverageInput{Linked: 1, Evidence: pass("c2")}, noDrift, core.CoveragePassing, "c2"},
++		{"results at several commits", CoverageInput{Linked: 2, Evidence: pass("c1", "c2")}, noDrift, core.CoveragePassing, ""},
++		{"a result without a commit", CoverageInput{Linked: 2,
++			Evidence: Evidence{Result: RequirementPass, Commits: []string{"c2"}, Uncommitted: true, At: t0}},
++			noDrift, core.CoveragePassing, ""},
++		{"results drifted since their commit", CoverageInput{Linked: 1, Evidence: pass("c2")}, drifted, core.CoverageSuspect, ""},
++		{"failing results", CoverageInput{Linked: 1,
++			Evidence: Evidence{Result: RequirementFail, Commits: []string{"c2"}, At: t0}}, noDrift, core.CoverageFailing, ""},
++		{"a stamp on the current text", CoverageInput{BlockRev: "sha256:a", Linked: 1,
++			Stamp: &core.Verification{Rev: "sha256:a", Commit: "c3", At: core.NewTimestamp(t0)}},
++			noDrift, core.CoveragePassing, "c3"},
++		{"a stamp without a rev", CoverageInput{BlockRev: "sha256:a", Linked: 1,
++			Stamp: &core.Verification{Commit: "c3", At: core.NewTimestamp(t0)}},
++			noDrift, core.CoveragePassing, ""},
++		{"a stamp on another text", CoverageInput{BlockRev: "sha256:b", Linked: 1,
++			Stamp: &core.Verification{Rev: "sha256:a", Commit: "c3", At: core.NewTimestamp(t0)}},
++			noDrift, core.CoverageSuspect, ""},
++		{"a stamp and partial results", CoverageInput{BlockRev: "sha256:a", Linked: 2,
++			Stamp:    &core.Verification{Rev: "sha256:a", Commit: "c3", At: core.NewTimestamp(t0)},
++			Evidence: Evidence{Result: RequirementPartial, Commits: []string{"c4"}, At: t0.Add(time.Hour)}},
++			noDrift, core.CoveragePassing, "c3"},
++		{"no history to check drift", CoverageInput{Linked: 1, Evidence: pass("c2")}, nil, core.CoveragePassing, "c2"},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			t.Parallel()
++			tc.in.Ref = ref
++			got, err := Classify(tc.in, tc.drift)
++			if err != nil {
++				t.Fatal(err)
++			}
++			if got.Status != tc.status || got.Commit != tc.commit {
++				t.Errorf("Classify = %s at %q, want %s at %q", got.Status, got.Commit, tc.status, tc.commit)
++			}
++		})
++	}
++}
++
+ // TestStampEvidence covers the refusals a stamp writer is handed.
+ func TestStampEvidence(t *testing.T) {
+ 	t.Parallel()
+diff --git a/internal/trace/results_match.go b/internal/trace/results_match.go
+index 0912ff5..40ba481 100644
+--- a/internal/trace/results_match.go
++++ b/internal/trace/results_match.go
+@@ -61,6 +61,9 @@ type RequirementResult struct {
+ 	// Latest is the newest ingest time of the matched results (UTC); zero
+ 	// when nothing matched. It dates the evidence for coverage (GIT-US-0116).
+ 	Latest time.Time `json:"-"`
++	// Uncommitted is set when some matched result records no commit: the
++	// evidence cannot be placed at one commit (GIT-US-0148).
++	Uncommitted bool `json:"-"`
+ }
+ 
+ // ResultSet indexes test results by file for matching. Only results mapped
+@@ -139,6 +142,8 @@ func (s *ResultSet) MatchRequirement(tr core.TracedRequirement) RequirementResul
+ 				lt.Results = append(lt.Results, r.ID)
+ 				if r.Commit != "" {
+ 					commits[r.Commit] = true
++				} else {
++					out.Uncommitted = true
+ 				}
+ 				if r.At.After(out.Latest) {
+ 					out.Latest = r.At
+diff --git a/scripts/spec-check.sh b/scripts/spec-check.sh
+index 07b1b7e..b6da1b6 100755
+--- a/scripts/spec-check.sh
++++ b/scripts/spec-check.sh
+@@ -58,6 +58,12 @@ fi
+ [ "$go_status" -eq 0 ] || echo "spec-check: go test exited $go_status; failures are recorded as failing results" >&2
+ [ "$web_status" -eq 0 ] || echo "spec-check: vitest exited $web_status; failures are recorded as failing results" >&2
+ 
++# `spec ingest` records the results at the checkout's HEAD (its --commit
++# default), the commit `spec impact` resolves the working-tree head to: a
++# requirement whose linked tests all pass here is re-verified at head and is not
++# flagged suspect for the diff touching its traced code (docs/03 R-IMP-5). The
++# checkout must stay clean outside the backlog folders — every output of this
++# script lands under $SPEC_DIR, which git ignores.
+ if [ -s "$dir/go.json" ]; then
+   "$gintrack" spec ingest --repo "$root" --format go "$dir/go.json" || exit $?
+ fi

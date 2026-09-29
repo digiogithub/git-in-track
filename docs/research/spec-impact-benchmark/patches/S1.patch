@@ -1,0 +1,17 @@
+diff --git a/internal/core/conflict.go b/internal/core/conflict.go
+index 70e3a30..cd1516b 100644
+--- a/internal/core/conflict.go
++++ b/internal/core/conflict.go
+@@ -29,9 +29,9 @@ func (p ItemPatch) conflictWith(current *Item) []ConflictField {
+ 	}
+ 	proposed := current.clone()
+ 	if err := applyPatch(proposed, p); err != nil {
+-		// A patch the store would refuse anyway has no meaningful field diff;
+-		// the revisions alone are what the caller gets.
+-		return nil
++		// A patch the store would refuse names itself instead of reading as
++		// already applied.
++		return []ConflictField{{Field: "patch", Current: "unchanged", Proposed: err.Error()}}
+ 	}
+ 	return diffFields(current, proposed)
+ }

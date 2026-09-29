@@ -1,0 +1,2188 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 76b9461..c6eb447 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -40,6 +40,20 @@ because a commit list cannot express them.
+   accepts the new kinds, never mirrors `implements`/`modifies` onto the spec, and refuses
+   `implemented_by`/`modified_by` with a pointer to the kind to write instead; the web editor
+   offers only the writable kinds, and accepts `duplicated_by`, which it used to reject.
++- **Single-requirement reads and writes through the vault** (`GIT-US-0107`, ADR-037 §6, docs/03
++  §21.5, docs/07 §6.7). The CoreApi contract gains `requirement.list`, `requirement.get`,
++  `requirement.create` and `requirement.update`, served by `internal/vault` and therefore by the
++  WASM module's `call` in browser-only mode. Every read returns two hashes: `rev`, the
++  **requirement rev** — the write token — and `blockRev`, the **block rev** a verification stamp
++  records. `requirement.update` patches only the requirement's block (`title`, `text`) and its
++  `requirements:` entry (`status`, `trace`, `verified`, `links`, `unset`) and requires the
++  requirement rev (`precondition_required` without one): a stale rev fails with
++  `stale_revision`, `currentRev` and per-field `conflicts[]`, while a concurrent write to another
++  requirement of the same spec succeeds. `requirement.create` allocates `R<n>` as max + 1 over
++  headings, map keys and inbound refs and appends the block. Writes use the canonical serializer,
++  materialize the status, follow the workflow transitions, honour the write gate and report
++  `schemaUpgraded`. `search` with `requirements: true` adds one `kind: "requirement"` hit per
++  matching block. No MCP tool, REST route or web UI yet.
+ 
+ ### Changed
+ 
+diff --git a/docs/.pmngr/comments/GIT-US-0107/20260924T155501Z-claude.md b/docs/.pmngr/comments/GIT-US-0107/20260924T155501Z-claude.md
+new file mode 100644
+index 0000000..6835785
+--- /dev/null
++++ b/docs/.pmngr/comments/GIT-US-0107/20260924T155501Z-claude.md
+@@ -0,0 +1,18 @@
++---
++item: GIT-US-0107
++author: claude
++created: 2026-09-24T15:55:01Z
++type: comment
++---
++
++Implemented as `requirement.list|get|create|update` in `internal/vault` (docs/07 §6.7).
++
++Where the acceptance criteria say "block `rev`", the implementation follows ADR-037 §6 and
++docs/03 R-REQ-REV-2: the **write token is the requirement rev** (block text + map entry),
++returned as `rev`; the block rev is returned alongside as `blockRev` and is never accepted as a
++write token. A write to one requirement never invalidates another's `rev`.
++
++For review: a requirement status change follows the workflow transitions like `item.move`;
++`requirement.update` without a rev is `precondition_required` (`"*"` waives); requirement hits
++in `search` are opt-in (`requirements: true`) because the web `SearchHit` type does not know the
++kind yet. No MCP tool, REST route or web UI (their own stories).
+diff --git a/docs/.pmngr/stories/GIT-US-0107-read-and-patch-one-requirement-through-the-vault-with-its.md b/docs/.pmngr/stories/GIT-US-0107-read-and-patch-one-requirement-through-the-vault-with-its.md
+index 198b763..11aca90 100644
+--- a/docs/.pmngr/stories/GIT-US-0107-read-and-patch-one-requirement-through-the-vault-with-its.md
++++ b/docs/.pmngr/stories/GIT-US-0107-read-and-patch-one-requirement-through-the-vault-with-its.md
+@@ -2,7 +2,7 @@
+ id: GIT-US-0107
+ type: story
+ title: Read and patch one requirement through the vault with its block rev
+-status: backlog
++status: in_review
+ priority: high
+ parent: GIT-EP-0023
+ milestone: GIT-M-0015
+@@ -10,7 +10,7 @@ author: claude
+ labels: [core, wasm, agent-ok]
+ estimate: 5
+ created: 2026-09-24T12:09:24Z
+-updated: 2026-09-24T12:09:24Z
++updated: 2026-09-24T15:55:01Z
+ links:
+   - { kind: blocked_by, target: GIT-US-0105 }
+ ---
+@@ -21,12 +21,12 @@ As an agent or the web app, I want to get, create, update and list single requir
+ 
+ ## Acceptance Criteria
+ 
+-- [ ] `internal/vault` gains `ListRequirements`, `GetRequirement`, `CreateRequirement` and `UpdateRequirement` on the CoreApi contract; each read returns the block `rev`, each write requires it.
+-- [ ] `UpdateRequirement` patches the block text and/or its `requirements:` map entry only; a stale block `rev` fails with `stale_revision` and per-field `conflicts[]`, while a concurrent edit to another block of the same spec succeeds.
+-- [ ] `CreateRequirement` allocates `R<n>` as max+1 in the file, never reusing a removed number.
+-- [ ] Requirements appear as their own rows in list/search results (ref, spec, title, status).
+-- [ ] The same methods are exported through `wasm/main_js.go` for browser-only mode.
+-- [ ] Tests in `internal/vault` cover the conflict matrix; docs/07 describes the contract.
++- [x] `internal/vault` gains `ListRequirements`, `GetRequirement`, `CreateRequirement` and `UpdateRequirement` on the CoreApi contract; each read returns the block `rev`, each write requires it.
++- [x] `UpdateRequirement` patches the block text and/or its `requirements:` map entry only; a stale block `rev` fails with `stale_revision` and per-field `conflicts[]`, while a concurrent edit to another block of the same spec succeeds.
++- [x] `CreateRequirement` allocates `R<n>` as max+1 in the file, never reusing a removed number.
++- [x] Requirements appear as their own rows in list/search results (ref, spec, title, status).
++- [x] The same methods are exported through `wasm/main_js.go` for browser-only mode.
++- [x] Tests in `internal/vault` cover the conflict matrix; docs/07 describes the contract.
+ 
+ ## Notes
+ 
+diff --git a/docs/03-data-model.md b/docs/03-data-model.md
+index a31adf2..84f5092 100644
+--- a/docs/03-data-model.md
++++ b/docs/03-data-model.md
+@@ -2292,8 +2292,10 @@ validation, and produce the `E-STATUS-UNKNOWN`, `W-LABEL-UNDECLARED`, and `E-CF-
+ > `GIT-US-0106` implements the six spec link kinds and requirement-ref link targets of §12.1
+ > (R-LINK-6, R-LINK-7, R-LINK-8): validation, `E-LINK-TARGET-TYPE`, `E-LINK-COMPUTED-ONLY` on a
+ > written `implemented_by`/`modified_by`, `W-REF-DANGLING` on a missing spec or block, and
+-> requirement nodes in the link graph.
+-> Not implemented yet: requirement reads and writes through the vault (`GIT-US-0107`), the grammar
++> requirement nodes in the link graph. `GIT-US-0107` implements single-requirement
++> reads and writes through the vault (`requirement.list|get|create|update`, docs/07 §6.7) under
++> the requirement rev of §21.5.
++> Not implemented yet: the MCP requirement tools, the grammar
+ > lint of §21.9 (`GIT-US-0108`), `## Spec Delta` (§21.8), verification and coverage (§21.6), and
+ > the marker scan (§21.7). This section is the normative format; the ADR records the reasoning,
+ > the consequences and the alternatives rejected. Using specs raises the project to `schema: 2`
+@@ -2462,7 +2464,9 @@ Two hashes per requirement, both `"sha256:" + lowercase_hex(sha256(x))[0:16]` li
+   the **write token** of a single requirement: every requirement read returns it, every requirement
+   write quotes it, and a mismatch fails with `stale_revision` exactly as §5 specifies, `conflicts[]`
+   naming `text`, `title`, `status`, `trace`, `verified` or `links`. A write to one requirement never
+-  invalidates another requirement's rev.
++  invalidates another requirement's rev. Every requirement read returns both hashes, the
++  requirement rev as `rev` and the block rev as `blockRev`; only `rev` is accepted as a write token
++  (docs/07 §6.7).
+ - **R-REQ-REV-3** The file `rev` (§5) is unchanged; spec-level writes quote it. Neither requirement
+   hash is ever stored, except the block rev as the value of `verified.rev`.
+ 
+diff --git a/docs/07-cli-and-api.md b/docs/07-cli-and-api.md
+index 29183a6..8380d74 100644
+--- a/docs/07-cli-and-api.md
++++ b/docs/07-cli-and-api.md
+@@ -1949,7 +1949,8 @@ and the YouTrack connection's own: `youtrack_not_configured`,
+ `read_only` also answers **every write** to a project whose `project.yaml` declares no `schema`
+ or one newer than the build supports: the project is open read-only (doc 03 R-EVO-2, ADR-037
+ §11). Reads keep working. The other side of the same rule: `item.create` and `item.update`
+-results carry `"schemaUpgraded": 2` when the write introduced the first spec construct into a
++results (and those of `requirement.create` and `requirement.update`, §6.7) carry
++`"schemaUpgraded": 2` when the write introduced the first spec construct into a
+ `schema: 1` project and raised `project.yaml` in the same write, which is then in `writes`
+ (doc 03 §21.10). `gintrack item new --json` reports it the same way.
+ 
+@@ -4759,6 +4760,70 @@ Bridge conventions:
+   (`go test ./internal/core/...` natively and `GOOS=js GOARCH=wasm go test` under
+   `wasmbrowsertest`).
+ 
++### 6.7 Requirement methods of the CoreApi contract
++
++`internal/vault` serves four methods that treat one requirement of a spec (ADR-037, doc 03 §21)
++as a unit of its own. They are part of the `CoreApi` contract of `web/src/core-bridge/api.ts`, so
++browser-only mode reaches them through the WASM module's `gintrackCore.call` and a workspace
++routes them to the repository that owns the spec (by `ref`, or by `spec`). No MCP tool, REST route
++or web screen uses them yet.
++
++| Method | Params | Result |
++|---|---|---|
++| `requirement.list` | `{project?, spec?, status?[], q?, text?, includeDeleted?}` | `{requirements: Requirement[], total}` — one row per requirement, sorted by spec and body order; `text`, `statement` and `scenarios` only with `text: true` |
++| `requirement.get` | `{ref}` | `{requirement: Requirement, specRev}` |
++| `requirement.create` | `{spec, title, text?, status?, trace?, links?}` | `{requirement, specRev, writes, schemaUpgraded?}` |
++| `requirement.update` | `{ref, patch, rev}` | `{requirement, specRev, writes, schemaUpgraded?}` |
++
++`ref` is `<SPEC-ID>.R<n>`, optionally `<KEY>/`-qualified. A `Requirement` carries `ref`, `spec`,
++`project`, `path`, `anchor`, `line`, `title`, `status` (`statusImplicit: true` when the entry has
++none and the workflow's initial status stands in), `text` (the block below its heading, without
++the blank lines around it), `statement`, `scenarios`, `trace`, `verified`, `links`, and **two
++hashes**:
++
++- **`rev` — the requirement rev** (doc 03 R-REQ-REV-2): the block bytes plus the canonical JSON of
++  the requirement's `requirements:` entry. It is the **write token**: `requirement.update` quotes
++  it, and nothing else. It changes on any change to the block or the entry, and on nothing else.
++- **`blockRev` — the block rev** (R-REQ-REV-1): the block bytes alone, the value a `verified.rev`
++  stamp records. A status or trace change leaves it alone; it is never accepted as a write token.
++- `specRev` is the spec's file rev (R-REV-1), for a spec-level `item.update` that follows.
++
++**`requirement.update`.** `patch` is sparse: `title` rewrites the heading (with the em dash),
++`text` replaces the block below it, and `status`, `trace`, `verified` and `links` change the
++requirement's entry; `unset` clears `trace`, `verified` or `links`. Nothing else in the file
++changes except `updated`, so no other requirement's `rev` moves. The rules:
++
++- `rev` is required; without it the call fails with `precondition_required` (R-REV-3b).
++  `rev: "*"` is the explicit, unsafe waiver.
++- A `rev` that is no longer the requirement's current rev fails with `stale_revision`, carrying
++  `currentRev` (the requirement rev now) and `conflicts[]` over `text` (named, never quoted),
++  `title`, `status`, `trace`, `verified` and `links`, judged against the file as it is now
++  (R-REV-3a). An empty `conflicts[]` means the change had already been made. A concurrent write to
++  **another** requirement of the same spec, or to the spec's own front matter, does not make the
++  rev stale.
++- A status change follows the project workflow exactly like `item.move`
++  (`workflow_transition_denied`), and the status is always materialized in the entry.
++- `text` may not contain a level 1–3 ATX heading outside a fence, nor leave a fence open (either
++  would end or swallow blocks); a title is one line of 1–200 characters. Both fail as
++  `validation_failed` (`E-REQ-FIELD`), like any other error-severity finding of the spec.
++
++**`requirement.create`** appends a block `### <REF> — <title>` after the last requirement block,
++else at the end of the `## Requirements` section, else in a new `## Requirements` section at the
++end of the body, and materializes the entry with `status` (default: `workflow.initial`). `R<n>` is
++max + 1 over the spec's block headings, its `requirements:` keys and every inbound ref in the
++project index (R-REQ-5), so a removed number is never handed out again. A create needs no rev.
++
++Both writes go through the same canonical serializer as `item.update` (front-matter key order,
++`requirements:` keys in numeric order, unknown keys preserved), refuse a project gated read-only
++(`read_only`, R-EVO-2) and report `schemaUpgraded` like `item.update` does, although a requirement
++write only ever touches a spec that already exists.
++
++**Search.** `search` with `requirements: true` adds one hit of `kind: "requirement"` per matching
++requirement, with `id` set to the ref, `path` to the spec's file, and `spec` and `status` set; it
++is off by default so a client that only opens items and pages never receives one. The web app's
++`search` params and `SearchHit` type do not declare it yet; the requirement screens (epic
++`GIT-EP-0027`) add it together with a way to open such a hit.
++
+ ---
+ 
+ ## 7. Cross-platform concerns
+diff --git a/docs/adr/ADR-037-specs-with-requirement-blocks.md b/docs/adr/ADR-037-specs-with-requirement-blocks.md
+index 440edac..b473107 100644
+--- a/docs/adr/ADR-037-specs-with-requirement-blocks.md
++++ b/docs/adr/ADR-037-specs-with-requirement-blocks.md
+@@ -3,7 +3,8 @@
+ - **Status:** Accepted — 2026-09-24, decided by the human maintainer after two review rounds, and
+   amended by a third (see "Decisions from review"). Core implemented by `GIT-US-0105` (the `spec` type, requirement
+   blocks and revs, the `requirements:` map, schema 2 and the write gate); the link kinds and
+-  requirement-ref link targets of §5 by `GIT-US-0106`; lint, Spec Delta, verification and
++  requirement-ref link targets of §5 by `GIT-US-0106`; single-requirement reads and writes
++  through the vault under the requirement rev of §6 by `GIT-US-0107`; lint, Spec Delta, verification and
+   markers follow in their own stories (docs/03 §21 banner).
+ - **Date:** 2026-09-24
+ - **Phase:** 11 (Spec-driven development)
+diff --git a/internal/core/indexspec.go b/internal/core/indexspec.go
+index 2101e18..7098104 100644
+--- a/internal/core/indexspec.go
++++ b/internal/core/indexspec.go
+@@ -3,6 +3,7 @@ package core
+ import (
+ 	"fmt"
+ 	"sort"
++	"strings"
+ )
+ 
+ // The spec half of the index (ADR-037, docs/03 section 21): the per-spec
+@@ -127,3 +128,137 @@ func (ix *Index) hasRequirementBlock(cache map[ItemID]map[int]bool, spec *Item,
+ 	}
+ 	return nums[n]
+ }
++
++// RequirementFilter narrows Index.Requirements. Every set field must match.
++type RequirementFilter struct {
++	Projects []ProjectKey
++	Spec     ItemID
++	Statuses []Status
++	// Text keeps the requirements whose ref, title or text contain every
++	// whitespace-separated term, case-insensitively.
++	Text string
++	// IncludeDeleted also lists the requirements of soft-deleted specs.
++	IncludeDeleted bool
++}
++
++// Requirements lists the requirements of every indexed spec that f admits, as
++// rows of their own (docs/03 section 21), sorted by spec id and then in body
++// order. Each carries its project, requirement rev and block rev.
++func (ix *Index) Requirements(f RequirementFilter) ([]RequirementView, error) {
++	ix.mu.RLock()
++	defer ix.mu.RUnlock()
++	projects := map[ProjectKey]bool{}
++	for _, p := range f.Projects {
++		projects[p] = true
++	}
++	statuses := map[Status]bool{}
++	for _, s := range f.Statuses {
++		statuses[s] = true
++	}
++	terms := strings.Fields(strings.ToLower(f.Text))
++	out := []RequirementView{}
++	for _, id := range sortedIDs(ix.byID) {
++		it := ix.byID[id]
++		if it.Type != TypeSpec || (it.Deleted && !f.IncludeDeleted) || (f.Spec != "" && it.ID != f.Spec) {
++			continue
++		}
++		project := ix.projectOf(it)
++		if len(projects) > 0 && !projects[project] {
++			continue
++		}
++		views, err := SpecRequirements(it, ix.configOf(it))
++		if err != nil {
++			return nil, err
++		}
++		for _, v := range views {
++			if len(statuses) > 0 && !statuses[v.Status] {
++				continue
++			}
++			if len(terms) > 0 && requirementScore(v, terms) == 0 {
++				continue
++			}
++			v.Project = project
++			out = append(out, v)
++		}
++	}
++	return out, nil
++}
++
++// Requirement returns one requirement of an indexed spec, with its text.
++func (ix *Index) Requirement(ref RequirementRef) (RequirementView, error) {
++	ix.mu.RLock()
++	defer ix.mu.RUnlock()
++	it, ok := ix.byID[ref.Spec]
++	if !ok {
++		return RequirementView{}, fmt.Errorf("%s: spec %s: %w", ref, ref.Spec, ErrItemNotFound)
++	}
++	v, err := FindRequirement(it, ref.Number, ix.configOf(it))
++	if err != nil {
++		return RequirementView{}, err
++	}
++	v.Project = ix.projectOf(it)
++	return v, nil
++}
++
++// requirementScore ranks a requirement against lower-cased search terms with
++// the weights Search uses for items: an exact ref outranks a title match,
++// which outranks a match in the text. Zero means some term did not match.
++func requirementScore(v RequirementView, terms []string) float64 {
++	ref := strings.ToLower(v.Ref.String())
++	title := strings.ToLower(v.Title)
++	text := strings.ToLower(v.Text)
++	score := 0.0
++	for _, t := range terms {
++		switch {
++		case ref == t:
++			score += scoreID
++		case strings.Contains(title, t):
++			score += scoreTitle
++		case strings.Contains(text, t) || strings.Contains(ref, t):
++			score += scoreBody
++		default:
++			return 0
++		}
++	}
++	return score
++}
++
++// SearchRequirements runs the substring search over requirement blocks: every
++// requirement of a live spec is a hit of its own, of kind "requirement", whose
++// id is the requirement ref and whose path is the spec's file (docs/03 section
++// 21). Hits are ranked like Search ranks items.
++func (ix *Index) SearchRequirements(q string, limit int) []SearchHit {
++	terms := strings.Fields(strings.ToLower(q))
++	if len(terms) == 0 {
++		return nil
++	}
++	if limit <= 0 {
++		limit = DefaultLimit
++	}
++	views, err := ix.Requirements(RequirementFilter{})
++	if err != nil {
++		return nil
++	}
++	var hits []SearchHit
++	for _, v := range views {
++		score := requirementScore(v, terms)
++		if score == 0 {
++			continue
++		}
++		hits = append(hits, SearchHit{
++			Kind: SearchKindRequirement, ID: ItemID(v.Ref.String()), Path: v.Path, Title: v.Title,
++			Project: v.Project, Score: score, Snippet: snippet(v.Text, terms[0]), Source: SearchSourceCore,
++			Spec: v.Spec, Status: v.Status,
++		})
++	}
++	sort.SliceStable(hits, func(i, j int) bool {
++		if hits[i].Score != hits[j].Score {
++			return hits[i].Score > hits[j].Score
++		}
++		return hits[i].ID < hits[j].ID
++	})
++	if len(hits) > limit {
++		hits = hits[:limit]
++	}
++	return hits
++}
+diff --git a/internal/core/query.go b/internal/core/query.go
+index 0bee8b7..5f6ea7c 100644
+--- a/internal/core/query.go
++++ b/internal/core/query.go
+@@ -600,7 +600,8 @@ func (ix *Index) KbTree() *TreeNode {
+ 
+ // SearchHit is one result of Search.
+ type SearchHit struct {
+-	// Kind is "item", "page", or "file" for a document a semantic backend
++	// Kind is "item", "page", "requirement" for a requirement block (see
++	// SearchKindRequirement), or "file" for a document a semantic backend
+ 	// found inside the indexed tree that this index owns neither as an item
+ 	// nor as a page. A file hit carries a path and a snippet and nothing
+ 	// else, so a client can tell the three apart without guessing from which
+@@ -629,8 +630,16 @@ type SearchHit struct {
+ 	// matched and were collapsed into this hit, so a thread that answers a
+ 	// query in five places does not fill the result list with one item.
+ 	MoreMatches int `json:"moreMatches,omitempty"`
++	// Spec and Status are set on a requirement hit only: the spec the block
++	// lives in and the requirement's status (docs/03 section 21).
++	Spec   ItemID `json:"spec,omitempty"`
++	Status Status `json:"status,omitempty"`
+ }
+ 
++// SearchKindRequirement is the [SearchHit.Kind] of a requirement block, which
++// Index.SearchRequirements returns and the vault's search adds on request.
++const SearchKindRequirement = "requirement"
++
+ // SearchMatchComment is the [SearchHit.Match] value of a hit whose fragment
+ // came from a comment rather than from the item body.
+ const SearchMatchComment = "comment"
+diff --git a/internal/core/requirementstore.go b/internal/core/requirementstore.go
+new file mode 100644
+index 0000000..ba2d4d6
+--- /dev/null
++++ b/internal/core/requirementstore.go
+@@ -0,0 +1,608 @@
++package core
++
++import (
++	"context"
++	"fmt"
++	"strings"
++	"unicode/utf8"
++)
++
++// This file holds the single-requirement reads and writes of ADR-037 (docs/03
++// section 21.5, GIT-US-0107): a requirement is a block in its spec's body plus
++// its requirements: entry, and it is read, created and patched as a unit of its
++// own under its own write token, the requirement rev. Like the rest of the spec
++// layer it is pure text processing over an injected FS, so it compiles to
++// WebAssembly unchanged (ADR-003).
++
++// RequirementView is one requirement as every surface reads it: where it lives,
++// what it says and its metadata, with both of its hashes.
++//
++// Rev is the requirement rev (R-REQ-REV-2): the write token every requirement
++// write quotes. BlockRev is the block rev (R-REQ-REV-1): the fingerprint of
++// what the requirement says, the value a verified.rev stamp records. They are
++// different on purpose and a caller never swaps them.
++type RequirementView struct {
++	Ref     RequirementRef `json:"ref"`
++	Spec    ItemID         `json:"spec"`
++	Project ProjectKey     `json:"project,omitempty"`
++	// Path is the file of the spec; Anchor the block's anchor in it (R-REQ-7).
++	Path   string `json:"path"`
++	Anchor string `json:"anchor"`
++	// Line is the 1-based line of the heading inside the spec body.
++	Line  int    `json:"line"`
++	Title string `json:"title"`
++	// Status is the requirement's status. When the entry has none it reads as
++	// the workflow's initial status and StatusImplicit is set (W-REQ-NO-ENTRY).
++	Status         Status `json:"status"`
++	StatusImplicit bool   `json:"statusImplicit,omitempty"`
++	// Text is the block below its heading — statement and scenarios — with the
++	// blank lines around it removed. It is what a patch's text replaces.
++	Text      string            `json:"text,omitempty"`
++	Statement string            `json:"statement,omitempty"`
++	Scenarios []Scenario        `json:"scenarios,omitempty"`
++	Trace     *RequirementTrace `json:"trace,omitempty"`
++	Verified  *Verification     `json:"verified,omitempty"`
++	Links     []Link            `json:"links,omitempty"`
++	// Extra carries the unknown keys of the entry, read-only (R-FMT-6).
++	Extra map[string]any `json:"extra,omitempty"`
++	// Rev is the requirement rev, the write token (R-REQ-REV-2).
++	Rev Rev `json:"rev"`
++	// BlockRev is the block rev, what verification stamps (R-REQ-REV-1).
++	BlockRev Rev `json:"blockRev"`
++}
++
++// Row returns the view without the block text, statement and scenarios: the
++// shape of a list row.
++func (v RequirementView) Row() RequirementView {
++	v.Text, v.Statement, v.Scenarios = "", "", nil
++	return v
++}
++
++// RequirementPatch is a sparse change to one requirement. A nil field is left
++// alone. Text replaces the block below the heading, Title the heading's title;
++// the remaining fields change the requirement's requirements: entry only.
++// Trace and Verified replace the whole value, keeping the unknown keys of the
++// value they replace when they bring none (R-FMT-6). Unset clears "trace",
++// "verified" or "links".
++type RequirementPatch struct {
++	Title    *string           `json:"title,omitempty"`
++	Text     *string           `json:"text,omitempty"`
++	Status   *Status           `json:"status,omitempty"`
++	Trace    *RequirementTrace `json:"trace,omitempty"`
++	Verified *Verification     `json:"verified,omitempty"`
++	Links    *[]Link           `json:"links,omitempty"`
++	Unset    []string          `json:"unset,omitempty"`
++}
++
++// RequirementDraft is a new requirement. The number is allocated by the store.
++type RequirementDraft struct {
++	Title string `json:"title"`
++	Text  string `json:"text,omitempty"`
++	// Status defaults to the workflow's initial status; a writer always
++	// materializes it (docs/03 section 21.4).
++	Status Status            `json:"status,omitempty"`
++	Trace  *RequirementTrace `json:"trace,omitempty"`
++	Links  []Link            `json:"links,omitempty"`
++}
++
++// RequirementHeading renders the canonical heading of a block, with the em
++// dash every writer emits (R-REQ-1).
++func RequirementHeading(ref RequirementRef, title string) string {
++	return "### " + ref.String() + " " + ReqSeparator + " " + title
++}
++
++// SpecRequirements returns the requirements of a spec in body order. A number
++// declared twice (E-REQ-DUPLICATE) is listed once, for its first block. cfg
++// supplies the initial status an entry without one reads as; nil leaves it
++// empty.
++func SpecRequirements(spec *Item, cfg *ProjectConfig) ([]RequirementView, error) {
++	if spec == nil || spec.Type != TypeSpec {
++		return nil, nil
++	}
++	body := ParseSpecBody(spec.ID, spec.Body)
++	seen := map[int]bool{}
++	out := make([]RequirementView, 0, len(body.Blocks))
++	for _, blk := range body.Blocks {
++		if seen[blk.Ref.Number] {
++			continue
++		}
++		seen[blk.Ref.Number] = true
++		view, err := requirementViewOf(spec, blk, cfg)
++		if err != nil {
++			return nil, err
++		}
++		out = append(out, view)
++	}
++	return out, nil
++}
++
++// FindRequirement returns requirement n of a spec. A spec without that block —
++// including one whose block was deleted by hand while its entry survived — has
++// no such requirement: ErrItemNotFound.
++func FindRequirement(spec *Item, n int, cfg *ProjectConfig) (RequirementView, error) {
++	if spec == nil {
++		return RequirementView{}, fmt.Errorf("requirement R%d: %w", n, ErrItemNotFound)
++	}
++	ref := RequirementRef{Spec: spec.ID, Number: n}
++	if spec.Type != TypeSpec {
++		return RequirementView{}, fmt.Errorf("%s: %s is a %s, not a spec: %w", ref, spec.ID, spec.Type, ErrItemNotFound)
++	}
++	blk, ok := ParseSpecBody(spec.ID, spec.Body).Block(n)
++	if !ok {
++		return RequirementView{}, fmt.Errorf("%s has no block in %s: %w", ref, spec.Path, ErrItemNotFound)
++	}
++	return requirementViewOf(spec, blk, cfg)
++}
++
++// requirementViewOf builds the view of one parsed block.
++func requirementViewOf(spec *Item, blk RequirementBlock, cfg *ProjectConfig) (RequirementView, error) {
++	entry := spec.Requirements[blk.Ref.Key()]
++	rev, err := RequirementRev(blk.Text, entry)
++	if err != nil {
++		return RequirementView{}, fmt.Errorf("%s: %w", blk.Ref, err)
++	}
++	_, rest, _ := strings.Cut(normalizeNewlines(blk.Text), "\n")
++	view := RequirementView{
++		Ref:       blk.Ref,
++		Spec:      spec.ID,
++		Path:      spec.Path,
++		Anchor:    blk.Ref.Anchor(),
++		Line:      blk.Line,
++		Title:     blk.Title,
++		Text:      trimBlankLines(rest),
++		Statement: blk.Statement,
++		Scenarios: blk.Scenarios,
++		Rev:       rev,
++		BlockRev:  blk.Rev,
++	}
++	if entry != nil {
++		e := entry.Clone()
++		view.Status, view.Trace, view.Verified, view.Links, view.Extra = e.Status, e.Trace, e.Verified, e.Links, e.Extra
++	}
++	if view.Status == "" && cfg != nil {
++		view.Status = cfg.InitialStatus()
++		view.StatusImplicit = true
++	}
++	return view, nil
++}
++
++// normalizeNewlines turns CRLF into LF, which is what every offset of the block
++// parser is measured on.
++func normalizeNewlines(s string) string { return strings.ReplaceAll(s, "\r\n", "\n") }
++
++// trimBlankLines drops the whitespace-only lines at both ends of a text and its
++// final newline.
++func trimBlankLines(s string) string {
++	lines := strings.Split(normalizeNewlines(s), "\n")
++	for len(lines) > 0 && strings.TrimSpace(lines[0]) == "" {
++		lines = lines[1:]
++	}
++	for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
++		lines = lines[:len(lines)-1]
++	}
++	return strings.Join(lines, "\n")
++}
++
++// trailingBlank returns the whitespace-only lines a block extent ends with: the
++// separation from whatever follows, which a rewrite of the block keeps.
++func trailingBlank(ext string) string {
++	lines := strings.SplitAfter(ext, "\n")
++	i := len(lines)
++	for i > 0 && strings.TrimSpace(lines[i-1]) == "" {
++		i--
++	}
++	return strings.Join(lines[i:], "")
++}
++
++// requirementFieldError is the validation failure of a requirement write.
++func requirementFieldError(spec *Item, ref RequirementRef, field, format string, args ...any) error {
++	return &DiagnosticError{Diagnostic: Diagnostic{
++		Code: CodeReqField, Severity: SeverityError, Path: spec.Path,
++		Field: "requirements." + ref.Key() + "." + field, Message: fmt.Sprintf(format, args...),
++	}}
++}
++
++// cleanRequirementTitle validates a title for the heading grammar (R-REQ-1).
++func cleanRequirementTitle(spec *Item, ref RequirementRef, title string) (string, error) {
++	title = strings.TrimSpace(title)
++	switch {
++	case title == "":
++		return "", requirementFieldError(spec, ref, "title", "a requirement needs a title")
++	case strings.ContainsAny(title, "\r\n"):
++		return "", requirementFieldError(spec, ref, "title", "a requirement title is one line")
++	case utf8.RuneCountInString(title) > maxRequirementTitle:
++		return "", requirementFieldError(spec, ref, "title", "a requirement title is at most %d characters", maxRequirementTitle)
++	}
++	return title, nil
++}
++
++// cleanRequirementText validates the text of a block below its heading: it may
++// not hold a level 1–3 ATX heading outside a fence, which would end the block,
++// nor leave a fence open, which would swallow the blocks after it (R-REQ-3).
++func cleanRequirementText(spec *Item, ref RequirementRef, text string) (string, error) {
++	text = trimBlankLines(text)
++	var fence fenceTracker
++	for i, line := range strings.Split(text, "\n") {
++		if fence.step(line) {
++			continue
++		}
++		if lvl := atxLevel(line); lvl >= 1 && lvl <= 3 {
++			return "", requirementFieldError(spec, ref, "text",
++				"line %d is a level-%d heading, which would end the requirement block; use #### or deeper", i+1, lvl)
++		}
++	}
++	if fence.inside() {
++		return "", requirementFieldError(spec, ref, "text", "the text leaves a fenced code block open")
++	}
++	return text, nil
++}
++
++// renderRequirementBlock renders a block from its heading and text.
++func renderRequirementBlock(heading, text string) string {
++	if text == "" {
++		return heading + "\n"
++	}
++	return heading + "\n\n" + text + "\n"
++}
++
++// applyRequirementPatch applies a patch to requirement n of a spec in memory:
++// the block in the body and the entry in requirements:. The status is always
++// materialized (docs/03 section 21.4). Nothing but that block and that entry
++// changes, so no other requirement's rev moves.
++func applyRequirementPatch(it *Item, n int, patch RequirementPatch, cfg *ProjectConfig) error {
++	body := normalizeNewlines(it.Body)
++	parsed := ParseSpecBody(it.ID, body)
++	blk, ok := parsed.Block(n)
++	if !ok {
++		return fmt.Errorf("%s.R%d has no block in %s: %w", it.ID, n, it.Path, ErrItemNotFound)
++	}
++	ref := blk.Ref
++	heading, _, _ := strings.Cut(blk.Text, "\n")
++	title := blk.Title
++	if patch.Title != nil {
++		t, err := cleanRequirementTitle(it, ref, *patch.Title)
++		if err != nil {
++			return err
++		}
++		if t != blk.Title {
++			title = t
++			heading = RequirementHeading(ref, title)
++		}
++	}
++	newBody := body
++	switch {
++	case patch.Text != nil:
++		text, err := cleanRequirementText(it, ref, *patch.Text)
++		if err != nil {
++			return err
++		}
++		_, rest, _ := strings.Cut(blk.Text, "\n")
++		if text != trimBlankLines(rest) || title != blk.Title {
++			block := renderRequirementBlock(heading, text) + trailingBlank(blk.Text)
++			newBody = body[:blk.Start] + block + body[blk.End:]
++		}
++	case title != blk.Title:
++		old, _, _ := strings.Cut(blk.Text, "\n")
++		newBody = body[:blk.Start] + heading + body[blk.Start+len(old):]
++	}
++	if newBody != body {
++		after := ParseSpecBody(it.ID, newBody)
++		if len(after.Blocks) != len(parsed.Blocks) {
++			return requirementFieldError(it, ref, "text", "the change would split or merge requirement blocks")
++		}
++		it.Body = newBody
++	}
++
++	key := ref.Key()
++	entry := it.Requirements[key].Clone()
++	if entry == nil {
++		entry = &Requirement{}
++	}
++	if entry.Status == "" && cfg != nil {
++		entry.Status = cfg.InitialStatus()
++	}
++	if patch.Status != nil {
++		entry.Status = *patch.Status
++	}
++	if patch.Trace != nil {
++		t := &RequirementTrace{
++			Code:  append([]string(nil), patch.Trace.Code...),
++			Tests: append([]string(nil), patch.Trace.Tests...),
++			Extra: cloneMap(patch.Trace.Extra),
++		}
++		if t.Extra == nil && entry.Trace != nil {
++			t.Extra = entry.Trace.Extra
++		}
++		entry.Trace = t
++	}
++	if patch.Verified != nil {
++		v := *patch.Verified
++		v.Extra = cloneMap(patch.Verified.Extra)
++		if v.Extra == nil && entry.Verified != nil {
++			v.Extra = entry.Verified.Extra
++		}
++		entry.Verified = &v
++	}
++	if patch.Links != nil {
++		entry.Links = append([]Link(nil), (*patch.Links)...)
++		if len(entry.Links) == 0 {
++			entry.Links = nil
++		}
++	}
++	for _, field := range patch.Unset {
++		switch field {
++		case "trace":
++			entry.Trace = nil
++		case "verified":
++			entry.Verified = nil
++		case "links":
++			entry.Links = nil
++		default:
++			return requirementFieldError(it, ref, field, "%q cannot be unset: want trace, verified or links", field)
++		}
++	}
++	reqs := it.Requirements.Clone()
++	if reqs == nil {
++		reqs = Requirements{}
++	}
++	reqs[key] = entry
++	it.Requirements = reqs
++	return nil
++}
++
++// requirementConflicts reports the fields a refused requirement write would
++// still change, judged against the spec as it is on disk now (R-REV-3a). The
++// text is named, never quoted back, like an item body.
++func requirementConflicts(current *Item, n int, patch RequirementPatch, cfg *ProjectConfig) []ConflictField {
++	if current == nil {
++		return nil
++	}
++	proposed := current.clone()
++	proposed.Requirements = current.Requirements.Clone()
++	if err := applyRequirementPatch(proposed, n, patch, cfg); err != nil {
++		return nil
++	}
++	cur, err := FindRequirement(current, n, cfg)
++	if err != nil {
++		return nil
++	}
++	next, err := FindRequirement(proposed, n, cfg)
++	if err != nil {
++		return nil
++	}
++	var out []ConflictField
++	add := func(field, c, p string) {
++		if c != p {
++			out = append(out, ConflictField{Field: field, Current: c, Proposed: p})
++		}
++	}
++	if cur.Text != next.Text {
++		out = append(out, ConflictField{Field: "text"})
++	}
++	add("title", cur.Title, next.Title)
++	add("status", string(cur.Status), string(next.Status))
++	add("trace", renderTrace(cur.Trace), renderTrace(next.Trace))
++	add("verified", renderVerification(cur.Verified), renderVerification(next.Verified))
++	add("links", renderLinks(cur.Links), renderLinks(next.Links))
++	return out
++}
++
++// renderTrace renders a trace for a conflict report.
++func renderTrace(t *RequirementTrace) string {
++	if t == nil || (len(t.Code) == 0 && len(t.Tests) == 0) {
++		return ""
++	}
++	return "code: " + joinList(t.Code) + "; tests: " + joinList(t.Tests)
++}
++
++// renderVerification renders a stamp for a conflict report.
++func renderVerification(v *Verification) string {
++	if v == nil {
++		return ""
++	}
++	return strings.TrimSpace(fmt.Sprintf("%s %s %s %s", v.Rev, v.Commit, v.At.String(), v.By))
++}
++
++// insertRequirementBlock appends a new block to a spec body: after the last
++// requirement block, else at the end of the "## Requirements" section, else in
++// a "## Requirements" section added at the end of the body.
++func insertRequirementBlock(body string, spec ItemID, block string) string {
++	body = normalizeNewlines(body)
++	pos := -1
++	if blocks := ParseSpecBody(spec, body).Blocks; len(blocks) > 0 {
++		pos = blocks[len(blocks)-1].End
++	} else {
++		var fence fenceTracker
++		inRequirements := false
++		for _, ln := range splitSpecLines(body) {
++			if fence.step(ln.text) {
++				continue
++			}
++			lvl := atxLevel(ln.text)
++			if lvl != 1 && lvl != 2 {
++				continue
++			}
++			if inRequirements {
++				pos = ln.start
++				break
++			}
++			if lvl == 2 && strings.EqualFold(headingText(ln.text, 2), "Requirements") {
++				inRequirements = true
++				pos = len(body)
++			}
++		}
++	}
++	if pos < 0 {
++		return withBlankLineEnd(body) + "## Requirements\n\n" + block
++	}
++	before, after := body[:pos], body[pos:]
++	out := withBlankLineEnd(before) + block
++	if after != "" {
++		out += "\n" + after
++	}
++	return out
++}
++
++// withBlankLineEnd makes a non-empty text end in a blank line.
++func withBlankLineEnd(s string) string {
++	if s == "" {
++		return s
++	}
++	if !strings.HasSuffix(s, "\n") {
++		s += "\n"
++	}
++	if !strings.HasSuffix(s, "\n\n") {
++		s += "\n"
++	}
++	return s
++}
++
++// readSpec locates and parses a spec for a requirement write. It is the part of
++// readChecked a requirement write shares: the lock is checked afterwards,
++// against the requirement rev rather than the file rev.
++func (s *FileStore) readSpec(spec ItemID) (*Item, error) {
++	found, err := s.locate(spec)
++	if err != nil {
++		return nil, err
++	}
++	data, err := s.fs.ReadFile(found.Path)
++	if err != nil {
++		return nil, fmt.Errorf("read %s: %w", found.Path, err)
++	}
++	it, err := ParseItem(found.Path, data)
++	if err != nil {
++		return nil, err
++	}
++	if it.Type != TypeSpec {
++		return nil, fmt.Errorf("%s is a %s, not a spec: %w", spec, it.Type, ErrItemNotFound)
++	}
++	return it, nil
++}
++
++// UpdateRequirement patches one requirement under its requirement rev
++// (R-REQ-REV-2): only its block and its requirements: entry change, so a
++// concurrent write to another requirement of the same spec neither conflicts
++// with this one nor is lost by it. A stale rev fails with a StaleRevisionError
++// carrying the current requirement rev and the fields the patch would still
++// change. An empty expected rev writes unconditionally, as Update does.
++//
++// The write goes through the canonical serializer, the validator and the
++// implicit schema upgrade exactly like an item update.
++func (s *FileStore) UpdateRequirement(
++	ctx context.Context, ref RequirementRef, patch RequirementPatch, expected Rev,
++) (*Item, RequirementView, error) {
++	if err := ctx.Err(); err != nil {
++		return nil, RequirementView{}, wrapContext("update requirement", err)
++	}
++	if err := s.cfg.WriteGate(); err != nil {
++		return nil, RequirementView{}, fmt.Errorf("update %s: %w", ref, err)
++	}
++	s.mu.Lock()
++	defer s.mu.Unlock()
++
++	it, err := s.readSpec(ref.Spec)
++	if err != nil {
++		return nil, RequirementView{}, err
++	}
++	current, err := FindRequirement(it, ref.Number, s.cfg)
++	if err != nil {
++		return nil, RequirementView{}, err
++	}
++	if expected != "" && expected != current.Rev {
++		return nil, RequirementView{}, &StaleRevisionError{
++			ID: ItemID(ref.String()), Path: it.Path, Expected: expected, Current: current.Rev,
++			Fields: requirementConflicts(it, ref.Number, patch, s.cfg),
++		}
++	}
++	if patch.Status != nil && *patch.Status != current.Status {
++		// A requirement's status follows the project workflow exactly as an
++		// item's does (R-REQ-10).
++		probe := &Item{ID: ItemID(ref.String()), Status: current.Status, Path: it.Path}
++		if err := s.checkTransition(probe, *patch.Status, false); err != nil {
++			return nil, RequirementView{}, err
++		}
++	}
++	had := HasSpecConstruct(it)
++	if err := applyRequirementPatch(it, ref.Number, patch, s.cfg); err != nil {
++		return nil, RequirementView{}, err
++	}
++	it.Updated = s.now()
++	if err := s.validateAndUpgrade(it, had); err != nil {
++		return nil, RequirementView{}, err
++	}
++	if err := s.writeItem(it, ""); err != nil {
++		return nil, RequirementView{}, err
++	}
++	view, err := FindRequirement(it, ref.Number, s.cfg)
++	if err != nil {
++		return nil, RequirementView{}, err
++	}
++	return it, view, nil
++}
++
++// CreateRequirement appends a new requirement to a spec. Its number is max + 1
++// over the spec's blocks, its requirements: keys and the inbound refs the
++// caller found in the project index (R-REQ-5), so a removed number is never
++// handed out again. A create conflicts with nothing: it needs no rev.
++func (s *FileStore) CreateRequirement(
++	ctx context.Context, spec ItemID, draft RequirementDraft, inbound []RequirementRef,
++) (*Item, RequirementView, error) {
++	if err := ctx.Err(); err != nil {
++		return nil, RequirementView{}, wrapContext("create requirement", err)
++	}
++	if err := s.cfg.WriteGate(); err != nil {
++		return nil, RequirementView{}, fmt.Errorf("create requirement in %s: %w", spec, err)
++	}
++	s.mu.Lock()
++	defer s.mu.Unlock()
++
++	it, err := s.readSpec(spec)
++	if err != nil {
++		return nil, RequirementView{}, err
++	}
++	ref := RequirementRef{Spec: it.ID, Number: NextRequirementNumber(it, inbound)}
++	title, err := cleanRequirementTitle(it, ref, draft.Title)
++	if err != nil {
++		return nil, RequirementView{}, err
++	}
++	text, err := cleanRequirementText(it, ref, draft.Text)
++	if err != nil {
++		return nil, RequirementView{}, err
++	}
++	had := HasSpecConstruct(it)
++	it.Body = insertRequirementBlock(it.Body, it.ID, renderRequirementBlock(RequirementHeading(ref, title), text))
++
++	entry := &Requirement{Status: draft.Status, Links: append([]Link(nil), draft.Links...)}
++	if len(entry.Links) == 0 {
++		entry.Links = nil
++	}
++	if entry.Status == "" && s.cfg != nil {
++		entry.Status = s.cfg.InitialStatus()
++	}
++	if draft.Trace != nil {
++		entry.Trace = &RequirementTrace{
++			Code:  append([]string(nil), draft.Trace.Code...),
++			Tests: append([]string(nil), draft.Trace.Tests...),
++			Extra: cloneMap(draft.Trace.Extra),
++		}
++	}
++	reqs := it.Requirements.Clone()
++	if reqs == nil {
++		reqs = Requirements{}
++	}
++	reqs[ref.Key()] = entry
++	it.Requirements = reqs
++	it.Updated = s.now()
++
++	if err := s.validateAndUpgrade(it, had); err != nil {
++		return nil, RequirementView{}, err
++	}
++	if err := s.writeItem(it, ""); err != nil {
++		return nil, RequirementView{}, err
++	}
++	view, err := FindRequirement(it, ref.Number, s.cfg)
++	if err != nil {
++		return nil, RequirementView{}, err
++	}
++	return it, view, nil
++}
+diff --git a/internal/core/requirementstore_test.go b/internal/core/requirementstore_test.go
+new file mode 100644
+index 0000000..93c3a80
+--- /dev/null
++++ b/internal/core/requirementstore_test.go
+@@ -0,0 +1,97 @@
++package core
++
++import "testing"
++
++func TestInsertRequirementBlock(t *testing.T) {
++	block := "### XY-SP-0001.R2 — New\n\nThe system SHALL do it.\n"
++	tests := []struct {
++		name, body, want string
++	}{
++		{
++			name: "after the last block, before the next section",
++			body: "## Requirements\n\n### XY-SP-0001.R1 — Old\n\nThe system SHALL.\n\n## Notes\n\nN.\n",
++			want: "## Requirements\n\n### XY-SP-0001.R1 — Old\n\nThe system SHALL.\n\n" + block + "\n## Notes\n\nN.\n",
++		},
++		{
++			name: "last block at the end of the body without a newline",
++			body: "## Requirements\n\n### XY-SP-0001.R1 — Old\n\nThe system SHALL.",
++			want: "## Requirements\n\n### XY-SP-0001.R1 — Old\n\nThe system SHALL.\n\n" + block,
++		},
++		{
++			name: "empty requirements section",
++			body: "## Purpose\n\nP.\n\n## Requirements\n\n## Notes\n",
++			want: "## Purpose\n\nP.\n\n## Requirements\n\n" + block + "\n## Notes\n",
++		},
++		{
++			name: "no requirements section",
++			body: "## Purpose\n\nP.\n",
++			want: "## Purpose\n\nP.\n\n## Requirements\n\n" + block,
++		},
++		{
++			name: "empty body",
++			body: "",
++			want: "## Requirements\n\n" + block,
++		},
++	}
++	for _, tc := range tests {
++		t.Run(tc.name, func(t *testing.T) {
++			if got := insertRequirementBlock(tc.body, "XY-SP-0001", block); got != tc.want {
++				t.Errorf("got\n%q\nwant\n%q", got, tc.want)
++			}
++		})
++	}
++}
++
++func TestApplyRequirementPatchKeepsOtherBytes(t *testing.T) {
++	body := "## Requirements\n\n### XY-SP-0001.R1 - Old title\nThe system SHALL keep this spacing.\n\n\n### XY-SP-0001.R2 — Other\n\nThe system SHALL.\n"
++	cfg := &ProjectConfig{Workflow: Workflow{Initial: "todo"}}
++	tests := []struct {
++		name  string
++		patch RequirementPatch
++		want  string
++	}{
++		{
++			name:  "status only leaves the body alone",
++			patch: RequirementPatch{Status: refOf(Status("todo"))},
++			want:  body,
++		},
++		{
++			name:  "title only rewrites the heading line",
++			patch: RequirementPatch{Title: refOf("New title")},
++			want:  "## Requirements\n\n### XY-SP-0001.R1 — New title\nThe system SHALL keep this spacing.\n\n\n### XY-SP-0001.R2 — Other\n\nThe system SHALL.\n",
++		},
++		{
++			name:  "text keeps the heading and the separation after the block",
++			patch: RequirementPatch{Text: refOf("\n\nThe system SHALL change.\n\n")},
++			want:  "## Requirements\n\n### XY-SP-0001.R1 - Old title\n\nThe system SHALL change.\n\n\n### XY-SP-0001.R2 — Other\n\nThe system SHALL.\n",
++		},
++	}
++	for _, tc := range tests {
++		t.Run(tc.name, func(t *testing.T) {
++			it := &Item{ID: "XY-SP-0001", Type: TypeSpec, Body: body}
++			r2, err := FindRequirement(it, 2, cfg)
++			if err != nil {
++				t.Fatal(err)
++			}
++			if err := applyRequirementPatch(it, 1, tc.patch, cfg); err != nil {
++				t.Fatal(err)
++			}
++			if it.Body != tc.want {
++				t.Errorf("body\n%q\nwant\n%q", it.Body, tc.want)
++			}
++			if got := it.Requirements["R1"]; got == nil || got.Status != "todo" {
++				t.Errorf("status not materialized: %+v", got)
++			}
++			after, err := FindRequirement(it, 2, cfg)
++			if err != nil {
++				t.Fatal(err)
++			}
++			if after.BlockRev != r2.BlockRev {
++				t.Errorf("R2 block rev moved")
++			}
++		})
++	}
++}
++
++// refOf returns a pointer to a value, for the sparse patch fields.
++func refOf[T any](v T) *T { return &v }
+diff --git a/internal/vault/dispatch.go b/internal/vault/dispatch.go
+index 61a2673..7ef6a24 100644
+--- a/internal/vault/dispatch.go
++++ b/internal/vault/dispatch.go
+@@ -20,6 +20,9 @@ type routeParams struct {
+ 	Project string `json:"project,omitempty"`
+ 	ID      string `json:"id,omitempty"`
+ 	Ref     string `json:"ref,omitempty"`
++	// Spec names the spec a requirement call is about (requirement.list,
++	// requirement.create).
++	Spec string `json:"spec,omitempty"`
+ }
+ 
+ // mountParams is the input of "workspace.mount".
+@@ -294,7 +297,7 @@ func (w *Workspace) Dispatch(ctx context.Context, method string, raw []byte) (an
+ 		if err != nil {
+ 			return nil, err
+ 		}
+-		return w.Search(ctx, p.Q, p.Limit, ScopeKeys(p.Project, p.Projects))
++		return w.SearchWith(ctx, p)
+ 	case "search.semantic":
+ 		// Ranked by meaning rather than by substring. The host installs the
+ 		// backend (see semantic.go); without one the method answers
+@@ -353,12 +356,27 @@ func (w *Workspace) route(method string, raw []byte) (*Mount, error) {
+ 			}
+ 		}
+ 	}
++	if p.Spec != "" {
++		if key, _, _, err := core.ParseItemID(p.Spec); err == nil {
++			if m, ok := w.MountForProject(key); ok {
++				return m, nil
++			}
++		}
++	}
+ 	if p.Ref != "" {
+ 		if ref, err := core.ParseRef(p.Ref); err == nil {
+ 			if m, ok := w.MountForProject(ref.Project); ok {
+ 				return m, nil
+ 			}
+ 		}
++		// A requirement ref, bare or "<KEY>/"-qualified, routes by its spec.
++		if req, err := parseRequirementRef(p.Ref); err == nil {
++			if key, _, _, err := core.ParseItemID(string(req.Spec)); err == nil {
++				if m, ok := w.MountForProject(key); ok {
++					return m, nil
++				}
++			}
++		}
+ 	}
+ 
+ 	mounts := w.Mounts()
+diff --git a/internal/vault/refresh.go b/internal/vault/refresh.go
+index 2557be7..8e519d0 100644
+--- a/internal/vault/refresh.go
++++ b/internal/vault/refresh.go
+@@ -44,6 +44,18 @@ func (v *Vault) freshen(ctx context.Context, method string, raw []byte) core.Ind
+ 			return core.IndexDelta{}
+ 		}
+ 		paths = v.index.ItemPaths(core.ItemID(p.ID))
++	case "requirement.get":
++		p, err := decodeParams[struct {
++			Ref string `json:"ref"`
++		}](raw)
++		if err != nil {
++			return core.IndexDelta{}
++		}
++		ref, err := parseRequirementRef(p.Ref)
++		if err != nil {
++			return core.IndexDelta{}
++		}
++		paths = v.index.ItemPaths(ref.Spec)
+ 	case "kb.page":
+ 		p, err := decodeParams[struct {
+ 			Path string `json:"path"`
+diff --git a/internal/vault/requirement.go b/internal/vault/requirement.go
+new file mode 100644
+index 0000000..0c56bf6
+--- /dev/null
++++ b/internal/vault/requirement.go
+@@ -0,0 +1,208 @@
++package vault
++
++import (
++	"context"
++	"fmt"
++	"sort"
++	"strings"
++
++	"github.com/digiogithub/git-in-track/internal/core"
++)
++
++// The single-requirement half of the CoreApi contract (ADR-037, docs/03
++// section 21.5, GIT-US-0107): list, get, create and update one requirement of a
++// spec. Every read returns two hashes, `rev` — the requirement rev, the write
++// token — and `blockRev` — the block rev, what a verification stamp records —
++// and every update quotes `rev`. A write to one requirement never invalidates
++// the rev of another requirement of the same spec.
++
++// requirementListParams is the filter of "requirement.list".
++type requirementListParams struct {
++	Project string   `json:"project,omitempty"`
++	Spec    string   `json:"spec,omitempty"`
++	Status  []string `json:"status,omitempty"`
++	// Q keeps the requirements whose ref, title or text hold every term.
++	Q string `json:"q,omitempty"`
++	// Text includes each requirement's text, statement and scenarios; a list
++	// row carries neither by default.
++	Text           bool `json:"text,omitempty"`
++	IncludeDeleted bool `json:"includeDeleted,omitempty"`
++}
++
++// parseRequirementRef reads the ref of a requirement call. A "<KEY>/" project
++// qualifier is accepted when it names the spec's own project.
++func parseRequirementRef(s string) (core.RequirementRef, error) {
++	s = strings.TrimSpace(s)
++	if key, bare, ok := strings.Cut(s, "/"); ok {
++		ref, err := core.ParseRequirementRef(bare)
++		if err != nil {
++			return core.RequirementRef{}, failf("invalid_request", "%v", err)
++		}
++		if specKey, _, _, err := core.ParseItemID(string(ref.Spec)); err != nil || string(specKey) != key {
++			return core.RequirementRef{}, failf("invalid_request", "ref %q: %s does not belong to project %s", s, ref.Spec, key)
++		}
++		return ref, nil
++	}
++	ref, err := core.ParseRequirementRef(s)
++	if err != nil {
++		return core.RequirementRef{}, failf("invalid_request", "%v", err)
++	}
++	return ref, nil
++}
++
++// requirementList answers "requirement.list": one row per requirement.
++func (v *Vault) requirementList(raw []byte) (any, error) {
++	p, err := decodeParams[requirementListParams](raw)
++	if err != nil {
++		return nil, err
++	}
++	f := core.RequirementFilter{Spec: core.ItemID(p.Spec), Text: p.Q, IncludeDeleted: p.IncludeDeleted}
++	if p.Project != "" {
++		f.Projects = []core.ProjectKey{core.ProjectKey(p.Project)}
++	}
++	for _, s := range p.Status {
++		f.Statuses = append(f.Statuses, core.Status(s))
++	}
++	rows, err := v.index.Requirements(f)
++	if err != nil {
++		return nil, fmt.Errorf("list requirements: %w", err)
++	}
++	if !p.Text {
++		for i := range rows {
++			rows[i] = rows[i].Row()
++		}
++	}
++	return map[string]any{"requirements": rows, "total": len(rows)}, nil
++}
++
++// requirementGet answers "requirement.get": one requirement with its text and
++// both of its hashes, plus the file rev of its spec.
++func (v *Vault) requirementGet(raw []byte) (any, error) {
++	p, err := decodeParams[struct {
++		Ref string `json:"ref"`
++	}](raw)
++	if err != nil {
++		return nil, err
++	}
++	ref, err := parseRequirementRef(p.Ref)
++	if err != nil {
++		return nil, err
++	}
++	view, err := v.index.Requirement(ref)
++	if err != nil {
++		return nil, fmt.Errorf("get %s: %w", ref, err)
++	}
++	spec, err := v.index.Item(ref.Spec)
++	if err != nil {
++		return nil, fmt.Errorf("get %s: %w", ref, err)
++	}
++	return map[string]any{"requirement": view, "specRev": spec.Rev}, nil
++}
++
++// requirementCreate answers "requirement.create": it allocates R<n> as max + 1
++// over the spec's blocks, its requirements: keys and every inbound ref in the
++// index (R-REQ-5), and appends the block.
++func (v *Vault) requirementCreate(ctx context.Context, raw []byte) (any, error) {
++	p, err := decodeParams[struct {
++		Spec string `json:"spec"`
++		core.RequirementDraft
++	}](raw)
++	if err != nil {
++		return nil, err
++	}
++	spec := core.ItemID(p.Spec)
++	if spec == "" {
++		return nil, failf("invalid_request", "requirement.create needs a spec")
++	}
++	store, err := v.storeForItem(spec)
++	if err != nil {
++		return nil, err
++	}
++	v.fs.begin()
++	schemaBefore := store.Schema()
++	it, view, err := store.CreateRequirement(ctx, spec, p.RequirementDraft, v.index.RequirementRefsTo(spec))
++	if err != nil {
++		return nil, fmt.Errorf("create requirement in %s: %w", spec, err)
++	}
++	return v.requirementResult(ctx, it, view, schemaBefore, store)
++}
++
++// requirementUpdate answers "requirement.update": a sparse patch of one
++// requirement's block and requirements: entry, conditional on its requirement
++// rev. The rev is required; "*" is the explicit, unsafe waiver (R-REV-3b).
++func (v *Vault) requirementUpdate(ctx context.Context, raw []byte) (any, error) {
++	p, err := decodeParams[struct {
++		Ref   string                `json:"ref"`
++		Patch core.RequirementPatch `json:"patch"`
++		Rev   string                `json:"rev"`
++	}](raw)
++	if err != nil {
++		return nil, err
++	}
++	ref, err := parseRequirementRef(p.Ref)
++	if err != nil {
++		return nil, err
++	}
++	expected := core.Rev(p.Rev)
++	switch p.Rev {
++	case "":
++		return nil, failf("precondition_required",
++			"requirement.update needs the requirement rev of %s (rev, from requirement.get), not its blockRev", ref)
++	case "*":
++		expected = ""
++	}
++	store, err := v.storeForItem(ref.Spec)
++	if err != nil {
++		return nil, err
++	}
++	v.fs.begin()
++	schemaBefore := store.Schema()
++	it, view, err := store.UpdateRequirement(ctx, ref, p.Patch, expected)
++	if err != nil {
++		return nil, fmt.Errorf("update %s: %w", ref, err)
++	}
++	return v.requirementResult(ctx, it, view, schemaBefore, store)
++}
++
++// requirementResult reports a requirement write: the requirement as written,
++// the spec's new file rev, the WriteSet and, when the write raised the schema,
++// schemaUpgraded (ADR-037 section 11).
++func (v *Vault) requirementResult(
++	ctx context.Context, it *core.Item, view core.RequirementView, schemaBefore int, store *core.FileStore,
++) (any, error) {
++	writes, err := v.commit(ctx)
++	if err != nil {
++		return nil, err
++	}
++	if indexed, err := v.index.Requirement(view.Ref); err == nil {
++		view.Project = indexed.Project
++	}
++	out := map[string]any{"requirement": view, "specRev": it.Rev, "writes": writes}
++	return withSchemaUpgrade(out, schemaBefore, store), nil
++}
++
++// mergeHits folds requirement hits into the item and page hits of one search,
++// in the order core.Index.Search ranks: score, then kind, id and path.
++func mergeHits(hits, more []core.SearchHit, limit int) []core.SearchHit {
++	out := append(append([]core.SearchHit(nil), hits...), more...)
++	sort.SliceStable(out, func(i, j int) bool {
++		a, b := out[i], out[j]
++		if a.Score != b.Score {
++			return a.Score > b.Score
++		}
++		if a.Kind != b.Kind {
++			return a.Kind < b.Kind
++		}
++		if a.ID != b.ID {
++			return a.ID < b.ID
++		}
++		return a.Path < b.Path
++	})
++	if limit <= 0 {
++		limit = core.DefaultLimit
++	}
++	if len(out) > limit {
++		out = out[:limit]
++	}
++	return out
++}
+diff --git a/internal/vault/requirement_test.go b/internal/vault/requirement_test.go
+new file mode 100644
+index 0000000..1d0fc9b
+--- /dev/null
++++ b/internal/vault/requirement_test.go
+@@ -0,0 +1,479 @@
++package vault
++
++import (
++	"encoding/json"
++	"strings"
++	"testing"
++)
++
++// requirementEnvelope is the failure half of a requirement write, with the
++// fields a stale revision carries.
++type requirementEnvelope struct {
++	OK     bool            `json:"ok"`
++	Result json.RawMessage `json:"result"`
++	Error  struct {
++		Code       string `json:"code"`
++		Message    string `json:"message"`
++		CurrentRev string `json:"currentRev"`
++		Conflicts  []struct {
++			Field    string `json:"field"`
++			Current  string `json:"current"`
++			Proposed string `json:"proposed"`
++		} `json:"conflicts"`
++	} `json:"error"`
++}
++
++// requirementRead is the shape of one requirement on the wire.
++type requirementRead struct {
++	Ref            string `json:"ref"`
++	Spec           string `json:"spec"`
++	Project        string `json:"project"`
++	Title          string `json:"title"`
++	Status         string `json:"status"`
++	StatusImplicit bool   `json:"statusImplicit"`
++	Text           string `json:"text"`
++	Rev            string `json:"rev"`
++	BlockRev       string `json:"blockRev"`
++	Trace          *struct {
++		Code []string `json:"code"`
++	} `json:"trace"`
++}
++
++// requirementResultWire is the result of requirement.get and of a write.
++type requirementResultWire struct {
++	Requirement    requirementRead `json:"requirement"`
++	SpecRev        string          `json:"specRev"`
++	Writes         WriteSet        `json:"writes"`
++	SchemaUpgraded int             `json:"schemaUpgraded"`
++}
++
++const specBody = "## Purpose\n\nAddresses.\n\n## Requirements\n\n" +
++	"### DEMO-SP-0001.R1 — Trim input\n\nThe checkout SHALL trim pasted addresses.\n\n" +
++	"#### Scenario: trailing spaces\n- **WHEN** an address ends in spaces\n- **THEN** they are removed\n\n" +
++	"### DEMO-SP-0001.R2 — Reject empty input\n\nThe checkout SHALL refuse an empty address.\n\n" +
++	"## Notes\n\nNothing yet.\n"
++
++// specVault loads the fixture and creates DEMO-SP-0001 with two requirements.
++func specVault(t *testing.T) *Vault {
++	t.Helper()
++	v, _ := loadedVault(t)
++	call(t, v, "item.create", map[string]any{
++		"project": "DEMO", "type": "spec", "title": "Checkout addresses", "body": specBody,
++	})
++	return v
++}
++
++func getRequirement(t *testing.T, v *Vault, ref string) requirementResultWire {
++	t.Helper()
++	return decode[requirementResultWire](t, call(t, v, "requirement.get", map[string]any{"ref": ref}))
++}
++
++func rawRequirementCall(t *testing.T, v *Vault, method string, params any) requirementEnvelope {
++	t.Helper()
++	data, err := json.Marshal(params)
++	if err != nil {
++		t.Fatal(err)
++	}
++	var env requirementEnvelope
++	if err := json.Unmarshal([]byte(v.Call(method, string(data))), &env); err != nil {
++		t.Fatalf("%s returned invalid JSON: %v", method, err)
++	}
++	return env
++}
++
++func specText(t *testing.T, writes WriteSet) string {
++	t.Helper()
++	for _, f := range writes.Written {
++		if strings.Contains(f.Path, "/specs/") {
++			return f.Text
++		}
++	}
++	t.Fatalf("no spec in the write set: %+v", writes.Written)
++	return ""
++}
++
++func TestRequirementGetReturnsBothRevs(t *testing.T) {
++	v := specVault(t)
++	got := getRequirement(t, v, "DEMO-SP-0001.R1")
++	r := got.Requirement
++	if r.Ref != "DEMO-SP-0001.R1" || r.Spec != "DEMO-SP-0001" || r.Project != "DEMO" || r.Title != "Trim input" {
++		t.Errorf("requirement = %+v", r)
++	}
++	if r.Status != "backlog" || !r.StatusImplicit {
++		t.Errorf("status = %q implicit %v, want the initial status, implicit", r.Status, r.StatusImplicit)
++	}
++	if !strings.HasPrefix(r.Text, "The checkout SHALL trim") || !strings.Contains(r.Text, "#### Scenario: trailing spaces") {
++		t.Errorf("text = %q", r.Text)
++	}
++	if r.Rev == "" || r.BlockRev == "" || r.Rev == r.BlockRev {
++		t.Errorf("rev %q and blockRev %q must both be set and differ", r.Rev, r.BlockRev)
++	}
++	if got.SpecRev == "" || got.SpecRev == r.Rev {
++		t.Errorf("specRev = %q", got.SpecRev)
++	}
++
++	// A qualified ref reads the same requirement; a missing block is not_found.
++	if q := getRequirement(t, v, "DEMO/DEMO-SP-0001.R1"); q.Requirement.Rev != r.Rev {
++		t.Errorf("qualified ref read rev %q, want %q", q.Requirement.Rev, r.Rev)
++	}
++	if env := rawCall(t, v, "requirement.get", map[string]any{"ref": "DEMO-SP-0001.R9"}); env.OK || env.Error.Code != "not_found" {
++		t.Errorf("missing requirement: ok %v code %q", env.OK, env.Error.Code)
++	}
++	if env := rawCall(t, v, "requirement.get", map[string]any{"ref": "DEMO-SP-0001.R01"}); env.OK || env.Error.Code != "invalid_request" {
++		t.Errorf("padded ref: ok %v code %q", env.OK, env.Error.Code)
++	}
++}
++
++func TestRequirementUpdatePatchesOneBlock(t *testing.T) {
++	v := specVault(t)
++	r1 := getRequirement(t, v, "DEMO-SP-0001.R1").Requirement
++	r2 := getRequirement(t, v, "DEMO-SP-0001.R2").Requirement
++
++	raw := call(t, v, "requirement.update", map[string]any{
++		"ref": "DEMO-SP-0001.R1", "rev": r1.Rev,
++		"patch": map[string]any{
++			"title":  "Trim pasted input",
++			"text":   "The checkout SHALL trim pasted addresses on both ends.\n",
++			"status": "todo",
++			"trace":  map[string]any{"code": []string{"internal/checkout/address.go#Trim"}},
++		},
++	})
++	got := decode[requirementResultWire](t, raw)
++	if got.Requirement.Title != "Trim pasted input" || got.Requirement.Status != "todo" || got.Requirement.StatusImplicit {
++		t.Errorf("written requirement = %+v", got.Requirement)
++	}
++	if got.Requirement.Rev == r1.Rev || got.Requirement.BlockRev == r1.BlockRev {
++		t.Errorf("revs did not move: %+v", got.Requirement)
++	}
++	text := specText(t, got.Writes)
++	for _, want := range []string{
++		"### DEMO-SP-0001.R1 — Trim pasted input\n\nThe checkout SHALL trim pasted addresses on both ends.\n\n### DEMO-SP-0001.R2",
++		"requirements:\n  R1:\n    status: todo\n    trace:\n      code: [internal/checkout/address.go#Trim]\n",
++		"\n## Notes\n\nNothing yet.\n",
++	} {
++		if !strings.Contains(text, want) {
++			t.Errorf("spec file lacks %q:\n%s", want, text)
++		}
++	}
++	// R2 was not touched: its rev still holds.
++	if again := getRequirement(t, v, "DEMO-SP-0001.R2").Requirement; again.Rev != r2.Rev || again.BlockRev != r2.BlockRev {
++		t.Errorf("R2 revs moved: %s/%s -> %s/%s", r2.Rev, r2.BlockRev, again.Rev, again.BlockRev)
++	}
++
++	// A status-only change moves the requirement rev, never the block rev.
++	before := got.Requirement
++	raw = call(t, v, "requirement.update", map[string]any{
++		"ref": "DEMO-SP-0001.R1", "rev": before.Rev, "patch": map[string]any{"status": "in_progress"},
++	})
++	after := decode[requirementResultWire](t, raw).Requirement
++	if after.BlockRev != before.BlockRev || after.Rev == before.Rev {
++		t.Errorf("status change: blockRev %s -> %s, rev %s -> %s", before.BlockRev, after.BlockRev, before.Rev, after.Rev)
++	}
++}
++
++func TestRequirementUpdateConflictMatrix(t *testing.T) {
++	tests := []struct {
++		name string
++		// first is the write another writer made after the base read.
++		first map[string]any
++		// second is the write under test, quoting the base rev of `ref`.
++		ref    string
++		second map[string]any
++		// wantCode is the failure code, "" for a success.
++		wantCode      string
++		wantConflicts []string
++	}{
++		{
++			name:          "stale rev on the same block",
++			first:         map[string]any{"ref": "DEMO-SP-0001.R1", "patch": map[string]any{"status": "todo", "title": "Trim everything"}},
++			ref:           "DEMO-SP-0001.R1",
++			second:        map[string]any{"status": "cancelled", "title": "Trim nothing", "text": "The checkout SHALL NOT trim."},
++			wantCode:      "stale_revision",
++			wantConflicts: []string{"text", "title", "status"},
++		},
++		{
++			name:   "concurrent edit to another block of the same spec",
++			first:  map[string]any{"ref": "DEMO-SP-0001.R2", "patch": map[string]any{"status": "todo", "text": "The checkout SHALL refuse a blank address."}},
++			ref:    "DEMO-SP-0001.R1",
++			second: map[string]any{"status": "todo", "title": "Trim pasted input"},
++		},
++		{
++			name:          "stale rev whose change already happened",
++			first:         map[string]any{"ref": "DEMO-SP-0001.R1", "patch": map[string]any{"status": "todo"}},
++			ref:           "DEMO-SP-0001.R1",
++			second:        map[string]any{"status": "todo"},
++			wantCode:      "stale_revision",
++			wantConflicts: nil,
++		},
++	}
++	for _, tc := range tests {
++		t.Run(tc.name, func(t *testing.T) {
++			v := specVault(t)
++			base := getRequirement(t, v, tc.ref).Requirement
++
++			firstRef := tc.first["ref"].(string)
++			first := map[string]any{"ref": firstRef, "patch": tc.first["patch"], "rev": getRequirement(t, v, firstRef).Requirement.Rev}
++			call(t, v, "requirement.update", first)
++
++			env := rawRequirementCall(t, v, "requirement.update", map[string]any{"ref": tc.ref, "rev": base.Rev, "patch": tc.second})
++			if tc.wantCode == "" {
++				if !env.OK {
++					t.Fatalf("write failed: %s: %s", env.Error.Code, env.Error.Message)
++				}
++				got := decode[requirementResultWire](t, env.Result)
++				if got.Requirement.Title != "Trim pasted input" {
++					t.Errorf("title = %q", got.Requirement.Title)
++				}
++				// The other writer's change survived the second write.
++				if r2 := getRequirement(t, v, "DEMO-SP-0001.R2").Requirement; r2.Text != "The checkout SHALL refuse a blank address." || r2.Status != "todo" {
++					t.Errorf("R2 lost the first write: %+v", r2)
++				}
++				return
++			}
++			if env.OK || env.Error.Code != tc.wantCode {
++				t.Fatalf("ok %v code %q, want %s", env.OK, env.Error.Code, tc.wantCode)
++			}
++			current := getRequirement(t, v, tc.ref).Requirement
++			if env.Error.CurrentRev != current.Rev {
++				t.Errorf("currentRev = %q, want the requirement rev %q", env.Error.CurrentRev, current.Rev)
++			}
++			var fields []string
++			for _, c := range env.Error.Conflicts {
++				fields = append(fields, c.Field)
++				if c.Field == "text" && (c.Current != "" || c.Proposed != "") {
++					t.Errorf("text is quoted back: %+v", c)
++				}
++			}
++			if strings.Join(fields, ",") != strings.Join(tc.wantConflicts, ",") {
++				t.Errorf("conflicts = %v, want %v", fields, tc.wantConflicts)
++			}
++		})
++	}
++}
++
++func TestRequirementUpdateNeedsTheRequirementRev(t *testing.T) {
++	v := specVault(t)
++	r1 := getRequirement(t, v, "DEMO-SP-0001.R1")
++	patch := map[string]any{"status": "todo"}
++
++	if env := rawCall(t, v, "requirement.update", map[string]any{"ref": "DEMO-SP-0001.R1", "patch": patch}); env.OK || env.Error.Code != "precondition_required" {
++		t.Errorf("no rev: ok %v code %q", env.OK, env.Error.Code)
++	}
++	for name, rev := range map[string]string{"blockRev": r1.Requirement.BlockRev, "specRev": r1.SpecRev} {
++		if env := rawCall(t, v, "requirement.update", map[string]any{"ref": "DEMO-SP-0001.R1", "patch": patch, "rev": rev}); env.OK || env.Error.Code != "stale_revision" {
++			t.Errorf("%s as the write token: ok %v code %q", name, env.OK, env.Error.Code)
++		}
++	}
++}
++
++func TestRequirementUpdateRefusals(t *testing.T) {
++	tests := []struct {
++		name  string
++		patch map[string]any
++		want  string
++	}{
++		{"heading in the text", map[string]any{"text": "The checkout SHALL trim.\n\n## Oops\n"}, "validation_failed"},
++		{"open fence", map[string]any{"text": "```go\nfunc x() {}\n"}, "validation_failed"},
++		{"empty title", map[string]any{"title": "  "}, "validation_failed"},
++		{"unknown status", map[string]any{"status": "nope"}, "validation_failed"},
++		{"transition outside the workflow", map[string]any{"status": "done"}, "workflow_transition_denied"},
++		{"bad trace path", map[string]any{"trace": map[string]any{"code": []string{"../etc/passwd"}}}, "validation_failed"},
++		{"unset status", map[string]any{"unset": []string{"status"}}, "validation_failed"},
++	}
++	for _, tc := range tests {
++		t.Run(tc.name, func(t *testing.T) {
++			v := specVault(t)
++			r1 := getRequirement(t, v, "DEMO-SP-0001.R1").Requirement
++			env := rawCall(t, v, "requirement.update", map[string]any{"ref": "DEMO-SP-0001.R1", "rev": r1.Rev, "patch": tc.patch})
++			if env.OK || env.Error.Code != tc.want {
++				t.Errorf("ok %v code %q (%s), want %s", env.OK, env.Error.Code, env.Error.Message, tc.want)
++			}
++			if again := getRequirement(t, v, "DEMO-SP-0001.R1").Requirement; again.Rev != r1.Rev {
++				t.Errorf("a refused write changed the requirement")
++			}
++		})
++	}
++}
++
++func TestRequirementCreateAllocatesMaxPlusOne(t *testing.T) {
++	v := specVault(t)
++
++	create := func(title string) requirementResultWire {
++		t.Helper()
++		return decode[requirementResultWire](t, call(t, v, "requirement.create", map[string]any{
++			"spec": "DEMO-SP-0001", "title": title, "text": "The checkout SHALL " + strings.ToLower(title) + ".",
++		}))
++	}
++	got := create("Keep the country")
++	if got.Requirement.Ref != "DEMO-SP-0001.R3" || got.Requirement.Status != "backlog" || got.Requirement.StatusImplicit {
++		t.Errorf("first create = %+v", got.Requirement)
++	}
++	text := specText(t, got.Writes)
++	if !strings.Contains(text, "### DEMO-SP-0001.R3 — Keep the country\n\nThe checkout SHALL keep the country.\n\n## Notes") {
++		t.Errorf("block not appended at the end of the requirements:\n%s", text)
++	}
++	if !strings.Contains(text, "  R3:\n    status: backlog\n") {
++		t.Errorf("status not materialized:\n%s", text)
++	}
++
++	// An inbound link reserves R7; the next number is R8, never a reused one.
++	call(t, v, "item.create", map[string]any{
++		"project": "DEMO", "type": "task", "title": "Implement R7",
++		"links": []map[string]any{{"kind": "implements", "target": "DEMO-SP-0001.R7"}},
++	})
++	if next := create("Keep the postcode"); next.Requirement.Ref != "DEMO-SP-0001.R8" {
++		t.Errorf("second create = %s, want R8", next.Requirement.Ref)
++	}
++}
++
++func TestRequirementCreateSkipsOrphanEntryNumbers(t *testing.T) {
++	v := NewInMemory()
++	files := fixtureFiles(t)
++	files = append(files, map[string]string{
++		"path": "docs/.pmngr/specs/DEMO-SP-0001-orphans.md",
++		"text": "---\nid: DEMO-SP-0001\ntype: spec\ntitle: Orphans\nstatus: backlog\ncreated: 2026-09-01T00:00:00Z\nupdated: 2026-09-01T00:00:00Z\n" +
++			"requirements:\n  R1:\n    status: todo\n  R5:\n    status: cancelled\n---\n\n## Requirements\n\n### DEMO-SP-0001.R1 — Keep\n\nThe system SHALL keep.\n",
++	})
++	for _, f := range files {
++		if strings.HasSuffix(f["path"], ".pmngr/project.yaml") {
++			f["text"] = strings.Replace(f["text"], "\nschema: 1\n", "\nschema: 2\n", 1)
++		}
++	}
++	call(t, v, "vault.load", map[string]any{"files": files})
++	got := decode[requirementResultWire](t, call(t, v, "requirement.create", map[string]any{"spec": "DEMO-SP-0001", "title": "Next"}))
++	if got.Requirement.Ref != "DEMO-SP-0001.R6" {
++		t.Errorf("created %s, want R6 past the orphan R5 entry", got.Requirement.Ref)
++	}
++	text := specText(t, got.Writes)
++	if !strings.Contains(text, "  R1:\n    status: todo\n  R5:\n    status: cancelled\n  R6:\n    status: backlog\n") {
++		t.Errorf("requirements: not in numeric order:\n%s", text)
++	}
++	if !strings.HasSuffix(text, "The system SHALL keep.\n\n### DEMO-SP-0001.R6 — Next\n") {
++		t.Errorf("block not appended:\n%s", text)
++	}
++}
++
++func TestRequirementCreateAddsTheSection(t *testing.T) {
++	v, _ := loadedVault(t)
++	call(t, v, "item.create", map[string]any{"project": "DEMO", "type": "spec", "title": "Empty", "body": "## Purpose\n\nNothing yet.\n"})
++	got := decode[requirementResultWire](t, call(t, v, "requirement.create", map[string]any{"spec": "DEMO-SP-0001", "title": "First", "status": "todo"}))
++	if got.Requirement.Ref != "DEMO-SP-0001.R1" || got.Requirement.Status != "todo" {
++		t.Errorf("created %+v", got.Requirement)
++	}
++	if text := specText(t, got.Writes); !strings.Contains(text, "## Purpose\n\nNothing yet.\n\n## Requirements\n\n### DEMO-SP-0001.R1 — First\n") {
++		t.Errorf("section not added:\n%s", text)
++	}
++	if env := rawCall(t, v, "requirement.create", map[string]any{"spec": "DEMO-US-0001", "title": "Not a spec"}); env.OK || env.Error.Code != "not_found" {
++		t.Errorf("create on a story: ok %v code %q", env.OK, env.Error.Code)
++	}
++}
++
++func TestRequirementWriteUpgradesSchemaAndHonoursTheGate(t *testing.T) {
++	// A spec written by hand into a schema-1 project is E-SCHEMA-FEATURE until
++	// the project is upgraded; creating a spec through the vault upgrades it.
++	v, _ := loadedVault(t)
++	raw := call(t, v, "item.create", map[string]any{"project": "DEMO", "type": "spec", "title": "Spec"})
++	if got := decode[specWriteResult](t, raw); got.SchemaUpgraded != 2 {
++		t.Fatalf("schemaUpgraded = %d", got.SchemaUpgraded)
++	}
++	got := decode[requirementResultWire](t, call(t, v, "requirement.create", map[string]any{"spec": "DEMO-SP-0001", "title": "First"}))
++	if got.SchemaUpgraded != 0 {
++		t.Errorf("a requirement write on an upgraded project reported schemaUpgraded = %d", got.SchemaUpgraded)
++	}
++
++	// The write gate refuses requirement writes on a newer schema.
++	gated := NewInMemory()
++	files := fixtureFiles(t)
++	files = append(files, map[string]string{
++		"path": "docs/.pmngr/specs/DEMO-SP-0001-s.md",
++		"text": "---\nid: DEMO-SP-0001\ntype: spec\ntitle: S\nstatus: backlog\ncreated: 2026-09-01T00:00:00Z\nupdated: 2026-09-01T00:00:00Z\n---\n\n## Requirements\n\n### DEMO-SP-0001.R1 — Keep\n\nThe system SHALL keep.\n",
++	})
++	for _, f := range files {
++		if strings.HasSuffix(f["path"], ".pmngr/project.yaml") {
++			f["text"] = strings.Replace(f["text"], "\nschema: 1\n", "\nschema: 3\n", 1)
++		}
++	}
++	call(t, gated, "vault.load", map[string]any{"files": files})
++	r1 := getRequirement(t, gated, "DEMO-SP-0001.R1").Requirement
++	if env := rawCall(t, gated, "requirement.update", map[string]any{"ref": "DEMO-SP-0001.R1", "rev": r1.Rev, "patch": map[string]any{"status": "todo"}}); env.OK || env.Error.Code != "read_only" {
++		t.Errorf("update on schema 3: ok %v code %q", env.OK, env.Error.Code)
++	}
++	if env := rawCall(t, gated, "requirement.create", map[string]any{"spec": "DEMO-SP-0001", "title": "No"}); env.OK || env.Error.Code != "read_only" {
++		t.Errorf("create on schema 3: ok %v code %q", env.OK, env.Error.Code)
++	}
++}
++
++func TestRequirementListAndSearchRows(t *testing.T) {
++	v := specVault(t)
++	r1 := getRequirement(t, v, "DEMO-SP-0001.R1").Requirement
++	call(t, v, "requirement.update", map[string]any{"ref": "DEMO-SP-0001.R1", "rev": r1.Rev, "patch": map[string]any{"status": "todo"}})
++
++	type listResult struct {
++		Requirements []requirementRead `json:"requirements"`
++		Total        int               `json:"total"`
++	}
++	all := decode[listResult](t, call(t, v, "requirement.list", map[string]any{"project": "DEMO"}))
++	if all.Total != 2 || len(all.Requirements) != 2 {
++		t.Fatalf("list = %+v", all)
++	}
++	row := all.Requirements[0]
++	if row.Ref != "DEMO-SP-0001.R1" || row.Spec != "DEMO-SP-0001" || row.Title != "Trim input" || row.Status != "todo" || row.Rev == "" || row.BlockRev == "" {
++		t.Errorf("row = %+v", row)
++	}
++	if row.Text != "" {
++		t.Errorf("a list row carries text by default")
++	}
++
++	todo := decode[listResult](t, call(t, v, "requirement.list", map[string]any{"spec": "DEMO-SP-0001", "status": []string{"backlog"}}))
++	if todo.Total != 1 || todo.Requirements[0].Ref != "DEMO-SP-0001.R2" {
++		t.Errorf("status filter = %+v", todo)
++	}
++	found := decode[listResult](t, call(t, v, "requirement.list", map[string]any{"q": "empty address", "text": true}))
++	if found.Total != 1 || found.Requirements[0].Ref != "DEMO-SP-0001.R2" || found.Requirements[0].Text == "" {
++		t.Errorf("text filter = %+v", found)
++	}
++
++	// Search adds requirement rows only when asked to.
++	plain := decode[[]SearchHit](t, call(t, v, "search", map[string]any{"q": "refuse"}))
++	for _, h := range plain {
++		if h.Kind == "requirement" {
++			t.Errorf("requirement hit without requirements: true: %+v", h)
++		}
++	}
++	hits := decode[[]SearchHit](t, call(t, v, "search", map[string]any{"q": "refuse", "requirements": true}))
++	var req *SearchHit
++	for i := range hits {
++		if hits[i].Kind == "requirement" {
++			req = &hits[i]
++		}
++	}
++	if req == nil || req.ID != "DEMO-SP-0001.R2" || req.Spec != "DEMO-SP-0001" || req.Status != "backlog" || req.Title != "Reject empty input" {
++		t.Errorf("requirement hit = %+v in %+v", req, hits)
++	}
++}
++
++func TestWorkspaceRoutesRequirementCalls(t *testing.T) {
++	w := NewWorkspace()
++	call := func(method string, params any) requirementEnvelope {
++		t.Helper()
++		data, _ := json.Marshal(params)
++		var env requirementEnvelope
++		if err := json.Unmarshal([]byte(w.Call(method, string(data))), &env); err != nil {
++			t.Fatal(err)
++		}
++		if !env.OK {
++			t.Fatalf("%s: %s: %s", method, env.Error.Code, env.Error.Message)
++		}
++		return env
++	}
++	call("vault.load", map[string]any{"vaultId": "demo", "files": fixtureFiles(t)})
++	call("item.create", map[string]any{"project": "DEMO", "type": "spec", "title": "S", "body": specBody})
++	env := call("requirement.get", map[string]any{"ref": "DEMO-SP-0001.R2"})
++	got := decode[requirementResultWire](t, env.Result)
++	call("requirement.create", map[string]any{"spec": "DEMO-SP-0001", "title": "Third"})
++	call("requirement.update", map[string]any{"ref": "DEMO-SP-0001.R2", "rev": got.Requirement.Rev, "patch": map[string]any{"status": "todo"}})
++	hits := decode[[]SearchHit](t, call("search", map[string]any{"q": "third", "requirements": true}).Result)
++	if len(hits) == 0 || hits[0].Kind != "requirement" || hits[0].ID != "DEMO-SP-0001.R3" || hits[0].VaultID != "demo" {
++		t.Errorf("workspace search = %+v", hits)
++	}
++}
+diff --git a/internal/vault/search_scope.go b/internal/vault/search_scope.go
+index e0ae14e..851aba1 100644
+--- a/internal/vault/search_scope.go
++++ b/internal/vault/search_scope.go
+@@ -11,6 +11,10 @@ type searchParams struct {
+ 	// Projects scopes the search to any of several project keys
+ 	// (GIT-US-0102). Empty, together with Project, searches every project.
+ 	Projects []string `json:"projects,omitempty"`
++	// Requirements adds one hit of kind "requirement" per matching requirement
++	// block (docs/03 section 21). Off by default, so a client that knows only
++	// items and pages never meets a kind it cannot open.
++	Requirements bool `json:"requirements,omitempty"`
+ }
+ 
+ // ScopeKeys folds the single-project and the multi-project spelling of a
+diff --git a/internal/vault/vault.go b/internal/vault/vault.go
+index 974e873..6d26064 100644
+--- a/internal/vault/vault.go
++++ b/internal/vault/vault.go
+@@ -415,6 +415,14 @@ func (v *Vault) Dispatch(ctx context.Context, method string, raw []byte) (any, e
+ 		return v.itemDelete(ctx, raw)
+ 	case "item.task.set":
+ 		return v.itemTaskSet(ctx, raw)
++	case "requirement.list":
++		return v.requirementList(raw)
++	case "requirement.get":
++		return v.requirementGet(raw)
++	case "requirement.create":
++		return v.requirementCreate(ctx, raw)
++	case "requirement.update":
++		return v.requirementUpdate(ctx, raw)
+ 	case "inbox.list":
+ 		return v.inboxList(ctx, raw)
+ 	case "inbox.triage":
+@@ -1586,6 +1594,9 @@ func (v *Vault) search(raw []byte) (any, error) {
+ 		limit *= 4
+ 	}
+ 	hits := v.index.Search(p.Q, limit)
++	if p.Requirements {
++		hits = mergeHits(hits, v.index.SearchRequirements(p.Q, limit), limit)
++	}
+ 	out := make([]searchHit, 0, len(hits))
+ 	for _, h := range hits {
+ 		if !InScope(scope, string(h.Project)) {
+@@ -1598,6 +1609,7 @@ func (v *Vault) search(raw []byte) (any, error) {
+ 		out = append(out, searchHit{
+ 			Kind: h.Kind, ID: string(h.ID), Path: h.Path, Title: h.Title,
+ 			Snippet: h.Snippet, Score: h.Score, Project: string(h.Project), Source: source,
++			Spec: string(h.Spec), Status: string(h.Status),
+ 		})
+ 		if p.Limit > 0 && len(out) >= p.Limit {
+ 			break
+diff --git a/internal/vault/wire.go b/internal/vault/wire.go
+index 31243db..997870a 100644
+--- a/internal/vault/wire.go
++++ b/internal/vault/wire.go
+@@ -377,6 +377,10 @@ type SearchHit struct {
+ 	MoreMatches int `json:"moreMatches,omitempty"`
+ 
+ 	Project string `json:"project,omitempty"`
++	// Spec and Status are set on a hit of kind "requirement" only: the spec
++	// the block lives in and the requirement's status.
++	Spec   string `json:"spec,omitempty"`
++	Status string `json:"status,omitempty"`
+ 	// VaultID names the repository the hit came from, so that a workspace-wide
+ 	// search can say which project — and which clone — answered.
+ 	VaultID string `json:"vaultId,omitempty"`
+diff --git a/internal/vault/workspace.go b/internal/vault/workspace.go
+index 12ecc80..b3b597f 100644
+--- a/internal/vault/workspace.go
++++ b/internal/vault/workspace.go
+@@ -375,11 +375,19 @@ func (w *Workspace) teamSummary(m *Mount) teamSummary {
+ // projects restricts the answer to those project keys; empty searches every
+ // project (GIT-US-0102). A repository owning none of them is not asked.
+ func (w *Workspace) Search(ctx context.Context, q string, limit int, projects []string) ([]searchHit, error) {
++	return w.SearchWith(ctx, searchParams{Q: q, Limit: limit, Projects: projects})
++}
++
++// SearchWith is Search driven by the full "search" params, which can also ask
++// for requirement hits.
++func (w *Workspace) SearchWith(ctx context.Context, p searchParams) ([]searchHit, error) {
+ 	w.mu.RLock()
+ 	mounts := w.snapshot()
+ 	w.mu.RUnlock()
+ 
+-	params, err := json.Marshal(searchParams{Q: q, Limit: limit, Projects: projects})
++	q, limit := p.Q, p.Limit
++	projects := ScopeKeys(p.Project, p.Projects)
++	params, err := json.Marshal(searchParams{Q: q, Limit: limit, Projects: projects, Requirements: p.Requirements})
+ 	if err != nil {
+ 		return nil, failf("internal", "encode search params: %v", err)
+ 	}
+diff --git a/scripts/wasm-smoke.mjs b/scripts/wasm-smoke.mjs
+index 15b6ca1..7185917 100755
+--- a/scripts/wasm-smoke.mjs
++++ b/scripts/wasm-smoke.mjs
+@@ -338,6 +338,82 @@ async function main() {
+     );
+   }
+ 
++  console.log('gintrackCore.call("requirement.*", …)');
++  const spec = envelope(
++    "call(item.create spec)",
++    core.call(
++      "item.create",
++      JSON.stringify({
++        project: "DEMO",
++        type: "spec",
++        title: "Smoke spec",
++        body:
++          "## Requirements\n\n### DEMO-SP-0001.R1 — Load the core\n\n" +
++          "The worker SHALL instantiate core.wasm.\n",
++      }),
++    ),
++  );
++  check(
++    "a spec is created and raises the schema",
++    spec.ok === true && spec.result?.schemaUpgraded === 2,
++    JSON.stringify(spec.ok ? spec.result?.schemaUpgraded : spec.error),
++  );
++  const created = envelope(
++    "call(requirement.create)",
++    core.call(
++      "requirement.create",
++      JSON.stringify({ spec: "DEMO-SP-0001", title: "Answer calls" }),
++    ),
++  );
++  check(
++    "requirement.create allocates R2",
++    created.ok === true && created.result?.requirement?.ref === "DEMO-SP-0001.R2",
++    JSON.stringify(created.ok ? created.result?.requirement?.ref : created.error),
++  );
++  const got = envelope(
++    "call(requirement.get)",
++    core.call("requirement.get", JSON.stringify({ ref: "DEMO-SP-0001.R1" })),
++  );
++  const req = got.result?.requirement ?? {};
++  check(
++    "requirement.get returns the requirement rev and the block rev",
++    got.ok === true && isNonEmptyString(req.rev) && isNonEmptyString(req.blockRev) && req.rev !== req.blockRev,
++    JSON.stringify(got.ok ? { rev: req.rev, blockRev: req.blockRev } : got.error),
++  );
++  const updated = envelope(
++    "call(requirement.update)",
++    core.call(
++      "requirement.update",
++      JSON.stringify({ ref: "DEMO-SP-0001.R1", rev: req.rev, patch: { status: "todo" } }),
++    ),
++  );
++  check(
++    "requirement.update applies under the requirement rev",
++    updated.ok === true && updated.result?.requirement?.status === "todo",
++    JSON.stringify(updated.ok ? updated.result?.requirement?.status : updated.error),
++  );
++  const stale = envelope(
++    "call(requirement.update stale)",
++    core.call(
++      "requirement.update",
++      JSON.stringify({ ref: "DEMO-SP-0001.R1", rev: req.rev, patch: { status: "in_progress" } }),
++    ),
++  );
++  check(
++    "a stale requirement rev yields stale_revision with conflicts",
++    stale.ok === false && stale.error?.code === "stale_revision" && Array.isArray(stale.error?.conflicts),
++    JSON.stringify(stale.error),
++  );
++  const rows = envelope(
++    "call(requirement.list)",
++    core.call("requirement.list", JSON.stringify({ spec: "DEMO-SP-0001" })),
++  );
++  check(
++    "requirement.list returns one row per requirement",
++    rows.ok === true && rows.result?.total === 2,
++    JSON.stringify(rows.ok ? rows.result?.total : rows.error),
++  );
++
+   console.log("gintrackCore.call() error path");
+   const unknown = envelope("call(nope)", core.call("nope", "null"));
+   check("an unknown method yields ok: false", unknown.ok === false);
+diff --git a/web/src/core-bridge/api.ts b/web/src/core-bridge/api.ts
+index 45bf5ea..a0e3c9e 100644
+--- a/web/src/core-bridge/api.ts
++++ b/web/src/core-bridge/api.ts
+@@ -466,6 +466,76 @@ export type SearchHit = {
+   vaultId?: string;
+ };
+ 
++/**
++ * One requirement of a spec (ADR-037, doc 03 §21). `rev` is the requirement
++ * rev — the write token `requirement.update` quotes; `blockRev` is the block
++ * rev — the fingerprint of the text that a `verified.rev` stamp records. Never
++ * swap them.
++ */
++export type Requirement = {
++  /** `<SPEC-ID>.R<n>`, e.g. `GIT-SP-0003.R2`. */
++  ref: string;
++  spec: string;
++  project?: string;
++  path: string;
++  anchor: string;
++  line: number;
++  title: string;
++  status: string;
++  /** The entry has no status: `status` is the workflow's initial status. */
++  statusImplicit?: boolean;
++  /** The block below its heading; absent from list rows unless `text: true`. */
++  text?: string;
++  statement?: string;
++  scenarios?: { name: string; line: number; steps?: string[] }[];
++  trace?: RequirementTrace;
++  verified?: RequirementVerification;
++  links?: Link[];
++  extra?: Record<string, unknown>;
++  rev: string;
++  blockRev: string;
++};
++
++export type RequirementTrace = { code?: string[]; tests?: string[]; extra?: Record<string, unknown> };
++
++export type RequirementVerification = {
++  rev?: string;
++  commit?: string;
++  at?: string;
++  by?: string;
++  extra?: Record<string, unknown>;
++};
++
++/** A sparse change to one requirement; `unset` clears `trace`, `verified` or `links`. */
++export type RequirementPatch = {
++  title?: string;
++  text?: string;
++  status?: string;
++  trace?: RequirementTrace;
++  verified?: RequirementVerification;
++  links?: Link[];
++  unset?: ('trace' | 'verified' | 'links')[];
++};
++
++export type RequirementDraft = {
++  spec: string;
++  title: string;
++  text?: string;
++  status?: string;
++  trace?: RequirementTrace;
++  links?: Link[];
++};
++
++/** The result of a requirement write. */
++export type RequirementWrite = {
++  requirement: Requirement;
++  /** The spec's file rev after the write, for a spec-level write that follows. */
++  specRev: string;
++  writes: WriteSet;
++  /** Set when the write raised `project.yaml` to schema 2 (doc 03 §21.10). */
++  schemaUpgraded?: number;
++};
++
+ /** One member of `team.yaml` (docs/04-team-repository.md §3.2). */
+ export type TeamMember = {
+   handle: string;
+@@ -1888,6 +1958,27 @@ export type CoreApi = {
+    * The triage queue of a project (ADR-033). `counts` and `pending` are over
+    * the whole queue, and an expired snooze already counts as pending.
+    */
++  /** Requirements as rows of their own (doc 03 §21); no text unless `text: true`. */
++  'requirement.list': {
++    params: {
++      project?: string;
++      spec?: string;
++      status?: string[];
++      q?: string;
++      text?: boolean;
++      includeDeleted?: boolean;
++    };
++    result: { requirements: Requirement[]; total: number };
++  };
++  /** One requirement with its text, both revs, and its spec's file rev. */
++  'requirement.get': { params: { ref: string }; result: { requirement: Requirement; specRev: string } };
++  /** Appends a requirement; `R<n>` is allocated as max + 1 and never reused. */
++  'requirement.create': { params: RequirementDraft; result: RequirementWrite };
++  /** Patches one requirement under its requirement rev (not its blockRev). */
++  'requirement.update': {
++    params: { ref: string; patch: RequirementPatch; rev: string };
++    result: RequirementWrite;
++  };
+   'inbox.list': { params: InboxFilter | undefined; result: InboxPage };
+   /**
+    * One triage decision. Accepting clears triage and moves the item into the
+diff --git a/web/src/core-bridge/protocol.ts b/web/src/core-bridge/protocol.ts
+index 2483f40..ebb0b05 100644
+--- a/web/src/core-bridge/protocol.ts
++++ b/web/src/core-bridge/protocol.ts
+@@ -44,6 +44,7 @@ export type CoreErrorCode =
+   | 'validation_failed'
+   | 'invalid_front_matter'
+   | 'duplicate_id'
++  | 'precondition_required'
+   | 'read_only';
+ 
+ export type CoreResponse =

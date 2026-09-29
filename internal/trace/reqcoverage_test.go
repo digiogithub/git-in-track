@@ -456,6 +456,12 @@ func TestClassify(t *testing.T) {
 				return []string{"code:e.go", "code:d.go", "test:a_test.go#T", "code:c.go#F", "code:b.go"}, nil
 			},
 			want{core.CoverageSuspect, []string{"code:b.go", "code:c.go#F", "code:d.go", "+2", "stamp"}}},
+		{"only a widely used declaration changed", CoverageInput{BlockRev: "sha256:a", Stamp: stamp},
+			func(string) ([]string, error) { return []string{"bounded:2"}, nil },
+			want{core.CoveragePassing, []string{"bounded:2", "stamp"}}},
+		{"bounded reach next to real drift is not listed", CoverageInput{BlockRev: "sha256:a", Stamp: stamp},
+			func(string) ([]string, error) { return []string{"bounded:2", "code:a.go#F"}, nil },
+			want{core.CoverageSuspect, []string{"code:a.go#F", "stamp"}}},
 		{"drift since every commit of the results", CoverageInput{Linked: 1,
 			Evidence: Evidence{Result: RequirementPass, Commits: []string{"c1", "c2"}, At: t0}},
 			func(c string) ([]string, error) {
@@ -575,5 +581,39 @@ func TestCoverageWithoutChanges(t *testing.T) {
 	}
 	if _, ok := c.evidence.(ResultEvidence); !ok {
 		t.Fatal("a nil evidence source is an empty test-result cache")
+	}
+}
+
+func TestDriftReasonsBoundDeclReach(t *testing.T) {
+	t.Parallel()
+	ref := core.RequirementRef{Spec: "ACME-SP-0001", Number: 1}
+	decl := func(symbol string, users int) core.TraceHit {
+		return core.TraceHit{TraceEdge: core.TraceEdge{Ref: ref, Role: core.TraceRoleCode, Path: "src/a.go", Symbol: symbol},
+			Reason: "decl", Changed: "Item", Users: users}
+	}
+	edge := core.TraceHit{TraceEdge: core.TraceEdge{Ref: ref, Role: core.TraceRoleCode, Path: "src/b.go", Symbol: "G"}, Reason: "symbol"}
+	tests := []struct {
+		name string
+		hits []core.TraceHit
+		max  int
+		want []string
+	}{
+		{"narrowly used declaration is drift", []core.TraceHit{decl("F", 3)}, 0, []string{"code:src/a.go#F"}},
+		{"at the bound is still drift", []core.TraceHit{decl("F", DefaultMaxDeclUsers)}, 0, []string{"code:src/a.go#F"}},
+		{"widely used declaration is counted, not drift", []core.TraceHit{decl("F", 11)}, 0, []string{"bounded:1"}},
+		{"several suppressed edges are counted once each", []core.TraceHit{decl("F", 11), decl("H", 40)}, 0, []string{"bounded:2"}},
+		{"real drift hides the count", []core.TraceHit{decl("F", 11), edge}, 0, []string{"code:src/b.go#G"}},
+		{"a narrow bound catches a narrow declaration", []core.TraceHit{decl("F", 3)}, 2, []string{"bounded:1"}},
+		{"a negative bound is no bound", []core.TraceHit{decl("F", 500)}, -1, []string{"code:src/a.go#F"}},
+		{"a non-decl hit ignores users", []core.TraceHit{{TraceEdge: core.TraceEdge{Ref: ref, Role: core.TraceRoleCode, Path: "src/a.go"}, Reason: "file", Users: 99}}, 0, []string{"code:src/a.go"}},
+		{"no hits", nil, 0, nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := driftReasons(tc.hits, tc.max); !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("driftReasons = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

@@ -42,7 +42,7 @@ const (
 	// reaches none of them (GIT-US-0168). The requirements only it reached
 	// are counted in the tier's Dropped. A type used everywhere, such as
 	// core.Item, says little about which requirement a change affects.
-	DefaultMaxDeclUsers = 10
+	DefaultMaxDeclUsers = trace.DefaultMaxDeclUsers
 	// maxReasons caps the reasons of one hit; the rest are counted in "+n".
 	maxReasons = 4
 	// maxDefinitions is the page of definitions tier 2 asks code_find_symbol
@@ -146,9 +146,6 @@ func New(opts Options) *Resolver {
 	}
 	if opts.CallBudget <= 0 {
 		opts.CallBudget = DefaultCallBudget
-	}
-	if opts.MaxDeclUsers == 0 {
-		opts.MaxDeclUsers = DefaultMaxDeclUsers
 	}
 	return &Resolver{opts: opts}
 }
@@ -325,7 +322,7 @@ func (r *Resolver) Impact(ctx context.Context, ix *core.Index, q core.ImpactQuer
 func (r *Resolver) direct(touching []core.TraceHit, col *collector) map[core.RequirementRef][]string {
 	wide := map[core.RequirementRef][]string{}
 	for _, h := range touching {
-		if h.Reason == "decl" && r.opts.MaxDeclUsers > 0 && h.Users > r.opts.MaxDeclUsers {
+		if trace.WideDecl(h, r.opts.MaxDeclUsers) {
 			wide[h.Ref] = append(wide[h.Ref], h.Changed)
 			continue
 		}

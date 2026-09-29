@@ -1,11 +1,11 @@
 ---
 title: Spec impact benchmark — the impact report against reading the specs
 created: 2026-09-25
-updated: 2026-09-29
+updated: 2026-09-30
 author: claude
 status: measured
 item: GIT-US-0137
-rerun: GIT-US-0161
+rerun: GIT-US-0161, GIT-US-0170
 ---
 
 # Spec impact benchmark — the impact report against reading the specs
@@ -35,6 +35,15 @@ read, below the 10× target. It closes none of the tier 1 misses of §5. Tier 3 
 in the shipped build it deadlocks (the CLI crashes after 30–90 s and the MCP tool hangs). With that
 patched out, Pando's response cache made it `unavailable` on 14 of 14 PRs. If the cache is
 followed by hand, it would have returned 3 candidates, none of them relevant.
+
+**Re-measured after the tier 1–3 precision work (`GIT-US-0170`, [§10](#10-re-measurement-after-the-tier-13-precision-work)).**
+The PR set and hand edits are now committed under
+[`spec-impact-benchmark/`](./spec-impact-benchmark/README.md), and the benchmark ran again against a
+Pando that `gintrack serve` launched itself (managed mode, ADR-039). Tier 1 now finds 16 of the 21
+behaviour requirements (was 15), tiers 1–2 find 17 (was 16), and tiers 1–3 find 19; the report of the
+default tiers costs 694 tokens at the median and 1,366 at worst (11.8× and 6.0× below the folder
+read). Tier 3 answers now, and it is the most expensive tier: 2 of its 67 candidates are right, and a PR
+that affects no requirement still gets 8 of them (67 tokens become 470).
 
 ## 1. Setup
 
@@ -545,3 +554,181 @@ The 17 evidence hits go with the 9 unrelated ones, and that is the trade-off: th
 tells the agent that a widely used type changed, and the agent can then `trace_requirement` the
 requirements it expects to be affected. The P4 hit that remains, `SP-0003.R7`, is a direct
 `symbol:` hit.
+
+## 10. Re-measurement after the tier 1–3 precision work
+
+`GIT-US-0170` measured the benchmark again after four changes that each claim to change precision or
+tokens, none of which had been run against a live Pando:
+
+| Change | Story | What it changes |
+|---|---|---|
+| #91 | `GIT-US-0166` | Tier 2 drops callers reached through a name that several definitions share, and counts a `call:` reason from a test caller as test evidence. |
+| #92 | `GIT-US-0167` | Tier 2 is `unavailable` when the code project has no call edges, instead of `ok 0`. |
+| #94 | `GIT-US-0168` | Tier 1 bounds its reach through a changed package-level declaration at 10 users (§9.9). |
+| #95 | `GIT-US-0165` | Tier 3 asks for spec blocks only (`path_prefix`) and builds its query from the story and the changed declarations in words. |
+
+The same 14 diffs as §2 and §9 ran, from the patches now committed under
+[`spec-impact-benchmark/`](./spec-impact-benchmark/README.md). That README states what had to be
+reconstructed: the eight real replays are rebuilt from git history and match the first run in files
+and changed lines, and the six hand edits are rewritten from their descriptions in §2.
+
+### 10.1 Setup
+
+- **Binary.** `gintrack` built with `make build` from `main` at `0845b41a` (`#103`), which contains #91,
+  #92, #94 and #95. The base tree is the same as in §1: a clone at `7e60c1c4`, with the results of
+  `go test -json ./internal/core/... ./internal/vault/... ./internal/mcp/...` ingested (3,325 tests
+  passed, all 32 requirements `passing`), so every hit is `suspect`.
+- **Pando, managed mode (ADR-039).** No Pando was configured by hand. A throwaway `GINTRACK_CONFIG` listed
+  only the clone, with `semanticSearch: true` and `search.pando.mode: managed`, and `gintrack serve` (port
+  47317) launched and supervised the Pando: `pando` v1.1.2-0.20260929221650-d4cc8e9f8f6a. The generated
+  `.pando.toml` (under `<cacheDir>/pando/<key>/`, never in the repository) sets `BuildCodeGraph = true`,
+  `KBPath` to the clone's `docs/`, `KBWatch = true`, and turns Mesnada, the API server and the file tools
+  off. The maintainer's `~/.pando.toml`, gintrack configuration and Pando processes were not touched. When the
+  run ended, `serve` was stopped, and the managed Pando went with it.
+- **Index.** `serve` registered the repository as a code project by itself. The index covered 1,124 files
+  (582 Go, 218 TSX, 184 TypeScript, 124 Markdown) and 19,104 symbols, and took about 100 s (§9.1 counted 582 Go files and
+  14,720 symbols). Pando indexed the
+  base once. The replays change only the working tree, so tiers 2 and 3 answer from the base index.
+- **Runs.** Every PR ran `spec impact --since 7e60c1c4` for tiers `1`, `1,2`, `1,2,3` and `3`, each twice as
+  compact JSON and once as text. The report's `tokens` is the size of the MCP JSON result. `spec_impact` over
+  `gintrack mcp` (stdio) found the managed instance too, with no `mcpUrl` configured.
+- **Recall truth set.** 21 requirements whose behaviour a replay really changes: the 15 behaviour hits of §5,
+  the P3 `SP-0003.R3` of §9.3, and the five known misses (S4 `SP-0004.R1`, S3 `SP-0004.R4` and `R5`, P5
+  `SP-0002.R7` and `SP-0004.R6`). It lives in `spec-impact-benchmark/verdicts.json`, and the numbers of §5
+  and §9 are restated against it. The only verdicts added here are the new hits of §10.3.
+
+### 10.2 Results
+
+Precision is behaviour hits over the hits a tier reached first (strict) and behaviour plus evidence over
+them (lenient), as in §9.3. Recall is cumulative over the 21 behaviour requirements. Tokens are the report's
+`tokens` over the 12 PRs, controls excluded. The old columns are §5 and §9 (the first-run binary).
+
+| Tier | Hits (B/E/U) old | Hits (B/E/U) new | Strict old → new | Lenient old → new | Recall old → new | Median tokens old → new | Worst old → new |
+|---|---|---|---|---|---|---|---|
+| 1 | 29 (15/9/5) | 33 (16/12/5) | 52 % → 48 % | 83 % → 85 % | 15 → 16 of 21 (71 → 76 %) | 190 → 204 | 716 → 756 |
+| 2, its own hits | 22 (1/9/12) | 20 (1/9/10) | 5 % → 5 % | 45 % → 50 % | 16 → 17 (76 → 81 %) | 261 → 353 (tiers 1–2) | 1,393 → 1,218 |
+| 3, its own hits | 0 (unavailable) | 67 (2/0/65) | — → 3 % | — → 3 % | 16 → 19 (76 → 90 %) | +99 → +300 (tiers 1–3) | — → 1,366 (tiers 1–3) |
+| 3 alone, top 8 | 3 by hand, 0 right | 96 (14/14/68) | 0 % → 15 % | 0 % → 29 % | — | — → 484 | — → 517 |
+
+- **Tier 1** gains S4: `maxPageSize` now reaches `SP-0004.R1` through `decl:… uses maxPageSize` (§8 follow-up 2),
+  plus three evidence hits from `TestListItems`. Tier 1 no longer floods on a widely used type: P4 goes from
+  15 hits to 1 and P5 from 12 to 0, and the dropped counts show in the tier line (`1 ok 1, 3 dropped (uses Item)`).
+  The other PRs have the same hits as in §5.
+- **Tier 2** has 20 hits of its own against 22: 1 behaviour, 9 evidence and 10 unrelated. The two hits that came
+  from a shared name are gone (P2 `SP-0001.R2` through `Valid`, P4 `SP-0002.R8` through `add`). The rest are the
+  same: 4 hits of P3 and 3 of P4 that a production caller reaches through a function it does not use for the
+  requirement (`FileStore.UpdateRequirement` calls `linksHaveSpecConstruct` and `writeItem`), one of S2 and two
+  of S5. Test callers now rank as `test-only`: the 8 evidence hits of P4 and P2 `SP-0003.R6`. Its one behaviour
+  hit is still P3 `SP-0003.R3`, and it now ranks as `test-only`, because the production caller
+  (`validateItemLinks`) has no marker and the only edge that reaches the requirement is a test's. The P1 corroboration
+  flip of §9.3 is gone: `SP-0001.R2`, `R9` and `R10` stay `test-only`. The flip that was right, P3 `SP-0003.R1`,
+  is gone with it.
+- **Tier 3** answers, and it is deterministic. It is not precise. See §10.4 for why, and §10.5 for its cost.
+- **Folder read.** Tier 1: 40× the median and 10.8× the worst. Tiers 1–2: 23× and 6.7×. Default tiers: **11.8×
+  and 6.0×**. Against the oracle spec the ratios are 7.5× and 3.3× (tier 1), 4.6× and 1.7× (tiers 1–2), and
+  2.6× and 1.5× (default). The typical report is under the 1.5k budget and 10× below the folder, and no report
+  was truncated. The worst one, P4, stays under the budget at 1,366 tokens, but it is 6.0× and not 10× below the folder.
+- **Latency.** Tier 1: 0.30 s median. Tiers 1–2: 0.62 s. Default tiers: 0.67 s, 0.31 s for tier 3 alone. Three PRs took
+  10.3 s: tier 2 hit its call budget (§10.6).
+- **Determinism.** 56 of 56 pairs were byte-identical, tier 3 included (§9.6 could not say that: its
+  `unavailable` message carried a random cache id).
+
+Recall by requirement:
+
+| Missed before | Now found by |
+|---|---|
+| S4 `SP-0004.R1` | tier 1 (`decl:`, #94) |
+| P5 `SP-0004.R6` | tier 3 (candidate 6 of 8, score 0.014) |
+| S3 `SP-0004.R5` | tier 3 (candidate 6 of 8, score 0.015) |
+| P5 `SP-0002.R7`, S3 `SP-0004.R4` | still missed by every tier |
+
+### 10.3 The hits judged
+
+Same categories as §5. New or changed verdicts only:
+
+| Hit | Verdict | Why |
+|---|---|---|
+| S4 `SP-0004.R1` (tier 1) | behaviour | The cap of 100 is `maxPageSize`. |
+| S4 `SP-0004.R2`, `R6`, `R7` (tier 1) | evidence | `TestListItems` verifies them and reads `maxPageSize`. |
+| P3 `SP-0003.R5` (tier 3) | unrelated | The replay does not touch `validateLinkTargetType`. |
+| P5 `SP-0004.R6`, S3 `SP-0004.R5` (tier 3) | behaviour | The two known misses of §5 and §9.3. |
+| Every other tier-3 candidate | unrelated, or evidence for the hits of §5 | 65 of the 67 candidates that no other tier reached are unrelated. |
+
+### 10.4 Why tier 3 gets little from its full-text leg (AC3)
+
+The tier-3 query is one part per line, cut at 1,000 bytes (`maxQueryBytes`): for each changed declaration the first
+sentence of its doc comment, or its name in words when it has none. Pando's knowledge-base search fuses a vector
+leg and a full-text leg by reciprocal rank fusion, and a chunk's score is the sum of `1 / (60 + rank)` over the
+legs that returned it. One leg gives at most 0.0164, and two legs give up to 0.0328. The full-text leg requires
+every word of the query.
+
+- **In the benchmark, the full-text leg never returned a hit.** The highest score of the 112 candidates of the 14
+  tier-3 runs is 0.016, and scores lie between 0.014 and 0.016. A long query of doc-comment words gets no chunk
+  that contains all of them.
+- **A short query does get full-text hits.** By hand, for the five PRs that change one declaration, with the
+  declaration's name in words: `conflict with` (S1), `next number` (S2) and `list items` (S3) score 0.027–0.033,
+  which means both legs matched. `max page size` (S4) and `from vault` (S5) do not. For S1 (`fields conflict`), the
+  full-text leg puts the chunks that use the words on top.
+- **It does not hurt recall in this sample.** The requirements a short query puts in its top 8 are the same as
+  the ones the shipped query finds: S1 2 of 2, S2 1 of 2, S3 1 of 2, S4 1 of 1, S5 0 of 1, 5 of 8 either way. The
+  vector leg alone already ranks the requirement nearest to what the code says. What the missing full-text leg
+  costs is ranking: 0.014–0.016 spans about two ranks of `1 / (60 + rank)`, so the order of the candidates is
+  close to arbitrary, and a chunk that names the changed word is not ahead of one that merely resembles it.
+  Nothing was measured for the seven PRs that change several declarations, which is where the query is longest.
+- **Caveat.** The short queries were built by hand and the chunks mapped to requirements by their heading, not by
+  the product's mapper. It is a sample of five, not a benchmark of query shapes.
+
+The cost of tier 3 is not the query but the candidate list (§10.2): it returns up to 8 blocks whatever the diff
+is, so it fills a report even when nothing is affected.
+
+### 10.5 What tier 3 costs
+
+- A report that affects no requirement (P6, P7, C1, C2) goes from 66–71 tokens to 467–473, and its 8 candidates are
+  all unrelated. The two controls are the pure false positives of the benchmark.
+- Over the 12 PRs the default tiers add 300 tokens at the median to a tier 1–2 report (100 to 421).
+- On the PRs that tiers 1 and 2 answer (P1–P4, S1, S2, S5), tier 3 adds 2 to 8 candidates per PR, and none of them is
+  right.
+
+### 10.6 Findings
+
+These are proposals to add under `GIT-EP-0029`. None of them was fixed here.
+
+1. **Tier 2 is `unavailable (Pando did not answer in time)` on 3 of 12 PRs (S1, S3, S4), and each run costs the
+   whole 10 s call budget.** After #92, a tier 2 that found no caller probes the call graph with
+   `code_related_files` on the changed files (`Resolver.probeGraph`). On this instance that Pando tool did not
+   answer within 40 s for any of four files, and not within 8 s for an absent one (`zzz/none.go`); the one call left
+   to finish returned after 194 s with `limit: 1`. `code_find_symbol`, `code_impact_analysis` and the searches answer in
+   under 0.1 s on the same instance. Caller-less PRs are common: for those three no caller of a changed
+   function survives (S3's `listItems` shares its name with a TypeScript method, so its callers are dropped). Proposal: probe with a tool that is cheap on a large graph, or skip the probe for a project
+   that Pando reports as indexed with the code graph on, or give the probe a budget of its own.
+2. **Tier 3 returns 8 candidates whatever the diff (§10.5).** Proposal: a score floor, and no candidate that the
+   tiers 1–2 already reached is listed as new; and no candidate at all when the diff touches no traced symbol and no
+   linked story, or say it in the tier line.
+3. **A true tier-2 behaviour hit ranks as `test-only`** (P3 `SP-0003.R3`) when the only call edge that reaches it
+   comes from a test. That is a consequence of #91 counting a test caller as evidence. If the production caller has no
+   markers, the hit has no evidence of behaviour either way; rank it below behaviour hits but do not label it
+   `test-only`.
+4. **The first call after a change to the working tree can fail with `unavailable (Pando did not answer in time)`
+   in tier 3.** It is intermittent: in one experiment the second of four calls failed in each of three rounds at
+   0.5 s, and in another none of ten failed. It coincides with Pando re-importing the documents a replay changed
+   (`KBWatch = true` in the generated `.pando.toml`), and a retry succeeds. `replay.sh` waits until tier 3 answers before
+   it measures, and every measured report has tier 3 `ok`. Symptom to fix: a tier that fails in under a second
+   is reported as "did not answer in time".
+5. **Stale text** found on the way: `gintrack spec impact --help` still says "the command line has no Pando client, so
+   they report unavailable", and ADR-039 still says "Nothing in this ADR is implemented".
+
+### 10.7 Managed mode, as it behaved
+
+Managed mode worked end to end for this benchmark:
+
+- `gintrack pando status --json` reported `not running` before `serve`, then `ready` with a pid, a port, the version,
+  the `mcpUrl` and the `tokenFile`, and never the token.
+- `serve` started the Pando in about 4 s, wrote its files under `<cacheDir>/pando/<key>/` (`.pando.toml`, `data/`,
+  `pando.log`, `state.json`, `token`), registered the code project with the id derived from the repository root
+  and built the code graph. No `mcpUrl` or `projectId` was configured anywhere.
+- `gintrack spec impact` and `gintrack mcp` found the instance from `state.json`, so tiers 2 and 3 answered.
+- `gintrack pando restart` gave a new pid and port, registered the project again, and kept the index. Its reply
+  showed the old pid and port, because it answers before the child has been replaced.
+- The difference from the hand setup of §9.1 that matters: `KBWatch = true` (the hand setup had it off). The knowledge base
+  therefore follows the replayed working tree, which is why `replay.sh` waits for Pando to settle. The code index does not
+  follow it.

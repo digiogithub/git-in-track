@@ -286,7 +286,10 @@ Examples:
   never an error.
 - **R-SLUG-2** Renaming an item title SHOULD rename the file (`git mv`) so browsing stays pleasant;
   the CLI does this by default and the web app offers it as a checkbox. Tools MUST tolerate a
-  refusal to rename.
+  refusal to rename. The rename is triggered only by a change to `title`: an update that leaves the
+  title as it was (a status move, a label edit, a body edit, a resent identical title) MUST keep the
+  existing filename, even when its slug is stale or longer than 60 bytes. Such a file only carries
+  `W-SLUG-STALE`; it is renamed by a real title change or by `gintrack doctor --fix`.
 - **R-SLUG-3** The ID prefix of the filename MUST match the `id` field. Mismatch is error
   `E-ID-FILENAME`.
 - **R-SLUG-4** Two files with the same `id` anywhere under `.pmngr/` is error `E-ID-DUPLICATE`
@@ -2724,7 +2727,11 @@ Two hashes per requirement, both `"sha256:" + lowercase_hex(sha256(x))[0:16]` li
      `HEAD`: the trace graph is scanned from it, so changed lines map to the right symbols, and
      an uncommitted edit of a traced symbol no longer holds what was verified either; on a clean
      tree the two are the same. Without history, or with no commit recorded, drift is left
-     `unchecked` and the row is `passing`.
+     `unchecked` and the row is `passing`. A `decl` reach (§21.7) through a declaration used by
+     more functions than the shared bound (`DefaultMaxDeclUsers`, as in R-IMP-2) is not drift
+     (`GIT-US-0169`): when it is the only change since the commit, the row stays `passing` and
+     carries `bounded:<n>`, the number of traced edges it suppressed, so the suppressed drift
+     is visible rather than lost; next to a real `code:`/`test:` change it adds nothing.
   5. Otherwise `untested`: `no-tests` (no `Verifies:` marker or `trace.tests` entry), `partial`,
      or `no-results`.
   6. **Verified at** (`GIT-US-0148`). A `passing` row also carries `commit`, the one full commit
@@ -2850,6 +2857,9 @@ Two hashes per requirement, both `"sha256:" + lowercase_hex(sha256(x))[0:16]` li
     the whole package, traced or not, that use the name — how widely the declaration is used
     (`GIT-US-0168`). An edge several changed names reach keeps the least used one (ties by
     name), so impact's bound (R-IMP-2) never hides a narrow declaration behind a wide one.
+    **One bound, two readers** (`GIT-US-0169`): coverage drift (R-REQ-12a rule 4) applies the same
+    bound as impact tier 1, from the same constant (`DefaultMaxDeclUsers`, 10): a `decl` hit whose
+    `users` exceeds it is not drift.
   - Every list is sorted (requirements by spec and number; edges by path, symbol, ref and role),
     so the same repository state gives byte-identical answers. The graph lives in memory, is
     rebuilt when the index or the scan changes, and is never written to any file. The companion

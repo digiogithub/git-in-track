@@ -1,0 +1,473 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 1cf7c0f..f70ad26 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -378,6 +378,14 @@ because a commit list cannot express them.
+   `HEAD` only while the tree differs from it in `.pmngr/` backlog files at most. Coverage rows
+   (`coverage.list`, `gintrack spec coverage --json`) gain `commit`, the commit a passing row's
+   evidence verified the current text at. The known limitation in docs/09 is gone.
++- **An empty `conflicts[]` on a requirement write now reliably means "already saved"**
++  (`GIT-US-0151`, docs/08 §4.5). `requirement.update` — vault, MCP `update_requirement` and
++  `PATCH …/requirements/{req}` — already omitted `conflicts` when every proposed field held its
++  value, but it also omitted them when a stale patch could not be applied to the current
++  content (an invalid title or text), so the caller was told its change was already there. Such
++  a patch now names every field it carries. The web requirement detail treats a
++  `stale_revision` with no conflicts as saved: it closes the editor, reloads and says *Already
++  saved* instead of showing the conflict alert or an error, for block edits and status moves.
+ - **`search_semantic` works over stdio `gintrack mcp`** (GIT-US-0121). Only `gintrack serve`
+   installed the semantic searcher, so an agent spawning `gintrack mcp` always got
+   `unavailable` even with `search.pando.mcpUrl` configured. The stdio server now installs the
+diff --git a/docs/.pmngr/comments/GIT-US-0151/20260924T221152Z-claude.md b/docs/.pmngr/comments/GIT-US-0151/20260924T221152Z-claude.md
+new file mode 100644
+index 0000000..67101f0
+--- /dev/null
++++ b/docs/.pmngr/comments/GIT-US-0151/20260924T221152Z-claude.md
+@@ -0,0 +1,10 @@
++---
++item: GIT-US-0151
++author: claude
++created: 2026-09-24T22:11:52Z
++type: comment
++---
++
++Already-applied requirement updates already omitted `conflicts`; the real gap was a stale patch the store would refuse (bad title/text), which also came back with no conflicts and read as "already applied" — it now names every field it carries.
++Table tests cover already-applied, partial overlap and real conflict in the vault, MCP `update_requirement` and HTTP PATCH.
++The web requirement detail treats a `stale_revision` with no conflicts as "Already saved" (block edits and status moves): it reloads, with no alert or error; docs/05, 07, 08 and CHANGELOG updated.
+diff --git a/docs/05-web-app.md b/docs/05-web-app.md
+index 9c4660c..30bb573 100644
+--- a/docs/05-web-app.md
++++ b/docs/05-web-app.md
+@@ -440,7 +440,10 @@ rewritten. A `stale_revision` keeps the draft and shows an alert with the **per-
+ disk)* next to *Yours*; the core names `text` without quoting it, so the view reloads the
+ requirement and fills in theirs once it holds the reported `currentRev`. *Reload theirs* drops the
+ draft and shows the file; *Save mine over theirs* repeats the same patch quoting `currentRev`
+-(never `*`); *Keep editing* closes the alert. `ProviderError` carries `currentRev` and
++(never `*`); *Keep editing* closes the alert. A `stale_revision` with an **empty** (absent)
++`conflicts[]` means the change is already on disk (GIT-US-0151): the view closes the editor,
++reloads and says *Already saved* instead of showing the alert — the status control does the
++same. `ProviderError` carries `currentRev` and
+ `conflicts[]` for this in all three providers (§4). Nothing to edit is offered in a read-only
+ workspace. **Browser-only mode:** the block, the status control and editing work over the WASM
+ core; the trace panel reads *Trace unavailable* and coverage `unavailable`, each with the
+diff --git a/docs/07-cli-and-api.md b/docs/07-cli-and-api.md
+index e4e1895..9e7a1c9 100644
+--- a/docs/07-cli-and-api.md
++++ b/docs/07-cli-and-api.md
+@@ -5180,7 +5180,9 @@ changes except `updated`, so no other requirement's `rev` moves. The rules:
+ - A `rev` that is no longer the requirement's current rev fails with `stale_revision`, carrying
+   `currentRev` (the requirement rev now) and `conflicts[]` over `text` (named, never quoted),
+   `title`, `status`, `trace`, `verified` and `links`, judged against the file as it is now
+-  (R-REV-3a). An empty `conflicts[]` means the change had already been made. A concurrent write to
++  (R-REV-3a). An empty (absent) `conflicts[]` means every proposed field already holds its value:
++the change had already been made. A patch that cannot be judged against the current content
++names every field it carries instead, so it never reads as already made. A concurrent write to
+   **another** requirement of the same spec, or to the spec's own front matter, does not make the
+   rev stale.
+ - A status change follows the project workflow exactly like `item.move`
+diff --git a/docs/08-mcp-server.md b/docs/08-mcp-server.md
+index a87f5e9..4258749 100644
+--- a/docs/08-mcp-server.md
++++ b/docs/08-mcp-server.md
+@@ -1060,8 +1060,11 @@ Both writes answer with the requirement without its text — the agent just sent
+ A stale `rev` is refused exactly like `update_item` (section 4.5): `stale_revision` with
+ `currentRev` — the requirement rev now — the one-line `retry`, and `conflicts[]` over `text`
+ (named, never quoted), `title`, `status`, `trace`, `verified` and `links`, judged against the file
+-as it is now. An empty (absent) `conflicts` means your change is already there: stop. A missing
+-`rev` is `precondition_required`; `"*"` is the explicit, unsafe waiver.
++as it is now. An empty (absent) `conflicts` means every field you proposed already holds its
++value — your change is already there: stop. A patch that cannot be judged against the current
++content (one the write would refuse anyway) names every field it carries, so it never reads as
++already applied. A missing `rev` is `precondition_required`; `"*"` is the explicit, unsafe
++waiver.
+ 
+ ```json
+ { "error": { "code": "stale_revision",
+diff --git a/internal/core/requirementstore.go b/internal/core/requirementstore.go
+index 8bac9c2..b05d471 100644
+--- a/internal/core/requirementstore.go
++++ b/internal/core/requirementstore.go
+@@ -3,6 +3,7 @@ package core
+ import (
+ 	"context"
+ 	"fmt"
++	"slices"
+ 	"strings"
+ 	"unicode/utf8"
+ )
+@@ -353,22 +354,28 @@ func applyRequirementPatch(it *Item, n int, patch RequirementPatch, cfg *Project
+ // requirementConflicts reports the fields a refused requirement write would
+ // still change, judged against the spec as it is on disk now (R-REV-3a). The
+ // text is named, never quoted back, like an item body.
++//
++// The list is empty exactly when every field the patch proposes already holds
++// its value, which is what tells a caller its change is already there
++// (GIT-US-0151). A patch that cannot be applied to the current content — one
++// the store would refuse — has no field diff, so it names every field it
++// carries rather than reading as already applied.
+ func requirementConflicts(current *Item, n int, patch RequirementPatch, cfg *ProjectConfig) []ConflictField {
+ 	if current == nil {
+-		return nil
++		return patchConflicts(RequirementView{}, patch)
++	}
++	cur, err := FindRequirement(current, n, cfg)
++	if err != nil {
++		return patchConflicts(RequirementView{}, patch)
+ 	}
+ 	proposed := current.clone()
+ 	proposed.Requirements = current.Requirements.Clone()
+ 	if err := applyRequirementPatch(proposed, n, patch, cfg); err != nil {
+-		return nil
+-	}
+-	cur, err := FindRequirement(current, n, cfg)
+-	if err != nil {
+-		return nil
++		return patchConflicts(cur, patch)
+ 	}
+ 	next, err := FindRequirement(proposed, n, cfg)
+ 	if err != nil {
+-		return nil
++		return patchConflicts(cur, patch)
+ 	}
+ 	var out []ConflictField
+ 	add := func(field, c, p string) {
+@@ -387,6 +394,53 @@ func requirementConflicts(current *Item, n int, patch RequirementPatch, cfg *Pro
+ 	return out
+ }
+ 
++// patchConflicts names every field a patch carries, in the order
++// requirementConflicts reports them, with the current value beside the
++// proposed one. It is the report for a patch that could not be judged field by
++// field. The text is named, never quoted.
++func patchConflicts(cur RequirementView, patch RequirementPatch) []ConflictField {
++	var out []ConflictField
++	if patch.Text != nil {
++		out = append(out, ConflictField{Field: "text"})
++	}
++	if patch.Title != nil {
++		out = append(out, ConflictField{Field: "title", Current: cur.Title, Proposed: *patch.Title})
++	}
++	if patch.Status != nil {
++		out = append(out, ConflictField{Field: "status", Current: string(cur.Status), Proposed: string(*patch.Status)})
++	}
++	unset := func(field string) bool { return slices.Contains(patch.Unset, field) }
++	if patch.Trace != nil || unset("trace") {
++		proposed := ""
++		if patch.Trace != nil {
++			proposed = renderTrace(patch.Trace)
++		}
++		out = append(out, ConflictField{Field: "trace", Current: renderTrace(cur.Trace), Proposed: proposed})
++	}
++	if patch.Verified != nil || unset("verified") {
++		proposed := ""
++		if patch.Verified != nil {
++			proposed = renderVerification(patch.Verified)
++		}
++		out = append(out, ConflictField{Field: "verified", Current: renderVerification(cur.Verified), Proposed: proposed})
++	}
++	if patch.Links != nil || unset("links") {
++		proposed := ""
++		if patch.Links != nil {
++			proposed = renderLinks(*patch.Links)
++		}
++		out = append(out, ConflictField{Field: "links", Current: renderLinks(cur.Links), Proposed: proposed})
++	}
++	for _, field := range patch.Unset {
++		switch field {
++		case "trace", "verified", "links":
++		default:
++			out = append(out, ConflictField{Field: field})
++		}
++	}
++	return out
++}
++
+ // renderTrace renders a trace for a conflict report.
+ func renderTrace(t *RequirementTrace) string {
+ 	if t == nil || (len(t.Code) == 0 && len(t.Tests) == 0) {
+diff --git a/internal/mcp/tools_specs_test.go b/internal/mcp/tools_specs_test.go
+index c1a7626..7038d45 100644
+--- a/internal/mcp/tools_specs_test.go
++++ b/internal/mcp/tools_specs_test.go
+@@ -277,6 +277,24 @@ func TestRequirementRevProtocol(t *testing.T) {
+ 		}
+ 	})
+ 
++	t.Run("a partial overlap names only the field still in conflict", func(t *testing.T) {
++		h := newHarness(t, true)
++		spec := specFixture(t, h)
++		before := read(t, h, spec+".R3")
++		call[RequirementWriteResult](t, h, "update_requirement", map[string]any{
++			"ref": before.Ref, "rev": before.Rev, "title": "Trim every field", "status": "todo",
++		})
++		got := callFails(t, h, "update_requirement", map[string]any{
++			"ref": before.Ref, "rev": before.Rev, "title": "Trim every field", "status": "in_progress",
++		})
++		if got.Code != "stale_revision" || got.Retry == "" {
++			t.Fatalf("overlapping write = %+v", got)
++		}
++		if len(got.Conflicts) != 1 || got.Conflicts[0].Field != "status" {
++			t.Errorf("conflicts = %+v, want status only", got.Conflicts)
++		}
++	})
++
+ 	t.Run("the block rev is not a write token", func(t *testing.T) {
+ 		h := newHarness(t, true)
+ 		spec := specFixture(t, h)
+diff --git a/internal/server/specs_test.go b/internal/server/specs_test.go
+index 6a2d560..a3799d2 100644
+--- a/internal/server/specs_test.go
++++ b/internal/server/specs_test.go
+@@ -477,3 +477,60 @@ func TestSpecLiveRoutes(t *testing.T) {
+ 	decode(t, send(t, s, request{method: http.MethodPost, target: "/api/v1/projects/NOPE/specs/lint",
+ 		body: map[string]any{"type": "spec", "body": ""}}), http.StatusNotFound, &doc)
+ }
++
++// TestRequirementStaleConflicts pins the conflicts a PATCH refused for a stale
++// rev reports: none when the change is already on disk, only the fields that
++// still differ otherwise (GIT-US-0151).
++func TestRequirementStaleConflicts(t *testing.T) {
++	t.Parallel()
++	tests := []struct {
++		name          string
++		first, second map[string]any
++		want          []string
++	}{
++		{
++			name:   "already applied",
++			first:  map[string]any{"title": "Trim everything", "status": "todo"},
++			second: map[string]any{"title": "Trim everything", "status": "todo"},
++		},
++		{
++			name:   "partial overlap",
++			first:  map[string]any{"title": "Trim everything", "status": "todo"},
++			second: map[string]any{"title": "Trim everything", "status": "in_progress"},
++			want:   []string{"status"},
++		},
++		{
++			name:   "real conflict",
++			first:  map[string]any{"title": "Trim everything"},
++			second: map[string]any{"title": "Trim nothing", "text": "The checkout SHALL NOT trim."},
++			want:   []string{"text", "title"},
++		},
++	}
++	for _, tc := range tests {
++		t.Run(tc.name, func(t *testing.T) {
++			t.Parallel()
++			s, _ := specServer(t)
++			target := specsBase + "/DEMO-SP-0001/requirements/R1"
++			var base requirementResult
++			decode(t, send(t, s, request{method: http.MethodGet, target: target}), http.StatusOK, &base)
++			var wrote requirementResult
++			decode(t, send(t, s, request{method: http.MethodPatch, target: target,
++				header: map[string]string{"If-Match": base.Requirement.Rev}, body: tc.first}), http.StatusOK, &wrote)
++
++			var doc problemBody
++			decode(t, send(t, s, request{method: http.MethodPatch, target: target,
++				header: map[string]string{"If-Match": base.Requirement.Rev}, body: tc.second}),
++				http.StatusPreconditionFailed, &doc)
++			if doc.Code != "stale_revision" || doc.CurrentRev != wrote.Requirement.Rev {
++				t.Fatalf("problem = %+v", doc)
++			}
++			var got []string
++			for _, c := range doc.Conflicts {
++				got = append(got, c.Field)
++			}
++			if strings.Join(got, ",") != strings.Join(tc.want, ",") {
++				t.Errorf("conflicts = %v, want %v", got, tc.want)
++			}
++		})
++	}
++}
+diff --git a/internal/vault/requirement_test.go b/internal/vault/requirement_test.go
+index 1d0fc9b..a5d4e3b 100644
+--- a/internal/vault/requirement_test.go
++++ b/internal/vault/requirement_test.go
+@@ -205,6 +205,33 @@ func TestRequirementUpdateConflictMatrix(t *testing.T) {
+ 			wantCode:      "stale_revision",
+ 			wantConflicts: nil,
+ 		},
++		{
++			name:          "stale rev whose every field already happened",
++			first:         map[string]any{"ref": "DEMO-SP-0001.R1", "patch": map[string]any{"title": "Trim everything", "status": "todo", "trace": map[string]any{"code": []string{"internal/checkout/address.go"}}}},
++			ref:           "DEMO-SP-0001.R1",
++			second:        map[string]any{"title": "Trim everything", "status": "todo", "trace": map[string]any{"code": []string{"internal/checkout/address.go"}}},
++			wantCode:      "stale_revision",
++			wantConflicts: nil,
++		},
++		{
++			name:          "stale rev with a partial overlap names only what still differs",
++			first:         map[string]any{"ref": "DEMO-SP-0001.R1", "patch": map[string]any{"title": "Trim everything", "status": "todo"}},
++			ref:           "DEMO-SP-0001.R1",
++			second:        map[string]any{"title": "Trim everything", "status": "in_progress"},
++			wantCode:      "stale_revision",
++			wantConflicts: []string{"status"},
++		},
++		{
++			// A patch the store would refuse cannot be judged field by field,
++			// and an empty list would tell the caller its change is already
++			// there. It names the fields it carries instead.
++			name:          "stale rev with a patch the store would refuse is never already applied",
++			first:         map[string]any{"ref": "DEMO-SP-0001.R1", "patch": map[string]any{"status": "todo"}},
++			ref:           "DEMO-SP-0001.R1",
++			second:        map[string]any{"title": "  ", "text": "The checkout SHALL trim.\n\n## Oops\n"},
++			wantCode:      "stale_revision",
++			wantConflicts: []string{"text", "title"},
++		},
+ 	}
+ 	for _, tc := range tests {
+ 		t.Run(tc.name, func(t *testing.T) {
+diff --git a/web/src/features/specs/RequirementDetail.test.tsx b/web/src/features/specs/RequirementDetail.test.tsx
+index a20dc48..b746eeb 100644
+--- a/web/src/features/specs/RequirementDetail.test.tsx
++++ b/web/src/features/specs/RequirementDetail.test.tsx
+@@ -19,7 +19,7 @@ import {
+   type FakeSpecAnalysis,
+ } from '@/api/fake-provider';
+ import type { Item, Requirement } from '@/api/provider';
+-import { BROWSER_SPEC_ANALYSIS_REASON } from '@/api/provider';
++import { BROWSER_SPEC_ANALYSIS_REASON, ProviderError } from '@/api/provider';
+ import { ToastProvider } from '@/components/ui/toast';
+ import { RequirementDetail } from '@/features/specs/RequirementDetail';
+ 
+@@ -304,6 +304,52 @@ describe('RequirementDetail', () => {
+     expect(screen.queryByRole('form', { name: 'Edit requirement' })).toBeNull();
+   });
+ 
++  it('treats a stale save whose change is already on disk as saved, not as a conflict', async () => {
++    const user = userEvent.setup();
++    const { provider } = renderDetail();
++
++    const form = await openEditor(user);
++    // Someone else made the very same rename while the edit was open.
++    await provider.updateRequirement(
++      'ACME',
++      'ACME-SP-0001.R2',
++      { title: 'Keep the basket' },
++      'sha256:req-rev',
++    );
++    const title = within(form).getByLabelText('Title');
++    await user.clear(title);
++    await user.type(title, 'Keep the basket');
++    const update = vi.spyOn(provider, 'updateRequirement');
++    await user.click(within(form).getByRole('button', { name: 'Save block' }));
++
++    expect(await screen.findByText('Already saved')).toBeInTheDocument();
++    await screen.findByRole('heading', { level: 1, name: 'Keep the basket' });
++    expect(screen.queryByRole('alert')).toBeNull();
++    expect(screen.queryByRole('form', { name: 'Edit requirement' })).toBeNull();
++    expect(screen.queryByText('The requirement could not be saved')).toBeNull();
++    // The empty conflict list is the answer: nothing is written again.
++    expect(update).toHaveBeenCalledTimes(1);
++  });
++
++  it('treats a stale status move that already happened as saved', async () => {
++    const user = userEvent.setup();
++    const { provider } = renderDetail();
++    const update = vi
++      .spyOn(provider, 'updateRequirement')
++      .mockRejectedValueOnce(
++        new ProviderError('stale_revision', 'changed on disk', spec.path, {
++          currentRev: 'sha256:theirs',
++        }),
++      );
++
++    const select = await screen.findByLabelText<HTMLSelectElement>('Status');
++    await user.selectOptions(select, 'in_review');
++
++    expect(await screen.findByText('Already saved')).toBeInTheDocument();
++    expect(screen.queryByText('Changed on disk')).toBeNull();
++    expect(update).toHaveBeenCalledTimes(1);
++  });
++
+   it('retries a conflicted save quoting the rev now on disk', async () => {
+     const user = userEvent.setup();
+     const { provider } = renderDetail();
+diff --git a/web/src/features/specs/RequirementDetail.tsx b/web/src/features/specs/RequirementDetail.tsx
+index 49031d3..fe27107 100644
+--- a/web/src/features/specs/RequirementDetail.tsx
++++ b/web/src/features/specs/RequirementDetail.tsx
+@@ -35,6 +35,20 @@ type Draft = { title: string; text: string; baseRev: string; baseTitle: string;
+ /** A save refused with `stale_revision`, kept until the user decides. */
+ type Conflict = { error: ProviderError; patch: RequirementPatch };
+ 
++/**
++ * Whether a refused write had already happened: a `stale_revision` whose
++ * `conflicts` list is empty (or absent) means every field it proposed already
++ * holds its value on disk (docs/08 §4.5, GIT-US-0151). There is nothing left
++ * to save and nothing to merge — reload, never write again.
++ */
++function alreadyApplied(error: unknown): error is ProviderError {
++  return (
++    error instanceof ProviderError &&
++    error.code === 'stale_revision' &&
++    (error.conflicts ?? []).length === 0
++  );
++}
++
+ const fieldLabels: Record<string, string> = {
+   text: 'Statement and scenarios',
+   title: 'Title',
+@@ -51,7 +65,8 @@ const fieldLabels: Record<string, string> = {
+  * suspect reasons, and the trace panel. Editing saves only this block through
+  * `updateRequirement`, quoting the **requirement rev** (the write token, doc
+  * 03 §21.5) — never the block rev a stamp records. A `stale_revision` shows
+- * the per-field diff and lets the user reload theirs or save theirs-aware.
++ * the per-field diff and lets the user reload theirs or save theirs-aware;
++ * one with an empty `conflicts` list is already saved and just reloads.
+  * Browser-only mode reads and edits the block; trace and coverage read
+  * `unavailable`.
+  */
+@@ -139,6 +154,7 @@ export function RequirementDetail() {
+               project={project}
+               projectKey={projectKey}
+               writable={writable}
++              onReload={() => void requirementQuery.refetch()}
+             />
+             <CoverageCard
+               state={
+@@ -229,6 +245,16 @@ function BlockCard({
+           toast({ title: `Saved ${result.requirement.ref}` });
+         },
+         onError: (error) => {
++          if (alreadyApplied(error)) {
++            setDraft(null);
++            setConflict(null);
++            onReload();
++            toast({
++              title: 'Already saved',
++              description: `${requirement.ref} already holds this change.`,
++            });
++            return;
++          }
+           if (error instanceof ProviderError && error.code === 'stale_revision') {
+             setConflict({ error, patch });
+             onReload();
+@@ -429,11 +455,13 @@ function StatusCard({
+   project,
+   projectKey,
+   writable,
++  onReload,
+ }: {
+   requirement: Requirement;
+   project: ProjectSummary | undefined;
+   projectKey: string;
+   writable: boolean;
++  onReload: () => void;
+ }) {
+   const update = useUpdateRequirement(projectKey);
+   const { toast } = useToast();
+@@ -467,6 +495,14 @@ function StatusCard({
+                   toast({ title: `Moved ${requirement.ref} to ${status}` });
+                 },
+                 onError: (error) => {
++                  if (alreadyApplied(error)) {
++                    onReload();
++                    toast({
++                      title: 'Already saved',
++                      description: `${requirement.ref} is already ${status}.`,
++                    });
++                    return;
++                  }
+                   if (error instanceof ProviderError && error.code === 'stale_revision') {
+                     toast({
+                       variant: 'destructive',

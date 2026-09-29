@@ -14,6 +14,10 @@ because a commit list cannot express them.
 
 ### Added
 
+- **Coverage drift bounds declaration reach like impact** (`GIT-US-0169`, docs/03 §21.6-§21.7). A
+  changed `const`, `var` or `type` used by more than 10 functions of its package no longer marks a
+  passing requirement `suspect`; the row stays `passing` and shows `bounded:<n>`, the traced edges
+  the bound suppressed. Impact and coverage share `trace.DefaultMaxDeclUsers`.
   `PUT /api/v1/search/managed/{repo}/opt-in` (`{enabled, deleteIndex?}`) saves the machine-local
   `repos[].semanticSearch` (guarded against concurrent edits of the configuration file) and starts
   or stops the repository's instance; `deleteIndex` also removes its data directory. In managed
@@ -94,6 +98,11 @@ because a commit list cannot express them.
 
 ### Fixed
 
+- **An update that keeps an item's title no longer renames its file** (`GIT-US-0171`, docs/03 §3.4).
+  A status-only `update_item` on an item whose slug was hand-made or longer than 60 bytes renamed
+  the file to the 60-byte truncation, turning a two-line diff into a delete plus an add. The file
+  is now renamed only when `title` actually changes (R-SLUG-2); a stale slug stays warning
+  `W-SLUG-STALE`. No paths, IDs or fields changed.
 - **Impact tier 2 reports a missing code graph as `unavailable`** (`GIT-US-0167`, docs/03
   R-IMP-3, docs/21 §6.1). A Pando project indexed with `[TokenOptimization] BuildCodeGraph =
   false` has no call edges and answers "No callers found" for every name, which tier 2 reported
