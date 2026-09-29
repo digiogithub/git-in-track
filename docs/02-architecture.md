@@ -728,8 +728,11 @@ contract, never the only one.
   package that runs one managed `pando mcp-server` per opted-in repository under
   `<cacheDir>/pando/<key>/`: a generated 0600 `.pando.toml` and token, a free loopback
   port, health checks with our own token, restart with backoff, a per-instance lock and
-  `state.json`. It takes a plain options struct and is not wired into `gintrack serve`
-  yet (GIT-US-0175); its internals are documented in the package's `doc.go`.
+  `state.json`. It takes a plain options struct; its internals are documented in the
+  package's `doc.go`. In managed mode `gintrack serve` runs one per opted-in repository
+  (GIT-US-0175, `internal/server/search_managed.go`): the search fans out to every ready
+  instance, the impact tiers use the instance of the repository being analysed, and the settings
+  API reports each instance's state (docs/21 §1.1).
 - **Never one ranking.** Pando's knowledge-base scores are reciprocal-rank-fusion
   values around 0.016 while the core score counts field weights; the two are
   incommensurable. The merge is therefore a concatenation — exact matches first in

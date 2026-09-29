@@ -28,6 +28,21 @@ because a commit list cannot express them.
   crashes in 10 minutes), a per-instance lock and a `state.json`. Nothing is written inside the
   repository. It is not reachable from `gintrack serve` or the configuration yet.
 
+- **`gintrack serve` runs the managed Pando instances** (`GIT-US-0175`, ADR-039, docs/07 search settings,
+  docs/21 §1.1). In managed mode, `serve` starts one supervised Pando per repository with
+  `semanticSearch: true`, at most `search.pando.managed.maxInstances` of them (the rest report
+  `skipped` with the reason), registers each repository as a code project under
+  `pando.SanitizeProjectID(root)` once its instance is ready, and stops them all when it stops.
+  A semantic search is sent to every ready instance in parallel inside the existing 300 ms budget
+  and merged as before; impact tiers 2 and 3 use the instance of the repository being analyzed.
+  An instance that is not ready makes its repository `unavailable` with a reason, never an
+  empty answer. `GET /api/v1/search/settings` gains `mode`, `modeRule`, `modeReason`, `binary`,
+  `maxInstances` and, per `indexed[]` row, `managed: {optedIn, state, pid, port, version, since,
+  crashes, error}`. The KB half of `POST /api/v1/search/reindex` restarts the instance (its
+  `KBAutoImport` performs the full sync) and `kbNote` says so. `PATCH` of `mcpUrl`, `restUrl` or
+  `projectId` is refused while the mode is managed. External mode behaves as before; explicit `mode: off` now disables Pando entirely, an `mcpUrl` included.
+  The version floor is only `search.pando.managed.minVersion`; gintrack has no built-in one.
+
 ### Changed
 
 - **Impact tier 2 is more precise** (`GIT-US-0166`, docs/03 R-IMP-3 and R-IMP-5, docs/08

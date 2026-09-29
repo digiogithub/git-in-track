@@ -89,11 +89,43 @@ var _ vault.SemanticSearcher = (*pandoSearcher)(nil)
 // one that decides to degrade to the core index, and it has to know that it
 // did.
 func (p *pandoSearcher) SearchSemantic(ctx context.Context, q vault.SemanticQuery) ([]core.SearchHit, error) {
-	if p == nil || p.client == nil {
-		return nil, pando.ErrNotConfigured
+	scored, dropped, err := p.collect(ctx, q)
+	if err != nil {
+		return nil, err
 	}
 	if strings.TrimSpace(q.Q) == "" {
 		return nil, nil
+	}
+	merge := newSemanticMerge(len(scored))
+	for _, h := range scored {
+		merge.add(h)
+	}
+	out := merge.hits(q.Limit)
+	p.noteDrops(ctx, q, dropped, len(out))
+	return out, nil
+}
+
+// noteDrops reports the candidates that resolved to nothing.
+func (p *pandoSearcher) noteDrops(ctx context.Context, q vault.SemanticQuery, dropped, kept int) {
+	if dropped > 0 {
+		p.dropped.Add(int64(dropped))
+		noteSemanticDrops(ctx, dropped)
+		p.log.Debug("semantic candidates dropped",
+			"query", q.Q, "dropped", dropped, "kept", kept, "total", p.dropped.Load())
+	}
+}
+
+// collect runs both legs inside the budget and answers the resolved candidates
+// with their rescaled scores, in the order they are to be merged: the
+// knowledge-base ones first. [pandoSearcher.SearchSemantic] merges one
+// searcher's candidates; the managed fan-out merges every instance's
+// (GIT-US-0175).
+func (p *pandoSearcher) collect(ctx context.Context, q vault.SemanticQuery) (scored []scoredHit, dropped int, err error) {
+	if p == nil || p.client == nil {
+		return nil, 0, pando.ErrNotConfigured
+	}
+	if strings.TrimSpace(q.Q) == "" {
+		return nil, 0, nil
 	}
 	budget := p.budget
 	if budget <= 0 {
@@ -134,11 +166,11 @@ func (p *pandoSearcher) SearchSemantic(ctx context.Context, q vault.SemanticQuer
 		// the backlog, which is what this companion is about. A code leg that
 		// failed on its own has already been logged and simply contributes
 		// nothing.
-		return nil, err
+		return nil, 0, fmt.Errorf("pando kb search: %w", err)
 	}
 
-	merge := newSemanticMerge(len(candidates) + len(code))
-	dropped := codeDropped
+	dropped = codeDropped
+	scored = make([]scoredHit, 0, len(candidates)+len(code))
 	top := topKBScore(candidates)
 	for _, c := range candidates {
 		hit, repo, ok := p.resolve(c, q)
@@ -146,23 +178,13 @@ func (p *pandoSearcher) SearchSemantic(ctx context.Context, q vault.SemanticQuer
 			dropped++
 			continue
 		}
-		merge.add(scoredHit{hit: hit, repo: repo, rel: relative(c.Score, top)})
+		scored = append(scored, scoredHit{hit: hit, repo: repo, rel: relative(c.Score, top)})
 	}
-	// Code candidates are merged after the knowledge-base ones so that a
-	// document both indexes returned keeps the knowledge-base row's identity
-	// when the scores tie.
-	for _, hit := range code {
-		merge.add(hit)
-	}
-	out := merge.hits(q.Limit)
-
-	if dropped > 0 {
-		p.dropped.Add(int64(dropped))
-		noteSemanticDrops(ctx, dropped)
-		p.log.Debug("semantic candidates dropped",
-			"query", q.Q, "dropped", dropped, "kept", len(out), "total", p.dropped.Load())
-	}
-	return out, nil
+	// Code candidates follow the knowledge-base ones so that a document both
+	// indexes returned keeps the knowledge-base row's identity when the scores
+	// tie.
+	scored = append(scored, code...)
+	return scored, dropped, nil
 }
 
 // specsPrefix is where every spec file sits relative to Pando's KBPath, the

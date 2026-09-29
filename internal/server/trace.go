@@ -89,8 +89,8 @@ func (s *Server) installTraceSeams(now func() time.Time) {
 		seams := TraceSeams{
 			Root: m.path, Now: now,
 			ProjectID: codeProjectID(m),
-			CallGraph: s.impactCallGraph,
-			Semantic:  s.impactSemantic,
+			CallGraph: func() impact.CallGraph { return s.impactCallGraph(m.id) },
+			Semantic:  func() vault.SemanticSearcher { return s.impactSemantic(m.id) },
 		}
 		if backend, ok := s.git.backendFor(m.id); ok {
 			seams.Git = backend
@@ -103,9 +103,13 @@ func (s *Server) installTraceSeams(now func() time.Time) {
 // at call time because a settings change rebuilds the client. Nil when no
 // Pando is configured, or when the configured client cannot read the code
 // graph.
-func (s *Server) impactCallGraph() impact.CallGraph {
+func (s *Server) impactCallGraph(repo string) impact.CallGraph {
 	if s.search == nil {
 		return nil
+	}
+	// In managed mode each repository is analyzed against its own instance.
+	if s.search.managed != nil {
+		return s.search.managed.impactGraph(repo)
 	}
 	if g, ok := s.search.pando().(impact.CallGraph); ok && g != nil {
 		return g
@@ -116,9 +120,12 @@ func (s *Server) impactCallGraph() impact.CallGraph {
 // impactSemantic is the semantic searcher tier 3 of the impact query asks
 // for requirement blocks, read at call time for the same reason. Nil when
 // semantic search is off.
-func (s *Server) impactSemantic() vault.SemanticSearcher {
+func (s *Server) impactSemantic(repo string) vault.SemanticSearcher {
 	if s.search == nil {
 		return nil
+	}
+	if s.search.managed != nil {
+		return s.search.managed.impactSemantic(repo)
 	}
 	if p := s.search.semantic(); p != nil {
 		return p

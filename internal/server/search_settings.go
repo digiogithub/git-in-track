@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,6 +19,7 @@ import (
 	"github.com/digiogithub/git-in-track/internal/config"
 	"github.com/digiogithub/git-in-track/internal/core"
 	"github.com/digiogithub/git-in-track/internal/pando"
+	"github.com/digiogithub/git-in-track/internal/vault"
 )
 
 // The problem codes of the search surface.
@@ -48,6 +50,11 @@ const (
 // pipeline numbers its operations.
 var searchJobCounter atomic.Uint64
 
+// defaultPandoLookPath finds the pando binary for the mode resolution. It is a
+// variable so that the package's tests, which must not depend on what is
+// installed on the machine, can replace it.
+var defaultPandoLookPath = exec.LookPath
+
 // searchState owns everything behind /api/v1/search: the Pando client, the
 // running `search.pando` settings and the single reindex slot.
 //
@@ -69,6 +76,15 @@ type searchState struct {
 	// was refused (a non-loopback host without allowRemote).
 	client   pandoAPI
 	searcher *pandoSearcher
+	// mode is the Pando mode in force and the rule that chose it, resolved
+	// once at construction (ADR-039).
+	mode config.PandoResolution
+	// managed is the set of supervised instances; nil unless the mode is
+	// managed. managedSearch is the fan-out searcher over them.
+	// offSearcher answers unavailable while search.pando.mode is off.
+	offSearcher   vault.SemanticSearcher
+	managed       *managedState
+	managedSearch *managedSearcher
 	// codeIndex is what became of each repository's code-project registration,
 	// keyed by mount id. It is what the settings card states when there is no
 	// code search (GIT-US-0098).
@@ -129,6 +145,21 @@ func newSearchState(opts Options, repos *registry, hub *Hub, log *slog.Logger, n
 		configPath: opts.ConfigPath,
 		settings:   opts.Search.Pando,
 	}
+	lookPath := opts.pandoLookPath
+	if lookPath == nil {
+		lookPath = defaultPandoLookPath
+	}
+	s.mode = config.ResolvePandoMode(opts.Search.Pando, lookPath)
+	if s.mode.Rule == 1 {
+		s.offSearcher = unavailableSearcher{err: fmt.Errorf(
+			"%w: Pando is turned off by search.pando.mode: off", pando.ErrNotConfigured)}
+	}
+	if s.mode.Mode == config.PandoModeManaged {
+		s.managed = newManagedState(opts, s.mode, repos, s, log)
+		s.managedSearch = &managedSearcher{ms: s.managed}
+		log.Info("Pando runs in managed mode", "rule", s.mode.Rule, "reason", s.mode.Reason,
+			"unavailable", s.mode.Unavailable)
+	}
 	s.rebuild()
 	return s
 }
@@ -136,6 +167,26 @@ func newSearchState(opts Options, repos *registry, hub *Hub, log *slog.Logger, n
 // rebuild reconciles the client and the searcher with the running settings. It
 // is called at construction and after a settings change.
 func (s *searchState) rebuild() {
+	if s.mode.Rule == 1 {
+		// Explicit `mode: off` disables Pando entirely, an `mcpUrl` included
+		// (ADR-039 rule 1): nothing is built, nothing is contacted, and every
+		// answer says why.
+		s.mu.Lock()
+		old := s.client
+		s.client, s.searcher = nil, nil
+		s.mu.Unlock()
+		if old != nil {
+			_ = old.Close()
+		}
+		s.repos.workspace().SetSemanticSearcher(s.offSearcher)
+		return
+	}
+	if s.managed != nil {
+		// Managed instances own their clients; a settings change never
+		// replaces them.
+		s.repos.workspace().SetSemanticSearcher(s.managedSearch)
+		return
+	}
 	s.mu.Lock()
 	settings := s.settings
 	old := s.client
@@ -265,9 +316,18 @@ func (s *searchState) pando() pandoAPI {
 }
 
 // semantic returns the searcher, nil when semantic search is off.
-func (s *searchState) semantic() *pandoSearcher {
+func (s *searchState) semantic() vault.SemanticSearcher {
+	if s.offSearcher != nil {
+		return s.offSearcher
+	}
+	if s.managedSearch != nil {
+		return s.managedSearch
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if s.searcher == nil {
+		return nil
+	}
 	return s.searcher
 }
 
@@ -276,7 +336,11 @@ func (s *searchState) semantic() *pandoSearcher {
 // configured and answering; a degraded one reports "core", because that is what
 // the next query will actually use.
 func (s *searchState) backend() string {
-	if s.semantic() == nil || s.degraded.Load() {
+	if s.offSearcher != nil || s.semantic() == nil || s.degraded.Load() {
+		return core.SearchSourceCore
+	}
+	// A managed mode with no instance ready answers from the core index.
+	if s.managed != nil && !s.managed.anyReady() {
 		return core.SearchSourceCore
 	}
 	return core.SearchSourcePando
@@ -323,6 +387,16 @@ type searchSettingsView struct {
 	ReachableError string `json:"reachableError,omitempty"`
 	// Indexed says what Pando is pointed at for every mounted repository.
 	Indexed []searchIndexedView `json:"indexed"`
+	// Mode is the Pando mode in force: managed, external or off, chosen by the
+	// rule ModeRule (ADR-039). ModeReason says why in words.
+	Mode       string `json:"mode"`
+	ModeRule   int    `json:"modeRule"`
+	ModeReason string `json:"modeReason,omitempty"`
+	// Binary is the pando binary managed mode found, when it found one.
+	Binary string `json:"binary,omitempty"`
+	// MaxInstances is the managed instance cap in force; absent outside managed
+	// mode.
+	MaxInstances int `json:"maxInstances,omitempty"`
 	// Reindex is the running job, or the last finished one.
 	Reindex *reindexJob `json:"reindex,omitempty"`
 	// Persisted says whether a PATCH reached the configuration file. It is
@@ -353,6 +427,9 @@ type searchIndexedView struct {
 	// registered under, or why there is no code search. It is absent until the
 	// registration that starts with the server has run.
 	Code *codeIndexView `json:"code,omitempty"`
+	// Managed is the state of the repository's managed Pando instance; absent
+	// outside managed mode.
+	Managed *managedInstanceView `json:"managed,omitempty"`
 }
 
 // view renders the settings. probe controls whether the reachability check
@@ -371,6 +448,15 @@ func (s *searchState) view(ctx context.Context, probe bool) searchSettingsView {
 		ProjectID:   s.projectID(),
 		AllowRemote: settings.AllowRemote,
 		Indexed:     []searchIndexedView{},
+		Mode:        s.mode.Mode, ModeRule: s.mode.Rule, ModeReason: s.mode.Reason,
+	}
+	if s.offSearcher != nil {
+		out.Configured, out.MCPURL, out.RESTURL, out.ProjectID = false, "", "", ""
+	}
+	if s.managed != nil {
+		out.Binary = s.mode.Binary
+		out.MaxInstances = s.managed.cfg.MaxInstancesOrDefault()
+		out.Configured = len(s.managed.slots()) > 0
 	}
 	for _, m := range s.repos.ready() {
 		stats := m.vlt.Stats()
@@ -383,8 +469,19 @@ func (s *searchState) view(ctx context.Context, probe bool) searchSettingsView {
 			Items: stats.Items, Pages: stats.Pages, Comments: stats.Comments,
 			Code: s.codeIndexOf(m.id),
 		})
+		if s.managed != nil {
+			view := s.managed.viewFor(m)
+			out.Indexed[len(out.Indexed)-1].Managed = &view
+		}
 	}
-	if probe && out.Configured {
+	if s.managed != nil {
+		// The instances are health-checked by their supervisors; nothing is
+		// dialed here.
+		if out.Configured {
+			ready := s.managed.anyReady()
+			out.Reachable = &ready
+		}
+	} else if probe && out.Configured {
 		reachable := false
 		if client := s.pando(); client != nil {
 			if err := client.Health(ctx); err != nil {
@@ -427,6 +524,19 @@ func (s *searchState) apply(patch searchSettingsPatch) error {
 	next := s.settings
 	s.mu.RUnlock()
 
+	if s.managed != nil {
+		// Managed mode generates its own endpoint and token, and ADR-039 refuses
+		// the two sources of truth: name the key rather than ignore it.
+		for _, k := range []struct {
+			name  string
+			value *string
+		}{{"mcpUrl", patch.MCPURL}, {"restUrl", patch.RESTURL}, {"projectId", patch.ProjectID}} {
+			if k.value != nil && strings.TrimSpace(*k.value) != "" {
+				return fmt.Errorf("%s cannot be set while search.pando.mode is managed: "+
+					"the managed Pando generates its own endpoint; set the mode to external first", k.name)
+			}
+		}
+	}
 	if patch.MCPURL != nil {
 		next.MCPURL = strings.TrimSpace(*patch.MCPURL)
 	}
@@ -554,6 +664,11 @@ func (s *Server) handleSearchReindex(w http.ResponseWriter, r *http.Request) {
 		failProblem(w, r, codeSearchReindexRunning,
 			"A reindex is already running; wait for it to finish rather than starting a second one.")
 		return
+	case errors.Is(err, errReindexNotEnabled):
+		failProblem(w, r, codeSearchNotConfigured,
+			"Nothing to reindex: semantic search is not enabled for "+
+				firstNonEmpty(req.Repo, "any repository")+" in managed mode.")
+		return
 	case errors.Is(err, errSearchNotConfigured):
 		failProblem(w, r, codeSearchNotConfigured,
 			"Nothing to reindex: no Pando endpoint is configured.")
@@ -571,6 +686,9 @@ var (
 	errReindexRunning      = errors.New("a reindex is already running")
 	errSearchNotConfigured = errors.New("no Pando endpoint")
 	errReindexUnknownRepo  = errors.New("no such indexed repository")
+	// errReindexNotEnabled is the managed-mode counterpart of
+	// errSearchNotConfigured: no instance runs for what was asked.
+	errReindexNotEnabled = errors.New("no managed Pando instance")
 )
 
 // startReindex claims the single reindex slot and runs the job in the
@@ -581,13 +699,24 @@ var (
 // workspace list switches semantic search on for a single repository.
 func (s *searchState) startReindex(ctx context.Context, repo string) (*reindexJob, error) {
 	projects := s.codeProjects()
+	if s.managed != nil {
+		projects = s.managed.codeProjects()
+	}
 	if repo != "" {
-		projects = scopeCodeProjects(projects, repo)
-		if len(projects) == 0 {
+		scoped := scopeCodeProjects(projects, repo)
+		if len(scoped) == 0 {
+			if _, mounted := s.repos.lookup(repo); mounted && s.managed != nil {
+				return nil, errReindexNotEnabled
+			}
 			return nil, errReindexUnknownRepo
 		}
+		projects = scoped
 	}
-	if s.pando() == nil {
+	if s.managed != nil {
+		if len(projects) == 0 {
+			return nil, errReindexNotEnabled
+		}
+	} else if s.pando() == nil {
 		return nil, errSearchNotConfigured
 	}
 
@@ -647,13 +776,22 @@ func (s *searchState) runReindex(ctx context.Context, job *reindexJob, projects 
 		s.publishProgress(job.ID, "", phase, 1, 1, note)
 	}()
 
-	client := s.pando()
 	// The same project list the registration uses (or its one scoped entry),
 	// so an explicit reindex asks Pando to refresh the very project the search
 	// reads from.
 	for _, p := range projects {
 		out := reindexRepo{Repo: p.repo}
 		s.publishProgress(job.ID, p.repo, searchPhaseCode, 0, 0, "indexing the source tree")
+		client, cerr := s.reindexClient(p.repo)
+		if cerr != nil {
+			// A managed instance that is not ready is unavailable with its
+			// reason, not silently skipped.
+			out.CodeError = cerr.Error()
+			s.noteCodeIndex(p.repo, codeIndexView{
+				Project: p.id, Status: codeIndexStatusUnavailable,
+				Note: "The managed Pando cannot take the code project, so there is no code search: " + cerr.Error(),
+			})
+		}
 		if client != nil {
 			id, err := client.IndexProject(ctx, p.root, p.id)
 			switch {
@@ -685,7 +823,16 @@ func (s *searchState) runReindex(ctx context.Context, job *reindexJob, projects 
 	s.publishProgress(job.ID, "", searchPhaseKB, 0, 0, "reindexing the knowledge base")
 	var kbStats *pando.ReindexStats
 	var kbNote string
-	if client == nil {
+	if s.managed != nil {
+		// A managed instance has no REST process to ask: bouncing it makes
+		// Pando's KBAutoImport read the documentation folder again.
+		n := s.managed.restart(job.Scope)
+		kbNote = fmt.Sprintf("Restarted %d managed Pando instance(s); each performs a full knowledge-base "+
+			"sync as it starts, so the index catches up in the background.", n)
+		if n == 0 {
+			kbNote = "No managed Pando instance was running, so nothing was restarted."
+		}
+	} else if client := s.pando(); client == nil {
 		kbNote = "No Pando endpoint is configured, so nothing was reindexed."
 	} else {
 		stats, err := client.ReindexKB(ctx)
@@ -714,4 +861,33 @@ func (s *searchState) runReindex(ctx context.Context, job *reindexJob, projects 
 			}
 		}
 	})
+}
+
+// reindexClient is the client the code half of a reindex uses for one
+// repository: the configured Pando's, or its own managed instance's.
+func (s *searchState) reindexClient(repo string) (pandoAPI, error) {
+	if s.managed != nil {
+		return s.managed.clientFor(repo)
+	}
+	return s.pando(), nil
+}
+
+// startManaged brings up the managed instances, when the mode is managed. It
+// returns at once.
+func (s *searchState) startManaged(ctx context.Context) {
+	if s == nil || s.managed == nil {
+		return
+	}
+	s.managed.begin(ctx)
+}
+
+// stopManaged stops every managed instance and waits for them: the graceful
+// shutdown path.
+func (s *searchState) stopManaged(ctx context.Context) {
+	if s == nil || s.managed == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	s.managed.stopAll(ctx)
 }

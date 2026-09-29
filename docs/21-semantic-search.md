@@ -101,8 +101,8 @@ or `off`) and resolved by the six rules of docs/07 §3.3: with `mcpUrl` set, `au
 hand-run (external) setup exactly as described below; without it, a `pando` binary on PATH
 resolves to managed mode and none resolves to off, which is not an error. `mode: managed` may
 not be combined with `mcpUrl`, `mcpToken`, `restUrl`, `restToken` or `projectId`. The per-repository
-opt-in is `repos[].semanticSearch` in the machine-local configuration file. Running the managed
-instances is ADR-039 work that lands separately; this section describes the keys only.
+opt-in is `repos[].semanticSearch` in the machine-local configuration file. In managed mode
+`gintrack serve` runs the instances (§1.1).
 
 `gintrack agent init` writes this into the repository's `.pando.toml`, and `--kb-path`
 overrides the directory for a layout it cannot guess (docs/07 §4.18):
@@ -129,6 +129,39 @@ it happens. See §5 for the warning this replaces.
 **Nothing is copied.** The files Pando indexes are the repository's own, committed files. There
 is no second directory to keep current, nothing to prune, and no window in which the index is
 one export behind the working tree.
+
+### 1.1 Managed mode: what `gintrack serve` does (ADR-039, GIT-US-0175)
+
+When the resolved mode is managed, `serve` starts, in the background and without holding the
+listener up, one supervised `pando mcp-server` (`internal/pando/supervisor`) for every mounted
+repository whose `semanticSearch` is true, up to `search.pando.managed.maxInstances`. A
+repository past the cap, or opted in with no usable binary, gets no instance; its row in
+`GET /api/v1/search/settings` reads `managed.state: "skipped"` with the reason. An instance
+another `gintrack serve` already supervises is reached through its state file and token instead
+of being started twice, and it is never stopped from here.
+
+- **Registration.** When an instance becomes `ready`, the repository root is registered with
+  **that** instance as a code project under `pando.SanitizeProjectID(root)` (the id the
+  supervisor reports as `Status.Project`), through the same pass as §0.1. The instance's
+  generated configuration already enables the code graph.
+- **Search.** A semantic search is sent to every `ready` instance in parallel, each with the
+  usual 300 ms budget, so the whole fan-out stays inside one budget. The candidates are
+  resolved against the workspace and merged exactly as one instance's are, so a document
+  reached by two instances appears once. An instance that is `starting`, `restarting` or
+  `failed` contributes nothing and the others still answer. When **no** instance can answer,
+  the search is `unavailable` with each repository's reason (`degraded` on the REST route),
+  never an empty success. With no repository opted in it answers "not configured".
+- **Impact.** Tiers 2 and 3 of `spec_impact` use the instance of the repository being analysed.
+  If that repository's instance is not ready the tier says `unavailable`; a repository that
+  did not opt in gets the same "no Pando is configured" as before.
+- **Reindex.** See docs/07: the `kb` phase restarts the instance instead of calling a REST
+  route, and `kbNote` says so.
+- **Shutdown.** Every instance is stopped (SIGTERM, then SIGKILL after 10 s) when the server
+  stops, and the child also dies with `gintrack serve` if that is killed (Linux).
+- **Not managed.** External mode is exactly as described above. Explicit `mode: off` disables
+  Pando entirely even with an `mcpUrl` set (rule 1): no client is built, the backend is `core`,
+  and semantic search answers `unavailable` naming `search.pando.mode: off`. Neither constructs
+  an instance. Browser-only mode has no instance and answers `unavailable`.
 
 The repository root is registered as a Pando **code** project separately, by the companion, when
 `gintrack serve` starts (§0.1). Nothing has to be run by hand for that.
@@ -237,7 +270,8 @@ says so, adding that Pando's own watcher still follows the documentation directo
 claims a reindex that did not happen.
 
 A second call while one is running is refused with `search_reindex_running` (409) and the running
-job is untouched. A companion with no Pando endpoint answers `search_not_configured` (400).
+job is untouched. A companion with no Pando endpoint answers `search_not_configured` (400). In managed mode the
+`kb` phase restarts the instance instead (§1.1).
 
 **One repository.** A body of `{"repo":"<mount id>"}` limits the `code` phase to that repository
 (GIT-US-0101): it is registered and indexed alone, the other repositories are not touched, and the

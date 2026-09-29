@@ -362,7 +362,7 @@ Effective value = flag > environment variable > config file > built-in default.
 These keys live in the configuration file only. `search.pando.mode` is `auto` (default),
 `managed`, `external` or `off`. `search.pando.managed` holds `binary` (a name on PATH or an
 absolute path, default `pando`), `maxInstances` (0-64, 0 means 4), `minVersion` (empty keeps the
-floor built into gintrack) and `logLevel` (`debug|info|warn|error`, default `info`).
+version floor; gintrack has no built-in one yet, so an empty value accepts any) and `logLevel` (`debug|info|warn|error`, default `info`).
 `repos[].semanticSearch: true` is the machine-local opt-in of one repository to a managed Pando;
 it is never stored in a repository.
 
@@ -370,7 +370,7 @@ The effective mode is decided when the configuration is loaded. The first matchi
 
 | # | Configuration | Effective mode |
 |---|---|---|
-| 1 | `mode: off` | off: "Pando is turned off" |
+| 1 | `mode: off` | off: "Pando is turned off". Nothing is started or contacted, an `mcpUrl` included: no client is built, and search and impact tiers 2 and 3 answer `unavailable` naming `search.pando.mode: off` |
 | 2 | `mode: external` | external, as before; without `mcpUrl`, "Pando is not configured" |
 | 3 | `mode: managed` | managed; without a binary, managed-but-unavailable |
 | 4 | `auto` and `mcpUrl` set | external: an explicit endpoint beats a binary on PATH |
@@ -382,6 +382,12 @@ refused at load time, one error per key. A missing binary is never an error: the
 loads and Pando-backed answers are `unavailable`. `gintrack doctor` prints the resolved mode and
 rule number (`pando mode managed (rule 5): ...`). The version floor is checked by the
 supervisor when it starts an instance, not by this resolution.
+
+In managed mode `gintrack serve` starts one supervised Pando per repository whose
+`semanticSearch` is true, at most `maxInstances` of them; the remaining opted-in repositories
+report `skipped` with the reason (docs/21 §1.1). `gintrack serve` keeps the instances under
+`<cacheDir>/pando/<key>/`, where `cacheDir` is `index.cacheDir` or the directory of the
+configuration file, and stops them when it stops.
 
 Global flags available on every command: `--config`, `--workspace/-w`,
 `--quiet/-q`, `--verbose/-v`, `--log-level`, `--no-color`, `--help/-h`. Naming a
@@ -3507,6 +3513,9 @@ POST  /api/v1/search/reindex
   "allowRemote":false,
   "reachable":true,
   "reachableError":"",
+  "mode":"external",
+  "modeRule":4,
+  "modeReason":"search.pando.mcpUrl is set, and an explicit endpoint beats a binary on PATH",
   "indexed":[
     {"repo":"acme-api","root":"/home/dana/src/acme-api","docs":["docs"],
      "items":412,"pages":38,"comments":167,
@@ -3538,11 +3547,32 @@ POST  /api/v1/search/reindex
   `unavailable` (Pando refused or did not answer). `note` says it in words, so
   the reason there is no code search is readable in the UI rather than only in
   the log. The field is absent until that pass has run.
+- `mode`, `modeRule` and `modeReason` are the resolved Pando mode (`managed`, `external` or
+  `off`), the number of the rule of docs/07 §3.3 that chose it and why, in words
+  (ADR-039). In `managed` mode the response also carries `binary` (the resolved `pando`
+  path, when one was found) and `maxInstances`, `configured` is true once an instance exists,
+  `mcpUrl`, `restUrl` and `projectId` are absent (the endpoint is generated and never
+  reported), and `reachable` is true while at least one instance is `ready` (it is read from
+  the supervisors, not probed). Each `indexed[]` row gains
+
+  ```json
+  "managed":{"optedIn":true,"state":"ready","pid":48120,"port":41873,
+             "version":"pando v1.1.1","since":"2026-09-29T10:02:11Z","crashes":0,"error":""}
+  ```
+
+  `state` is the supervisor's (`stopped`, `starting`, `ready`, `restarting`, `failed`) or
+  `disabled` (the repository has not opted in and has no instance) or `skipped` (it opted in
+  but no instance was started; `error` says why: the `maxInstances` cap, or no binary).
+  `error` also carries the last crash or refusal of a `failed` instance. Neither the token
+  nor the endpoint is ever reported; an agent that wants them reads the instance directory.
+  Outside managed mode `managed` is absent.
 - Neither Pando token is ever reported. They are resolved from
   `GINTRACK_PANDO_MCP_TOKEN` / `GINTRACK_PANDO_REST_TOKEN` or the configuration
   file (docs/07 §3.3) and stay in the companion process.
 
-`PATCH` takes any subset of `mcpUrl`, `restUrl`, `projectId` and `allowRemote`;
+`PATCH` takes any subset of `mcpUrl`, `restUrl`, `projectId` and `allowRemote`; while the
+mode is `managed` a non-empty `mcpUrl`, `restUrl` or `projectId` is refused with
+`invalid_request` (400), because the managed Pando generates its own endpoint;
 an absent field is left alone, and an unknown one — `corpusDir` included — is
 ignored and changes nothing. **Tokens are not patchable**: a credential enters
 the process from the environment or the file, never over the API. The change is
@@ -3586,6 +3616,15 @@ and, afterwards, the last finished one:
   it never claims a reindex that did not happen. With `restUrl` configured the
   job calls the route and `kb` carries the real
   `scanned/added/updated/unchanged/deleted` counts.
+- **Managed mode (ADR-039).** There is no Pando REST process, so the `kb` phase **restarts the
+  instance** (or every instance, or the one in `repo`) and Pando's `KBAutoImport` performs a
+  full sync as it comes back; `kbNote` says "Restarted N managed Pando instance(s)…", and `kb`
+  carries no counts. A restart interrupts the code index the child was running, so the
+  supervising server hands the source tree to the fresh child again once it is ready. The
+  `code` phase goes to each repository's own instance: one that is not `ready` reports
+  `codeError` with the reason and its `indexed[].code` reads `unavailable`. A repository
+  that has no instance, or a workspace where none is enabled, answers `search_not_configured`
+  (400).
 - A second call while one is running is refused with `search_reindex_running`
   (409) and the running job is untouched. A companion with no Pando endpoint
   answers `search_not_configured` (400).
