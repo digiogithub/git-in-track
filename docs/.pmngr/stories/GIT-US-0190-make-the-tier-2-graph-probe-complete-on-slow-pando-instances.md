@@ -2,12 +2,15 @@
 id: GIT-US-0190
 type: story
 title: Make the tier-2 graph probe complete on slow Pando instances
-status: backlog
+status: done
 priority: medium
+assignees: [claude]
 author: mcp
 labels: [server, core, agent-ok]
 created: 2026-09-30T15:23:15Z
-updated: 2026-09-30T15:23:15Z
+updated: 2026-09-30T16:50:40Z
+started: 2026-09-30T16:22:50Z
+closed: 2026-09-30T16:50:40Z
 ---
 
 ## Description
@@ -19,11 +22,15 @@ GIT-US-0179 (#111) and GIT-US-0188 (#118) persist the tier-2 code-graph probe an
 
 ## Acceptance Criteria
 
-- [ ] The warm-up samples files likely to have call edges (for example spread across packages, preferring non-main packages with many symbols) and stores a result with a short TTL even when no edges are found.
-- [ ] Short-lived CLI runs do not start a new probe when one is already running for that instance (a lock or marker in the store), so abandoned calls do not pile up in Pando.
-- [ ] With a managed Pando on the benchmark repo, tier 2 answers `ok` from the store within minutes of `serve` starting (replay S1/S3/S4).
+- [x] The warm-up samples files likely to have call edges (for example spread across packages, preferring non-main packages with many symbols) and stores a result with a short TTL even when no edges are found.
+- [x] Short-lived CLI runs do not start a new probe when one is already running for that instance (a lock or marker in the store), so abandoned calls do not pile up in Pando.
+- [x] With a managed Pando on the benchmark repo, tier 2 answers `ok` from the store within minutes of `serve` starting (replay S1/S3/S4).
 - [ ] Consider an upstream Pando change (a cheap "has call edges" or edge count in `code_get_project_stats`) and record the finding in docs/21; if it is cheap, file it upstream.
 
 ## Notes
 
-From the GIT-US-0188 report (2026-09-30).
+Done in PR #120. The real root cause was the Pando client's 20 s per-call deadline, which meant the 184 s probe could never finish; the probe now passes its own timeout. The warm-up now waits for indexing to complete, samples AST-ranked files across packages, and stores "no edges" for 5 min. An `O_EXCL` in-flight marker gives one probe per instance across processes, and exiting CLI runs cancel their call, which Pando honours.
+
+Replay: the store was populated 286 s after `serve` started, and S1/S3/S4 give tier 2 `ok` in about 0.4 s.
+
+Pando finding, recorded in docs/21 §6.1 but not yet filed upstream: `code_edges` has no index on `src_file`. Adding `(project_id, src_file, edge_type)` cut the query from 52.5 s to 0.146 s. A second index for in-calls and edge counts in `GetProjectStats` are also proposed.
