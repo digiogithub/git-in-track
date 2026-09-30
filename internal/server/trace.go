@@ -45,6 +45,9 @@ type TraceSeams struct {
 	// unavailable while tier 1 still answers.
 	CallGraph func() impact.CallGraph
 	Semantic  func() vault.SemanticSearcher
+	// GraphStore persists the tier 2 graph check across processes; nil keeps
+	// the answer in memory only (GIT-US-0179).
+	GraphStore func(impact.CallGraph) impact.GraphStore
 	// Now is the clock of the marker scan; nil means time.Now.
 	Now func() time.Time
 }
@@ -77,9 +80,10 @@ func InstallTraceSeams(v *vault.Vault, o TraceSeams) {
 	}
 	v.SetRequirementImpact(impact.New(impact.Options{
 		Engine: engine, Differ: o.Git, Coverage: coverage,
-		ProjectID: o.ProjectID,
-		CallGraph: o.CallGraph,
-		Semantic:  o.Semantic,
+		ProjectID:  o.ProjectID,
+		CallGraph:  o.CallGraph,
+		Semantic:   o.Semantic,
+		GraphStore: o.GraphStore,
 	}))
 }
 
@@ -88,9 +92,10 @@ func (s *Server) installTraceSeams(now func() time.Time) {
 	for _, m := range s.repos.ready() {
 		seams := TraceSeams{
 			Root: m.path, Now: now,
-			ProjectID: codeProjectID(m),
-			CallGraph: func() impact.CallGraph { return s.impactCallGraph(m.id) },
-			Semantic:  func() vault.SemanticSearcher { return s.impactSemantic(m.id) },
+			ProjectID:  codeProjectID(m),
+			CallGraph:  func() impact.CallGraph { return s.impactCallGraph(m.id) },
+			Semantic:   func() vault.SemanticSearcher { return s.impactSemantic(m.id) },
+			GraphStore: s.impactGraphStore(m.id),
 		}
 		if backend, ok := s.git.backendFor(m.id); ok {
 			seams.Git = backend
@@ -115,6 +120,16 @@ func (s *Server) impactCallGraph(repo string) impact.CallGraph {
 		return g
 	}
 	return nil
+}
+
+// impactGraphStore is where the graph check of one repository's instance is
+// persisted; nil outside managed mode, where there is no instance generation
+// to key an answer by.
+func (s *Server) impactGraphStore(repo string) func(impact.CallGraph) impact.GraphStore {
+	if s.search == nil || s.search.managed == nil {
+		return nil
+	}
+	return s.search.managed.graphStore(repo)
 }
 
 // impactSemantic is the semantic searcher tier 3 of the impact query asks

@@ -103,7 +103,9 @@ because a commit list cannot express them.
   budget on every query. The check now runs once per Pando instance in the background and its
   answer is cached (30 minutes for a graph with edges, 1 minute for none, again after a managed
   restart); a check still running gives `unavailable` with a "still being checked" reason
-  instead of a timeout.
+  instead of a timeout. In managed mode the answer is also persisted in the instance's cache
+  directory (keyed by pid and state change, so a restart drops it) and `gintrack serve` warms it
+  once the code project is registered, so short-lived `gintrack mcp` processes reuse it.
 
 - **An update that keeps an item's title no longer renames its file** (`GIT-US-0171`, docs/03 §3.4).
   A status-only `update_item` on an item whose slug was hand-made or longer than 60 bytes renamed

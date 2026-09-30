@@ -3113,7 +3113,12 @@ answers `unavailable`.
   one for 1 minute, and a replaced client (a managed restart) is asked again. The tier waits
   only for what is left of its budget; a check still running then gives `unavailable` with
   `the Pando call graph is still being checked: code_related_files has not answered yet, ask
-  again in a moment`, and the next query answers from the cache.
+  again in a moment`, and the next query answers from the cache. In managed mode the answer is
+  also persisted as derived cache data, `<cacheDir>/pando/<instance>/graph-probe.json` (never in
+  the repository), keyed by project and the instance's pid and last state change, so a restart
+  drops it; a missing or corrupt file is ignored and writes are atomic. `gintrack serve` warms it
+  once the code project is registered (a sample of source files; only a found graph is stored),
+  so the first query of a short-lived `gintrack mcp` finds a known answer.
 - **R-IMP-4 Tier 3, semantic.** One semantic search of kind `requirement` (docs/21 §2.1), which
   searches spec files only: Pando's `path_prefix` filter on `.pmngr/specs/`, asked again once
   without it when nothing is indexed under that prefix, and no code search (`GIT-US-0165`).

@@ -118,6 +118,15 @@ func (h *SemanticHost) CallGraphFor(repo string) impact.CallGraph {
 	return h.CallGraph()
 }
 
+// GraphStoreFor is where the tier 2 graph check of one repository is persisted
+// across processes; nil when the host is not connected to managed instances.
+func (h *SemanticHost) GraphStoreFor(repo string) func(impact.CallGraph) impact.GraphStore {
+	if h == nil || h.discovered == nil {
+		return nil
+	}
+	return h.discovered.graphStore(repo)
+}
+
 // SemanticFor is the searcher tier 3 asks for one repository, as
 // [SemanticHost.CallGraphFor] is for tier 2.
 func (h *SemanticHost) SemanticFor(repo string) vault.SemanticSearcher {

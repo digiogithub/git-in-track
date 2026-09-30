@@ -481,7 +481,9 @@ A probe Pando cannot answer gives its own `pando.Reason`. The probe runs once pe
 in the background and its answer is cached (30 minutes when the graph exists, 1 minute when it
 does not, and again after a managed restart), so a slow `code_related_files` never holds the
 tier past its budget: a probe still running gives `unavailable` with `the Pando call graph is
-still being checked … ask again in a moment` (`GIT-US-0179`). To fix it, turn the setting on and
+still being checked … ask again in a moment` (`GIT-US-0179`). In managed mode the answer is also persisted under the instance directory
+(`graph-probe.json`, keyed by the instance's pid and start time) and `gintrack serve` warms it
+after registering the code project, so a fresh `gintrack mcp` process reads a known answer. To fix it, turn the setting on and
 re-index the project.
 
 The code project tier 2 asks about is **derived from the repository root**, never from

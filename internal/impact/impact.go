@@ -130,6 +130,12 @@ type Options struct {
 	MaxSymbols int
 	// CallBudget bounds tier 2; 0 is DefaultCallBudget.
 	CallBudget time.Duration
+	// GraphStore returns where the answer of the tier 2 graph check of one
+	// client is persisted across processes (GIT-US-0179), nil for none. It
+	// is derived cache data: a store that cannot read or write only costs
+	// the check a rerun. The host keys it by the instance the client talks
+	// to, so a restarted instance does not inherit the old answer.
+	GraphStore func(CallGraph) GraphStore
 	// MaxDeclUsers bounds the decl: reach of tier 1 by the users of the
 	// changed declaration; 0 is DefaultMaxDeclUsers, a negative value no
 	// bound.
@@ -629,6 +635,15 @@ const (
 	graphNoTTL = time.Minute
 )
 
+// GraphStore persists one graph check answer. Load reports ok only for an
+// answer that exists and belongs to the instance the store was made for;
+// Store overwrites it. Both must tolerate a missing, corrupt or concurrently
+// written backing file.
+type GraphStore interface {
+	Load() (edges bool, expires time.Time, ok bool)
+	Store(edges bool, expires time.Time)
+}
+
 // graphKey identifies one Pando instance and code project. A managed
 // instance that restarts is a new client, so it is a new key.
 type graphKey struct {
@@ -677,7 +692,11 @@ func (r *Resolver) probeGraph(ctx context.Context, client CallGraph, symbols []c
 	if len(files) > maxGraphProbes {
 		files = files[:maxGraphProbes]
 	}
-	p := r.graphProbeFor(ctx, relator, files)
+	var store GraphStore
+	if r.opts.GraphStore != nil {
+		store = r.opts.GraphStore(client)
+	}
+	p := r.graphProbeFor(ctx, relator, files, store)
 	select {
 	case <-p.done:
 	default:
@@ -698,7 +717,7 @@ func (r *Resolver) probeGraph(ctx context.Context, client CallGraph, symbols []c
 
 // graphProbeFor returns the cached check of relator's instance, starting one
 // when there is none or it has expired.
-func (r *Resolver) graphProbeFor(ctx context.Context, relator FileRelator, files []string) *graphProbe {
+func (r *Resolver) graphProbeFor(ctx context.Context, relator FileRelator, files []string, store GraphStore) *graphProbe {
 	key := graphKey{project: r.opts.ProjectID}
 	if reflect.TypeOf(relator).Comparable() {
 		key.client = relator
@@ -717,36 +736,82 @@ func (r *Resolver) graphProbeFor(ctx context.Context, relator FileRelator, files
 		}
 	}
 	p := &graphProbe{done: make(chan struct{})}
+	if store != nil {
+		if edges, exp, ok := store.Load(); ok && now.Before(exp) {
+			p.edges, p.expires = edges, exp
+			close(p.done)
+			if key.client != nil {
+				if r.graphs == nil {
+					r.graphs = map[graphKey]*graphProbe{}
+				}
+				r.graphs[key] = p
+			}
+			return p
+		}
+	}
 	if key.client != nil {
 		if r.graphs == nil {
 			r.graphs = map[graphKey]*graphProbe{}
 		}
 		r.graphs[key] = p
 	}
-	go r.runGraphProbe(context.WithoutCancel(ctx), relator, files, key, p)
+	go r.runGraphProbe(context.WithoutCancel(ctx), relator, files, key, p, store)
 	return p
 }
 
-// runGraphProbe answers p. A check that could not answer is dropped from the
-// cache so the next query asks again.
-func (r *Resolver) runGraphProbe(parent context.Context, relator FileRelator, files []string, key graphKey, p *graphProbe) {
+// runGraphProbe answers p and persists the answer. A check that could not
+// answer is dropped from the cache so the next query asks again.
+func (r *Resolver) runGraphProbe(parent context.Context, relator FileRelator, files []string, key graphKey, p *graphProbe, store GraphStore) {
 	ctx, cancel := context.WithTimeout(parent, graphProbeTimeout)
 	defer cancel()
 	defer close(p.done)
+	edges, err := probeFiles(ctx, relator, r.opts.ProjectID, files)
+	if err != nil {
+		p.failure = func() (core.ImpactTierStatus, string) { return pandoFailure(err) }
+		r.dropGraph(key, p)
+		return
+	}
+	ttl := graphNoTTL
+	if edges {
+		ttl = graphYesTTL
+	}
+	p.edges, p.expires = edges, r.now().Add(ttl)
+	if store != nil {
+		store.Store(edges, p.expires)
+	}
+}
+
+// probeFiles asks code_related_files about files in order and reports whether
+// one is coupled to another. An error means Pando could not answer at all
+// (unreachable, timed out); any other failure is no evidence of a graph.
+func probeFiles(ctx context.Context, relator FileRelator, project string, files []string) (bool, error) {
 	for _, f := range files {
-		res, err := relator.RelatedFiles(ctx, r.opts.ProjectID, f, pando.RelatedFilesOptions{Limit: 1})
+		res, err := relator.RelatedFiles(ctx, project, f, pando.RelatedFilesOptions{Limit: 1})
 		switch {
 		case err == nil && len(res.Files) > 0:
-			p.edges, p.expires = true, r.now().Add(graphYesTTL)
-			return
+			return true, nil
 		case err != nil && (pando.IsUnavailable(err) || errors.Is(err, context.DeadlineExceeded)):
-			p.failure = func() (core.ImpactTierStatus, string) { return pandoFailure(err) }
-			r.dropGraph(key, p)
-			return
+			return false, fmt.Errorf("code_related_files: %w", err)
 		}
-		// Any other failure is no evidence of a graph: try the next file.
 	}
-	p.expires = r.now().Add(graphNoTTL)
+	return false, nil
+}
+
+// WarmGraph runs the graph check on files ahead of any query and persists a
+// found graph in store, so the first query after a host starts reads a known
+// answer (GIT-US-0179). A missing graph is not stored: the files are a sample,
+// not the diff, and only a query may conclude "no call edges". It blocks for as
+// long as Pando takes, up to graphProbeTimeout; call it from a goroutine.
+func WarmGraph(ctx context.Context, client CallGraph, project string, files []string, store GraphStore) {
+	relator, ok := client.(FileRelator)
+	if !ok || store == nil || len(files) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, graphProbeTimeout)
+	defer cancel()
+	if edges, err := probeFiles(ctx, relator, project, files); err == nil && edges {
+		store.Store(true, time.Now().Add(graphYesTTL))
+	}
 }
 
 func (r *Resolver) dropGraph(key graphKey, p *graphProbe) {

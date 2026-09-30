@@ -401,6 +401,11 @@ func (ms *managedState) watch(ctx context.Context, slot *managedRepo) {
 	defer slot.mu.Unlock()
 	if ok {
 		slot.registered, slot.registerPID, slot.forceIndex = true, st.PID, false
+		ms.wg.Add(1)
+		go func() {
+			defer ms.wg.Done()
+			ms.warmGraph(ctx, slot, client)
+		}()
 	} else {
 		slot.nextTry = time.Now().Add(managedRegisterRetry)
 	}
