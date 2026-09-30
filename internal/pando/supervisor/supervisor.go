@@ -48,8 +48,26 @@ type Options struct {
 	// DocsFolder is the knowledge-base folder inside the repository. Default
 	// "docs".
 	DocsFolder string
-	// Key names the instance directory. Default InstanceKey(RepoRoot).
+	// Kind selects what the instance runs: KindMCP (the default) is
+	// `pando mcp-server`, KindAGUI is `pando agui-serve` for the agent panel
+	// (GIT-US-0185). Both get the lifecycle, health, backoff, watchdog and
+	// state-file rules described in the package documentation.
+	Kind Kind
+	// Key names the instance directory. Default InstanceKey(RepoRoot), or
+	// AGUIKey(RepoRoot) for KindAGUI.
 	Key string
+	// Files renders the configuration of a KindAGUI instance: it is called on
+	// every child start with the chosen port and answers the files to write
+	// under the instance directory, keyed by slash-separated relative path
+	// (".pando.toml", "agents/personas/x.md"). It is required for KindAGUI and
+	// ignored for KindMCP, whose configuration is generated here. The files
+	// are written with mode 0600 in a 0700 directory, because they may carry a
+	// credential. The port is passed on the command line too, so a file that
+	// states it is a courtesy, not a requirement.
+	Files func(port int) (map[string][]byte, error)
+	// AGUIPath is the route prefix of a KindAGUI instance, "/api/v1/agui" when
+	// empty. It must equal `[AGUI] Path` in the rendered configuration.
+	AGUIPath string
 	// PortMin and PortMax bound the port choice, inclusive. Both zero means any
 	// free loopback port.
 	PortMin, PortMax int
@@ -111,8 +129,24 @@ func (o *Options) defaults() error {
 	if o.DocsFolder == "" {
 		o.DocsFolder = "docs"
 	}
+	switch o.Kind {
+	case "", KindMCP:
+		o.Kind = KindMCP
+	case KindAGUI:
+		if o.Files == nil {
+			return errors.New("supervisor: Options.Files is required for an AG-UI instance")
+		}
+		if o.AGUIPath == "" {
+			o.AGUIPath = defaultAGUIPath
+		}
+	default:
+		return fmt.Errorf("supervisor: unknown instance kind %q", o.Kind)
+	}
 	if o.Key == "" {
 		o.Key = InstanceKey(o.RepoRoot)
+		if o.Kind == KindAGUI {
+			o.Key = AGUIKey(o.RepoRoot)
+		}
 	}
 	dur := func(p *time.Duration, d time.Duration) {
 		if *p <= 0 {
@@ -176,7 +210,7 @@ func New(opts Options) (*Supervisor, error) {
 		restart: make(chan struct{}, 1),
 	}
 	s.status = Status{
-		State: StateStopped, Key: opts.Key, Root: opts.RepoRoot, Project: s.project,
+		State: StateStopped, Kind: opts.Kind, Key: opts.Key, Root: opts.RepoRoot, Project: s.project,
 		TokenFile: filepath.Join(dir, tokenFileName), Binary: opts.Binary, Since: time.Now().UTC(),
 	}
 	return s, nil
@@ -194,13 +228,18 @@ func (s *Supervisor) Status() Status {
 	return st
 }
 
-// Endpoint returns the MCP URL and bearer token of the running child, for a
-// pando.Client. ok is false until the instance is ready.
+// Endpoint returns the URL and bearer token of the running child. For a
+// KindMCP instance the URL is the MCP endpoint, for a pando.Client; for a
+// KindAGUI instance it is the base URL of the AG-UI listener, scheme and host
+// only. ok is false until the instance is ready.
 func (s *Supervisor) Endpoint() (mcpURL, token string, ok bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.status.State != StateReady {
 		return "", "", false
+	}
+	if s.opts.Kind == KindAGUI {
+		return s.status.AGUIURL, s.token, true
 	}
 	return s.status.MCPURL, s.token, true
 }
@@ -299,7 +338,7 @@ func (s *Supervisor) Start(ctx context.Context) error {
 	s.mu.Unlock()
 	s.update(func(st *Status) {
 		*st = Status{
-			State: StateStarting, Key: st.Key, Root: st.Root, Project: st.Project, LastPort: st.LastPort,
+			State: StateStarting, Kind: st.Kind, Key: st.Key, Root: st.Root, Project: st.Project, LastPort: st.LastPort,
 			TokenFile: st.TokenFile, Binary: st.Binary, Version: version, SupervisorPID: os.Getpid(),
 		}
 	})
@@ -379,7 +418,7 @@ func (s *Supervisor) loop(ctx context.Context, sink *logSink) {
 	runtime.LockOSThread()
 	defer func() {
 		sink.Close()
-		s.update(func(st *Status) { st.State, st.PID, st.Port, st.MCPURL = StateStopped, 0, 0, "" })
+		s.update(func(st *Status) { st.State, st.PID, st.Port, st.MCPURL, st.AGUIURL = StateStopped, 0, 0, "", "" })
 		s.mu.Lock()
 		lock, done := s.lock, s.done
 		s.lock, s.cancel, s.started, s.done = nil, nil, false, nil
@@ -477,14 +516,9 @@ func (s *Supervisor) runOnce(ctx context.Context, sink *logSink, avoid int) (rea
 		changedFrom = preferred
 		s.opts.Logger.Warn("managed pando cannot reuse its previous port; using another", "key", s.opts.Key, "previous", preferred, "port", port)
 	}
-	cfg := generatedConfig(s.opts, s.dir, port, s.token)
-	if err := writeFileAtomic(filepath.Join(s.dir, configFileName), cfg, 0o600); err != nil {
-		return "write .pando.toml: " + err.Error(), 0, true
-	}
-
-	args := []string{"mcp-server", "--no-stdio", "--cwd", s.dir}
-	if s.opts.Debug {
-		args = append(args, "--debug")
+	args, err := s.prepareRun(port)
+	if err != nil {
+		return err.Error(), 0, true
 	}
 	cmd := exec.CommandContext(context.WithoutCancel(ctx), s.opts.Binary, args...)
 	cmd.Dir = s.dir
@@ -508,9 +542,15 @@ func (s *Supervisor) runOnce(ctx context.Context, sink *logSink, avoid int) (rea
 		exited <- err
 	}()
 
-	url := "http://127.0.0.1:" + strconv.Itoa(port) + "/mcp"
+	base := "http://127.0.0.1:" + strconv.Itoa(port)
+	url := base + "/mcp"
 	s.update(func(st *Status) {
-		st.State, st.PID, st.Port, st.MCPURL = StateStarting, cmd.Process.Pid, port, url
+		st.State, st.PID, st.Port = StateStarting, cmd.Process.Pid, port
+		if s.opts.Kind == KindAGUI {
+			st.AGUIURL = base
+		} else {
+			st.MCPURL = url
+		}
 		st.LastPort, st.PortChangedFrom = port, changedFrom
 	})
 
@@ -526,12 +566,12 @@ func (s *Supervisor) runOnce(ctx context.Context, sink *logSink, avoid int) (rea
 		}
 	}
 
-	client, err := pando.New(pando.Options{MCPURL: url, Token: s.token, Timeout: s.opts.HealthTimeout})
+	check, closeCheck, err := s.healthCheck(url, base)
 	if err != nil {
 		stop()
 		return "build the health client: " + err.Error(), 0, true
 	}
-	defer func() { _ = client.Close() }()
+	defer closeCheck()
 
 	// Wait for ready.
 	deadline := time.NewTimer(s.opts.ReadyTimeout)
@@ -554,7 +594,7 @@ func (s *Supervisor) runOnce(ctx context.Context, sink *logSink, avoid int) (rea
 			return fmt.Sprintf("pando was not healthy on port %d within %s (it may have moved to another port): %v", port, s.opts.ReadyTimeout, lastErr), port, true
 		case <-poll.C:
 			hctx, cancel := context.WithTimeout(ctx, s.opts.HealthTimeout)
-			lastErr = client.Health(hctx)
+			lastErr = check(hctx, true)
 			cancel()
 			ready = lastErr == nil
 		}
@@ -577,7 +617,7 @@ func (s *Supervisor) runOnce(ctx context.Context, sink *logSink, avoid int) (rea
 			return fmt.Sprintf("pando exited: %v", err), 0, true
 		case <-tick.C:
 			hctx, cancel := context.WithTimeout(ctx, s.opts.HealthTimeout)
-			err := client.Health(hctx)
+			err := check(hctx, false)
 			cancel()
 			if ctx.Err() != nil {
 				continue

@@ -558,7 +558,23 @@ Follow-ups, not implemented yet:
   fall back to a free port (in the configured range only), log a warning and record
   `portChangedFrom` in `state.json`. A port on which the child never became healthy (Pando
   moved silently) is still a crash and is not preferred on the next run.
-- GIT-US-0185: supervise `pando agui-serve` for the agent panel.
+- GIT-US-0185: supervise `pando agui-serve` for the agent panel. Implemented (decision 4):
+  - **Topology.** One adapter per opted-in repository, beside the repository's search instance:
+    `agui-serve --cwd` chdirs once, so serving several repositories from one process is not
+    possible, and this matches decision 1. It runs in `<cache dir>/pando/<key>-agui/` with its
+    own lock, `state.json` (`kind: "agui"`, `aguiUrl`), token, log and data directory.
+  - **Same supervisor.** `supervisor.Options.Kind` selects `agui-serve`; lifecycle, health,
+    backoff, watchdog, orphan reaping and the stable port (GIT-US-0184) are shared code. Health is
+    `/healthz` plus, on the first check, `/info` with the instance token.
+  - **Configuration.** Generated from the `gintrack agent init` templates (moved to
+    `internal/agentcfg`) into the instance directory, so nothing is written to the repository.
+    The code-search tools are left out of `[AGUI] Tools` because the adapter has no code project.
+  - **Discovery.** The browser never knew the upstream, so the companion's agent proxy resolves
+    the managed adapter first, then `agent.pando.repos`, then `agent.pando.url`, and answers
+    `503` while a managed adapter is not ready rather than use another repository's upstream.
+    `agent.pando.managed: false` and an explicit `repos` row keep a repository external.
+  - **Not done.** The code tools, `gintrack pando status` output for the adapter, and a web view
+    of `indexed[].managed.agui` beyond the typed field.
 - GIT-US-0186: support managed Pando on Windows with Job Objects.
 - GIT-US-0187: guarantee managed Pando dies with `serve` on macOS. Implemented (decision 5): the
   child runs under `gintrack __pando-watch`, a re-executed watchdog holding a lifeline pipe, on

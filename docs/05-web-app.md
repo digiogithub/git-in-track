@@ -2078,6 +2078,14 @@ resolves but renders "the agent is not available here" when it is false — the
 branch is on the capability, never on the provider kind, so a companion built
 without the AG-UI routes behaves like browser-only mode.
 
+The panel is configured by nothing: it never learns where the AG-UI adapter listens, only
+whether `features.agent` is true, and every call goes to `/api/v1/agent?repo=<id>`. In
+managed search mode `gintrack serve` runs the adapter for each opted-in repository itself and
+the companion routes to it (docs/20 §2.4, GIT-US-0185); a managed adapter that is still
+starting shows up as a `503` with `Retry-After` and a reason on those calls, and its state is
+in `indexed[].managed.agui` of the search settings. An external `agui-serve` is reached through
+`agent.pando` exactly as before.
+
 ### 19.1 Layout
 
 Three columns — conversations, the conversation, and a right rail — collapsing

@@ -137,12 +137,13 @@ type PandoTargets struct {
 	byRepo  map[string]PandoTarget
 	tokens  map[string]string
 	maxRuns int
+	managed bool
 }
 
 // PandoTargets resolves the `agent.pando` section into a snapshot.
 func (c *Config) PandoTargets() PandoTargets {
 	p := c.Agent.Pando
-	out := PandoTargets{maxRuns: p.MaxRuns}
+	out := PandoTargets{maxRuns: p.MaxRuns, managed: p.ManagedEnabled()}
 	if out.maxRuns <= 0 {
 		out.maxRuns = DefaultPandoMaxRuns
 	}
@@ -181,6 +182,10 @@ func (c *Config) PandoTargets() PandoTargets {
 // Configured reports whether an upstream URL is set at all. With none there is
 // nothing to proxy to and the feature reports itself absent.
 func (t PandoTargets) Configured() bool { return t.def.URL != "" || len(t.byRepo) > 0 }
+
+// ManagedAGUI reports whether a managed-mode server may run the AG-UI adapter
+// itself (`agent.pando.managed`, on unless set to false).
+func (t PandoTargets) ManagedAGUI() bool { return t.managed }
 
 // MaxRuns is the global in-flight run cap.
 func (t PandoTargets) MaxRuns() int { return t.maxRuns }
