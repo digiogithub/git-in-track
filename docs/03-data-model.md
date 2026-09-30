@@ -584,7 +584,8 @@ default `false`), `footnotes` (bool, default `true`), `callouts` (bool, default 
 - `transitions`: optional mapping `from → [to…]`. Absent or `null` means "any transition allowed".
   Violations are **warnings** (`W-WORKFLOW-TRANSITION`) in files, and **errors** in the API/MCP layer
   unless `--force`. Rationale: a git repo may receive a file from anywhere; refusing to parse it
-  would be worse than flagging it.
+  would be worse than flagging it. A status of category `triage` that has no key of its own in the
+  mapping may move to any declared status (R-INBOX-7); moving **into** triage follows the mapping.
 
 ### 6.2 Complete example
 
@@ -779,7 +780,11 @@ inbox:
   resolves to nothing — a warning, because the target may arrive in a later merge).
 - **R-INBOX-7** A project scaffolded by `gintrack` declares `{id: triage, name: Triage, category:
   triage}`, and it is neither the initial status nor the target of any declared transition, so
-  nothing ordinary lands there by accident.
+  nothing ordinary lands there by accident. Work leaves triage by being accepted or rejected: when
+  `workflow.transitions` has **no key** for a triage-category status, a move out of it to any
+  declared status is allowed, so a project that declares transitions without mentioning triage can
+  still accept and reject. A project that does declare `triage: [...]` is held to that list, and
+  moving into triage follows the declared transitions as usual.
 
 ---
 
