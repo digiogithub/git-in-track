@@ -504,6 +504,10 @@ All commands accept the global flags above. Exit codes:
 | 5    | conflict (stale `rev`, git conflict)                           |
 | 6    | git error (auth, network, dirty tree)                          |
 | 7    | gate tripped: `gintrack spec impact --fail-on` found a hit in a listed state (§4.20) |
+| 10   | `gintrack update --check` found a newer release (§4.24)        |
+| 11   | `gintrack update` was refused: install channel, non-comparable version, no terminal without `--yes`, or declined (§4.24) |
+| 12   | `gintrack update`: the download failed verification; nothing was installed (§4.24) |
+| 13   | `gintrack update`: the verified binary could not be installed (§4.24) |
 
 With `--json`, machine-readable output goes to stdout and human logs to stderr, so
 `gintrack item list --json | jq` is always safe. The JSON is indented, except for
@@ -1316,6 +1320,8 @@ $ gintrack version --json
  "os":"linux","arch":"amd64","ui":"embedded","git":{"backend":"system","version":"2.45.2"},
  "schema":"v1"}
 ```
+
+`gintrack update` replaces this binary with a newer release (§4.24).
 
 ### 4.11 `gintrack completion`
 
@@ -2300,6 +2306,60 @@ changed, so a repository stopped here comes back with the next `serve`.
 **Exit codes**: `0` ok; `1` serve unreachable, token refused or another failure; `2` no
 repository opted in and no `--repo`; `4` unknown repository; `5` the instance cannot take the
 verb (none running for `restart`, or supervised by another `gintrack serve`).
+
+### 4.24 `gintrack update`
+
+Self-update from GitHub Releases (GIT-EP-0032, ADR-040). It follows the asset contract of
+docs/09 §3.1: it downloads the archive for this platform, checks its size and SHA-256 against the
+release's `checksums.txt`, and only then swaps the verified binary in. A download that does not
+verify never touches the installed binary.
+
+```
+gintrack update [version] [--check] [--prerelease] [--force] [--yes] [--json]
+```
+
+| Flag           | Meaning                                                                           |
+| -------------- | --------------------------------------------------------------------------------- |
+| `[version]`    | Install exactly this release (`2.1.0` or `v2.1.0`). The only way to downgrade, and the only update a source build accepts. |
+| `--check`      | Report only; install nothing. Exit 0 when up to date, 10 when a release differs. |
+| `--prerelease` | Consider pre-releases when looking for the latest.                               |
+| `--force`      | Reinstall the same version; replace a Homebrew, Scoop, container or dev install; update a build whose version is not comparable. |
+| `--yes`        | Do not ask. Without it a terminal gets a `[y/N]` prompt, and **off a terminal it refuses** (exit 11) instead of prompting: use `--yes`, or `--check`. |
+| `--json`       | Print one JSON object on stdout, human text goes to stderr.                      |
+
+Flow: detect the install channel, resolve the release, compare it with the running version, stop
+for `--check`, confirm, download into a temporary directory next to the binary (same filesystem,
+so the final rename is atomic), verify, replace. The file mode is kept. Without a version the newest
+stable release is chosen, and a current version that is newer than it is reported as up to date. A
+downgrade needs an explicit version and the prompt says `DOWNGRADE`; the same version again needs
+`--force`. A running version that is not semver (`dev`) needs an explicit version or `--force`.
+
+Channels: a release archive install updates itself. A Homebrew (`brew upgrade --cask gintrack`),
+Scoop (`scoop update gintrack`) or container install is refused with its own upgrade command, and
+`--force` replaces the binary anyway with a warning that the package manager will not know.
+
+Exit codes (§4 table): `0` up to date or updated, `10` update available (`--check`), `11`
+refused, `12` verification failed (checksum, size, or no checksum in the release), `13` the
+verified binary could not be installed. When the old binary may be missing after a failed swap the
+message says so and names the `.<name>.old` file to move back. `4` is an unknown explicit version;
+other failures (network, GitHub rate limit, which asks for `GITHUB_TOKEN`) are `1`. A read-only
+install directory is reported with a hint to re-run with the privileges that installed it.
+
+`--json`:
+
+```json
+{"current":"2.0.0","latest":"2.1.0","url":"https://github.com/digiogithub/git-in-track/releases/tag/v2.1.0",
+ "action":"updated","reason":"updated to 2.1.0","channel":"release"}
+```
+
+`action` is `up_to_date`, `available`, `updated`, `refused` or `failed`; `warning`, `oldPath` and
+`running` appear only when set.
+
+After a successful update it looks for processes still running the old binary, from the supervisor
+state files under the cache directory (`<cacheDir>/pando/*/state.json`, §4.23): the `gintrack serve`
+that supervises a managed Pando and that Pando. It prints them and tells you to restart; **it never
+restarts anything**. A `gintrack serve` without a managed Pando leaves no state file and is not
+detected.
 
 ## 5. Local REST API
 

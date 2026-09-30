@@ -98,6 +98,7 @@ Start with:
 		newServeCommand(build),
 		newMCPCommand(build, flags),
 		newVersionCommand(build),
+		newUpdateCommand(build, flags),
 		newCompletionCommand(),
 		newInitCommand(flags),
 		newAddCommand(flags),

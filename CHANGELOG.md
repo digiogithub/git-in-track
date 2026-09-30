@@ -14,11 +14,18 @@ because a commit list cannot express them.
 
 ### Added
 
+- **`gintrack update`** (`GIT-US-0194`, docs/07 §4.24, ADR-040). Updates the binary from GitHub
+  Releases: it verifies the archive against `checksums.txt` before anything is replaced, keeps the
+  file mode, refuses Homebrew, Scoop and container installs with their own upgrade command (`--force`
+  overrides), and asks for confirmation on a terminal (`--yes` otherwise). `--check` reports only,
+  `--json` is machine readable, a downgrade needs an explicit version. New exit codes 10 (update
+  available), 11 (refused), 12 (verification failed) and 13 (install failed). It tells you to restart
+  a running `gintrack serve` or managed Pando and never restarts one.
 - **Update notices** (`GIT-US-0195`, ADR-040). A cached latest-release checker
   (`internal/selfupdate`, `<cacheDir>/update-check.json`, 6 h after a success, 15 min after a
   failure, 5 s lookup timeout, tolerant of a corrupt file) feeds three surfaces: an `update` line in
   `gintrack doctor` (info when one exists, a warning, never an error, when the lookup fails, not
-  checked on development builds), `GET /api/v1/version` and a dismissible notice in the web UI
+  checked on development builds, Homebrew, Scoop or container installs), `GET /api/v1/version` and a dismissible notice in the web UI
   (hidden in browser-only mode), and, opt-in with the new `update.checkOnStart` key (default
   `false`), one stderr line after an interactive command. The line is never printed for `--json`,
   `--quiet`, a non-terminal stderr, `mcp`, `serve`, `update`, `version` or `doctor`.
