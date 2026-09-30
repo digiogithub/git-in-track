@@ -179,6 +179,8 @@ type hitState struct {
 	behaviour bool // a reason reached the requirement through its code or the story
 	tested    bool // a reason reached it through a test that verifies it
 	shared    bool // a call reached it through a caller that carries several requirements
+	narrow    bool // a call reached it through a caller that carries two requirements
+	testCall  bool // a call reached it through a caller in a test file
 	reasons   [4][]string
 }
 
@@ -189,15 +191,38 @@ type hitState struct {
 // rendered.
 const kindShared core.ImpactKind = "shared"
 
+// kindNarrow is the kind of a tier-2 reason whose production caller carries
+// the code edges of exactly two requirements (GIT-US-0181): too few for the
+// call to be diluted the way a caller of many rules is, so it outranks a
+// test that only calls the changed code, but not a test the diff changed.
+// It is never rendered.
+const kindNarrow core.ImpactKind = "narrow"
+
+// maxNarrowCaller is the most requirements a production caller may carry and
+// still be kindNarrow. The benchmark's P3 caller (validateItemLinks) carries
+// two; P4's (FileStore.UpdateRequirement) carries four and stays shared.
+const maxNarrowCaller = 2
+
+// kindTestCall is the kind of a tier-2 reason whose caller sits in a test
+// file (GIT-US-0166): a test that runs changed code is test evidence. It is
+// weaker than a test the diff changed, and a narrow production caller
+// outranks it. It is never rendered.
+const kindTestCall core.ImpactKind = "test-call"
+
 // kind is the hit's ImpactKind: behaviour as soon as one reason is, test-only
-// when every other certain reason came through a verifying test, behaviour
-// when the only reasons are calls from shared callers, empty for a
-// candidate.
+// when every other certain reason came through a verifying test the diff
+// changed, behaviour when a narrow production caller reached it, test-only
+// when calls from test files did, behaviour when only shared callers did,
+// empty for a candidate.
 func (h *hitState) kind() core.ImpactKind {
 	switch {
 	case h.behaviour:
 		return core.ImpactKindBehaviour
 	case h.tested:
+		return core.ImpactKindTestOnly
+	case h.narrow:
+		return core.ImpactKindBehaviour
+	case h.testCall:
 		return core.ImpactKindTestOnly
 	case h.shared:
 		return core.ImpactKindBehaviour
@@ -226,6 +251,8 @@ func (c *collector) add(ref core.RequirementRef, tier int, reason string, touche
 	h.behaviour = h.behaviour || kind == core.ImpactKindBehaviour
 	h.tested = h.tested || kind == core.ImpactKindTestOnly
 	h.shared = h.shared || kind == kindShared
+	h.narrow = h.narrow || kind == kindNarrow
+	h.testCall = h.testCall || kind == kindTestCall
 	for _, r := range h.reasons[tier] {
 		if r == reason {
 			return h
@@ -506,9 +533,11 @@ func isTestPath(p string) bool {
 //     resolves callees by name, so they may call the other definition. A
 //     failing pin turns pinning off for the rest of the query;
 //   - a caller in a test file is test evidence (test-only), whatever marker
-//     it carries;
+//     it carries, unless a narrow production caller outranks it;
 //   - a production caller that carries the code edges of several
-//     requirements gives kindShared, which does not flip a test-only hit.
+//     requirements gives kindShared, which does not flip a test-only hit;
+//     with exactly two (kindNarrow, GIT-US-0181) it flips a hit that a test
+//     only calls, but not one whose verifying test the diff changed.
 func (r *Resolver) transitive(ctx context.Context, q core.ImpactQuery, symbols []changedSymbol,
 	graph *trace.Graph, tree fs.FS, col *collector,
 ) core.ImpactTier {
@@ -592,15 +621,17 @@ func (r *Resolver) transitive(ctx context.Context, q core.ImpactQuery, symbols [
 			}
 			sym := lines.symbolAt(p, c.StartLine)
 			edges := graph.ForSymbol(p, sym)
-			shared := codeRefs(edges) > 1
+			carried := codeRefs(edges)
 			for _, e := range edges {
 				reason := "call:" + e.TraceRef() + " calls " + name + " d" + strconv.Itoa(max(c.Depth, 1))
 				kind := roleKind(e.Role)
 				switch {
 				case isTestPath(p):
-					kind = core.ImpactKindTestOnly
-				case shared && kind == core.ImpactKindBehaviour:
+					kind = kindTestCall
+				case carried > maxNarrowCaller && kind == core.ImpactKindBehaviour:
 					kind = kindShared
+				case carried > 1 && kind == core.ImpactKindBehaviour:
+					kind = kindNarrow
 				}
 				found = append(found, pending{ref: e.Ref, reason: reason, kind: kind})
 			}

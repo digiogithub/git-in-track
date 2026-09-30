@@ -107,6 +107,14 @@ because a commit list cannot express them.
   directory (keyed by pid and state change, so a restart drops it) and `gintrack serve` warms it
   once the code project is registered, so short-lived `gintrack mcp` processes reuse it.
 
+- **Tier 2 keeps a narrow production caller as behaviour evidence over a test caller**
+  (`GIT-US-0181`, docs/03 R-IMP-3, R-IMP-5). After `GIT-US-0166` a hit reached by a production
+  caller carrying two requirement markers and by an unchanged test that calls the changed code
+  ranked `test-only`: the benchmark's one true tier-2 behaviour hit (P3 `GIT-SP-0003.R3`, through
+  `validateItemLinks` calling `Inverse`) was labelled evidence. A caller carrying exactly two
+  requirements now outranks a test caller; a verifying test the diff changed, and a caller of
+  three or more requirements, still do not flip `test-only`.
+
 - **An update that keeps an item's title no longer renames its file** (`GIT-US-0171`, docs/03 §3.4).
   A status-only `update_item` on an item whose slug was hand-made or longer than 60 bytes renamed
   the file to the 60-byte truncation, turning a two-line diff into a delete plus an add. The file

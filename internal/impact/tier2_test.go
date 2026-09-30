@@ -705,3 +705,101 @@ func TestImpactTier2GraphProbePersisted(t *testing.T) {
 		}
 	})
 }
+
+// The P3 replay of the benchmark (GIT-US-0181, §10.6): the diff changes
+// LinkKind.Inverse, which carries no marker. Its production caller
+// validateItemLinks carries the markers of R1 and R3, and an unchanged test
+// that verifies both calls Inverse too. GIT-US-0166 ranked both hits
+// test-only, although validateItemLinks runs the changed code.
+const (
+	fxInverse = `package links
+
+// LinkKind is the kind of a link.
+type LinkKind string
+
+func (k LinkKind) Inverse() LinkKind {
+	return k
+}
+`
+	fxValidate = `package links
+
+// Implements: ACME-SP-0003.R1, ACME-SP-0003.R3
+func validateItemLinks(kinds []LinkKind) []LinkKind {
+	var out []LinkKind
+	for _, k := range kinds {
+		out = append(out, k.Inverse())
+	}
+	return out
+}
+`
+	fxValidateTests = `package links
+
+import "testing"
+
+// Verifies: ACME-SP-0003.R1, ACME-SP-0003.R3
+func TestLinkKindValidAndInverse(t *testing.T) {
+	if LinkKind("a").Inverse() != "a" {
+		t.Fatal("inverse")
+	}
+}
+`
+)
+
+func TestImpactTier2NarrowCallerOutranksTestCaller(t *testing.T) {
+	// setup commits the P3 shapes with the given markers on validateItemLinks
+	// and returns the fixture, the base commit and the callers Pando reports.
+	setup := func(t *testing.T, markers string) (*fixture, string, []pando.ImpactCaller) {
+		validate := strings.Replace(fxValidate, "ACME-SP-0003.R1, ACME-SP-0003.R3", markers, 1)
+		f := newFixture(t)
+		f.write(fxLinksSpecPath, fxLinksSpec)
+		f.write("src/links/kind.go", fxInverse)
+		f.write("src/links/validate.go", validate)
+		f.write("src/links/validate_test.go", fxValidateTests)
+		base := f.commit("link kinds")
+		if _, err := f.vlt.Reload(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		f.write("src/links/kind.go", strings.Replace(fxInverse, "return k", `return k + "_"`, 1))
+		return f, base, []pando.ImpactCaller{
+			{Name: "validateItemLinks", FilePath: "src/links/validate.go", StartLine: lineOf(validate, "func validateItemLinks"), Depth: 1},
+			{Name: "TestLinkKindValidAndInverse", FilePath: "src/links/validate_test.go", StartLine: lineOf(fxValidateTests, "func TestLinkKindValidAndInverse"), Depth: 1},
+		}
+	}
+	kinds := func(f *fixture, base string, callers []pando.ImpactCaller) map[string]core.ImpactKind {
+		graph := &fakeGraph{callers: map[string][]pando.ImpactCaller{"Inverse": callers}}
+		res := f.impact(f.resolver(graph, nil), core.ImpactQuery{Base: base, Tiers: []int{1, 2}})
+		got := map[string]core.ImpactKind{}
+		for _, h := range res.Hits {
+			got[h.Ref.String()] = h.Kind
+		}
+		return got
+	}
+
+	t.Run("a caller of two requirements flips a test caller to behaviour", func(t *testing.T) {
+		f, base, callers := setup(t, "ACME-SP-0003.R1, ACME-SP-0003.R3")
+		got := kinds(f, base, callers)
+		for _, ref := range []string{"ACME-SP-0003.R1", "ACME-SP-0003.R3"} {
+			if got[ref] != core.ImpactKindBehaviour {
+				t.Errorf("%s kind = %q, want behaviour: validateItemLinks calls the changed Inverse", ref, got[ref])
+			}
+		}
+	})
+
+	t.Run("a caller of three requirements does not", func(t *testing.T) {
+		f, base, callers := setup(t, "ACME-SP-0003.R1, ACME-SP-0003.R3, ACME-SP-0003.R4")
+		got := kinds(f, base, callers)
+		for _, ref := range []string{"ACME-SP-0003.R1", "ACME-SP-0003.R3"} {
+			if got[ref] != core.ImpactKindTestOnly {
+				t.Errorf("%s kind = %q, want test-only: the caller carries three requirements", ref, got[ref])
+			}
+		}
+	})
+
+	t.Run("a test caller alone stays test-only", func(t *testing.T) {
+		f, base, callers := setup(t, "ACME-SP-0003.R1, ACME-SP-0003.R3")
+		got := kinds(f, base, callers[1:])
+		if len(got) != 2 || got["ACME-SP-0003.R1"] != core.ImpactKindTestOnly || got["ACME-SP-0003.R3"] != core.ImpactKindTestOnly {
+			t.Errorf("kinds = %v, want R1 and R3 test-only", got)
+		}
+	})
+}
