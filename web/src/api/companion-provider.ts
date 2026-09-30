@@ -105,6 +105,7 @@ import type {
   SearchIndexedRepo,
   SearchHit,
   SearchQuery,
+  SearchManagedAgui,
   SearchManagedInstance,
   SearchManagedState,
   SearchOptInResult,
@@ -1115,6 +1116,20 @@ const MANAGED_STATES: readonly SearchManagedState[] = [
   'skipped',
 ];
 
+function toSearchManagedAgui(value: unknown): SearchManagedAgui | undefined {
+  const record = asRecord(value);
+  if (record === null) return undefined;
+  const state = asString(record['state']);
+  return {
+    state: MANAGED_STATES.find((known) => known === state) ?? 'failed',
+    ...optional('pid', asNumber(record['pid'])),
+    ...optional('port', asNumber(record['port'])),
+    ...optional('since', asString(record['since'])),
+    ...optional('crashes', asNumber(record['crashes'])),
+    ...optional('error', asString(record['error'])),
+  };
+}
+
 /** `indexed[].managed`, absent outside managed mode. */
 export function toSearchManaged(value: unknown): SearchManagedInstance | undefined {
   const record = asRecord(value);
@@ -1123,6 +1138,7 @@ export function toSearchManaged(value: unknown): SearchManagedInstance | undefin
   return {
     optedIn: asBoolean(record['optedIn']) ?? false,
     state: MANAGED_STATES.find((known) => known === state) ?? 'failed',
+    ...optional('agui', toSearchManagedAgui(record['agui'])),
     ...optional('pid', asNumber(record['pid'])),
     ...optional('port', asNumber(record['port'])),
     ...optional('version', asString(record['version'])),

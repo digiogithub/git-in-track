@@ -1,9 +1,10 @@
 # ADR-039 — gintrack launches and manages Pando over the workspace
 
-- **Status:** Proposed — 2026-09-29. Nothing in this ADR is implemented. The maintainer has
-  decided four points of it (see *Maintainer decisions*). The open questions at the end are
-  still undecided and must be answered before it is accepted.
-- **Date:** 2026-09-29
+- **Status:** Accepted — 2026-09-30. The maintainer decided four points on 2026-09-29 and
+  answered the five open questions on 2026-09-30 (see *Maintainer decisions*). The core of it
+  is implemented (see *Implementation*); the follow-ups are tracked as GIT-US-0184 to
+  GIT-US-0187. Proposed on 2026-09-29.
+- **Date:** 2026-09-29 (accepted 2026-09-30)
 - **Phase:** Semantic search (Phase 9 surface), for the impact tiers 2 and 3 of Phase 11
 - **Related:** [ADR-002](ADR-002-git-as-only-sync.md), [ADR-005](ADR-005-companion-cli-go-embed.md),
   [ADR-032](ADR-032-local-integration-credential-storage.md),
@@ -21,6 +22,10 @@
 ## Context
 
 ### How Pando is used today
+
+> Historical note (2026-09-30): the claim below and in the table further down that Pando's CORS
+> is `*` describes an older Pando. It was corrected in docs/07 §3.3 and `internal/pando/doc.go`
+> by GIT-US-0172 (#105).
 
 Semantic search (docs/21) and impact tiers 2 and 3 (docs/21 §6.1) need a Pando instance. The
 companion reaches it through `internal/pando`, a streamable-HTTP MCP client. It is configured
@@ -205,7 +210,25 @@ The maintainer decided the following on 2026-09-29. The rest of this ADR follows
      using the endpoint that `gintrack pando status --json` reports (see *Agents connecting to
      the managed Pando*).
 
-## Decision (proposed)
+## Maintainer decisions (2026-09-30)
+
+The maintainer answered the five open questions on 2026-09-30, and this ADR is accepted with
+these answers.
+
+1. **Lifetime.** An instance dies with the `gintrack serve` that started it, as implemented.
+   There is no detached daemon.
+2. **Transport.** Loopback HTTP with a bearer token, as implemented. In addition, an instance
+   reuses its port across restarts when the port is free, stored in `state.json`. Tracked as
+   GIT-US-0184 (implemented, see *Implementation*).
+3. **Embedding model.** gintrack inherits the provider and model from the user's global Pando
+   configuration, as implemented. gintrack does not pin them.
+4. **AG-UI.** The same supervisor also manages `pando agui-serve` for the agent panel
+   (ADR-035). Tracked as GIT-US-0185.
+5. **Platforms.** Windows is to be supported with Job Objects (GIT-US-0186), and macOS must get
+   the same die-with-serve guarantee as Linux (GIT-US-0187). Until those land, managed mode is
+   guaranteed on Linux only.
+
+## Decision
 
 **`gintrack serve` supervises one Pando per repository that opts in to semantic search (option
 C). The hand-run setup stays available as the external mode (option A).**
@@ -333,7 +356,7 @@ Pando. The one known exception is the ADR-036 hazard, and this design narrows it
   - A second `gintrack serve` on the same configuration finds the lock held and connects to
     the running instance instead of starting its own.
   - Instances live as long as the `gintrack serve` process that started them. Whether they
-    should outlive it is open question 1.
+    should outlive it was decided on 2026-09-30: they do not (no detached daemon).
 - **Clients that only connect.** `gintrack mcp` and the `gintrack spec` commands never start
   Pando.
   - They read `state.json` and `token` for the repository they need, check that the recorded
@@ -344,7 +367,8 @@ Pando. The one known exception is the ADR-036 hazard, and this design narrows it
     2 and 3. `gintrack mcp` does not re-export any Pando tool.
 - **Start.** Startup never blocks the listener. The supervisor:
   1. resolves `managed.binary`, and checks `pando --version` against the version floor;
-  2. picks a port by binding `127.0.0.1:0` and releasing it;
+  2. picks a port: the last one recorded in `state.json` (`lastPort`) when it is free, else a
+     free one from the configured range or from `127.0.0.1:0` (GIT-US-0184);
   3. writes the configuration;
   4. runs `pando mcp-server --no-stdio --cwd <instance dir>` in its own process group. On
      Linux it also sets `Pdeathsig = SIGTERM`, so the child dies with its supervisor.
@@ -352,7 +376,8 @@ Pando. The one known exception is the ADR-036 hazard, and this design narrows it
   - The instance counts as ready when `Client.Health` (MCP initialize plus `tools/list`)
     succeeds with **our** token on **our** port, within 30 s.
   - Pando may switch to another port without saying so. If that happens, Health fails with an
-    unreachable error, and the supervisor kills the child and retries on a new port. A `401`
+    unreachable error, and the supervisor kills the child and retries on a different port (the
+    unhealthy one is not preferred again). A `401`
     means some other process owns the port.
   - Once ready, Health runs every 30 s. Three failures in a row count as a crash.
 - **Restart.** Restarts use exponential backoff from 1 s to 60 s. After 5 crashes within 10
@@ -390,9 +415,10 @@ $ gintrack pando status --json
 - The output includes `tokenFile`, never the token. The agent's MCP configuration reads the
   file and sends its contents as `Authorization: Bearer …`. A `--repo <id>` filter narrows the
   output to one instance.
-- **The port changes on every start**, so an agent configuration that hard-codes it breaks when
-  `serve` restarts. A client should resolve the endpoint through `gintrack pando status --json`
-  when it launches. Whether to offer a stable port is part of open question 2.
+- **The port is stable across restarts when it can be**: the supervisor tries the last port
+  first (GIT-US-0184), so a hard-coded agent configuration keeps working. If something else took
+  the port it changes, so a client should still resolve the endpoint through
+  `gintrack pando status --json` when it launches.
 - **The agent then sees Pando's full MCP tool surface**, including `kb_add_document` and the
   memory tools, which write, under Pando's auto-approve. This is the ADR-036 hazard, and it is
   outside gintrack's control: the token confines the endpoint to local users who can read the
@@ -469,7 +495,9 @@ package next to `internal/pando`, and it imports neither.
 - **Process supervision is new to gintrack.** The only external process gintrack starts today
   is system `git`, and those runs are short. cloudflared is embedded as a library (ADR-027).
   A long-running child needs care on Windows too: no `Pdeathsig`, so a Job Object is needed.
-  See open questions.
+  The maintainer decided on 2026-09-30 to support Windows with Job Objects (GIT-US-0186) and to
+  give macOS the same die-with-serve guarantee as Linux (GIT-US-0187). Until Windows lands,
+  managed mode is guaranteed on Linux and macOS (GIT-US-0187).
 - **The first index is not instant.** About a minute per 1,000 files for code, plus the KB
   embedding pass. Until the index is ready, rows show `indexing` and the tiers may answer from
   a partial index.
@@ -499,27 +527,59 @@ package next to `internal/pando`, and it imports neither.
    - docs/21 §1 and §7, docs/02 §8.1, docs/07 §3.3, docs/20 (the managed instance serves search
      only), and docs/08 §10 (connecting an agent to the managed Pando directly).
 
-## Open questions for the maintainer
+## Resolved questions
 
-Maintainer decisions 1–4 settled the earlier questions on topology, where the opt-in lives,
-the default mode and who may start Pando. These remain open:
+Maintainer decisions 1–4 of 2026-09-29 settled the earlier questions on topology, where the
+opt-in lives, the default mode and who may start Pando. The remaining five were answered on
+2026-09-30 (see *Maintainer decisions (2026-09-30)*):
 
-1. **Lifetime.** Should an instance die with the `gintrack serve` that started it, as proposed?
-   Or should it be a detached daemon that keeps running between runs, so that `gintrack mcp`
-   sessions still have it after `serve` stops? A daemon would need an idle timeout that Pando
-   does not have.
-2. **Transport.** Loopback HTTP is proposed, because `gintrack mcp`, `gintrack spec` and
-   directly-connected agents all need to reach the instance. Stdio would remove the port and
-   the token, but only `serve` could use it. Related: should the port stay the same across
-   restarts, stored in `state.json` and reused when it is free, so agent configurations do not
-   break?
-3. **Embedding model.** Should gintrack pin the embedding provider and model in the generated
-   configuration, since a model change silently degrades recall (docs/07)? Or should it
-   inherit them from the user's global Pando configuration, as proposed?
-4. **AG-UI.** Should the same supervisor also manage `pando agui-serve` for the agent panel
-   (ADR-035)? This ADR limits itself to search and impact.
-5. **Windows and macOS.** Is managed mode Linux and macOS only at first? Windows needs Job
-   Objects to tie the child's lifetime to gintrack.
+1. **Lifetime.** Resolved: the instance dies with the `gintrack serve` that started it. No
+   detached daemon.
+2. **Transport.** Resolved: loopback HTTP with a token, and the port is reused across restarts
+   when free, stored in `state.json` (GIT-US-0184).
+3. **Embedding model.** Resolved: inherited from the user's global Pando configuration, not
+   pinned by gintrack.
+4. **AG-UI.** Resolved: the same supervisor also manages `pando agui-serve` for the agent panel
+   (GIT-US-0185).
+5. **Windows and macOS.** Resolved: Windows with Job Objects (GIT-US-0186), and macOS gets the
+   same die-with-serve guarantee as Linux (GIT-US-0187). Linux only is guaranteed until then.
+
+## Implementation (2026-09-30)
+
+Shipped: the supervisor, the configuration keys and mode resolution, the `gintrack serve`
+integration, the clients that connect, and the web and docs work (GIT-US-0173 to GIT-US-0177,
+PRs #96 to #100). The CORS text correction landed as GIT-US-0172 (#105).
+
+Follow-ups, not implemented yet:
+
+- GIT-US-0184: reuse a managed Pando instance's port across restarts. Implemented (decision 2):
+  `state.json` keeps `lastPort` while stopped; a start, a requested restart and a crash restart
+  try it first, waiting up to `PortWait` (2 s) for the previous child's socket to close, then
+  fall back to a free port (in the configured range only), log a warning and record
+  `portChangedFrom` in `state.json`. A port on which the child never became healthy (Pando
+  moved silently) is still a crash and is not preferred on the next run.
+- GIT-US-0185: supervise `pando agui-serve` for the agent panel. Implemented (decision 4):
+  - **Topology.** One adapter per opted-in repository, beside the repository's search instance:
+    `agui-serve --cwd` chdirs once, so serving several repositories from one process is not
+    possible, and this matches decision 1. It runs in `<cache dir>/pando/<key>-agui/` with its
+    own lock, `state.json` (`kind: "agui"`, `aguiUrl`), token, log and data directory.
+  - **Same supervisor.** `supervisor.Options.Kind` selects `agui-serve`; lifecycle, health,
+    backoff, watchdog, orphan reaping and the stable port (GIT-US-0184) are shared code. Health is
+    `/healthz` plus, on the first check, `/info` with the instance token.
+  - **Configuration.** Generated from the `gintrack agent init` templates (moved to
+    `internal/agentcfg`) into the instance directory, so nothing is written to the repository.
+    The code-search tools are left out of `[AGUI] Tools` because the adapter has no code project.
+  - **Discovery.** The browser never knew the upstream, so the companion's agent proxy resolves
+    the managed adapter first, then `agent.pando.repos`, then `agent.pando.url`, and answers
+    `503` while a managed adapter is not ready rather than use another repository's upstream.
+    `agent.pando.managed: false` and an explicit `repos` row keep a repository external.
+  - **Not done.** The code tools, `gintrack pando status` output for the adapter, and a web view
+    of `indexed[].managed.agui` beyond the typed field.
+- GIT-US-0186: support managed Pando on Windows with Job Objects.
+- GIT-US-0187: guarantee managed Pando dies with `serve` on macOS. Implemented (decision 5): the
+  child runs under `gintrack __pando-watch`, a re-executed watchdog holding a lifeline pipe, on
+  every unix without `Pdeathsig`, and a start reaps an orphan recorded in `state.json`. Verified
+  on Linux; not run on a macOS machine.
 
 ## Alternatives considered
 

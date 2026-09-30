@@ -196,8 +196,9 @@ func installMCPTraceSeams(mounts []mcpMount, backend config.Backend, pandoHost *
 	for _, m := range mounts {
 		seams := server.TraceSeams{
 			Root: m.root, ProjectID: pando.SanitizeProjectID(m.root),
-			CallGraph: func() impact.CallGraph { return pandoHost.CallGraphFor(m.id) },
-			Semantic:  func() corevault.SemanticSearcher { return pandoHost.SemanticFor(m.id) },
+			CallGraph:  func() impact.CallGraph { return pandoHost.CallGraphFor(m.id) },
+			Semantic:   func() corevault.SemanticSearcher { return pandoHost.SemanticFor(m.id) },
+			GraphStore: pandoHost.GraphStoreFor(m.id),
 		}
 		repo, err := gitops.Open(m.root, gitops.Options{Backend: gitops.Kind(backend)})
 		if err != nil {
@@ -235,7 +236,7 @@ func installMCPSemantic(cfg *config.Config, configPath string, space *corevault.
 	if res := config.ResolvePandoMode(cfg.Search.Pando, exec.LookPath); res.Mode == config.PandoModeManaged {
 		return server.InstallDiscoveredSemanticSearch(cfg.CacheDir(configPath), space, repos, log)
 	}
-	return server.InstallSemanticSearch(searchSettings(cfg).Pando, space, repos, log)
+	return server.InstallSemanticSearch(searchSettings(cfg).Pando, cfg.CacheDir(configPath), space, repos, log)
 }
 
 // writeMode renders the posture on the startup line.

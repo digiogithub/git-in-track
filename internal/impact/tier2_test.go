@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/digiogithub/git-in-track/internal/core"
 	"github.com/digiogithub/git-in-track/internal/pando"
@@ -468,6 +470,336 @@ func TestImpactTier2CodeGraph(t *testing.T) {
 		res := f.impact(f.resolver(noCallers(), nil), q)
 		if res.Tiers[1].Status != core.ImpactTierOK {
 			t.Errorf("tier 2 = %+v, want ok: without code_related_files the graph cannot be checked", res.Tiers[1])
+		}
+	})
+}
+
+// slowRelator is a fake Pando whose code_related_files blocks until release
+// is closed, and counts its calls (GIT-US-0179).
+type slowRelator struct {
+	*finderGraph
+	related map[string][]pando.RelatedFile
+	release chan struct{}
+	mu      sync.Mutex
+	calls   int
+}
+
+func (g *slowRelator) RelatedFiles(ctx context.Context, _, path string, _ pando.RelatedFilesOptions) (pando.RelatedFilesResult, error) {
+	g.mu.Lock()
+	g.calls++
+	g.mu.Unlock()
+	select {
+	case <-g.release:
+	case <-ctx.Done():
+		return pando.RelatedFilesResult{}, ctx.Err()
+	}
+	return pando.RelatedFilesResult{Files: g.related[path]}, nil
+}
+
+func (g *slowRelator) probeCalls() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.calls
+}
+
+// TestImpactTier2GraphProbeSpeed pins GIT-US-0179: the graph check never
+// holds the tier past its budget, its answer is cached, and a restarted
+// instance or an expired answer is asked again.
+func TestImpactTier2GraphProbeSpeed(t *testing.T) {
+	f, base := precisionFixture(t)
+	q := core.ImpactQuery{Base: base, Tiers: []int{1, 2}}
+	edges := map[string][]pando.RelatedFile{
+		"src/links/store.go": {{FilePath: "src/links/store_test.go", Score: 0.8}},
+	}
+	slow := func(related map[string][]pando.RelatedFile) *slowRelator {
+		return &slowRelator{
+			finderGraph: &finderGraph{fakeGraph: &fakeGraph{}, defs: precisionDefs()},
+			related:     related, release: make(chan struct{}),
+		}
+	}
+	budgeted := func(g CallGraph) *Resolver {
+		r := f.resolver(g, nil)
+		r.opts.CallBudget = 150 * time.Millisecond
+		return r
+	}
+	wait := func(t *testing.T, r *Resolver) {
+		t.Helper()
+		r.graphMu.Lock()
+		var ps []*graphProbe
+		for _, p := range r.graphs {
+			ps = append(ps, p)
+		}
+		r.graphMu.Unlock()
+		for _, p := range ps {
+			<-p.done
+		}
+	}
+
+	t.Run("a slow probe stays within the budget and is pending", func(t *testing.T) {
+		g := slow(edges)
+		defer close(g.release)
+		r := budgeted(g)
+		start := time.Now()
+		res := f.impact(r, q)
+		if d := time.Since(start); d > 5*time.Second {
+			t.Errorf("query took %s, want it bounded by the tier budget", d)
+		}
+		if tier := res.Tiers[1]; tier.Status != core.ImpactTierUnavailable || tier.Message != GraphPending {
+			t.Errorf("tier 2 = %+v, want unavailable with %q", tier, GraphPending)
+		}
+	})
+
+	t.Run("the answer of a probe that finishes later is cached and reused", func(t *testing.T) {
+		g := slow(edges)
+		r := budgeted(g)
+		if res := f.impact(r, q); res.Tiers[1].Message != GraphPending {
+			t.Fatalf("first query tier 2 = %+v, want pending", res.Tiers[1])
+		}
+		close(g.release)
+		wait(t, r)
+		calls := g.probeCalls()
+		for i := 0; i < 2; i++ {
+			if tier := f.impact(r, q).Tiers[1]; tier.Status != core.ImpactTierOK {
+				t.Fatalf("query %d tier 2 = %+v, want ok: the graph has edges", i, tier)
+			}
+		}
+		if got := g.probeCalls(); got != calls {
+			t.Errorf("probed %d more times, want the cached answer reused", got-calls)
+		}
+	})
+
+	t.Run("a missing graph stays unavailable with the BuildCodeGraph message", func(t *testing.T) {
+		g := slow(nil)
+		close(g.release)
+		r := budgeted(g)
+		for i := 0; i < 2; i++ {
+			tier := f.impact(r, q).Tiers[1]
+			if tier.Status != core.ImpactTierUnavailable || tier.Message != NoCallEdges {
+				t.Fatalf("query %d tier 2 = %+v, want unavailable with %q", i, tier, NoCallEdges)
+			}
+		}
+		if got := g.probeCalls(); got != 3 {
+			t.Errorf("probed %d times, want one pass over the 3 changed files", got)
+		}
+	})
+
+	t.Run("a replaced client and an expired answer are probed again", func(t *testing.T) {
+		g1 := slow(edges)
+		close(g1.release)
+		var current CallGraph = g1
+		opts := f.resolver(g1, nil).opts
+		opts.CallGraph = func() CallGraph { return current }
+		r := New(opts)
+		clock := time.Now()
+		r.now = func() time.Time { return clock }
+		if tier := f.impact(r, q).Tiers[1]; tier.Status != core.ImpactTierOK {
+			t.Fatalf("tier 2 = %+v, want ok", tier)
+		}
+		before := g1.probeCalls()
+		g2 := slow(nil)
+		close(g2.release)
+		current = g2 // a managed restart hands out a new client
+		if tier := f.impact(r, q).Tiers[1]; tier.Message != NoCallEdges {
+			t.Fatalf("tier 2 = %+v, want the new instance probed (no edges)", tier)
+		}
+		if g2.probeCalls() == 0 {
+			t.Error("the restarted instance was not probed")
+		}
+		clock = clock.Add(2 * graphNoTTL) // the missing-graph answer expires
+		calls := g2.probeCalls()
+		f.impact(r, q)
+		if g2.probeCalls() == calls {
+			t.Error("an expired answer was not probed again")
+		}
+		if g1.probeCalls() != before {
+			t.Error("the replaced client was probed again")
+		}
+	})
+}
+
+type memStore struct {
+	mu      sync.Mutex
+	edges   bool
+	expires time.Time
+	ok      bool
+}
+
+func (s *memStore) Load() (bool, time.Time, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.edges, s.expires, s.ok
+}
+
+func (s *memStore) Store(edges bool, expires time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.edges, s.expires, s.ok = edges, expires, true
+}
+
+// TestImpactTier2GraphProbePersisted pins the cross-process cache of
+// GIT-US-0179: a second resolver (a new process) reads the stored answer
+// instead of probing, an expired answer is probed again, and WarmGraph stores
+// a found graph only.
+func TestImpactTier2GraphProbePersisted(t *testing.T) {
+	f, base := precisionFixture(t)
+	q := core.ImpactQuery{Base: base, Tiers: []int{1, 2}}
+	edges := map[string][]pando.RelatedFile{"src/links/store.go": {{FilePath: "src/links/store_test.go"}}}
+	newGraph := func(related map[string][]pando.RelatedFile) *slowRelator {
+		g := &slowRelator{finderGraph: &finderGraph{fakeGraph: &fakeGraph{}, defs: precisionDefs()},
+			related: related, release: make(chan struct{})}
+		close(g.release)
+		return g
+	}
+	runner := func(g CallGraph, st GraphStore) *Resolver {
+		opts := f.resolver(g, nil).opts
+		opts.GraphStore = func(CallGraph) GraphStore { return st }
+		return New(opts)
+	}
+
+	t.Run("a second runner reuses the stored answer", func(t *testing.T) {
+		st := &memStore{}
+		g1 := newGraph(edges)
+		if tier := f.impact(runner(g1, st), q).Tiers[1]; tier.Status != core.ImpactTierOK {
+			t.Fatalf("first run tier 2 = %+v, want ok", tier)
+		}
+		if _, _, ok := st.Load(); !ok {
+			t.Fatal("the answer was not stored")
+		}
+		g2 := newGraph(edges)
+		if tier := f.impact(runner(g2, st), q).Tiers[1]; tier.Status != core.ImpactTierOK {
+			t.Fatalf("second run tier 2 = %+v, want ok", tier)
+		}
+		if g2.probeCalls() != 0 {
+			t.Errorf("second runner probed %d times, want the stored answer", g2.probeCalls())
+		}
+	})
+
+	t.Run("a stored missing graph answers the BuildCodeGraph message", func(t *testing.T) {
+		st := &memStore{}
+		st.Store(false, time.Now().Add(time.Minute))
+		g := newGraph(edges)
+		tier := f.impact(runner(g, st), q).Tiers[1]
+		if tier.Status != core.ImpactTierUnavailable || tier.Message != NoCallEdges || g.probeCalls() != 0 {
+			t.Errorf("tier 2 = %+v after %d probes, want the stored no-edges answer", tier, g.probeCalls())
+		}
+	})
+
+	t.Run("an expired answer is probed again", func(t *testing.T) {
+		st := &memStore{}
+		st.Store(false, time.Now().Add(-time.Minute))
+		g := newGraph(edges)
+		if tier := f.impact(runner(g, st), q).Tiers[1]; tier.Status != core.ImpactTierOK || g.probeCalls() == 0 {
+			t.Errorf("tier 2 = %+v after %d probes, want a fresh probe", tier, g.probeCalls())
+		}
+	})
+
+	t.Run("warming stores a found graph and never a missing one", func(t *testing.T) {
+		st := &memStore{}
+		WarmGraph(context.Background(), newGraph(nil), "acme", []string{"src/links/store.go"}, st)
+		if _, _, ok := st.Load(); ok {
+			t.Error("a missing graph was stored by the warm-up")
+		}
+		WarmGraph(context.Background(), newGraph(edges), "acme", []string{"src/links/store.go"}, st)
+		if e, exp, ok := st.Load(); !ok || !e || !exp.After(time.Now()) {
+			t.Errorf("stored (%v, %v, %v), want a live found graph", e, exp, ok)
+		}
+	})
+}
+
+// The P3 replay of the benchmark (GIT-US-0181, §10.6): the diff changes
+// LinkKind.Inverse, which carries no marker. Its production caller
+// validateItemLinks carries the markers of R1 and R3, and an unchanged test
+// that verifies both calls Inverse too. GIT-US-0166 ranked both hits
+// test-only, although validateItemLinks runs the changed code.
+const (
+	fxInverse = `package links
+
+// LinkKind is the kind of a link.
+type LinkKind string
+
+func (k LinkKind) Inverse() LinkKind {
+	return k
+}
+`
+	fxValidate = `package links
+
+// Implements: ACME-SP-0003.R1, ACME-SP-0003.R3
+func validateItemLinks(kinds []LinkKind) []LinkKind {
+	var out []LinkKind
+	for _, k := range kinds {
+		out = append(out, k.Inverse())
+	}
+	return out
+}
+`
+	fxValidateTests = `package links
+
+import "testing"
+
+// Verifies: ACME-SP-0003.R1, ACME-SP-0003.R3
+func TestLinkKindValidAndInverse(t *testing.T) {
+	if LinkKind("a").Inverse() != "a" {
+		t.Fatal("inverse")
+	}
+}
+`
+)
+
+func TestImpactTier2NarrowCallerOutranksTestCaller(t *testing.T) {
+	// setup commits the P3 shapes with the given markers on validateItemLinks
+	// and returns the fixture, the base commit and the callers Pando reports.
+	setup := func(t *testing.T, markers string) (*fixture, string, []pando.ImpactCaller) {
+		validate := strings.Replace(fxValidate, "ACME-SP-0003.R1, ACME-SP-0003.R3", markers, 1)
+		f := newFixture(t)
+		f.write(fxLinksSpecPath, fxLinksSpec)
+		f.write("src/links/kind.go", fxInverse)
+		f.write("src/links/validate.go", validate)
+		f.write("src/links/validate_test.go", fxValidateTests)
+		base := f.commit("link kinds")
+		if _, err := f.vlt.Reload(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		f.write("src/links/kind.go", strings.Replace(fxInverse, "return k", `return k + "_"`, 1))
+		return f, base, []pando.ImpactCaller{
+			{Name: "validateItemLinks", FilePath: "src/links/validate.go", StartLine: lineOf(validate, "func validateItemLinks"), Depth: 1},
+			{Name: "TestLinkKindValidAndInverse", FilePath: "src/links/validate_test.go", StartLine: lineOf(fxValidateTests, "func TestLinkKindValidAndInverse"), Depth: 1},
+		}
+	}
+	kinds := func(f *fixture, base string, callers []pando.ImpactCaller) map[string]core.ImpactKind {
+		graph := &fakeGraph{callers: map[string][]pando.ImpactCaller{"Inverse": callers}}
+		res := f.impact(f.resolver(graph, nil), core.ImpactQuery{Base: base, Tiers: []int{1, 2}})
+		got := map[string]core.ImpactKind{}
+		for _, h := range res.Hits {
+			got[h.Ref.String()] = h.Kind
+		}
+		return got
+	}
+
+	t.Run("a caller of two requirements flips a test caller to behaviour", func(t *testing.T) {
+		f, base, callers := setup(t, "ACME-SP-0003.R1, ACME-SP-0003.R3")
+		got := kinds(f, base, callers)
+		for _, ref := range []string{"ACME-SP-0003.R1", "ACME-SP-0003.R3"} {
+			if got[ref] != core.ImpactKindBehaviour {
+				t.Errorf("%s kind = %q, want behaviour: validateItemLinks calls the changed Inverse", ref, got[ref])
+			}
+		}
+	})
+
+	t.Run("a caller of three requirements does not", func(t *testing.T) {
+		f, base, callers := setup(t, "ACME-SP-0003.R1, ACME-SP-0003.R3, ACME-SP-0003.R4")
+		got := kinds(f, base, callers)
+		for _, ref := range []string{"ACME-SP-0003.R1", "ACME-SP-0003.R3"} {
+			if got[ref] != core.ImpactKindTestOnly {
+				t.Errorf("%s kind = %q, want test-only: the caller carries three requirements", ref, got[ref])
+			}
+		}
+	})
+
+	t.Run("a test caller alone stays test-only", func(t *testing.T) {
+		f, base, callers := setup(t, "ACME-SP-0003.R1, ACME-SP-0003.R3")
+		got := kinds(f, base, callers[1:])
+		if len(got) != 2 || got["ACME-SP-0003.R1"] != core.ImpactKindTestOnly || got["ACME-SP-0003.R3"] != core.ImpactKindTestOnly {
+			t.Errorf("kinds = %v, want R1 and R3 test-only", got)
 		}
 	})
 }

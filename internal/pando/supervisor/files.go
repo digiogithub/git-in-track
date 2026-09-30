@@ -38,10 +38,24 @@ const (
 	StateFailed     State = "failed"
 )
 
+// Kind is what an instance runs.
+type Kind string
+
+// The kinds of instance. The zero value means KindMCP.
+const (
+	// KindMCP is `pando mcp-server`, the semantic-search and code-graph backend.
+	KindMCP Kind = "mcp"
+	// KindAGUI is `pando agui-serve`, the adapter the agent panel talks to.
+	KindAGUI Kind = "agui"
+)
+
 // Status is the content of state.json and what Supervisor.Status returns. It
 // never carries the token, only the path of the file that does.
 type Status struct {
 	State State `json:"state"`
+	// Kind is what the instance runs; an older state.json has none and means
+	// KindMCP.
+	Kind Kind `json:"kind,omitempty"`
 	// Key, Root and Project identify the instance: the directory name, the
 	// repository root and the Pando code-project id.
 	Key     string `json:"key"`
@@ -49,10 +63,20 @@ type Status struct {
 	Project string `json:"project"`
 	// PID is the child's pid, 0 when there is no child. Port and MCPURL describe
 	// the endpoint the current or last child was told to listen on.
-	PID       int    `json:"pid"`
-	Port      int    `json:"port"`
-	MCPURL    string `json:"mcpUrl"`
-	TokenFile string `json:"tokenFile"`
+	PID    int    `json:"pid"`
+	Port   int    `json:"port"`
+	MCPURL string `json:"mcpUrl"`
+	// AGUIURL is the base URL of a KindAGUI instance's listener, empty for
+	// KindMCP.
+	AGUIURL string `json:"aguiUrl,omitempty"`
+	// LastPort is the port of the last child, kept while stopped: the next start
+	// (a restart, a crash restart or a new process) tries it first so an agent
+	// configured with the direct endpoint keeps working (GIT-US-0184).
+	// PortChangedFrom is the port that was wanted but busy, set for as long as
+	// the current child runs elsewhere; it is 0 when the port was reused.
+	LastPort        int    `json:"lastPort,omitempty"`
+	PortChangedFrom int    `json:"portChangedFrom,omitempty"`
+	TokenFile       string `json:"tokenFile"`
 	// Version is the first line of `pando --version`.
 	Version string `json:"version"`
 	Binary  string `json:"binary"`
@@ -76,6 +100,11 @@ func InstanceKey(repoRoot string) string {
 	sum := sha256.Sum256([]byte(abs))
 	return pando.SanitizeProjectID(abs) + "-" + hex.EncodeToString(sum[:4])
 }
+
+// AGUIKey names the instance directory of the AG-UI adapter of a repository:
+// InstanceKey plus "-agui", so it sits next to the MCP instance and never
+// shares its lock, state file, token or data directory.
+func AGUIKey(repoRoot string) string { return InstanceKey(repoRoot) + "-agui" }
 
 // InstanceDir is where an instance's files live: <cacheDir>/pando/<key>.
 func InstanceDir(cacheDir, key string) string {

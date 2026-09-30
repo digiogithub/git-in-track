@@ -3097,8 +3097,11 @@ answers `unavailable`.
   - **A shared caller does not flip a verdict.** A production caller whose code edges name
     several requirements says that it runs changed code, not which of its rules changed. Its
     `call:` reason makes a hit `behaviour` only when nothing else reached the requirement; it
-    never turns a `test-only` hit into `behaviour`. A caller carrying one requirement's marker is
-    that requirement's own code and does.
+    never turns a `test-only` hit into `behaviour`. One exception (`GIT-US-0181`): a caller that
+    carries exactly two requirements' code edges is narrow enough to run the rule it names, so
+    it turns a hit that a test file only *calls* into `behaviour`; it still never overrides a
+    verifying test the diff changed (a tier-1 `tests` edge). A caller carrying one requirement's
+    marker is that requirement's own code and always does.
 
   When no changed name has a caller, tier 2 checks that the answer came from a code graph
   (`GIT-US-0167`): Pando says "No callers found" alike for a symbol nothing calls and for a
@@ -3107,7 +3110,21 @@ answers `unavailable`.
   5; the first file coupled to another makes the empty answer `ok`, and none makes the tier
   `unavailable` with the fixed message `the Pando code project has no call edges: index the
   repository root with [TokenOptimization] BuildCodeGraph = true`. A client without
-  `code_related_files` takes the empty answer as it comes.
+  `code_related_files` takes the empty answer as it comes. The check is slow on a large project
+  (194 s measured), so it runs once per Pando instance in the background, detached from the
+  tier budget, and its answer is cached (`GIT-US-0179`): a found graph for 30 minutes, a missing
+  one for 1 minute, and a replaced client (a managed restart) is asked again. The tier waits
+  only for what is left of its budget; a check still running then gives `unavailable` with
+  `the Pando call graph is still being checked: code_related_files has not answered yet, ask
+  again in a moment`, and the next query answers from the cache. In managed mode the answer is
+  also persisted as derived cache data, `<cacheDir>/pando/<instance>/graph-probe.json` (never in
+  the repository), keyed by project and the instance's pid and last state change, so a restart
+  drops it; a missing or corrupt file is ignored and writes are atomic. `gintrack serve` warms it
+  once the code project is registered (a sample of source files; only a found graph is stored),
+  so the first query of a short-lived `gintrack mcp` finds a known answer. `gintrack spec impact`
+  reads the same store, and an external Pando (`search.pando.mcpUrl`) is persisted in
+  `<cacheDir>/pando/external/graph-probe-<hash>.json`, keyed by a hash of the endpoint URL and the project id and
+  bounded by the same TTLs only (`GIT-US-0188`).
 - **R-IMP-4 Tier 3, semantic.** One semantic search of kind `requirement` (docs/21 §2.1), which
   searches spec files only: Pando's `path_prefix` filter on `.pmngr/specs/`, asked again once
   without it when nothing is indexed under that prefix, and no code search (`GIT-US-0165`).
@@ -3116,7 +3133,15 @@ answers `unavailable`.
   declarations in words — the first sentence of a Go declaration's doc comment, marker lines
   dropped, else the name split into lower-case words (`nextNumber` → `next number`) — with
   declarations in test files only when nothing else changed; at most 1,000 bytes, cut on a word
-  boundary. A hit becomes a `candidate` with a
+  boundary. That long query mostly feeds Pando's vector leg, because its full-text leg needs every
+  word in one chunk. So each changed declaration whose name has at least two words also gets its
+  own short query, its name in words (`nextNumber` → `next number`; at most 6, declarations in test
+  files only when nothing else changed, a query that fails costs only its candidates), and the best
+  score per requirement over all the queries wins (`GIT-US-0180`). **The cut:** Pando fuses its two
+  legs by reciprocal rank, so a chunk one leg returned scores at most 0.0164 and one both legs
+  returned 0.025 to 0.033. A candidate is listed only when its score is at least 0.017 (both legs
+  matched), at least 80 % of the best candidate's, and within the first 5 (or the query's `limit`);
+  a flat ranking of single-leg scores, which orders nothing, lists no candidate at all. A hit becomes a `candidate` with a
   `score` (rounded to three decimals) and the reason `semantic`, only when tiers 1–2 did not
   reach the requirement: a candidate never adds to or overrides their certainty.
 - **R-IMP-5 Hit.** `{ref, title, tier, kind?, candidate?, score?, status?, suspect?, reasons[],
@@ -3130,7 +3155,8 @@ answers `unavailable`.
   test file: only a test that verifies the requirement changed, or only such a test calls the
   changed code, so what the requirement states may not have changed. A `call:` reason from a
   production caller that carries several requirements (R-IMP-3) counts as `behaviour` only when
-  the hit has no other reason, so it never overrides `test-only`. `status` is the
+  the hit has no other reason, so it never overrides `test-only`; a caller carrying exactly two
+  does override a test caller, but not a changed verifying test. `status` is the
   coverage state (R-REQ-12a). `pending` lists the open items whose unapplied Spec Delta modifies
   the requirement. `suspect` means **changed and not re-verified** (`GIT-US-0148`):
   1. state `suspect` → set;

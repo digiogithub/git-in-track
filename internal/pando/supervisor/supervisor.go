@@ -48,8 +48,26 @@ type Options struct {
 	// DocsFolder is the knowledge-base folder inside the repository. Default
 	// "docs".
 	DocsFolder string
-	// Key names the instance directory. Default InstanceKey(RepoRoot).
+	// Kind selects what the instance runs: KindMCP (the default) is
+	// `pando mcp-server`, KindAGUI is `pando agui-serve` for the agent panel
+	// (GIT-US-0185). Both get the lifecycle, health, backoff, watchdog and
+	// state-file rules described in the package documentation.
+	Kind Kind
+	// Key names the instance directory. Default InstanceKey(RepoRoot), or
+	// AGUIKey(RepoRoot) for KindAGUI.
 	Key string
+	// Files renders the configuration of a KindAGUI instance: it is called on
+	// every child start with the chosen port and answers the files to write
+	// under the instance directory, keyed by slash-separated relative path
+	// (".pando.toml", "agents/personas/x.md"). It is required for KindAGUI and
+	// ignored for KindMCP, whose configuration is generated here. The files
+	// are written with mode 0600 in a 0700 directory, because they may carry a
+	// credential. The port is passed on the command line too, so a file that
+	// states it is a courtesy, not a requirement.
+	Files func(port int) (map[string][]byte, error)
+	// AGUIPath is the route prefix of a KindAGUI instance, "/api/v1/agui" when
+	// empty. It must equal `[AGUI] Path` in the rendered configuration.
+	AGUIPath string
 	// PortMin and PortMax bound the port choice, inclusive. Both zero means any
 	// free loopback port.
 	PortMin, PortMax int
@@ -60,7 +78,18 @@ type Options struct {
 	// ExtraEnv is appended to the child's environment ("K=V"), after the
 	// supervisor's own PANDO_CONFIG_PARENT_SEARCH=false.
 	ExtraEnv []string
+	// Watchdog is the command prefix that runs the child under a parent-death
+	// watchdog (RunWatchdog): the child is started as `<Watchdog...> <binary>
+	// <args...>` with the read end of a lifeline pipe as descriptor 3, and dies
+	// when the supervisor does, even on SIGKILL. Default: none on Linux (which
+	// has Pdeathsig), this binary's `__pando-watch` on other unix systems such
+	// as macOS, none on Windows.
+	Watchdog []string
 
+	// PortWait bounds how long a start waits for the previous port to be
+	// released (the old child may still be closing its socket) before falling
+	// back to another port. Default 2s.
+	PortWait time.Duration
 	// ReadyTimeout bounds the wait for a fresh child to pass Health. Default 30s.
 	ReadyTimeout time.Duration
 	// HealthInterval is the pause between health checks of a ready child.
@@ -100,14 +129,31 @@ func (o *Options) defaults() error {
 	if o.DocsFolder == "" {
 		o.DocsFolder = "docs"
 	}
+	switch o.Kind {
+	case "", KindMCP:
+		o.Kind = KindMCP
+	case KindAGUI:
+		if o.Files == nil {
+			return errors.New("supervisor: Options.Files is required for an AG-UI instance")
+		}
+		if o.AGUIPath == "" {
+			o.AGUIPath = defaultAGUIPath
+		}
+	default:
+		return fmt.Errorf("supervisor: unknown instance kind %q", o.Kind)
+	}
 	if o.Key == "" {
 		o.Key = InstanceKey(o.RepoRoot)
+		if o.Kind == KindAGUI {
+			o.Key = AGUIKey(o.RepoRoot)
+		}
 	}
 	dur := func(p *time.Duration, d time.Duration) {
 		if *p <= 0 {
 			*p = d
 		}
 	}
+	dur(&o.PortWait, 2*time.Second)
 	dur(&o.ReadyTimeout, 30*time.Second)
 	dur(&o.HealthInterval, 30*time.Second)
 	dur(&o.HealthTimeout, 5*time.Second)
@@ -123,6 +169,9 @@ func (o *Options) defaults() error {
 	}
 	if o.BackoffMax < o.BackoffMin {
 		o.BackoffMax = o.BackoffMin
+	}
+	if o.Watchdog == nil {
+		o.Watchdog = defaultWatchdog()
 	}
 	if o.Logger == nil {
 		o.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -161,7 +210,7 @@ func New(opts Options) (*Supervisor, error) {
 		restart: make(chan struct{}, 1),
 	}
 	s.status = Status{
-		State: StateStopped, Key: opts.Key, Root: opts.RepoRoot, Project: s.project,
+		State: StateStopped, Kind: opts.Kind, Key: opts.Key, Root: opts.RepoRoot, Project: s.project,
 		TokenFile: filepath.Join(dir, tokenFileName), Binary: opts.Binary, Since: time.Now().UTC(),
 	}
 	return s, nil
@@ -179,13 +228,18 @@ func (s *Supervisor) Status() Status {
 	return st
 }
 
-// Endpoint returns the MCP URL and bearer token of the running child, for a
-// pando.Client. ok is false until the instance is ready.
+// Endpoint returns the URL and bearer token of the running child. For a
+// KindMCP instance the URL is the MCP endpoint, for a pando.Client; for a
+// KindAGUI instance it is the base URL of the AG-UI listener, scheme and host
+// only. ok is false until the instance is ready.
 func (s *Supervisor) Endpoint() (mcpURL, token string, ok bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.status.State != StateReady {
 		return "", "", false
+	}
+	if s.opts.Kind == KindAGUI {
+		return s.status.AGUIURL, s.token, true
 	}
 	return s.status.MCPURL, s.token, true
 }
@@ -252,6 +306,14 @@ func (s *Supervisor) Start(ctx context.Context) error {
 		return err
 	}
 
+	// The port of the last run survives in state.json; a fresh Supervisor
+	// (a new gintrack process) reads it back and tries it first.
+	if prev, err := ReadStatus(s.dir); err == nil && prev.LastPort > 0 {
+		s.mu.Lock()
+		s.status.LastPort = prev.LastPort
+		s.mu.Unlock()
+	}
+	s.reapOrphan(ctx)
 	version, err := s.checkBinary(ctx)
 	if err != nil {
 		return fail(err)
@@ -276,7 +338,7 @@ func (s *Supervisor) Start(ctx context.Context) error {
 	s.mu.Unlock()
 	s.update(func(st *Status) {
 		*st = Status{
-			State: StateStarting, Key: st.Key, Root: st.Root, Project: st.Project,
+			State: StateStarting, Kind: st.Kind, Key: st.Key, Root: st.Root, Project: st.Project, LastPort: st.LastPort,
 			TokenFile: st.TokenFile, Binary: st.Binary, Version: version, SupervisorPID: os.Getpid(),
 		}
 	})
@@ -356,7 +418,7 @@ func (s *Supervisor) loop(ctx context.Context, sink *logSink) {
 	runtime.LockOSThread()
 	defer func() {
 		sink.Close()
-		s.update(func(st *Status) { st.State, st.PID, st.Port, st.MCPURL = StateStopped, 0, 0, "" })
+		s.update(func(st *Status) { st.State, st.PID, st.Port, st.MCPURL, st.AGUIURL = StateStopped, 0, 0, "", "" })
 		s.mu.Lock()
 		lock, done := s.lock, s.done
 		s.lock, s.cancel, s.started, s.done = nil, nil, false, nil
@@ -365,10 +427,10 @@ func (s *Supervisor) loop(ctx context.Context, sink *logSink) {
 		close(done)
 	}()
 
-	lastPort := 0
+	avoid := 0
 	for ctx.Err() == nil {
-		reason, port, counted := s.runOnce(ctx, sink, lastPort)
-		lastPort = port
+		reason, unhealthy, counted := s.runOnce(ctx, sink, avoid)
+		avoid = unhealthy
 		if ctx.Err() != nil {
 			return
 		}
@@ -435,20 +497,28 @@ func (s *Supervisor) recordCrash(reason string, tail []string) (time.Duration, b
 }
 
 // runOnce starts one child and supervises it until it ends. counted is false
-// when the end was a requested restart or a shutdown.
-func (s *Supervisor) runOnce(ctx context.Context, sink *logSink, avoid int) (reason string, port int, counted bool) {
-	port, err := pickPort(ctx, s.opts.PortMin, s.opts.PortMax, avoid)
+// when the end was a requested restart or a shutdown. avoid is a port on which
+// the previous child never became healthy (it moved silently); unhealthy is the
+// same for this child, 0 when the port did work.
+func (s *Supervisor) runOnce(ctx context.Context, sink *logSink, avoid int) (reason string, unhealthy int, counted bool) {
+	s.mu.Lock()
+	preferred := s.status.LastPort
+	s.mu.Unlock()
+	if preferred == avoid {
+		preferred = 0
+	}
+	port, err := s.choosePort(ctx, preferred, avoid)
 	if err != nil {
 		return err.Error(), 0, true
 	}
-	cfg := generatedConfig(s.opts, s.dir, port, s.token)
-	if err := writeFileAtomic(filepath.Join(s.dir, configFileName), cfg, 0o600); err != nil {
-		return "write .pando.toml: " + err.Error(), port, true
+	changedFrom := 0
+	if preferred > 0 && port != preferred {
+		changedFrom = preferred
+		s.opts.Logger.Warn("managed pando cannot reuse its previous port; using another", "key", s.opts.Key, "previous", preferred, "port", port)
 	}
-
-	args := []string{"mcp-server", "--no-stdio", "--cwd", s.dir}
-	if s.opts.Debug {
-		args = append(args, "--debug")
+	args, err := s.prepareRun(port)
+	if err != nil {
+		return err.Error(), 0, true
 	}
 	cmd := exec.CommandContext(context.WithoutCancel(ctx), s.opts.Binary, args...)
 	cmd.Dir = s.dir
@@ -456,16 +526,32 @@ func (s *Supervisor) runOnce(ctx context.Context, sink *logSink, avoid int) (rea
 	cmd.Env = append(cmd.Env, s.opts.ExtraEnv...)
 	cmd.Stdout, cmd.Stderr = sink, sink
 	cmd.WaitDelay = 2 * time.Second
-	prepareCmd(cmd)
-	if err := cmd.Start(); err != nil {
-		return "start pando: " + err.Error(), port, true
+	life, err := prepareCmd(cmd, s.opts.Watchdog)
+	if err != nil {
+		return "prepare pando: " + err.Error(), 0, true
 	}
+	if err := cmd.Start(); err != nil {
+		life.Close()
+		return "start pando: " + err.Error(), 0, true
+	}
+	life.started()
 	exited := make(chan error, 1)
-	go func() { exited <- cmd.Wait() }()
+	go func() {
+		err := cmd.Wait()
+		life.Close()
+		exited <- err
+	}()
 
-	url := "http://127.0.0.1:" + strconv.Itoa(port) + "/mcp"
+	base := "http://127.0.0.1:" + strconv.Itoa(port)
+	url := base + "/mcp"
 	s.update(func(st *Status) {
-		st.State, st.PID, st.Port, st.MCPURL = StateStarting, cmd.Process.Pid, port, url
+		st.State, st.PID, st.Port = StateStarting, cmd.Process.Pid, port
+		if s.opts.Kind == KindAGUI {
+			st.AGUIURL = base
+		} else {
+			st.MCPURL = url
+		}
+		st.LastPort, st.PortChangedFrom = port, changedFrom
 	})
 
 	stop := func() {
@@ -480,12 +566,12 @@ func (s *Supervisor) runOnce(ctx context.Context, sink *logSink, avoid int) (rea
 		}
 	}
 
-	client, err := pando.New(pando.Options{MCPURL: url, Token: s.token, Timeout: s.opts.HealthTimeout})
+	check, closeCheck, err := s.healthCheck(url, base)
 	if err != nil {
 		stop()
-		return "build the health client: " + err.Error(), port, true
+		return "build the health client: " + err.Error(), 0, true
 	}
-	defer func() { _ = client.Close() }()
+	defer closeCheck()
 
 	// Wait for ready.
 	deadline := time.NewTimer(s.opts.ReadyTimeout)
@@ -497,18 +583,18 @@ func (s *Supervisor) runOnce(ctx context.Context, sink *logSink, avoid int) (rea
 		select {
 		case <-ctx.Done():
 			stop()
-			return "", port, false
+			return "", 0, false
 		case <-s.restart:
 			stop()
-			return "", port, false
+			return "", 0, false
 		case err := <-exited:
-			return fmt.Sprintf("pando exited while starting: %v", err), port, true
+			return fmt.Sprintf("pando exited while starting: %v", err), 0, true
 		case <-deadline.C:
 			stop()
 			return fmt.Sprintf("pando was not healthy on port %d within %s (it may have moved to another port): %v", port, s.opts.ReadyTimeout, lastErr), port, true
 		case <-poll.C:
 			hctx, cancel := context.WithTimeout(ctx, s.opts.HealthTimeout)
-			lastErr = client.Health(hctx)
+			lastErr = check(hctx, true)
 			cancel()
 			ready = lastErr == nil
 		}
@@ -523,15 +609,15 @@ func (s *Supervisor) runOnce(ctx context.Context, sink *logSink, avoid int) (rea
 		select {
 		case <-ctx.Done():
 			stop()
-			return "", port, false
+			return "", 0, false
 		case <-s.restart:
 			stop()
-			return "", port, false
+			return "", 0, false
 		case err := <-exited:
-			return fmt.Sprintf("pando exited: %v", err), port, true
+			return fmt.Sprintf("pando exited: %v", err), 0, true
 		case <-tick.C:
 			hctx, cancel := context.WithTimeout(ctx, s.opts.HealthTimeout)
-			err := client.Health(hctx)
+			err := check(hctx, false)
 			cancel()
 			if ctx.Err() != nil {
 				continue
@@ -543,10 +629,42 @@ func (s *Supervisor) runOnce(ctx context.Context, sink *logSink, avoid int) (rea
 			fails++
 			if fails >= s.opts.HealthFailures {
 				stop()
-				return fmt.Sprintf("%d health checks failed in a row: %v", fails, err), port, true
+				return fmt.Sprintf("%d health checks failed in a row: %v", fails, err), 0, true
 			}
 		}
 	}
+}
+
+// choosePort returns the port for the next child. It tries preferred first (the
+// last port, so agents that connect to Pando directly keep working), retrying
+// for up to PortWait because the previous child may not have released it yet.
+// A busy or out-of-range preferred port falls back to pickPort.
+func (s *Supervisor) choosePort(ctx context.Context, preferred, avoid int) (int, error) {
+	inRange := s.opts.PortMin == 0 && s.opts.PortMax == 0 ||
+		preferred >= s.opts.PortMin && preferred <= s.opts.PortMax
+	if preferred > 0 && inRange {
+		deadline := time.Now().Add(s.opts.PortWait)
+		for {
+			if portFree(ctx, preferred) {
+				return preferred, nil
+			}
+			if ctx.Err() != nil || !time.Now().Before(deadline) {
+				break
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+	return pickPort(ctx, s.opts.PortMin, s.opts.PortMax, max(avoid, preferred))
+}
+
+// portFree reports whether a loopback port can be bound right now.
+func portFree(ctx context.Context, p int) bool {
+	l, err := (&net.ListenConfig{}).Listen(ctx, "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(p)))
+	if err != nil {
+		return false
+	}
+	_ = l.Close()
+	return true
 }
 
 // pickPort binds a loopback port and releases it. With no range it asks the
@@ -591,4 +709,24 @@ func pickPort(ctx context.Context, lo, hi, avoid int) (int, error) {
 		return fallback, nil
 	}
 	return 0, fmt.Errorf("no free loopback port in %d-%d", lo, hi)
+}
+
+// reapOrphan ends a child left behind by a previous supervisor that died
+// without stopping it. The caller holds the instance lock, so no live
+// supervisor owns state.json: a recorded child pid that is still alive, and
+// whose command line names this instance directory, is an orphan. The command
+// line check keeps a recycled pid from being killed. It runs on every platform
+// (GIT-US-0187); the watchdog and Pdeathsig make it a safety net, not the
+// normal path.
+func (s *Supervisor) reapOrphan(ctx context.Context) {
+	st, err := ReadStatus(s.dir)
+	if err != nil || st.PID <= 0 || st.PID == os.Getpid() || !PIDAlive(st.PID) {
+		return
+	}
+	cmdline, err := processCommand(ctx, st.PID)
+	if err != nil || !strings.Contains(cmdline, s.dir) {
+		return
+	}
+	s.opts.Logger.Warn("ending a managed pando left by a previous supervisor", "key", s.opts.Key, "pid", st.PID, "supervisorPid", st.SupervisorPID)
+	killOrphan(st.PID, s.opts.StopTimeout)
 }

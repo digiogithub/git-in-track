@@ -278,6 +278,7 @@ agent:
     insecureTls: false           # for an agui-serve left on its self-signed cert
     allowRemote: false           # true to dial a host that is not loopback
     maxRuns: 8                   # runs in flight before a 503 + Retry-After, 0-256
+    managed: true                # managed search mode: serve runs agui-serve per opted-in repo (docs/20 §2.4)
     repos:                       # per-repository upstreams, matched on the mounted id
       - repo: git-in-track
         url: http://127.0.0.1:8091
@@ -1933,7 +1934,10 @@ test-result cache is the raw per-test input, the verification cache the per-requ
 > seams build the Pando client and semantic searcher through the constructor `gintrack serve`
 > uses (`server.InstallSemanticSearch`) and hand them to the impact seam, so with
 > `search.pando.mcpUrl` configured impact tiers 2 and 3 answer; without it they report
-> `unavailable` and tier 1 still answers. The CI gate (`GIT-US-0133`: `make spec-check` and the
+> `unavailable` and tier 1 still answers. The tier 2 graph check is persisted across runs
+> (`GIT-US-0188`): in the managed instance's cache directory, or, for an external Pando, in
+> `<cacheDir>/pando/external/` keyed by endpoint URL and project id, so a short-lived run reuses the
+> last answer until its 30 min / 1 min TTL ends. The CI gate (`GIT-US-0133`: `make spec-check` and the
 > `spec-impact` job of `ci.yml`, docs/09 §2) and the pre-push hook (`GIT-US-0134`, §4.21) build on
 > `spec impact --fail-on`.
 
@@ -4443,8 +4447,10 @@ token, and `/run` posts to `{path}/{agent}`, where `{agent}` is the configured
 `agent.pando.agent` — the browser does not choose which agent runs.
 
 **Routing.** The deployment is one `agui-serve` process per repository, so
-`?repo=<id>` selects the upstream from the `agent.pando.repos` table, falling
-back to the section-wide URL. An id that names neither a table row nor a mounted
+`?repo=<id>` selects the upstream: first the managed adapter `gintrack serve`
+runs for that repository (docs/20 §2.4; while it is not ready the route answers
+`503` with `Retry-After`, never the default upstream), then the
+`agent.pando.repos` table, falling back to the section-wide URL. An id that names neither a table row nor a mounted
 repository is an `agent_repo_unknown` **404** — never a silent fallback to
 another repository's agent.
 

@@ -21,6 +21,14 @@ import (
 var fakeBinary string
 
 func TestMain(m *testing.M) {
+	// This test binary doubles as the watchdog and as a throwaway supervisor
+	// process for the tests that kill the supervisor.
+	if len(os.Args) > 1 && os.Args[1] == WatchdogCommandName {
+		os.Exit(RunWatchdog(os.Args[2:]))
+	}
+	if os.Getenv("SUPERVISOR_TEST_HELPER") == "1" {
+		os.Exit(helperSupervisor())
+	}
 	code := func() int {
 		dir, err := os.MkdirTemp("", "fakepando-")
 		if err != nil {
@@ -676,4 +684,129 @@ func TestRealPando(t *testing.T) {
 
 func listenLoopback() (net.Listener, error) {
 	return (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+}
+
+func TestStablePort(t *testing.T) {
+	hold := func(t *testing.T, port int) net.Listener {
+		t.Helper()
+		l, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", fmt.Sprintf("127.0.0.1:%d", port))
+		if err != nil {
+			t.Skipf("cannot take port %d: %v", port, err)
+		}
+		t.Cleanup(func() { _ = l.Close() })
+		return l
+	}
+	t.Run("a requested restart keeps the port", func(t *testing.T) {
+		r := newRig(t, nil, nil)
+		r.start()
+		first := r.waitState(StateReady)
+		r.sup.Restart()
+		waitFor(t, 10*time.Second, "a new child", func() bool {
+			st := r.sup.Status()
+			return st.State == StateReady && st.PID != first.PID
+		})
+		if st := r.sup.Status(); st.Port != first.Port || st.PortChangedFrom != 0 {
+			t.Errorf("port = %d (changedFrom %d), want %d", st.Port, st.PortChangedFrom, first.Port)
+		}
+	})
+	t.Run("a crash restart keeps the port", func(t *testing.T) {
+		r := newRig(t, []string{"FAKE_PANDO_CRASH_RUNS=2"}, nil)
+		r.start()
+		st := r.waitState(StateReady)
+		seen := map[int]bool{}
+		for _, s := range r.starts() {
+			seen[s.Port] = true
+		}
+		if len(seen) != 1 || !seen[st.Port] {
+			t.Errorf("ports used = %v, want only %d", seen, st.Port)
+		}
+	})
+	t.Run("a new Start after Stop and a new process reuse the port from state.json", func(t *testing.T) {
+		r := newRig(t, nil, nil)
+		r.start()
+		first := r.waitState(StateReady)
+		if err := r.sup.Stop(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if st, err := ReadStatus(r.sup.Dir()); err != nil || st.Port != 0 || st.LastPort != first.Port {
+			t.Fatalf("stopped state = %+v, %v; want lastPort %d kept", st, err, first.Port)
+		}
+		r.start()
+		if st := r.waitState(StateReady); st.Port != first.Port {
+			t.Errorf("port after Start = %d, want %d", st.Port, first.Port)
+		}
+		if err := r.sup.Stop(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		other, err := New(r.sup.opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := other.Start(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		defer other.Stop(context.Background())
+		waitFor(t, 15*time.Second, "ready", func() bool { return other.Status().State == StateReady })
+		if st := other.Status(); st.Port != first.Port {
+			t.Errorf("port in a new supervisor = %d, want %d", st.Port, first.Port)
+		}
+	})
+	t.Run("a busy port falls back to a free one and records the change", func(t *testing.T) {
+		r := newRig(t, nil, func(o *Options) { o.PortWait = 100 * time.Millisecond })
+		r.start()
+		first := r.waitState(StateReady)
+		if err := r.sup.Stop(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		hold(t, first.Port)
+		r.start()
+		st := r.waitState(StateReady)
+		if st.Port == first.Port || st.PortChangedFrom != first.Port || st.LastPort != st.Port {
+			t.Errorf("status = port %d lastPort %d changedFrom %d, want a new port and changedFrom %d", st.Port, st.LastPort, st.PortChangedFrom, first.Port)
+		}
+		disk, _ := ReadStatus(r.sup.Dir())
+		if disk.LastPort != st.Port || disk.PortChangedFrom != first.Port {
+			t.Errorf("state.json = %+v, want the change recorded", disk)
+		}
+	})
+	t.Run("a port that is still closing is waited for", func(t *testing.T) {
+		r := newRig(t, nil, func(o *Options) { o.PortWait = 3 * time.Second })
+		r.start()
+		first := r.waitState(StateReady)
+		if err := r.sup.Stop(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		l := hold(t, first.Port)
+		go func() { time.Sleep(300 * time.Millisecond); _ = l.Close() }()
+		r.start()
+		if st := r.waitState(StateReady); st.Port != first.Port {
+			t.Errorf("port = %d, want %d after the old socket closed", st.Port, first.Port)
+		}
+	})
+	t.Run("a stored port outside the configured range is not reused", func(t *testing.T) {
+		r := newRig(t, nil, nil)
+		r.start()
+		first := r.waitState(StateReady)
+		if err := r.sup.Stop(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		lo := first.Port + 1
+		if lo+20 > 65535 {
+			t.Skip("no room above the port")
+		}
+		opts := r.sup.opts
+		opts.PortMin, opts.PortMax = lo, lo+20
+		other, err := New(opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := other.Start(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		defer other.Stop(context.Background())
+		waitFor(t, 15*time.Second, "ready", func() bool { return other.Status().State == StateReady })
+		if st := other.Status(); st.Port < lo || st.Port > lo+20 {
+			t.Errorf("port = %d outside [%d, %d]", st.Port, lo, lo+20)
+		}
+	})
 }

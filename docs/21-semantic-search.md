@@ -156,8 +156,28 @@ of being started twice, and it is never stopped from here.
   did not opt in gets the same "no Pando is configured" as before.
 - **Reindex.** See docs/07: the `kb` phase restarts the instance instead of calling a REST
   route, and `kbNote` says so.
+- **Stable port (GIT-US-0184).** The port of the last child is kept in `state.json` (`lastPort`)
+  even while the instance is stopped. A start, a requested restart and a crash restart try it
+  first, waiting up to 2 s for the previous child to release it, so an agent that connects to
+  Pando directly keeps its configuration. If the port is busy, or outside the configured port
+  range, the supervisor logs a warning, picks a free port and records the old one as
+  `portChangedFrom`. Pando silently moving to another port is unchanged: the health check
+  fails, the run counts as a crash, and the next run does not prefer that port.
 - **Shutdown.** Every instance is stopped (SIGTERM, then SIGKILL after 10 s) when the server
-  stops, and the child also dies with `gintrack serve` if that is killed (Linux).
+  stops, and the child also dies with `gintrack serve` if that is killed, on
+  Linux and macOS (Windows is not supported yet, GIT-US-0186). Linux uses `Pdeathsig`. macOS has no
+  equivalent, so the child runs under a watchdog: `gintrack __pando-watch`, this same binary, which
+  holds a pipe whose write end only `serve` has and ends the child's process group when the pipe
+  closes, even if `serve` was SIGKILLed. At the next start, a child recorded in `state.json` whose
+  supervisor is dead but whose process is alive and whose command line names the instance
+  directory is an orphan and is ended first, on every platform.
+- **The AG-UI adapter (GIT-US-0185).** With the agent proxy on (`serve --agent`) and the MCP
+  endpoint on (`--mcp-http`), the same supervisor also runs one `pando agui-serve` per opted-in
+  repository, in `<key>-agui/` beside the instance's directory, for the agent panel. It shares
+  the lifecycle, the stable port, the watchdog and the orphan reaping described here; its
+  health check is `GET /api/v1/agui/healthz` plus `/info` with its token on the first check,
+  which is what tells it from another process holding the port. It does not register a code
+  project. docs/20 §2.4 has the configuration, the discovery order and the external cases.
 - **Not managed.** External mode is exactly as described above. Explicit `mode: off` disables
   Pando entirely even with an `mcpUrl` set (rule 1): no client is built, the backend is `core`,
   and semantic search answers `unavailable` naming `search.pando.mode: off`. Neither constructs
@@ -457,8 +477,15 @@ the name split into words — never from bare identifiers, which match prose *ab
 (`GIT-US-0165`, docs/03 R-IMP-4). That query is long on purpose, and it has a cost: Pando's
 full-text leg quotes every word of the query and FTS5 requires all of them in one chunk, so a
 story-based query almost never matches there and the vector leg does all the ranking. The query is
-capped at 1,000 bytes because a longer one buys nothing for either leg. Its hits are
-`candidate`s with a score and never raise a tier-1 or tier-2 hit. Both read the client at call
+capped at 1,000 bytes because a longer one buys nothing for either leg. To give the full-text leg
+something it can match, tier 3 also sends one short query per changed declaration, its name in
+words (`next number`), and keeps the best score per requirement (`GIT-US-0180`). It then cuts the
+ranking: a candidate needs a score of at least 0.017 — above the 0.0164 a single leg's
+reciprocal-rank fusion can give, so both legs matched — at least 80 % of the best score, and at
+most 5 (or the query's `limit`). A flat ranking of single-leg scores (0.014 to 0.016, about two
+ranks apart) lists nothing, and a report with no other hit stays small. The price is recall:
+a requirement that only the vector leg finds is not listed (docs/research, benchmark §11). Its
+hits are `candidate`s with a score and never raise a tier-1 or tier-2 hit. Both read the client at call
 time, so a settings change applies to the next query. An `IsUnavailable` error, or no Pando at
 all, makes the tier `unavailable`; any other error makes it `error`; tier 1 answers regardless.
 The message of an `unavailable` tier is a short, fixed sentence (`pando.Reason`): `Pando is not
@@ -477,7 +504,16 @@ caller, it asks `code_related_files` about the changed files (test files include
 most 5). The first file coupled to another proves the graph and the tier is `ok` with no hits;
 none makes the tier `unavailable` with the fixed message `the Pando code project has no call
 edges: index the repository root with [TokenOptimization] BuildCodeGraph = true`, never `ok 0`.
-A probe Pando cannot answer gives its own `pando.Reason`. To fix it, turn the setting on and
+A probe Pando cannot answer gives its own `pando.Reason`. The probe runs once per Pando instance
+in the background and its answer is cached (30 minutes when the graph exists, 1 minute when it
+does not, and again after a managed restart), so a slow `code_related_files` never holds the
+tier past its budget: a probe still running gives `unavailable` with `the Pando call graph is
+still being checked … ask again in a moment` (`GIT-US-0179`). In managed mode the answer is also persisted under the instance directory
+(`graph-probe.json`, keyed by the instance's pid and start time) and `gintrack serve` warms it
+after registering the code project, so a fresh `gintrack mcp` process reads a known answer. `gintrack spec impact` and `gintrack mcp` read the same store (`GIT-US-0188`), and an
+external `search.pando.mcpUrl` is persisted too: no instance generation exists, so the answer is keyed by the endpoint
+URL and the project id and bounded by its expiry alone (`<cacheDir>/pando/external/graph-probe-<hash>.json`, the endpoint hashed, never the token), so a
+short-lived CLI, CI or hook run on a slow Pando reuses the last answer. To fix it, turn the setting on and
 re-index the project.
 
 The code project tier 2 asks about is **derived from the repository root**, never from

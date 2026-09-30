@@ -46,7 +46,7 @@ func TestInstallSemanticSearch(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			host := InstallSemanticSearch(tt.settings, space,
+			host := InstallSemanticSearch(tt.settings, "", space,
 				[]SemanticRepo{{ID: "project-basic", Path: root, Vault: v}}, nil)
 			if host == nil {
 				t.Fatal("the host is nil")

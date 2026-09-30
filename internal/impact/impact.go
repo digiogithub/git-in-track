@@ -7,9 +7,11 @@ import (
 	"io/fs"
 	"math"
 	"path"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/digiogithub/git-in-track/internal/core"
@@ -26,9 +28,6 @@ const (
 	// DefaultLimit caps the callers per changed symbol (tier 2) and the
 	// candidates (tier 3).
 	DefaultLimit = 20
-	// defaultSemanticLimit is the number of tier-3 candidates asked for when
-	// the query names no limit: a few neighbors, not a ranking.
-	defaultSemanticLimit = 8
 	// DefaultMaxSymbols caps the changed symbols tier 2 analyzes: one Pando
 	// call each. The rest are dropped, in sorted order, and the tier is
 	// reported truncated.
@@ -128,6 +127,12 @@ type Options struct {
 	MaxSymbols int
 	// CallBudget bounds tier 2; 0 is DefaultCallBudget.
 	CallBudget time.Duration
+	// GraphStore returns where the answer of the tier 2 graph check of one
+	// client is persisted across processes (GIT-US-0179), nil for none. It
+	// is derived cache data: a store that cannot read or write only costs
+	// the check a rerun. The host keys it by the instance the client talks
+	// to, so a restarted instance does not inherit the old answer.
+	GraphStore func(CallGraph) GraphStore
 	// MaxDeclUsers bounds the decl: reach of tier 1 by the users of the
 	// changed declaration; 0 is DefaultMaxDeclUsers, a negative value no
 	// bound.
@@ -137,6 +142,10 @@ type Options struct {
 // Resolver answers impact queries over one repository.
 type Resolver struct {
 	opts Options
+	now  func() time.Time
+
+	graphMu sync.Mutex
+	graphs  map[graphKey]*graphProbe // the graph checks, see probeGraph
 }
 
 // New returns a resolver.
@@ -147,7 +156,7 @@ func New(opts Options) *Resolver {
 	if opts.CallBudget <= 0 {
 		opts.CallBudget = DefaultCallBudget
 	}
-	return &Resolver{opts: opts}
+	return &Resolver{opts: opts, now: time.Now}
 }
 
 // changedSymbol is one symbol a diff changed.
@@ -167,6 +176,8 @@ type hitState struct {
 	behaviour bool // a reason reached the requirement through its code or the story
 	tested    bool // a reason reached it through a test that verifies it
 	shared    bool // a call reached it through a caller that carries several requirements
+	narrow    bool // a call reached it through a caller that carries two requirements
+	testCall  bool // a call reached it through a caller in a test file
 	reasons   [4][]string
 }
 
@@ -177,15 +188,38 @@ type hitState struct {
 // rendered.
 const kindShared core.ImpactKind = "shared"
 
+// kindNarrow is the kind of a tier-2 reason whose production caller carries
+// the code edges of exactly two requirements (GIT-US-0181): too few for the
+// call to be diluted the way a caller of many rules is, so it outranks a
+// test that only calls the changed code, but not a test the diff changed.
+// It is never rendered.
+const kindNarrow core.ImpactKind = "narrow"
+
+// maxNarrowCaller is the most requirements a production caller may carry and
+// still be kindNarrow. The benchmark's P3 caller (validateItemLinks) carries
+// two; P4's (FileStore.UpdateRequirement) carries four and stays shared.
+const maxNarrowCaller = 2
+
+// kindTestCall is the kind of a tier-2 reason whose caller sits in a test
+// file (GIT-US-0166): a test that runs changed code is test evidence. It is
+// weaker than a test the diff changed, and a narrow production caller
+// outranks it. It is never rendered.
+const kindTestCall core.ImpactKind = "test-call"
+
 // kind is the hit's ImpactKind: behaviour as soon as one reason is, test-only
-// when every other certain reason came through a verifying test, behaviour
-// when the only reasons are calls from shared callers, empty for a
-// candidate.
+// when every other certain reason came through a verifying test the diff
+// changed, behaviour when a narrow production caller reached it, test-only
+// when calls from test files did, behaviour when only shared callers did,
+// empty for a candidate.
 func (h *hitState) kind() core.ImpactKind {
 	switch {
 	case h.behaviour:
 		return core.ImpactKindBehaviour
 	case h.tested:
+		return core.ImpactKindTestOnly
+	case h.narrow:
+		return core.ImpactKindBehaviour
+	case h.testCall:
 		return core.ImpactKindTestOnly
 	case h.shared:
 		return core.ImpactKindBehaviour
@@ -214,6 +248,8 @@ func (c *collector) add(ref core.RequirementRef, tier int, reason string, touche
 	h.behaviour = h.behaviour || kind == core.ImpactKindBehaviour
 	h.tested = h.tested || kind == core.ImpactKindTestOnly
 	h.shared = h.shared || kind == kindShared
+	h.narrow = h.narrow || kind == kindNarrow
+	h.testCall = h.testCall || kind == kindTestCall
 	for _, r := range h.reasons[tier] {
 		if r == reason {
 			return h
@@ -494,9 +530,11 @@ func isTestPath(p string) bool {
 //     resolves callees by name, so they may call the other definition. A
 //     failing pin turns pinning off for the rest of the query;
 //   - a caller in a test file is test evidence (test-only), whatever marker
-//     it carries;
+//     it carries, unless a narrow production caller outranks it;
 //   - a production caller that carries the code edges of several
-//     requirements gives kindShared, which does not flip a test-only hit.
+//     requirements gives kindShared, which does not flip a test-only hit;
+//     with exactly two (kindNarrow, GIT-US-0181) it flips a hit that a test
+//     only calls, but not one whose verifying test the diff changed.
 func (r *Resolver) transitive(ctx context.Context, q core.ImpactQuery, symbols []changedSymbol,
 	graph *trace.Graph, tree fs.FS, col *collector,
 ) core.ImpactTier {
@@ -580,15 +618,17 @@ func (r *Resolver) transitive(ctx context.Context, q core.ImpactQuery, symbols [
 			}
 			sym := lines.symbolAt(p, c.StartLine)
 			edges := graph.ForSymbol(p, sym)
-			shared := codeRefs(edges) > 1
+			carried := codeRefs(edges)
 			for _, e := range edges {
 				reason := "call:" + e.TraceRef() + " calls " + name + " d" + strconv.Itoa(max(c.Depth, 1))
 				kind := roleKind(e.Role)
 				switch {
 				case isTestPath(p):
-					kind = core.ImpactKindTestOnly
-				case shared && kind == core.ImpactKindBehaviour:
+					kind = kindTestCall
+				case carried > maxNarrowCaller && kind == core.ImpactKindBehaviour:
 					kind = kindShared
+				case carried > 1 && kind == core.ImpactKindBehaviour:
+					kind = kindNarrow
 				}
 				found = append(found, pending{ref: e.Ref, reason: reason, kind: kind})
 			}
@@ -606,13 +646,63 @@ func (r *Resolver) transitive(ctx context.Context, q core.ImpactQuery, symbols [
 	return tier
 }
 
+// GraphPending is the reason of a tier 2 whose graph check has not answered
+// within the tier budget (GIT-US-0179). The check keeps running in the
+// background and its answer is cached, so the next query does not wait.
+const GraphPending = "the Pando call graph is still being checked: " +
+	"code_related_files has not answered yet, ask again in a moment"
+
+const (
+	// graphProbeTimeout bounds a background graph check as a whole; it is
+	// far above the tier budget because nothing waits on it.
+	graphProbeTimeout = 10 * time.Minute
+	// graphYesTTL is how long a found graph is trusted; edges rarely vanish.
+	graphYesTTL = 30 * time.Minute
+	// graphNoTTL is how long "no call edges" is trusted: a reindex that
+	// builds the graph must be noticed soon.
+	graphNoTTL = time.Minute
+)
+
+// GraphStore persists one graph check answer. Load reports ok only for an
+// answer that exists and belongs to the instance the store was made for;
+// Store overwrites it. Both must tolerate a missing, corrupt or concurrently
+// written backing file.
+type GraphStore interface {
+	Load() (edges bool, expires time.Time, ok bool)
+	Store(edges bool, expires time.Time)
+}
+
+// graphKey identifies one Pando instance and code project. A managed
+// instance that restarts is a new client, so it is a new key.
+type graphKey struct {
+	client  any
+	project string
+}
+
+// graphProbe is the check of one graphKey: running while done is open, then
+// answered.
+type graphProbe struct {
+	done    chan struct{}
+	edges   bool                                   // the graph has call edges (valid once done)
+	failure func() (core.ImpactTierStatus, string) // set when the check could not answer
+	expires time.Time
+}
+
 // probeGraph checks that the Pando code project has call edges, once tier 2
-// found no caller of any changed name. It asks code_related_files about the
-// changed files, test files included (a test calls the code it tests), in
-// sorted order and at most maxGraphProbes of them: the first coupled file
-// proves the graph, and the empty answers were real. No coupled file gives
-// `unavailable` with NoCallEdges, a Pando that cannot answer the probe gives
+// found no caller of any changed name. The check asks code_related_files
+// about the changed files, test files included (a test calls the code it
+// tests), in sorted order and at most maxGraphProbes of them: the first
+// coupled file proves the graph, and the empty answers were real. No coupled
+// file gives `unavailable` with NoCallEdges, a Pando that cannot answer gives
 // its own fixed reason, and a client that cannot probe leaves the tier ok.
+//
+// The call is slow on a large project (194 s measured, GIT-US-0179), so the
+// check runs once per instance in the background, detached from the tier
+// budget, and its answer is cached: a found graph for graphYesTTL, a missing
+// one for graphNoTTL, a client that is replaced (a managed restart) starts
+// again. The tier waits only for what is left of its budget; when the check
+// has not answered by then the tier is `unavailable` with GraphPending,
+// never a timeout error and never a guess.
 func (r *Resolver) probeGraph(ctx context.Context, client CallGraph, symbols []changedSymbol) (status core.ImpactTierStatus, message string) {
 	relator, ok := client.(FileRelator)
 	if !ok {
@@ -630,17 +720,134 @@ func (r *Resolver) probeGraph(ctx context.Context, client CallGraph, symbols []c
 	if len(files) > maxGraphProbes {
 		files = files[:maxGraphProbes]
 	}
-	for _, p := range files {
-		res, err := relator.RelatedFiles(ctx, r.opts.ProjectID, p, pando.RelatedFilesOptions{Limit: 1})
-		switch {
-		case err == nil && len(res.Files) > 0:
-			return core.ImpactTierOK, ""
-		case err != nil && (pando.IsUnavailable(err) || errors.Is(err, context.DeadlineExceeded)):
-			return pandoFailure(err)
+	var store GraphStore
+	if r.opts.GraphStore != nil {
+		store = r.opts.GraphStore(client)
+	}
+	p := r.graphProbeFor(ctx, relator, files, store)
+	select {
+	case <-p.done:
+	default:
+		select {
+		case <-p.done:
+		case <-ctx.Done():
+			return core.ImpactTierUnavailable, GraphPending
 		}
-		// Any other failure is no evidence of a graph: try the next file.
+	}
+	switch {
+	case p.failure != nil:
+		return p.failure()
+	case p.edges:
+		return core.ImpactTierOK, ""
 	}
 	return core.ImpactTierUnavailable, NoCallEdges
+}
+
+// graphProbeFor returns the cached check of relator's instance, starting one
+// when there is none or it has expired.
+func (r *Resolver) graphProbeFor(ctx context.Context, relator FileRelator, files []string, store GraphStore) *graphProbe {
+	key := graphKey{project: r.opts.ProjectID}
+	if reflect.TypeOf(relator).Comparable() {
+		key.client = relator
+	}
+	now := r.now()
+	r.graphMu.Lock()
+	defer r.graphMu.Unlock()
+	if p, ok := r.graphs[key]; ok {
+		select {
+		case <-p.done:
+			if now.Before(p.expires) {
+				return p
+			}
+		default:
+			return p
+		}
+	}
+	p := &graphProbe{done: make(chan struct{})}
+	if store != nil {
+		if edges, exp, ok := store.Load(); ok && now.Before(exp) {
+			p.edges, p.expires = edges, exp
+			close(p.done)
+			if key.client != nil {
+				if r.graphs == nil {
+					r.graphs = map[graphKey]*graphProbe{}
+				}
+				r.graphs[key] = p
+			}
+			return p
+		}
+	}
+	if key.client != nil {
+		if r.graphs == nil {
+			r.graphs = map[graphKey]*graphProbe{}
+		}
+		r.graphs[key] = p
+	}
+	go r.runGraphProbe(context.WithoutCancel(ctx), relator, files, key, p, store)
+	return p
+}
+
+// runGraphProbe answers p and persists the answer. A check that could not
+// answer is dropped from the cache so the next query asks again.
+func (r *Resolver) runGraphProbe(parent context.Context, relator FileRelator, files []string, key graphKey, p *graphProbe, store GraphStore) {
+	ctx, cancel := context.WithTimeout(parent, graphProbeTimeout)
+	defer cancel()
+	defer close(p.done)
+	edges, err := probeFiles(ctx, relator, r.opts.ProjectID, files)
+	if err != nil {
+		p.failure = func() (core.ImpactTierStatus, string) { return pandoFailure(err) }
+		r.dropGraph(key, p)
+		return
+	}
+	ttl := graphNoTTL
+	if edges {
+		ttl = graphYesTTL
+	}
+	p.edges, p.expires = edges, r.now().Add(ttl)
+	if store != nil {
+		store.Store(edges, p.expires)
+	}
+}
+
+// probeFiles asks code_related_files about files in order and reports whether
+// one is coupled to another. An error means Pando could not answer at all
+// (unreachable, timed out); any other failure is no evidence of a graph.
+func probeFiles(ctx context.Context, relator FileRelator, project string, files []string) (bool, error) {
+	for _, f := range files {
+		res, err := relator.RelatedFiles(ctx, project, f, pando.RelatedFilesOptions{Limit: 1})
+		switch {
+		case err == nil && len(res.Files) > 0:
+			return true, nil
+		case err != nil && (pando.IsUnavailable(err) || errors.Is(err, context.DeadlineExceeded)):
+			return false, fmt.Errorf("code_related_files: %w", err)
+		}
+	}
+	return false, nil
+}
+
+// WarmGraph runs the graph check on files ahead of any query and persists a
+// found graph in store, so the first query after a host starts reads a known
+// answer (GIT-US-0179). A missing graph is not stored: the files are a sample,
+// not the diff, and only a query may conclude "no call edges". It blocks for as
+// long as Pando takes, up to graphProbeTimeout; call it from a goroutine.
+func WarmGraph(ctx context.Context, client CallGraph, project string, files []string, store GraphStore) {
+	relator, ok := client.(FileRelator)
+	if !ok || store == nil || len(files) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, graphProbeTimeout)
+	defer cancel()
+	if edges, err := probeFiles(ctx, relator, project, files); err == nil && edges {
+		store.Store(true, time.Now().Add(graphYesTTL))
+	}
+}
+
+func (r *Resolver) dropGraph(key graphKey, p *graphProbe) {
+	r.graphMu.Lock()
+	defer r.graphMu.Unlock()
+	if r.graphs[key] == p {
+		delete(r.graphs, key)
+	}
 }
 
 // sharedName reports whether a definition the diff did not change shares
@@ -772,30 +979,50 @@ func (r *Resolver) semantic(ctx context.Context, ix *core.Index, q core.ImpactQu
 	if text == "" {
 		return tier, nil
 	}
-	limit := q.Limit
-	if limit <= 0 {
-		limit = defaultSemanticLimit
-	}
-	hits, err := searcher.SearchSemantic(ctx, vault.SemanticQuery{Q: text, Limit: limit, Kind: core.SearchKindRequirement})
-	if err != nil {
-		tier.Status, tier.Message = pandoFailure(err)
-		return tier, nil
-	}
-	var out []semanticHit
-	for _, h := range hits {
-		if h.Kind != core.SearchKindRequirement {
-			continue
-		}
-		ref, err := core.ParseRequirementRef(string(h.ID))
+	// One long query for the vector leg, then one short name-word query per
+	// changed declaration so the full-text leg can match too (docs/03
+	// R-IMP-4). Each answers on its own; the best score per requirement wins.
+	queries := append([]string{text}, nameQueries(symbols)...)
+	best := map[core.RequirementRef]float64{}
+	for i, qt := range queries {
+		hits, err := searcher.SearchSemantic(ctx, vault.SemanticQuery{Q: qt, Limit: max(q.Limit, semanticFetch), Kind: core.SearchKindRequirement})
 		if err != nil {
-			continue
+			if i == 0 {
+				tier.Status, tier.Message = pandoFailure(err)
+				return tier, nil
+			}
+			continue // a name query that fails costs its candidates only
 		}
-		if _, err := ix.Requirement(ref); err != nil {
-			continue // another repository's requirement, or one gone since
+		for _, h := range hits {
+			if h.Kind != core.SearchKindRequirement {
+				continue
+			}
+			ref, err := core.ParseRequirementRef(string(h.ID))
+			if err != nil {
+				continue
+			}
+			if _, err := ix.Requirement(ref); err != nil {
+				continue // another repository's requirement, or one gone since
+			}
+			if h.Score > best[ref] {
+				best[ref] = h.Score
+			}
 		}
-		out = append(out, semanticHit{ref: ref, score: math.Round(h.Score*1000) / 1000})
 	}
-	return tier, out
+	all := make([]semanticHit, 0, len(best))
+	for ref, s := range best {
+		all = append(all, semanticHit{ref: ref, score: math.Round(s*1000) / 1000})
+	}
+	sort.Slice(all, func(i, j int) bool {
+		if all[i].score != all[j].score {
+			return all[i].score > all[j].score
+		}
+		if all[i].ref.Spec != all[j].ref.Spec {
+			return all[i].ref.Spec < all[j].ref.Spec
+		}
+		return all[i].ref.Number < all[j].ref.Number
+	})
+	return tier, cutCandidates(all, q.Limit)
 }
 
 // render turns the collected hits into the sorted answer: title, coverage

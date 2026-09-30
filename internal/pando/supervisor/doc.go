@@ -39,7 +39,9 @@
 // gintrack process supervises the instance: connect to it through ReadStatus
 // and ReadToken instead), checks `pando --version` against Options.MinVersion,
 // writes the token file and launches the supervision goroutine, then returns.
-// It never waits for the child to become ready.
+// It never waits for the child to become ready. Before starting it ends an
+// orphan: a child that state.json records, that is still alive although its
+// supervisor is dead, and whose command line names the instance directory.
 //
 // Each child run:
 //
@@ -48,7 +50,10 @@
 //  2. runs `pando mcp-server --no-stdio --cwd <dir>` in its own process group;
 //     on Linux it also sets Pdeathsig = SIGTERM, so the child dies with the
 //     supervisor, and the supervision goroutine is locked to its OS thread for
-//     that reason (Pdeathsig fires when the thread that started the child ends);
+//     that reason (Pdeathsig fires when the thread that started the child ends).
+//     Where there is no Pdeathsig (macOS) the child runs under Options.Watchdog,
+//     `gintrack __pando-watch`, which ends the child's group when the lifeline
+//     pipe to the supervisor closes, SIGKILL included (RunWatchdog);
 //  3. is ready when pando.Client.Health succeeds with our token on our port
 //     within ReadyTimeout. Pando silently moves to another port when the
 //     requested one is busy, and a 401 means someone else owns it: both look
@@ -67,6 +72,18 @@
 // is reached over loopback HTTP (open question 2, default). The port changes on
 // every child start and is never reused on purpose; clients resolve it through
 // state.json.
+//
+// # AG-UI instances
+//
+// Options.Kind = KindAGUI runs `pando agui-serve --cwd <dir> --host 127.0.0.1 --port N
+// --no-tls --token-file <dir>/token` instead (GIT-US-0185), for the agent panel of ADR-035. It
+// lives in <CacheDir>/pando/<AGUIKey>/ (InstanceKey plus "-agui"), so it has its own lock, state
+// file, token, log and data directory and runs beside the repository's MCP instance. Everything
+// in Lifecycle applies unchanged; what differs is the configuration, which the caller renders
+// (Options.Files, called on every start with the chosen port), and the health check: GET
+// <AGUIPath>/healthz, and on the first check also /info with the bearer token, which is what
+// tells our child from another process that holds the port. Status.AGUIURL replaces MCPURL, and
+// Endpoint returns it.
 //
 // # Windows
 //

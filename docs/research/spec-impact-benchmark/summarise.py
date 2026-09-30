@@ -41,7 +41,7 @@ found = {1: set(), 2: set(), 3: set()}
 for pr in PRS + CTRL:
     r = report(pr, "t123")
     row = {1: [0, 0, 0], 2: [0, 0, 0], 3: [0, 0, 0]}
-    for h in r["hits"]:
+    for h in r.get("hits", []):
         v = verdict(pr, h["ref"])
         row[h["tier"]]["BEU".index(v)] += 1
         tot[h["tier"]]["BEU".index(v)] += 1
@@ -62,7 +62,7 @@ maxscore = 0
 for pr in PRS + CTRL:
     r = report(pr, "t3")
     c = [0, 0, 0]
-    for h in r["hits"]:
+    for h in r.get("hits", []):
         c["BEU".index(verdict(pr, h["ref"]))] += 1
         maxscore = max(maxscore, h.get("score", 0))
     for i in range(3):

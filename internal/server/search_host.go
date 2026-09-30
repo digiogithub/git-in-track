@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"strings"
 
 	"github.com/digiogithub/git-in-track/internal/config"
 	"github.com/digiogithub/git-in-track/internal/impact"
+	"github.com/digiogithub/git-in-track/internal/pando"
 	"github.com/digiogithub/git-in-track/internal/vault"
 )
 
@@ -43,7 +45,10 @@ type SemanticRepo struct {
 // Unlike the companion it registers no code project with Pando: that is the
 // long-lived server's job, and a short-lived agent session must not queue an
 // indexing job every time it is spawned.
-func InstallSemanticSearch(settings config.SearchPando, space *vault.Workspace, repos []SemanticRepo, log *slog.Logger) *SemanticHost {
+//
+// cacheDir is where the tier 2 graph check is persisted for this endpoint
+// (GIT-US-0188); empty keeps the answer in memory only.
+func InstallSemanticSearch(settings config.SearchPando, cacheDir string, space *vault.Workspace, repos []SemanticRepo, log *slog.Logger) *SemanticHost {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
@@ -54,7 +59,16 @@ func InstallSemanticSearch(settings config.SearchPando, space *vault.Workspace, 
 		return &SemanticHost{}
 	}
 	space.SetSemanticSearcher(searcher)
-	return &SemanticHost{client: client, searcher: searcher}
+	host := &SemanticHost{client: client, searcher: searcher}
+	if cacheDir != "" {
+		host.graphCache = cacheDir
+		host.endpoint = strings.TrimSpace(settings.MCPURL)
+		host.projects = make(map[string]string, len(repos))
+		for _, r := range repos {
+			host.projects[r.ID] = pando.SanitizeProjectID(r.Path)
+		}
+	}
+	return host
 }
 
 // semanticRegistry mounts the repositories a host attached to space.
@@ -94,6 +108,12 @@ type SemanticHost struct {
 	// discovered is set by [InstallDiscoveredSemanticSearch]: one connect-only
 	// slot per opted-in repository instead of one client.
 	discovered *managedState
+	// graphCache, endpoint and projects persist the graph check of an external
+	// Pando: the cache directory, the endpoint URL and the code project of each
+	// repository (GIT-US-0188). Empty for any other host.
+	graphCache string
+	endpoint   string
+	projects   map[string]string
 }
 
 // CallGraph is the Pando client tier 2 of the impact query calls; nil when no
@@ -116,6 +136,27 @@ func (h *SemanticHost) CallGraphFor(repo string) impact.CallGraph {
 		return h.discovered.impactGraph(repo)
 	}
 	return h.CallGraph()
+}
+
+// GraphStoreFor is where the tier 2 graph check of one repository is persisted
+// across processes. A host connected to managed instances answers the
+// instance's own store; a host with an external Pando answers a TTL-only file
+// keyed by endpoint and project; any other host answers nil.
+func (h *SemanticHost) GraphStoreFor(repo string) func(impact.CallGraph) impact.GraphStore {
+	switch {
+	case h == nil:
+		return nil
+	case h.discovered != nil:
+		return h.discovered.graphStore(repo)
+	case h.graphCache != "" && h.endpoint != "":
+		project := h.projects[repo]
+		if project == "" {
+			return nil
+		}
+		store := externalGraphStore(h.graphCache, h.endpoint, project)
+		return func(impact.CallGraph) impact.GraphStore { return store }
+	}
+	return nil
 }
 
 // SemanticFor is the searcher tier 3 asks for one repository, as

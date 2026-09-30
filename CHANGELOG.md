@@ -14,6 +14,36 @@ because a commit list cannot express them.
 
 ### Added
 
+- **Impact tier 3 cuts its candidates by score** (`GIT-US-0180`, docs/03 R-IMP-4, docs/21 §6.1). It
+  used to list 8 candidates whatever the diff, so a report with no hits grew from 67 to 470 tokens
+  and 2 of 83 candidates were right. It now also asks one short name-word query per changed
+  declaration (`nextNumber` is `next number`, at most 6) so the full-text leg can match, keeps the
+  best score per requirement, and lists a candidate only above a floor of 0.017 (both legs of
+  Pando's fusion matched), within 80 % of the best score, at most 5 (or `limit`). A flat ranking
+  lists none. On the benchmark replay the median default-tiers report goes from 707 to 405 tokens,
+  a report with no hit from 470 to 70, and recall from 19 to 18 of 21 (§11).
+- **`gintrack serve` runs `pando agui-serve` for the agent panel** (`GIT-US-0185`, ADR-039
+  decision 4, ADR-035, docs/20 §2.4, docs/21, docs/05). In managed search mode with `--agent` and
+  `--mcp-http`, each opted-in repository gets a supervised adapter in `<cache>/pando/<key>-agui/`
+  (same lifecycle, health, backoff, orphan reaping and stable port as the search instance),
+  configured from the `gintrack agent init` templates without writing to the repository. The agent
+  proxy routes to it before `agent.pando`, answers `503` with `Retry-After` while it is not ready
+  and never falls back to another repository's upstream. `indexed[].managed.agui` reports its
+  state. External setups are unchanged; `agent.pando.managed: false` or an `agent.pando.repos` row
+  keeps a repository external. The adapter has no code project, so the two code-search tools are
+  not in its allow-list. The `agent init` templates moved to `internal/agentcfg`.
+- **Managed Pando keeps its port across restarts** (`GIT-US-0184`, ADR-039 decision 2, docs/21,
+  docs/08). `state.json` records `lastPort`, which survives a stop; a start, a requested restart
+  and a crash restart try it first and wait up to 2 s for the old socket to close. A busy port
+  falls back to a free one, logs a warning and records `portChangedFrom`. Pando silently moving
+  ports is still detected by the health check.
+- **Managed Pando dies with `gintrack serve` on macOS** (`GIT-US-0187`, ADR-039 decision 5, docs/21).
+  Without `Pdeathsig`, the child now runs under a watchdog (`gintrack __pando-watch`, this binary
+  re-executed) that ends its process group when a lifeline pipe from `serve` closes, even if
+  `serve` is SIGKILLed; the same code path is used on any unix that lacks `Pdeathsig`. On every
+  platform a start now ends an orphan left by a crashed supervisor, found through `state.json`
+  and confirmed by its command line. CI cross-vets the supervisor for darwin and windows. The
+  macOS path is tested on Linux through the watchdog; it has not run on a Mac.
 - **Coverage drift bounds declaration reach like impact** (`GIT-US-0169`, docs/03 §21.6-§21.7). A
   changed `const`, `var` or `type` used by more than 10 functions of its package no longer marks a
   passing requirement `suspect`; the row stays `passing` and shows `bounded:<n>`, the traced edges
@@ -97,6 +127,29 @@ because a commit list cannot express them.
   nothing else changed, capped at 1,000 bytes; it no longer sends bare symbol names.
 
 ### Fixed
+
+- **`gintrack spec impact` reuses the persisted tier 2 graph probe** (`GIT-US-0188`, docs/21 §6.1,
+  docs/03 R-IMP-3, docs/07 §4.20). The CLI (and `gintrack mcp`) read the managed instance's store,
+  and an external `search.pando.mcpUrl` now has one too: `<cacheDir>/pando/external/graph-probe-<hash>.json`,
+  keyed by the endpoint URL (hashed) and the project id, expiring by TTL alone. A short-lived CLI, CI
+  or hook run on a slow Pando no longer answers "still being checked" while an earlier run knew.
+
+- **The tier 2 graph probe no longer blocks impact** (`GIT-US-0179`, docs/03 R-IMP-3, docs/21
+  §6.1). `code_related_files` took 194 s on the benchmark repository, so tier 2 burned its whole
+  budget on every query. The check now runs once per Pando instance in the background and its
+  answer is cached (30 minutes for a graph with edges, 1 minute for none, again after a managed
+  restart); a check still running gives `unavailable` with a "still being checked" reason
+  instead of a timeout. In managed mode the answer is also persisted in the instance's cache
+  directory (keyed by pid and state change, so a restart drops it) and `gintrack serve` warms it
+  once the code project is registered, so short-lived `gintrack mcp` processes reuse it.
+
+- **Tier 2 keeps a narrow production caller as behaviour evidence over a test caller**
+  (`GIT-US-0181`, docs/03 R-IMP-3, R-IMP-5). After `GIT-US-0166` a hit reached by a production
+  caller carrying two requirement markers and by an unchanged test that calls the changed code
+  ranked `test-only`: the benchmark's one true tier-2 behaviour hit (P3 `GIT-SP-0003.R3`, through
+  `validateItemLinks` calling `Inverse`) was labelled evidence. A caller carrying exactly two
+  requirements now outranks a test caller; a verifying test the diff changed, and a caller of
+  three or more requirements, still do not flip `test-only`.
 
 - **An update that keeps an item's title no longer renames its file** (`GIT-US-0171`, docs/03 §3.4).
   A status-only `update_item` on an item whose slug was hand-made or longer than 60 bytes renamed

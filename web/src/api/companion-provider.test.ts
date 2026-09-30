@@ -7,6 +7,7 @@ import {
   POLL_INTERVAL_MS,
   RECONNECT_BASE_MS,
   toCapabilities,
+  toSearchManaged,
   toSearchReindexJob,
   toSearchSettings,
   type WebSocketLike,
@@ -2435,6 +2436,28 @@ describe('CompanionProvider semantic search settings (story GIT-US-0091)', () =>
       );
     await expect(provider(off).reindexSearch()).rejects.toMatchObject({
       code: 'search_not_configured',
+    });
+  });
+
+  it('reads the managed AG-UI adapter of a repository (GIT-US-0185)', () => {
+    expect(
+      toSearchManaged({
+        optedIn: true,
+        state: 'ready',
+        agui: { state: 'restarting', pid: 7, port: 41000, crashes: 1, error: 'pando exited' },
+      }),
+    ).toEqual({
+      optedIn: true,
+      state: 'ready',
+      agui: { state: 'restarting', pid: 7, port: 41000, crashes: 1, error: 'pando exited' },
+    });
+    // No adapter: the field is absent, and an unknown state reads as failed.
+    expect(toSearchManaged({ optedIn: true, state: 'ready' })).toEqual({
+      optedIn: true,
+      state: 'ready',
+    });
+    expect(toSearchManaged({ optedIn: true, state: 'ready', agui: { state: 'weird' } })?.agui).toEqual({
+      state: 'failed',
     });
   });
 
