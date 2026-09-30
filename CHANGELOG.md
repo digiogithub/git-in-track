@@ -14,6 +14,14 @@ because a commit list cannot express them.
 
 ### Added
 
+- **Impact tier 3 cuts its candidates by score** (`GIT-US-0180`, docs/03 R-IMP-4, docs/21 §6.1). It
+  used to list 8 candidates whatever the diff, so a report with no hits grew from 67 to 470 tokens
+  and 2 of 83 candidates were right. It now also asks one short name-word query per changed
+  declaration (`nextNumber` is `next number`, at most 6) so the full-text leg can match, keeps the
+  best score per requirement, and lists a candidate only above a floor of 0.017 (both legs of
+  Pando's fusion matched), within 80 % of the best score, at most 5 (or `limit`). A flat ranking
+  lists none. On the benchmark replay the median default-tiers report goes from 707 to 405 tokens,
+  a report with no hit from 470 to 70, and recall from 19 to 18 of 21 (§11).
 - **`gintrack serve` runs `pando agui-serve` for the agent panel** (`GIT-US-0185`, ADR-039
   decision 4, ADR-035, docs/20 §2.4, docs/21, docs/05). In managed search mode with `--agent` and
   `--mcp-http`, each opted-in repository gets a supervised adapter in `<cache>/pando/<key>-agui/`
