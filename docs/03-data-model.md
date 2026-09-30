@@ -3097,8 +3097,11 @@ answers `unavailable`.
   - **A shared caller does not flip a verdict.** A production caller whose code edges name
     several requirements says that it runs changed code, not which of its rules changed. Its
     `call:` reason makes a hit `behaviour` only when nothing else reached the requirement; it
-    never turns a `test-only` hit into `behaviour`. A caller carrying one requirement's marker is
-    that requirement's own code and does.
+    never turns a `test-only` hit into `behaviour`. One exception (`GIT-US-0181`): a caller that
+    carries exactly two requirements' code edges is narrow enough to run the rule it names, so
+    it turns a hit that a test file only *calls* into `behaviour`; it still never overrides a
+    verifying test the diff changed (a tier-1 `tests` edge). A caller carrying one requirement's
+    marker is that requirement's own code and always does.
 
   When no changed name has a caller, tier 2 checks that the answer came from a code graph
   (`GIT-US-0167`): Pando says "No callers found" alike for a symbol nothing calls and for a
@@ -3130,7 +3133,8 @@ answers `unavailable`.
   test file: only a test that verifies the requirement changed, or only such a test calls the
   changed code, so what the requirement states may not have changed. A `call:` reason from a
   production caller that carries several requirements (R-IMP-3) counts as `behaviour` only when
-  the hit has no other reason, so it never overrides `test-only`. `status` is the
+  the hit has no other reason, so it never overrides `test-only`; a caller carrying exactly two
+  does override a test caller, but not a changed verifying test. `status` is the
   coverage state (R-REQ-12a). `pending` lists the open items whose unapplied Spec Delta modifies
   the requirement. `suspect` means **changed and not re-verified** (`GIT-US-0148`):
   1. state `suspect` → set;
