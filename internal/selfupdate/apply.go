@@ -89,9 +89,13 @@ func (e *ApplyError) IsPermission() bool { return errors.Is(e.Err, fs.ErrPermiss
 func CurrentExecutable() (string, error) {
 	exe, err := os.Executable()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("selfupdate: locate executable: %w", err)
 	}
-	return filepath.EvalSymlinks(exe)
+	resolved, err := filepath.EvalSymlinks(exe)
+	if err != nil {
+		return "", fmt.Errorf("selfupdate: resolve symlinks: %w", err)
+	}
+	return resolved, nil
 }
 
 // NewPath and OldPath name the side files used next to target.
@@ -136,7 +140,7 @@ func Apply(newBinary, target string, opts ApplyOptions) error {
 		ae := &ApplyError{Op: "install", Path: target, Err: err, OldPath: oldPath}
 		if rerr := ops.rename(oldPath, target); rerr != nil {
 			ae.BinaryMayBeMissing = true
-			ae.Err = fmt.Errorf("%w; rollback failed: %v", err, rerr)
+			ae.Err = fmt.Errorf("%w; rollback failed: %w", err, rerr)
 		}
 		_ = ops.remove(newPath)
 		return ae
@@ -152,21 +156,21 @@ func writeCopy(ops *fsOps, src, dst string, mode fs.FileMode, old fs.FileInfo) e
 	if err != nil {
 		return err
 	}
-	defer in.Close()
+	defer func() { _ = in.Close() }()
 	out, err := ops.create(dst, mode)
 	if err != nil {
 		return err
 	}
 	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
-		return err
+		_ = out.Close()
+		return fmt.Errorf("copy: %w", err)
 	}
 	if err := out.Sync(); err != nil {
-		out.Close()
-		return err
+		_ = out.Close()
+		return fmt.Errorf("fsync: %w", err)
 	}
 	if err := out.Close(); err != nil {
-		return err
+		return fmt.Errorf("close: %w", err)
 	}
 	// The umask may have stripped bits at create time.
 	if err := ops.chmod(dst, mode); err != nil {

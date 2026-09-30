@@ -9,6 +9,7 @@ import (
 // Channel is how this gintrack was installed.
 type Channel string
 
+// Install channels.
 const (
 	ChannelRelease   Channel = "release"
 	ChannelHomebrew  Channel = "homebrew"
@@ -33,7 +34,11 @@ func (e Env) read(p string) ([]byte, error) {
 	if e.ReadFile != nil {
 		return e.ReadFile(p)
 	}
-	return os.ReadFile(p)
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", p, err)
+	}
+	return b, nil
 }
 
 // DetectChannel classifies the install at exePath (symlinks already resolved).
