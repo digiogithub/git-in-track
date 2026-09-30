@@ -12,7 +12,15 @@ because a commit list cannot express them.
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- **`gintrack update`** (`GIT-US-0194`, docs/07 §4.24, ADR-040). Updates the binary from GitHub
+  Releases: it verifies the archive against `checksums.txt` before anything is replaced, keeps the
+  file mode, refuses Homebrew, Scoop and container installs with their own upgrade command (`--force`
+  overrides), and asks for confirmation on a terminal (`--yes` otherwise). `--check` reports only,
+  `--json` is machine readable, a downgrade needs an explicit version. New exit codes 10 (update
+  available), 11 (refused), 12 (verification failed) and 13 (install failed). It tells you to restart
+  a running `gintrack serve` or managed Pando and never restarts one.
 
 ## [2.2.0] — 2026-09-30
 
