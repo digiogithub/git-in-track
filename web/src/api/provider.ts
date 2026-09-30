@@ -316,6 +316,24 @@ export type GitSettingsPatch = {
 };
 
 /**
+ * Whether a newer gintrack release exists (`GET /api/v1/version`, story
+ * GIT-US-0195). `supported: false` means this runtime cannot tell (browser-only
+ * mode has no companion to ask): the notice stays hidden.
+ */
+export type VersionStatus = {
+  supported: boolean;
+  /** The running companion version; empty when unknown. */
+  current: string;
+  /** The newest published release; empty when the lookup has not succeeded. */
+  latest: string;
+  updateAvailable: boolean;
+  /** When the lookup ran, ISO 8601; `null` when there is none. */
+  checkedAt: string | null;
+  /** The release page of `latest`. */
+  url: string;
+};
+
+/**
  * The lifecycle of the public tunnel (`/api/v1/tunnel`).
  *
  * `starting` already carries the URL: the hostname is handed out before the
@@ -1526,13 +1544,7 @@ export type SearchIndexedRepo = {
 
 /** What a managed Pando instance is doing, as the settings report it. */
 export type SearchManagedState =
-  | 'stopped'
-  | 'starting'
-  | 'ready'
-  | 'restarting'
-  | 'failed'
-  | 'disabled'
-  | 'skipped';
+  'stopped' | 'starting' | 'ready' | 'restarting' | 'failed' | 'disabled' | 'skipped';
 
 /** One repository's managed Pando: `indexed[].managed` of the settings. */
 export type SearchManagedInstance = {
@@ -2222,6 +2234,13 @@ export interface DataProvider {
    * it grants every agent the user runs the right to edit the backlog.
    */
   setMcpWriteTools(allowWrite: boolean): Promise<McpSettings>;
+
+  // update notice (`GET /api/v1/version`)
+  /**
+   * The running version and whether a newer release is published. It never
+   * throws for "unknown": a failed lookup answers `updateAvailable: false`.
+   */
+  getVersionStatus(): Promise<VersionStatus>;
 
   // public tunnel (`GET|POST|DELETE /api/v1/tunnel`)
   /**

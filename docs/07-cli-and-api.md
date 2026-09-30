@@ -318,7 +318,23 @@ integrations:
 log:
   level: info            # debug | info | warn | error
   format: text           # text | json
+
+# Update notices (GIT-US-0195, ADR-040). Off by default: nothing contacts
+# GitHub on its own. `gintrack doctor`, `gintrack update` and the web UI notice
+# always may; this key adds one stderr line to interactive commands.
+update:
+  checkOnStart: false    # true: print ONE stderr line when a newer release exists
 ```
+
+`update.checkOnStart` prints `gintrack X.Y.Z is available (you have A.B.C): run
+`gintrack update`` on stderr after a command succeeds, from a cached lookup
+(`<index.cacheDir>/update-check.json`, derived data, 6 h TTL after a success and 15 min
+after a failure, lookup timeout 5 s). A stale cache is refreshed in the background while
+the command runs; the command waits at most 300 ms for it at exit. The line is never
+printed for `--json`, `--quiet`, a non-terminal stderr, `gintrack mcp`, `serve`,
+`update`, `version`, `doctor` (which reports the state itself) or completion, nor on a
+development build, a Homebrew or Scoop install or a container (`selfupdate.DetectChannel`: those
+are upgraded by their own tooling).
 
 The file is written with `gintrack config init` or by the first `gintrack add`,
 always with mode `0600`. Keys this build does not know are ignored rather than
@@ -1158,6 +1174,12 @@ permissions, the readability of every registered path, the presence and validity
 `project.yaml`, every content diagnostic the indexer produces, and duplicate ids. The
 `--fix` class is currently front matter rewritten in canonical key order and files whose
 slug drifted from the title.
+
+An `update` line (GIT-US-0195) reports whether a newer gintrack release is published: `ok`
+when up to date or when the install is not checked (development builds, Homebrew, Scoop, containers), `info` — counted
+as neither a warning nor an error — with `run gintrack update` when one exists, and a
+`warning` when the lookup failed (offline, rate limited). It uses the cache described in
+§3.2 `update.checkOnStart`, so repeated runs do not hit GitHub.
 
 Checks performed:
 
@@ -2616,6 +2638,25 @@ GET /api/v1/capabilities
   "activeWorkspace": "work"
 }
 ```
+
+```http
+GET /api/v1/version            # bearer token, like capabilities
+200
+{
+  "current": "2.2.0",
+  "latest": "2.3.0",
+  "updateAvailable": true,
+  "checkedAt": "2026-09-30T10:00:00Z",
+  "url": "https://github.com/digiogithub/git-in-track/releases/tag/v2.3.0"
+}
+```
+
+`/api/v1/version` answers from the same cached lookup as `gintrack doctor` (6 h after a
+success, 15 min after a failure, 5 s lookup timeout; `internal/selfupdate`). A lookup
+failure, a development build or a package-manager install answers `200` with
+`"latest": ""`, `"updateAvailable": false` and `"checkedAt": null` when nothing was ever
+looked up: "unknown" is not an error. The body carries no token or credential. The web
+app shows a dismissible notice from it (docs/05 §3.2).
 
 The web app calls `/api/v1/capabilities` on load (with a 300 ms timeout) to decide between
 browser-only and companion mode; failure is a normal, silent fallback.
