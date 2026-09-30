@@ -2,11 +2,12 @@
 id: GIT-SP-0001
 type: spec
 title: The rev write protocol
-status: in_review
+status: done
 labels: [core]
 created: 2026-09-24T22:53:07Z
-updated: 2026-09-24T22:53:44Z
+updated: 2026-09-30T21:13:48Z
 started: 2026-09-24T22:53:07Z
+closed: 2026-09-30T21:13:48Z
 requirements:
   R1:
     status: in_review

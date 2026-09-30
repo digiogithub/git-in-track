@@ -26,6 +26,7 @@ workflow:
     - {id: done, name: Done, category: done, terminal: true}
     - {id: cancelled, name: Cancelled, category: cancelled, terminal: true}
   transitions:
+    triage: [backlog, todo, cancelled]
     backlog: [todo, cancelled]
     todo: [in_progress, backlog, cancelled]
     in_progress: [in_review, todo, cancelled]
@@ -37,8 +38,8 @@ id_allocation:
   write_counters: true
   counters: # hints only, NOT authoritative (the index scan wins)
     epic: 32
-    story: 197
-    task: 238
+    story: 199
+    task: 239
     milestone: 18
     spec: 4
 priorities: [critical, high, medium, low]
