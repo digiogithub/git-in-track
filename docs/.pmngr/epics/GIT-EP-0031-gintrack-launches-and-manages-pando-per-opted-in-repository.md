@@ -2,12 +2,12 @@
 id: GIT-EP-0031
 type: epic
 title: gintrack launches and manages Pando per opted-in repository
-status: in_review
+status: in_progress
 priority: high
 author: mcp
 labels: [server, cli, web, docs]
 created: 2026-09-29T18:53:18Z
-updated: 2026-09-29T21:24:28Z
+updated: 2026-09-30T07:01:08Z
 started: 2026-09-29T21:24:26Z
 ---
 

@@ -2,12 +2,15 @@
 id: GIT-US-0183
 type: story
 title: Fix stale text about Pando in spec impact help and ADR-039
-status: backlog
+status: done
 priority: low
+assignees: [claude]
 author: mcp
 labels: [cli, docs, agent-ok, good-first-issue]
 created: 2026-09-29T22:56:37Z
-updated: 2026-09-29T22:56:37Z
+updated: 2026-09-30T13:06:59Z
+started: 2026-09-30T12:58:26Z
+closed: 2026-09-30T13:06:59Z
 ---
 
 ## Description
@@ -16,6 +19,10 @@ updated: 2026-09-29T22:56:37Z
 
 ## Acceptance Criteria
 
-- [ ] `spec impact --help` describes how tiers 2–3 find Pando (external config or a running managed instance).
-- [ ] ADR-039 gets a dated implementation note (status stays `proposed` until the maintainer accepts it) and a note that the CORS claim is historical.
-- [ ] `make lint` and `make test` pass.
+- [x] `spec impact --help` describes how tiers 2–3 find Pando (external config or a running managed instance).
+- [x] ADR-039 gets a dated implementation note (status stays `proposed` until the maintainer accepts it) and a note that the CORS claim is historical.
+- [x] `make lint` and `make test` pass.
+
+## Notes
+
+The ADR half was done in #109: ADR-039 was accepted on 2026-09-30, with an implementation note and a historical CORS note. The help text was fixed in #116, pinned by `cmd/gintrack/spec_impact_help_test.go`. No other stale `spec` help texts were found.
