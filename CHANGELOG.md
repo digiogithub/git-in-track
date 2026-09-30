@@ -12,6 +12,14 @@ because a commit list cannot express them.
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [2.2.0] — 2026-09-30
+
+A minor release: managed Pando (ADR-039), tier 2 and 3 spec impact precision, and the agent
+panel adapter. No configuration key, data-model path, CLI flag or API field is removed, so
+nothing breaks for an existing setup.
+
 ### Added
 
 - **Impact tier 3 cuts its candidates by score** (`GIT-US-0180`, docs/03 R-IMP-4, docs/21 §6.1). It
@@ -48,6 +56,7 @@ because a commit list cannot express them.
   changed `const`, `var` or `type` used by more than 10 functions of its package no longer marks a
   passing requirement `suspect`; the row stays `passing` and shows `bounded:<n>`, the traced edges
   the bound suppressed. Impact and coverage share `trace.DefaultMaxDeclUsers`.
+- **Web opt-in to managed Pando and its status** (`GIT-US-0177`, ADR-039, docs/05, docs/08 §10.9).
   `PUT /api/v1/search/managed/{repo}/opt-in` (`{enabled, deleteIndex?}`) saves the machine-local
   `repos[].semanticSearch` (guarded against concurrent edits of the configuration file) and starts
   or stops the repository's instance; `deleteIndex` also removes its data directory. In managed
@@ -1837,7 +1846,8 @@ each, `Contents: read and write`. GHCR needs no secret. The release workflow ver
 tokens before it builds anything and fails with the fix in the message when either is
 missing. Full procedure: [docs/09](docs/09-ci-cd-and-releases.md) §9 and §10.
 
-[Unreleased]: https://github.com/digiogithub/git-in-track/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/digiogithub/git-in-track/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/digiogithub/git-in-track/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/digiogithub/git-in-track/compare/v2.0.1...v2.1.0
 [2.0.1]: https://github.com/digiogithub/git-in-track/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/digiogithub/git-in-track/compare/v1.6.0...v2.0.0
