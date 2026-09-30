@@ -3130,7 +3130,15 @@ answers `unavailable`.
   declarations in words — the first sentence of a Go declaration's doc comment, marker lines
   dropped, else the name split into lower-case words (`nextNumber` → `next number`) — with
   declarations in test files only when nothing else changed; at most 1,000 bytes, cut on a word
-  boundary. A hit becomes a `candidate` with a
+  boundary. That long query mostly feeds Pando's vector leg, because its full-text leg needs every
+  word in one chunk. So each changed declaration whose name has at least two words also gets its
+  own short query, its name in words (`nextNumber` → `next number`; at most 6, declarations in test
+  files only when nothing else changed, a query that fails costs only its candidates), and the best
+  score per requirement over all the queries wins (`GIT-US-0180`). **The cut:** Pando fuses its two
+  legs by reciprocal rank, so a chunk one leg returned scores at most 0.0164 and one both legs
+  returned 0.025 to 0.033. A candidate is listed only when its score is at least 0.017 (both legs
+  matched), at least 80 % of the best candidate's, and within the first 5 (or the query's `limit`);
+  a flat ranking of single-leg scores, which orders nothing, lists no candidate at all. A hit becomes a `candidate` with a
   `score` (rounded to three decimals) and the reason `semantic`, only when tiers 1–2 did not
   reach the requirement: a candidate never adds to or overrides their certainty.
 - **R-IMP-5 Hit.** `{ref, title, tier, kind?, candidate?, score?, status?, suspect?, reasons[],

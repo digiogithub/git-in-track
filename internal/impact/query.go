@@ -161,3 +161,85 @@ func capWords(s string, n int) string {
 	}
 	return s[:n]
 }
+
+// maxNameQueries caps the name-word queries of tier 3.
+const maxNameQueries = 6
+
+// nameQueries are the short queries of tier 3: the name of each changed
+// declaration in words ("nextNumber" is "next number"), one query each, in
+// the order of symbols, declarations in test files only when nothing else
+// changed. Pando's full-text leg requires every word of a query in one
+// chunk, so a query this short is the one that can match it.
+func nameQueries(symbols []changedSymbol) []string {
+	var code, tests []changedSymbol
+	for _, s := range symbols {
+		if isTestPath(s.path) {
+			tests = append(tests, s)
+		} else {
+			code = append(code, s)
+		}
+	}
+	if len(code) == 0 {
+		code = tests
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, s := range code {
+		if len(out) == maxNameQueries {
+			break
+		}
+		name := pandoName(s.symbol)
+		if isTestPath(s.path) {
+			name = strings.TrimPrefix(name, "Test")
+		}
+		text := splitIdentifier(name)
+		// A single word ("item", "string") is in too many chunks to say
+		// anything about one requirement.
+		if !strings.Contains(text, " ") || seen[text] {
+			continue
+		}
+		seen[text] = true
+		out = append(out, text)
+	}
+	return out
+}
+
+// Tier-3 cut (docs/03 R-IMP-4). Pando fuses a vector leg and a full-text leg
+// by reciprocal rank fusion: a chunk one leg returned scores at most
+// 1/61 = 0.0164, and one both legs returned scores 0.025 to 0.033. When the
+// full-text leg has nothing to say the scores span two ranks (0.014 to
+// 0.016) and order nothing, so a candidate needs both legs.
+const (
+	// semanticFloor is the least score of a candidate: above what one leg can
+	// give, so only a chunk the full-text leg matched too passes.
+	semanticFloor = 0.017
+	// semanticGap keeps a candidate only when its score is at least this
+	// fraction of the best one's.
+	semanticGap = 0.8
+	// defaultSemanticLimit is the most candidates a report lists when the
+	// query names no limit.
+	defaultSemanticLimit = 5
+	// semanticFetch is what each Pando search asks for, whatever the limit:
+	// the cut needs a ranking to choose from.
+	semanticFetch = 8
+)
+
+// cutCandidates keeps the candidates of a ranking, best first, that clear
+// semanticFloor and semanticGap, at most limit of them. A flat ranking of
+// single-leg scores gives none.
+func cutCandidates(ranked []semanticHit, limit int) []semanticHit {
+	if limit <= 0 {
+		limit = defaultSemanticLimit
+	}
+	var out []semanticHit
+	for _, h := range ranked {
+		if h.score < semanticFloor || len(out) == limit {
+			break
+		}
+		if len(out) > 0 && h.score < out[0].score*semanticGap {
+			break
+		}
+		out = append(out, h)
+	}
+	return out
+}

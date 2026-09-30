@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -323,20 +324,29 @@ func fixtureGraph() *fakeGraph {
 
 // fakeSemantic answers a fixed ranking of requirement blocks.
 type fakeSemantic struct {
-	hits  []core.SearchHit
-	err   error
-	query vault.SemanticQuery
+	hits    []core.SearchHit
+	err     error
+	query   vault.SemanticQuery   // the first search: the long query
+	queries []vault.SemanticQuery // every search, in order
+	// byQuery, when it has the query text, answers that search instead of hits.
+	byQuery map[string][]core.SearchHit
 }
 
 func (s *fakeSemantic) SearchSemantic(_ context.Context, q vault.SemanticQuery) ([]core.SearchHit, error) {
-	s.query = q
+	if len(s.queries) == 0 {
+		s.query = q
+	}
+	s.queries = append(s.queries, q)
+	if h, ok := s.byQuery[q.Q]; ok {
+		return h, s.err
+	}
 	return s.hits, s.err
 }
 
 func fixtureSemantic() *fakeSemantic {
 	return &fakeSemantic{hits: []core.SearchHit{
-		{Kind: core.SearchKindRequirement, ID: "ACME-SP-0001.R1", Score: 1},
-		{Kind: core.SearchKindRequirement, ID: "ACME-SP-0001.R3", Score: 0.61234},
+		{Kind: core.SearchKindRequirement, ID: "ACME-SP-0001.R1", Score: 0.0328},
+		{Kind: core.SearchKindRequirement, ID: "ACME-SP-0001.R3", Score: 0.02834},
 		{Kind: core.SearchKindRequirement, ID: "OTHER-SP-0001.R1", Score: 0.5},
 		{Kind: "item", ID: "ACME-SP-0001", Score: 0.4},
 	}}
@@ -428,8 +438,8 @@ func TestImpactTiers(t *testing.T) {
 			len(r2.Reasons) != 1 || r2.Reasons[0] != "call:src/format.go#Format calls NextID d1" {
 			t.Errorf("R2 = %+v, want a passing tier-2 hit made suspect by the call", r2)
 		}
-		if r3.Tier != 3 || !r3.Candidate || r3.Score != 0.612 || r3.Suspect || r3.Reasons[0] != "semantic" {
-			t.Errorf("R3 = %+v, want a tier-3 candidate scored 0.612", r3)
+		if r3.Tier != 3 || !r3.Candidate || r3.Score != 0.028 || r3.Suspect || r3.Reasons[0] != "semantic" {
+			t.Errorf("R3 = %+v, want a tier-3 candidate scored 0.028", r3)
 		}
 		if r4.Tier != 1 || r4.Reasons[0] != "delta:ACME-US-0001" || len(r4.Pending) != 1 || r4.Suspect {
 			t.Errorf("R4 = %+v, want a tier-1 delta hit with a pending edge", r4)
@@ -1130,4 +1140,68 @@ func TestImpactDeclReachBounded(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestSemanticCut runs tier 3 through a fake Pando (GIT-US-0180): the long
+// query's flat single-leg ranking yields nothing, a name-word query that both
+// legs matched yields its leader, and the best score per requirement wins.
+func TestSemanticCut(t *testing.T) {
+	hit := func(id string, score float64) core.SearchHit {
+		return core.SearchHit{Kind: core.SearchKindRequirement, ID: core.ItemID(id), Score: score}
+	}
+	flat := []core.SearchHit{hit("ACME-SP-0001.R1", 0.016), hit("ACME-SP-0001.R2", 0.015), hit("ACME-SP-0001.R3", 0.014)}
+	refs := func(res core.ImpactResult) string {
+		var got []string
+		for _, h := range res.Hits {
+			got = append(got, h.Ref.String()+"@"+strconv.FormatFloat(h.Score, 'f', -1, 64))
+		}
+		return strings.Join(got, " ")
+	}
+	run := func(sem *fakeSemantic) core.ImpactResult {
+		f := newFixture(t)
+		return f.impact(f.resolver(nil, sem), core.ImpactQuery{Base: f.base, Tiers: []int{core.ImpactTierSemantic}})
+	}
+
+	t.Run("a flat ranking lists nothing", func(t *testing.T) {
+		res := run(&fakeSemantic{hits: flat})
+		if len(res.Hits) != 0 || res.Tiers[2].Status != core.ImpactTierOK {
+			t.Errorf("hits = %s, tier = %+v; want none and ok", refs(res), res.Tiers[2])
+		}
+	})
+	t.Run("a name query both legs matched is kept, the flat ranking is not", func(t *testing.T) {
+		sem := &fakeSemantic{hits: flat, byQuery: map[string][]core.SearchHit{
+			"next id": {hit("ACME-SP-0001.R3", 0.0325), hit("ACME-SP-0001.R1", 0.016)},
+		}}
+		res := run(sem)
+		if got := refs(res); got != "ACME-SP-0001.R3@0.033" {
+			t.Errorf("hits = %q, want only R3 at 0.033", got)
+		}
+		if len(sem.queries) != 2 || sem.queries[1].Q != "next id" {
+			t.Errorf("searches = %+v, want the long query then %q", sem.queries, "next id")
+		}
+		for _, q := range sem.queries {
+			if q.Limit < semanticFetch || q.Kind != core.SearchKindRequirement {
+				t.Errorf("search %+v: want limit >= %d and kind requirement", q, semanticFetch)
+			}
+		}
+	})
+	t.Run("the best score of a requirement wins across queries", func(t *testing.T) {
+		sem := &fakeSemantic{
+			hits:    []core.SearchHit{hit("ACME-SP-0001.R1", 0.031)},
+			byQuery: map[string][]core.SearchHit{"next id": {hit("ACME-SP-0001.R1", 0.0325)}},
+		}
+		if got := refs(run(sem)); got != "ACME-SP-0001.R1@0.033" {
+			t.Errorf("hits = %q, want R1 at 0.033", got)
+		}
+	})
+	t.Run("a requirement tiers 1-2 reached is not listed again", func(t *testing.T) {
+		f := newFixture(t)
+		sem := &fakeSemantic{hits: []core.SearchHit{hit("ACME-SP-0001.R1", 0.0328), hit("ACME-SP-0001.R3", 0.0320)}}
+		res := f.impact(f.resolver(nil, sem), core.ImpactQuery{Base: f.base})
+		for _, h := range res.Hits {
+			if h.Tier == core.ImpactTierSemantic && h.Ref.String() == "ACME-SP-0001.R1" {
+				t.Errorf("R1 listed as a candidate although tier 1 reached it: %+v", h)
+			}
+		}
+	})
 }

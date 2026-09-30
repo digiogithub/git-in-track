@@ -28,9 +28,6 @@ const (
 	// DefaultLimit caps the callers per changed symbol (tier 2) and the
 	// candidates (tier 3).
 	DefaultLimit = 20
-	// defaultSemanticLimit is the number of tier-3 candidates asked for when
-	// the query names no limit: a few neighbors, not a ranking.
-	defaultSemanticLimit = 8
 	// DefaultMaxSymbols caps the changed symbols tier 2 analyzes: one Pando
 	// call each. The rest are dropped, in sorted order, and the tier is
 	// reported truncated.
@@ -982,30 +979,50 @@ func (r *Resolver) semantic(ctx context.Context, ix *core.Index, q core.ImpactQu
 	if text == "" {
 		return tier, nil
 	}
-	limit := q.Limit
-	if limit <= 0 {
-		limit = defaultSemanticLimit
-	}
-	hits, err := searcher.SearchSemantic(ctx, vault.SemanticQuery{Q: text, Limit: limit, Kind: core.SearchKindRequirement})
-	if err != nil {
-		tier.Status, tier.Message = pandoFailure(err)
-		return tier, nil
-	}
-	var out []semanticHit
-	for _, h := range hits {
-		if h.Kind != core.SearchKindRequirement {
-			continue
-		}
-		ref, err := core.ParseRequirementRef(string(h.ID))
+	// One long query for the vector leg, then one short name-word query per
+	// changed declaration so the full-text leg can match too (docs/03
+	// R-IMP-4). Each answers on its own; the best score per requirement wins.
+	queries := append([]string{text}, nameQueries(symbols)...)
+	best := map[core.RequirementRef]float64{}
+	for i, qt := range queries {
+		hits, err := searcher.SearchSemantic(ctx, vault.SemanticQuery{Q: qt, Limit: max(q.Limit, semanticFetch), Kind: core.SearchKindRequirement})
 		if err != nil {
-			continue
+			if i == 0 {
+				tier.Status, tier.Message = pandoFailure(err)
+				return tier, nil
+			}
+			continue // a name query that fails costs its candidates only
 		}
-		if _, err := ix.Requirement(ref); err != nil {
-			continue // another repository's requirement, or one gone since
+		for _, h := range hits {
+			if h.Kind != core.SearchKindRequirement {
+				continue
+			}
+			ref, err := core.ParseRequirementRef(string(h.ID))
+			if err != nil {
+				continue
+			}
+			if _, err := ix.Requirement(ref); err != nil {
+				continue // another repository's requirement, or one gone since
+			}
+			if h.Score > best[ref] {
+				best[ref] = h.Score
+			}
 		}
-		out = append(out, semanticHit{ref: ref, score: math.Round(h.Score*1000) / 1000})
 	}
-	return tier, out
+	all := make([]semanticHit, 0, len(best))
+	for ref, s := range best {
+		all = append(all, semanticHit{ref: ref, score: math.Round(s*1000) / 1000})
+	}
+	sort.Slice(all, func(i, j int) bool {
+		if all[i].score != all[j].score {
+			return all[i].score > all[j].score
+		}
+		if all[i].ref.Spec != all[j].ref.Spec {
+			return all[i].ref.Spec < all[j].ref.Spec
+		}
+		return all[i].ref.Number < all[j].ref.Number
+	})
+	return tier, cutCandidates(all, q.Limit)
 }
 
 // render turns the collected hits into the sorted answer: title, coverage

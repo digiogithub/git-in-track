@@ -104,3 +104,83 @@ func TestSplitIdentifier(t *testing.T) {
 		}
 	}
 }
+
+// TestCutCandidates pins the tier-3 cut (GIT-US-0180, docs/03 R-IMP-4): a
+// candidate needs both legs of Pando's fusion (a score above 0.0164), stays
+// within semanticGap of the best one, and at most limit are kept.
+func TestCutCandidates(t *testing.T) {
+	t.Parallel()
+	rank := func(scores ...float64) []semanticHit {
+		out := make([]semanticHit, len(scores))
+		for i, s := range scores {
+			out[i] = semanticHit{ref: core.RequirementRef{Spec: "ACME-SP-0001", Number: i + 1}, score: s}
+		}
+		return out
+	}
+	tests := []struct {
+		name   string
+		ranked []semanticHit
+		limit  int
+		want   int
+	}{
+		{"no candidates", nil, 0, 0},
+		{"a flat single-leg ranking gives none", rank(0.016, 0.016, 0.015, 0.015, 0.014, 0.014, 0.014, 0.014), 0, 0},
+		{"one leg at its best is still below the floor", rank(0.0164), 0, 0},
+		{"a clear leader is kept alone", rank(0.033, 0.016, 0.015), 0, 1},
+		{"a leader and a close second", rank(0.033, 0.030, 0.016), 0, 2},
+		{"a second under the gap is dropped", rank(0.033, 0.0255, 0.025), 0, 1},
+		{"the cap is the default limit", rank(0.033, 0.033, 0.032, 0.031, 0.031, 0.030, 0.030), 0, defaultSemanticLimit},
+		{"an explicit limit caps too", rank(0.033, 0.033, 0.032), 2, 2},
+		{"a limit does not lower the floor", rank(0.033, 0.016), 5, 1},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := cutCandidates(tc.ranked, tc.limit)
+			if len(got) != tc.want {
+				t.Fatalf("kept %d candidates (%+v), want %d", len(got), got, tc.want)
+			}
+			for i, h := range got {
+				if h.ref != tc.ranked[i].ref {
+					t.Errorf("candidate %d = %s, want the ranking's %s", i, h.ref, tc.ranked[i].ref)
+				}
+			}
+		})
+	}
+}
+
+func TestNameQueries(t *testing.T) {
+	t.Parallel()
+	sym := func(path, symbol string) changedSymbol { return changedSymbol{path: path, symbol: symbol} }
+	tests := []struct {
+		name    string
+		symbols []changedSymbol
+		want    []string
+	}{
+		{"names in words", []changedSymbol{sym("a.go", "nextNumber"), sym("a.go", "Allocator.ReserveRange")}, []string{"next number", "reserve range"}},
+		{"a single word is dropped", []changedSymbol{sym("a.go", "Item"), sym("a.go", "nextNumber")}, []string{"next number"}},
+		{"a duplicate is asked once", []changedSymbol{sym("a.go", "nextNumber"), sym("b.go", "nextNumber")}, []string{"next number"}},
+		{"tests only when nothing else changed", []changedSymbol{sym("a_test.go", "TestNextNumber"), sym("a.go", "reserveRange")}, []string{"reserve range"}},
+		{"only tests changed", []changedSymbol{sym("a_test.go", "TestNextNumber")}, []string{"next number"}},
+		{"nothing changed", nil, nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := nameQueries(tc.symbols)
+			if strings.Join(got, "|") != strings.Join(tc.want, "|") {
+				t.Errorf("nameQueries = %q, want %q", got, tc.want)
+			}
+		})
+	}
+	t.Run("at most maxNameQueries", func(t *testing.T) {
+		t.Parallel()
+		var syms []changedSymbol
+		for _, n := range []string{"aaAa", "bbBb", "ccCc", "ddDd", "eeEe", "ffFf", "ggGg", "hhHh"} {
+			syms = append(syms, sym("a.go", n))
+		}
+		if got := nameQueries(syms); len(got) != maxNameQueries {
+			t.Errorf("got %d queries, want %d", len(got), maxNameQueries)
+		}
+	})
+}

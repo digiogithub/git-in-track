@@ -470,8 +470,15 @@ the name split into words — never from bare identifiers, which match prose *ab
 (`GIT-US-0165`, docs/03 R-IMP-4). That query is long on purpose, and it has a cost: Pando's
 full-text leg quotes every word of the query and FTS5 requires all of them in one chunk, so a
 story-based query almost never matches there and the vector leg does all the ranking. The query is
-capped at 1,000 bytes because a longer one buys nothing for either leg. Its hits are
-`candidate`s with a score and never raise a tier-1 or tier-2 hit. Both read the client at call
+capped at 1,000 bytes because a longer one buys nothing for either leg. To give the full-text leg
+something it can match, tier 3 also sends one short query per changed declaration, its name in
+words (`next number`), and keeps the best score per requirement (`GIT-US-0180`). It then cuts the
+ranking: a candidate needs a score of at least 0.017 — above the 0.0164 a single leg's
+reciprocal-rank fusion can give, so both legs matched — at least 80 % of the best score, and at
+most 5 (or the query's `limit`). A flat ranking of single-leg scores (0.014 to 0.016, about two
+ranks apart) lists nothing, and a report with no other hit stays small. The price is recall:
+a requirement that only the vector leg finds is not listed (docs/research, benchmark §11). Its
+hits are `candidate`s with a score and never raise a tier-1 or tier-2 hit. Both read the client at call
 time, so a settings change applies to the next query. An `IsUnavailable` error, or no Pando at
 all, makes the tier `unavailable`; any other error makes it `error`; tier 1 answers regardless.
 The message of an `unavailable` tier is a short, fixed sentence (`pando.Reason`): `Pando is not
