@@ -37,6 +37,9 @@ type globalFlags struct {
 
 	resolution *config.Resolution
 	resolveErr error
+
+	// notice is the opt-in update notice of this invocation (GIT-US-0195).
+	notice *updateNotice
 }
 
 // Execute runs the command tree and returns the error the caller reports.
@@ -65,8 +68,17 @@ Start with:
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Version:       build.Version,
-		PersistentPreRunE: func(_ *cobra.Command, _ []string) error {
-			return configureLogging(flags)
+		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+			if err := configureLogging(flags); err != nil {
+				return err
+			}
+			startUpdateNotice(cmd, flags, build)
+			return nil
+		},
+		// A failed command prints its own error; the notice follows successes
+		// only.
+		PersistentPostRun: func(cmd *cobra.Command, _ []string) {
+			finishUpdateNotice(cmd, flags)
 		},
 	}
 
@@ -97,7 +109,7 @@ Start with:
 		newItemCommand(flags),
 		newInboxCommand(flags),
 		newSprintCommand(flags),
-		newDoctorCommand(flags),
+		newDoctorCommand(flags, build),
 		newMigrateCommand(flags),
 		newConfigCommand(flags),
 		newYouTrackCommand(flags),

@@ -12,7 +12,16 @@ because a commit list cannot express them.
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- **Update notices** (`GIT-US-0195`, ADR-040). A cached latest-release checker
+  (`internal/selfupdate`, `<cacheDir>/update-check.json`, 6 h after a success, 15 min after a
+  failure, 5 s lookup timeout, tolerant of a corrupt file) feeds three surfaces: an `update` line in
+  `gintrack doctor` (info when one exists, a warning, never an error, when the lookup fails, not
+  checked on development builds), `GET /api/v1/version` and a dismissible notice in the web UI
+  (hidden in browser-only mode), and, opt-in with the new `update.checkOnStart` key (default
+  `false`), one stderr line after an interactive command. The line is never printed for `--json`,
+  `--quiet`, a non-terminal stderr, `mcp`, `serve`, `update`, `version` or `doctor`.
 
 ## [2.2.0] — 2026-09-30
 

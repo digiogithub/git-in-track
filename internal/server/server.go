@@ -162,6 +162,10 @@ type Options struct {
 	// documented default and starts an idle engine that costs nothing.
 	SyncEngine SyncEngine
 
+	// Update answers GET /api/v1/version. Nil reports the running version and
+	// no update, which is what a test and `serve --repo` want.
+	Update UpdateChecker
+
 	// Tunnel is the `server.tunnel` section: the provider and whether a tunnel
 	// is opened as soon as the listener has an address. Enabling it publishes
 	// this server on the internet, so New refuses it without a token.

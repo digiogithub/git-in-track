@@ -26,6 +26,8 @@ func (s *Server) mountAPI(api chi.Router) {
 		p.Use(s.bearerAuth)
 
 		p.Get("/capabilities", s.handleCapabilities)
+		// Whether a newer gintrack release exists (GIT-US-0195).
+		p.Get("/version", s.handleVersion)
 		p.Get("/events", s.handleEvents)
 
 		// Workspaces and repositories.

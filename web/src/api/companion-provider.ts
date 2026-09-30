@@ -153,6 +153,7 @@ import type {
   TunnelState,
   McpSettings,
   TunnelStatus,
+  VersionStatus,
   Unsubscribe,
   UpdateOp,
   YouTrackField,
@@ -557,6 +558,18 @@ function toTunnelStatus(body: unknown): TunnelStatus {
     since: asString(record['since']) ?? null,
     error: asString(record['error']) ?? '',
     tokenConfigured: record['tokenConfigured'] === true,
+  };
+}
+
+function toVersionStatus(body: unknown): VersionStatus {
+  const record = asRecord(body) ?? {};
+  return {
+    supported: true,
+    current: asString(record['current']) ?? '',
+    latest: asString(record['latest']) ?? '',
+    updateAvailable: record['updateAvailable'] === true,
+    checkedAt: asString(record['checkedAt']) ?? null,
+    url: asString(record['url']) ?? '',
   };
 }
 
@@ -2806,6 +2819,13 @@ export class CompanionProvider implements DataProvider {
     );
   }
 
+  // ----------------------------------------------------------------- version
+
+  /** `GET /api/v1/version`. */
+  async getVersionStatus(): Promise<VersionStatus> {
+    return toVersionStatus(await this.#json(`${API_PREFIX}/version`));
+  }
+
   // ------------------------------------------------------------------ tunnel
 
   /** `GET /api/v1/tunnel`. */
@@ -3425,7 +3445,11 @@ export class CompanionProvider implements DataProvider {
 
   async getSpecTemplates(project: string): Promise<SpecTemplates> {
     const body = asRecord(await this.#json(`${specsBase(project)}/templates`));
-    if (body === null || typeof body['spec'] !== 'string' || typeof body['requirement'] !== 'string') {
+    if (
+      body === null ||
+      typeof body['spec'] !== 'string' ||
+      typeof body['requirement'] !== 'string'
+    ) {
       throw malformed('spec templates');
     }
     return { ...body, diagnostics: asArray(body['diagnostics']) } as SpecTemplates;
