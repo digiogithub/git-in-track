@@ -14,6 +14,11 @@ because a commit list cannot express them.
 
 ### Added
 
+- **A running `gintrack serve` is detected after an update** (`GIT-US-0197`, docs/07 §4.24). `serve`
+  records `<cacheDir>/serve/<port>.json` (pid, port, bind, version, start time, config path),
+  removes it on a clean shutdown, and readers ignore and delete one whose pid is dead.
+  `gintrack update` lists the live serves that still run the old version in its restart hint and in
+  `running` of `--json`; `gintrack doctor` warns about a serve whose version differs from the binary.
 - **`gintrack update`** (`GIT-US-0194`, docs/07 §4.24, ADR-040). Updates the binary from GitHub
   Releases: it verifies the archive against `checksums.txt` before anything is replaced, keeps the
   file mode, refuses Homebrew, Scoop and container installs with their own upgrade command (`--force`

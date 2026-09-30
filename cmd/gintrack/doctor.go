@@ -121,6 +121,7 @@ func runDoctor(cmd *cobra.Command, flags *globalFlags, local *doctorFlags, build
 	payload.Config = append(payload.Config,
 		checkPando(res.Config, exec.LookPath),
 		checkUpdate(cmd.Context(), newUpdateChecker(build, updateCacheDir(res))))
+	payload.Config = append(payload.Config, checkRunningServes(res.Config.CacheDir(res.Path), build.Version)...)
 
 	repos := res.Config.WorkspaceRepos(res.Workspace)
 	if local.repo != "" {
