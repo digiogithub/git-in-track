@@ -288,6 +288,30 @@ The macOS archives are `zip`, not `tar.gz`: `notarytool` accepts a zip, and the 
 to survive the round trip to Apple. Every archive carries the binary plus `LICENSE` and
 `README.md`.
 
+### 3.1 Asset naming contract
+
+`gintrack update` ([ADR-040](./adr/ADR-040-gintrack-update-verified-self-update.md)) finds and
+verifies its download from the names below, so they are a contract, not an implementation detail.
+
+- **Archive name:** `gintrack_<version>_<os>_<arch>.<ext>`. `<version>` has no leading `v` (the
+  tag is `v<version>`). `<os>` is `linux`, `darwin` or `windows`; `<arch>` is `amd64` or `arm64`.
+- **Extension:** `.tar.gz` for linux, `.zip` for darwin and windows.
+- **Layout:** flat, with no top-level directory. The archive holds `gintrack` (`gintrack.exe` on
+  windows), `LICENSE` and `README.md`.
+- **`checksums.txt`:** one asset of the release, `sha256sum` format (`<hex>  <archive name>`), with
+  a line for every archive.
+- **Tag and pre-releases:** a stable tag is `vX.Y.Z`; a pre-release carries a suffix
+  (`vX.Y.Z-rc.N`) and is marked as a pre-release on GitHub.
+
+Changing any of these (a new extension, a nested directory, a renamed or dropped
+`checksums.txt`, a new OS or arch name) requires updating `internal/selfupdate` in the same
+change, and the old names must stay published for the versions already in the field. This
+pipeline is human-only, so such a change is proposed as a story. Implementation:
+GIT-US-0192 (lookup and verification) and GIT-US-0193 (install).
+
+Known drift: `.goreleaser.yaml` still builds a darwin `tar.gz`, unlike the tag pipeline
+(darwin `zip`); it only feeds `make release-snapshot` (§5) and is tracked by GIT-US-0196.
+
 ### Running it
 
 ```bash
