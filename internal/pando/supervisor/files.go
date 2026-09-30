@@ -49,10 +49,17 @@ type Status struct {
 	Project string `json:"project"`
 	// PID is the child's pid, 0 when there is no child. Port and MCPURL describe
 	// the endpoint the current or last child was told to listen on.
-	PID       int    `json:"pid"`
-	Port      int    `json:"port"`
-	MCPURL    string `json:"mcpUrl"`
-	TokenFile string `json:"tokenFile"`
+	PID    int    `json:"pid"`
+	Port   int    `json:"port"`
+	MCPURL string `json:"mcpUrl"`
+	// LastPort is the port of the last child, kept while stopped: the next start
+	// (a restart, a crash restart or a new process) tries it first so an agent
+	// configured with the direct endpoint keeps working (GIT-US-0184).
+	// PortChangedFrom is the port that was wanted but busy, set for as long as
+	// the current child runs elsewhere; it is 0 when the port was reused.
+	LastPort        int    `json:"lastPort,omitempty"`
+	PortChangedFrom int    `json:"portChangedFrom,omitempty"`
+	TokenFile       string `json:"tokenFile"`
 	// Version is the first line of `pando --version`.
 	Version string `json:"version"`
 	Binary  string `json:"binary"`

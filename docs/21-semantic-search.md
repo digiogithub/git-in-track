@@ -156,6 +156,13 @@ of being started twice, and it is never stopped from here.
   did not opt in gets the same "no Pando is configured" as before.
 - **Reindex.** See docs/07: the `kb` phase restarts the instance instead of calling a REST
   route, and `kbNote` says so.
+- **Stable port (GIT-US-0184).** The port of the last child is kept in `state.json` (`lastPort`)
+  even while the instance is stopped. A start, a requested restart and a crash restart try it
+  first, waiting up to 2 s for the previous child to release it, so an agent that connects to
+  Pando directly keeps its configuration. If the port is busy, or outside the configured port
+  range, the supervisor logs a warning, picks a free port and records the old one as
+  `portChangedFrom`. Pando silently moving to another port is unchanged: the health check
+  fails, the run counts as a crash, and the next run does not prefer that port.
 - **Shutdown.** Every instance is stopped (SIGTERM, then SIGKILL after 10 s) when the server
   stops, and the child also dies with `gintrack serve` if that is killed, on
   Linux and macOS (Windows is not supported yet, GIT-US-0186). Linux uses `Pdeathsig`. macOS has no
