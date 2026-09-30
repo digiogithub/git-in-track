@@ -494,8 +494,8 @@ package next to `internal/pando`, and it imports neither.
   is system `git`, and those runs are short. cloudflared is embedded as a library (ADR-027).
   A long-running child needs care on Windows too: no `Pdeathsig`, so a Job Object is needed.
   The maintainer decided on 2026-09-30 to support Windows with Job Objects (GIT-US-0186) and to
-  give macOS the same die-with-serve guarantee as Linux (GIT-US-0187). Until those land,
-  managed mode is guaranteed on Linux only.
+  give macOS the same die-with-serve guarantee as Linux (GIT-US-0187). Until Windows lands,
+  managed mode is guaranteed on Linux and macOS (GIT-US-0187).
 - **The first index is not instant.** About a minute per 1,000 files for code, plus the KB
   embedding pass. Until the index is ready, rows show `indexing` and the tiers may answer from
   a partial index.
@@ -553,7 +553,10 @@ Follow-ups, not implemented yet:
 - GIT-US-0184: reuse a managed Pando instance's port across restarts.
 - GIT-US-0185: supervise `pando agui-serve` for the agent panel.
 - GIT-US-0186: support managed Pando on Windows with Job Objects.
-- GIT-US-0187: guarantee managed Pando dies with `serve` on macOS.
+- GIT-US-0187: guarantee managed Pando dies with `serve` on macOS. Implemented (decision 5): the
+  child runs under `gintrack __pando-watch`, a re-executed watchdog holding a lifeline pipe, on
+  every unix without `Pdeathsig`, and a start reaps an orphan recorded in `state.json`. Verified
+  on Linux; not run on a macOS machine.
 
 ## Alternatives considered
 

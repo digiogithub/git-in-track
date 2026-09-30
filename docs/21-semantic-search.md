@@ -157,7 +157,13 @@ of being started twice, and it is never stopped from here.
 - **Reindex.** See docs/07: the `kb` phase restarts the instance instead of calling a REST
   route, and `kbNote` says so.
 - **Shutdown.** Every instance is stopped (SIGTERM, then SIGKILL after 10 s) when the server
-  stops, and the child also dies with `gintrack serve` if that is killed (Linux).
+  stops, and the child also dies with `gintrack serve` if that is killed, on
+  Linux and macOS (Windows is not supported yet, GIT-US-0186). Linux uses `Pdeathsig`. macOS has no
+  equivalent, so the child runs under a watchdog: `gintrack __pando-watch`, this same binary, which
+  holds a pipe whose write end only `serve` has and ends the child's process group when the pipe
+  closes, even if `serve` was SIGKILLed. At the next start, a child recorded in `state.json` whose
+  supervisor is dead but whose process is alive and whose command line names the instance
+  directory is an orphan and is ended first, on every platform.
 - **Not managed.** External mode is exactly as described above. Explicit `mode: off` disables
   Pando entirely even with an `mcpUrl` set (rule 1): no client is built, the backend is `core`,
   and semantic search answers `unavailable` naming `search.pando.mode: off`. Neither constructs

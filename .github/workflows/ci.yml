@@ -131,6 +131,14 @@ jobs:
       - name: go vet
         run: go list ./... | grep -v '/web/node_modules/' | xargs go vet
 
+      # The managed-Pando supervisor has per-OS code (Pdeathsig on Linux, the
+      # watchdog on macOS, none on Windows); cross-vet keeps those files
+      # compiling although the test job only runs on Linux.
+      - name: go vet (darwin and windows cross-compile)
+        run: |
+          GOOS=darwin go vet ./internal/pando/... ./cmd/...
+          GOOS=windows go vet ./internal/pando/... ./cmd/...
+
       - name: go test (race + coverage)
         run: |
           # Report the toolchain layout: a runner whose GOROOT is missing

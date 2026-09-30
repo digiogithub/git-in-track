@@ -60,6 +60,13 @@ type Options struct {
 	// ExtraEnv is appended to the child's environment ("K=V"), after the
 	// supervisor's own PANDO_CONFIG_PARENT_SEARCH=false.
 	ExtraEnv []string
+	// Watchdog is the command prefix that runs the child under a parent-death
+	// watchdog (RunWatchdog): the child is started as `<Watchdog...> <binary>
+	// <args...>` with the read end of a lifeline pipe as descriptor 3, and dies
+	// when the supervisor does, even on SIGKILL. Default: none on Linux (which
+	// has Pdeathsig), this binary's `__pando-watch` on other unix systems such
+	// as macOS, none on Windows.
+	Watchdog []string
 
 	// ReadyTimeout bounds the wait for a fresh child to pass Health. Default 30s.
 	ReadyTimeout time.Duration
@@ -123,6 +130,9 @@ func (o *Options) defaults() error {
 	}
 	if o.BackoffMax < o.BackoffMin {
 		o.BackoffMax = o.BackoffMin
+	}
+	if o.Watchdog == nil {
+		o.Watchdog = defaultWatchdog()
 	}
 	if o.Logger == nil {
 		o.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -252,6 +262,7 @@ func (s *Supervisor) Start(ctx context.Context) error {
 		return err
 	}
 
+	s.reapOrphan(ctx)
 	version, err := s.checkBinary(ctx)
 	if err != nil {
 		return fail(err)
@@ -456,12 +467,21 @@ func (s *Supervisor) runOnce(ctx context.Context, sink *logSink, avoid int) (rea
 	cmd.Env = append(cmd.Env, s.opts.ExtraEnv...)
 	cmd.Stdout, cmd.Stderr = sink, sink
 	cmd.WaitDelay = 2 * time.Second
-	prepareCmd(cmd)
+	life, err := prepareCmd(cmd, s.opts.Watchdog)
+	if err != nil {
+		return "prepare pando: " + err.Error(), port, true
+	}
 	if err := cmd.Start(); err != nil {
+		life.Close()
 		return "start pando: " + err.Error(), port, true
 	}
+	life.started()
 	exited := make(chan error, 1)
-	go func() { exited <- cmd.Wait() }()
+	go func() {
+		err := cmd.Wait()
+		life.Close()
+		exited <- err
+	}()
 
 	url := "http://127.0.0.1:" + strconv.Itoa(port) + "/mcp"
 	s.update(func(st *Status) {
@@ -591,4 +611,24 @@ func pickPort(ctx context.Context, lo, hi, avoid int) (int, error) {
 		return fallback, nil
 	}
 	return 0, fmt.Errorf("no free loopback port in %d-%d", lo, hi)
+}
+
+// reapOrphan ends a child left behind by a previous supervisor that died
+// without stopping it. The caller holds the instance lock, so no live
+// supervisor owns state.json: a recorded child pid that is still alive, and
+// whose command line names this instance directory, is an orphan. The command
+// line check keeps a recycled pid from being killed. It runs on every platform
+// (GIT-US-0187); the watchdog and Pdeathsig make it a safety net, not the
+// normal path.
+func (s *Supervisor) reapOrphan(ctx context.Context) {
+	st, err := ReadStatus(s.dir)
+	if err != nil || st.PID <= 0 || st.PID == os.Getpid() || !PIDAlive(st.PID) {
+		return
+	}
+	cmdline, err := processCommand(ctx, st.PID)
+	if err != nil || !strings.Contains(cmdline, s.dir) {
+		return
+	}
+	s.opts.Logger.Warn("ending a managed pando left by a previous supervisor", "key", s.opts.Key, "pid", st.PID, "supervisorPid", st.SupervisorPID)
+	killOrphan(st.PID, s.opts.StopTimeout)
 }

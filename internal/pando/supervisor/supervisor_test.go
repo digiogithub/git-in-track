@@ -21,6 +21,14 @@ import (
 var fakeBinary string
 
 func TestMain(m *testing.M) {
+	// This test binary doubles as the watchdog and as a throwaway supervisor
+	// process for the tests that kill the supervisor.
+	if len(os.Args) > 1 && os.Args[1] == WatchdogCommandName {
+		os.Exit(RunWatchdog(os.Args[2:]))
+	}
+	if os.Getenv("SUPERVISOR_TEST_HELPER") == "1" {
+		os.Exit(helperSupervisor())
+	}
 	code := func() int {
 		dir, err := os.MkdirTemp("", "fakepando-")
 		if err != nil {

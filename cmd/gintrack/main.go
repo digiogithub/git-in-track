@@ -10,6 +10,8 @@ package main
 import (
 	"fmt"
 	"os"
+
+	"github.com/digiogithub/git-in-track/internal/pando/supervisor"
 )
 
 // Build information, set by the release pipeline with:
@@ -23,6 +25,12 @@ var (
 )
 
 func main() {
+	// The parent-death watchdog of managed Pando (GIT-US-0187) is this same
+	// binary re-executed. It is handled before cobra: no flags, no config, no
+	// logging setup, and it is not a command users see.
+	if len(os.Args) > 1 && os.Args[1] == supervisor.WatchdogCommandName {
+		os.Exit(supervisor.RunWatchdog(os.Args[2:]))
+	}
 	err := Execute(buildInfo{
 		Version: version,
 		Commit:  commit,
