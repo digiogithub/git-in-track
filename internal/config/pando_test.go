@@ -406,3 +406,24 @@ func TestParseRefusesTheRetiredCorpusDir(t *testing.T) {
 		t.Errorf("the refusal does not name the epic that removed it: %q", fe.Message)
 	}
 }
+
+func TestManagedAGUISwitch(t *testing.T) {
+	off, on := false, true
+	for _, tc := range []struct {
+		name string
+		set  *bool
+		want bool
+	}{
+		{"absent means on", nil, true},
+		{"explicit true", &on, true},
+		{"explicit false", &off, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := Default()
+			cfg.Agent.Pando.Managed = tc.set
+			if got := cfg.PandoTargets().ManagedAGUI(); got != tc.want {
+				t.Errorf("ManagedAGUI() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

@@ -428,7 +428,17 @@ type Pando struct {
 	MaxRuns int `json:"maxRuns" yaml:"maxRuns"`
 	// Repos overrides the upstream for individual repositories.
 	Repos []PandoRepo `json:"repos,omitempty" yaml:"repos,omitempty"`
+	// Managed lets `gintrack serve` run `pando agui-serve` itself for every
+	// repository that opted in to semantic search, when the search mode is
+	// managed and the agent proxy is on (ADR-039, GIT-US-0185). Absent means
+	// true; false keeps this section's URL and Repos rows as the only upstreams.
+	// A repository that has a Repos row is never managed: the row is an explicit
+	// choice of upstream.
+	Managed *bool `json:"managed,omitempty" yaml:"managed,omitempty"`
 }
+
+// ManagedEnabled reports whether the managed AG-UI adapter is allowed.
+func (p Pando) ManagedEnabled() bool { return p.Managed == nil || *p.Managed }
 
 // PandoRepo is one row of the `agent.pando.repos` routing table: the AG-UI
 // adapter serving one mounted repository. Every field but Repo falls back to

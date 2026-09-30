@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"crypto/rand"
-	"embed"
 	"encoding/hex"
 	"fmt"
 	"os"
@@ -11,45 +10,38 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"text/template"
 
 	"github.com/spf13/cobra"
 
+	"github.com/digiogithub/git-in-track/internal/agentcfg"
 	"github.com/digiogithub/git-in-track/internal/config"
 )
 
-// agentTemplates holds the files `gintrack agent init` writes. They are
-// embedded rather than generated in code so that the shape of the Pando
-// configuration is reviewable as one file, next to the documentation that
-// explains it (docs/20-agent-interface.md).
-//
-//go:embed templates/agent/*.tmpl
-var agentTemplates embed.FS
-
-// The generated file names, relative to the repository root.
+// The generated file names, relative to the repository root. The templates
+// themselves live in internal/agentcfg, shared with the managed AG-UI instance.
 const (
-	agentPandoConfigName = ".pando.toml"
-	agentPersonaName     = "agents/personas/backlog-assistant.md"
-	agentSkillName       = "agents/skills/gintrack-search/SKILL.md"
+	agentPandoConfigName = agentcfg.PandoConfigName
+	agentPersonaName     = agentcfg.PersonaName
+	agentSkillName       = agentcfg.SkillName
 )
 
 // agentPersonaID is the persona and profile name the generated configuration
 // points at. It is also the route the browser posts a run to:
 // POST {AGUI.Path}/backlog-assistant.
-const agentPersonaID = "backlog-assistant"
+const agentPersonaID = agentcfg.PersonaID
 
 // agentDefaultAGUIPath is Pando's own default AG-UI route prefix. The generated
 // file states it explicitly so the companion and Pando cannot drift apart when
 // Pando changes its default.
-const agentDefaultAGUIPath = "/api/v1/agui"
+const agentDefaultAGUIPath = agentcfg.DefaultAGUIPath
 
 // agentDefaultAGUIPort is the loopback port the generated file gives the AG-UI
 // listener. It is a dedicated listener: nothing else of Pando's API is on it.
-const agentDefaultAGUIPort = 8090
+const agentDefaultAGUIPort = agentcfg.DefaultAGUIPort
 
 // agentDefaultMaxRuns is Pando's own backstop on concurrent AG-UI runs. The
 // companion imposes its own per-user and global caps on top of it.
-const agentDefaultMaxRuns = 4
+const agentDefaultMaxRuns = agentcfg.DefaultMaxRuns
 
 // agentTools is the glob allow-list written into `[AGUI] Tools`. Pando matches
 // a glob (path.Match semantics) against each tool's Info().Name and keeps only
@@ -64,24 +56,12 @@ const agentDefaultMaxRuns = 4
 // alone, so a call against a file of this repository would rewrite it without
 // `id`, `status` or `parent` (GIT-EP-0020). The watcher is not in that set: it
 // performs no file write at all.
-var agentTools = []string{
-	"gintrack_*",
-	"kb_search_documents",
-	"kb_get_document",
-	"kb_related_documents",
-	"code_hybrid_search",
-	"code_find_symbol",
-}
+var agentTools = agentcfg.Tools
 
 // agentWritingKBTools are the Pando tools that mirror a document to disk. They
 // are named here so a test can assert the allow-list above admits none of them,
 // and so that adding one to Pando cannot silently widen it.
-var agentWritingKBTools = []string{
-	"kb_add_document",
-	"kb_delete_document",
-	"remember",
-	"forget",
-}
+var agentWritingKBTools = agentcfg.WritingKBTools
 
 // agentSecretPrefix is the marker Pando puts in front of an age ciphertext.
 // `pando secret <value>` prints it and Pando's configuration loader decrypts
@@ -102,22 +82,7 @@ type agentInitFlags struct {
 }
 
 // agentTemplateData is what the embedded templates are rendered against.
-type agentTemplateData struct {
-	RepoID            string
-	RepoPath          string
-	AGUIPath          string
-	AGUIHost          string
-	AGUIPort          int
-	MaxConcurrentRuns int
-	Persona           string
-	Tools             []string
-	MCPURL            string
-	Token             bool
-	Encrypted         bool
-	AuthToken         string
-	BearerHeader      string
-	KBPath            string
-}
+type agentTemplateData = agentcfg.TemplateData
 
 // agentInitPayload is what `gintrack agent init --json` prints. It carries no
 // token, only whether one was found.
@@ -523,16 +488,7 @@ func agentRedact(text, secret string) string {
 
 // renderAgentTemplate renders one embedded template.
 func renderAgentTemplate(name string, data agentTemplateData) ([]byte, error) {
-	tmpl, err := template.New(name).Funcs(template.FuncMap{"toml": tomlString}).
-		ParseFS(agentTemplates, "templates/agent/"+name)
-	if err != nil {
-		return nil, fmt.Errorf("parse the %s template: %w", name, err)
-	}
-	var buf strings.Builder
-	if execErr := tmpl.Execute(&buf, data); execErr != nil {
-		return nil, fmt.Errorf("render the %s template: %w", name, execErr)
-	}
-	return []byte(buf.String()), nil
+	return agentcfg.Render(name, data)
 }
 
 // agentRepoID is the id the AG-UI token file and the companion route are keyed
@@ -651,32 +607,5 @@ func agentTokenFile(configPath, repoID string) (string, error) {
 	return path, nil
 }
 
-// tomlString renders a value as a TOML string. It prefers a literal string,
-// which needs no escaping at all, and falls back to a basic string when the
-// value contains a quote, a backslash or a control character.
-func tomlString(v any) string {
-	s := fmt.Sprint(v)
-	if !strings.ContainsAny(s, "'\n\r\t\\") {
-		return "'" + s + "'"
-	}
-	var b strings.Builder
-	b.WriteByte('"')
-	for _, r := range s {
-		switch r {
-		case '"':
-			b.WriteString(`\"`)
-		case '\\':
-			b.WriteString(`\\`)
-		case '\n':
-			b.WriteString(`\n`)
-		case '\r':
-			b.WriteString(`\r`)
-		case '\t':
-			b.WriteString(`\t`)
-		default:
-			b.WriteRune(r)
-		}
-	}
-	b.WriteByte('"')
-	return b.String()
-}
+// tomlString renders a value as a TOML string.
+func tomlString(v any) string { return agentcfg.TOMLString(v) }

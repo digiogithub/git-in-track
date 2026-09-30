@@ -10,6 +10,11 @@
 //	FAKE_PANDO_IGNORE_TERM=1  ignore SIGTERM
 //	FAKE_PANDO_VERSION    what --version prints (default "pando v1.1.1")
 //	FAKE_PANDO_RECORD     a file that receives one JSON line per start
+//
+// `agui-serve --port N --token-file F` (GIT-US-0185) serves the AG-UI routes
+// GET /api/v1/agui/healthz (open) and /info (bearer) instead; the same modes
+// and variables apply. FAKE_PANDO_AGUI_NO_PORT=1 makes it ignore --port and
+// listen elsewhere, the way a port that was taken looks from outside.
 package main
 
 import (
@@ -43,6 +48,12 @@ func main() {
 	cfg, _ := os.ReadFile(".pando.toml")
 	port, _ := strconv.Atoi(find(cfg, `HttpPort\s*=\s*(\d+)`))
 	token := find(cfg, `HttpToken\s*=\s*"([^"]*)"`)
+	agui := len(args) > 0 && args[0] == "agui-serve"
+	if agui {
+		port, _ = strconv.Atoi(flagValue(args, "--port"))
+		b, _ := os.ReadFile(flagValue(args, "--token-file"))
+		token = strings.TrimSpace(string(b))
+	}
 
 	record(map[string]any{
 		"args": args, "cwd": cwd, "pid": os.Getpid(), "config": string(cfg),
@@ -70,8 +81,11 @@ func main() {
 		// listens somewhere else and only logs a warning.
 		l, _ := net.Listen("tcp", "127.0.0.1:0")
 		fmt.Fprintln(os.Stderr, "warning: port busy, using", l.Addr())
-		serve(l, token)
+		serve(l, token, agui)
 		return
+	}
+	if agui && os.Getenv("FAKE_PANDO_AGUI_NO_PORT") == "1" {
+		port = 0
 	}
 	l, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(port))
 	if err != nil {
@@ -82,10 +96,39 @@ func main() {
 		d, _ := time.ParseDuration(os.Getenv("FAKE_PANDO_AFTER"))
 		go func() { time.Sleep(d); fmt.Fprintln(os.Stderr, "fatal: crash after uptime"); os.Exit(1) }()
 	}
-	serve(l, token)
+	serve(l, token, agui)
 }
 
-func serve(l net.Listener, token string) {
+// flagValue returns the value after name in args, "" when absent.
+func flagValue(args []string, name string) string {
+	for i, a := range args {
+		if a == name && i+1 < len(args) {
+			return args[i+1]
+		}
+	}
+	return ""
+}
+
+func serveAGUI(l net.Listener, token string) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/agui/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	})
+	mux.HandleFunc("/api/v1/agui/info", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+token {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		_, _ = w.Write([]byte(`{"agents":[]}`))
+	})
+	_ = http.Serve(l, mux)
+}
+
+func serve(l net.Listener, token string, agui bool) {
+	if agui {
+		serveAGUI(l, token)
+		return
+	}
 	srv := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "fakepando", Version: "test"}, nil)
 	srv.AddTool(&mcpsdk.Tool{Name: "code_list_projects", InputSchema: map[string]any{"type": "object"}},
 		func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {

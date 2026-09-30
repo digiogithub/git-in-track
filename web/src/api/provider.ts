@@ -1547,6 +1547,24 @@ export type SearchManagedInstance = {
   crashes?: number;
   /** The last error, or why the instance was skipped. */
   error?: string;
+  /**
+   * The managed `pando agui-serve` behind the agent panel (GIT-US-0185). Absent
+   * when the agent proxy is off or the repository has an `agent.pando.repos`
+   * row. The panel needs nothing from it: it talks to `/api/v1/agent`, and the
+   * companion routes to this adapter.
+   */
+  agui?: SearchManagedAgui;
+};
+
+/** The managed AG-UI adapter of one repository. */
+export type SearchManagedAgui = {
+  state: SearchManagedState;
+  pid?: number;
+  port?: number;
+  since?: string;
+  crashes?: number;
+  /** The last error, or why the adapter was skipped. */
+  error?: string;
 };
 
 /** `PUT /api/v1/search/managed/{repo}/opt-in` → what came of it. */

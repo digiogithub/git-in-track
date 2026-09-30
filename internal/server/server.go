@@ -308,6 +308,12 @@ func New(opts Options) (*Server, error) {
 	// installed on the workspace before the first request rather than when the
 	// listener comes up.
 	s.search = newSearchState(opts, s.repos, s.hub, s.log, now)
+	// In managed mode the agent proxy finds the AG-UI adapter `serve` runs for
+	// a repository before it looks at `agent.pando` (GIT-US-0185).
+	if ms := s.search.managed; ms != nil {
+		ms.agui = s.newManagedAGUI(opts)
+		s.agent.managed = ms
+	}
 	s.proxy = newCORSProxy(s)
 	s.tunnel = newTunnelState(opts)
 	s.router = s.routes()
