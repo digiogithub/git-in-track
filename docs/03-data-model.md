@@ -3107,7 +3107,13 @@ answers `unavailable`.
   5; the first file coupled to another makes the empty answer `ok`, and none makes the tier
   `unavailable` with the fixed message `the Pando code project has no call edges: index the
   repository root with [TokenOptimization] BuildCodeGraph = true`. A client without
-  `code_related_files` takes the empty answer as it comes.
+  `code_related_files` takes the empty answer as it comes. The check is slow on a large project
+  (194 s measured), so it runs once per Pando instance in the background, detached from the
+  tier budget, and its answer is cached (`GIT-US-0179`): a found graph for 30 minutes, a missing
+  one for 1 minute, and a replaced client (a managed restart) is asked again. The tier waits
+  only for what is left of its budget; a check still running then gives `unavailable` with
+  `the Pando call graph is still being checked: code_related_files has not answered yet, ask
+  again in a moment`, and the next query answers from the cache.
 - **R-IMP-4 Tier 3, semantic.** One semantic search of kind `requirement` (docs/21 §2.1), which
   searches spec files only: Pando's `path_prefix` filter on `.pmngr/specs/`, asked again once
   without it when nothing is indexed under that prefix, and no code search (`GIT-US-0165`).

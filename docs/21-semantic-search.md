@@ -477,7 +477,11 @@ caller, it asks `code_related_files` about the changed files (test files include
 most 5). The first file coupled to another proves the graph and the tier is `ok` with no hits;
 none makes the tier `unavailable` with the fixed message `the Pando code project has no call
 edges: index the repository root with [TokenOptimization] BuildCodeGraph = true`, never `ok 0`.
-A probe Pando cannot answer gives its own `pando.Reason`. To fix it, turn the setting on and
+A probe Pando cannot answer gives its own `pando.Reason`. The probe runs once per Pando instance
+in the background and its answer is cached (30 minutes when the graph exists, 1 minute when it
+does not, and again after a managed restart), so a slow `code_related_files` never holds the
+tier past its budget: a probe still running gives `unavailable` with `the Pando call graph is
+still being checked … ask again in a moment` (`GIT-US-0179`). To fix it, turn the setting on and
 re-index the project.
 
 The code project tier 2 asks about is **derived from the repository root**, never from

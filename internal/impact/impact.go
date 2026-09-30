@@ -7,9 +7,11 @@ import (
 	"io/fs"
 	"math"
 	"path"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/digiogithub/git-in-track/internal/core"
@@ -137,6 +139,10 @@ type Options struct {
 // Resolver answers impact queries over one repository.
 type Resolver struct {
 	opts Options
+	now  func() time.Time
+
+	graphMu sync.Mutex
+	graphs  map[graphKey]*graphProbe // the graph checks, see probeGraph
 }
 
 // New returns a resolver.
@@ -147,7 +153,7 @@ func New(opts Options) *Resolver {
 	if opts.CallBudget <= 0 {
 		opts.CallBudget = DefaultCallBudget
 	}
-	return &Resolver{opts: opts}
+	return &Resolver{opts: opts, now: time.Now}
 }
 
 // changedSymbol is one symbol a diff changed.
@@ -606,13 +612,54 @@ func (r *Resolver) transitive(ctx context.Context, q core.ImpactQuery, symbols [
 	return tier
 }
 
+// GraphPending is the reason of a tier 2 whose graph check has not answered
+// within the tier budget (GIT-US-0179). The check keeps running in the
+// background and its answer is cached, so the next query does not wait.
+const GraphPending = "the Pando call graph is still being checked: " +
+	"code_related_files has not answered yet, ask again in a moment"
+
+const (
+	// graphProbeTimeout bounds a background graph check as a whole; it is
+	// far above the tier budget because nothing waits on it.
+	graphProbeTimeout = 10 * time.Minute
+	// graphYesTTL is how long a found graph is trusted; edges rarely vanish.
+	graphYesTTL = 30 * time.Minute
+	// graphNoTTL is how long "no call edges" is trusted: a reindex that
+	// builds the graph must be noticed soon.
+	graphNoTTL = time.Minute
+)
+
+// graphKey identifies one Pando instance and code project. A managed
+// instance that restarts is a new client, so it is a new key.
+type graphKey struct {
+	client  any
+	project string
+}
+
+// graphProbe is the check of one graphKey: running while done is open, then
+// answered.
+type graphProbe struct {
+	done    chan struct{}
+	edges   bool                                   // the graph has call edges (valid once done)
+	failure func() (core.ImpactTierStatus, string) // set when the check could not answer
+	expires time.Time
+}
+
 // probeGraph checks that the Pando code project has call edges, once tier 2
-// found no caller of any changed name. It asks code_related_files about the
-// changed files, test files included (a test calls the code it tests), in
-// sorted order and at most maxGraphProbes of them: the first coupled file
-// proves the graph, and the empty answers were real. No coupled file gives
-// `unavailable` with NoCallEdges, a Pando that cannot answer the probe gives
+// found no caller of any changed name. The check asks code_related_files
+// about the changed files, test files included (a test calls the code it
+// tests), in sorted order and at most maxGraphProbes of them: the first
+// coupled file proves the graph, and the empty answers were real. No coupled
+// file gives `unavailable` with NoCallEdges, a Pando that cannot answer gives
 // its own fixed reason, and a client that cannot probe leaves the tier ok.
+//
+// The call is slow on a large project (194 s measured, GIT-US-0179), so the
+// check runs once per instance in the background, detached from the tier
+// budget, and its answer is cached: a found graph for graphYesTTL, a missing
+// one for graphNoTTL, a client that is replaced (a managed restart) starts
+// again. The tier waits only for what is left of its budget; when the check
+// has not answered by then the tier is `unavailable` with GraphPending,
+// never a timeout error and never a guess.
 func (r *Resolver) probeGraph(ctx context.Context, client CallGraph, symbols []changedSymbol) (status core.ImpactTierStatus, message string) {
 	relator, ok := client.(FileRelator)
 	if !ok {
@@ -630,17 +677,84 @@ func (r *Resolver) probeGraph(ctx context.Context, client CallGraph, symbols []c
 	if len(files) > maxGraphProbes {
 		files = files[:maxGraphProbes]
 	}
-	for _, p := range files {
-		res, err := relator.RelatedFiles(ctx, r.opts.ProjectID, p, pando.RelatedFilesOptions{Limit: 1})
+	p := r.graphProbeFor(ctx, relator, files)
+	select {
+	case <-p.done:
+	default:
+		select {
+		case <-p.done:
+		case <-ctx.Done():
+			return core.ImpactTierUnavailable, GraphPending
+		}
+	}
+	switch {
+	case p.failure != nil:
+		return p.failure()
+	case p.edges:
+		return core.ImpactTierOK, ""
+	}
+	return core.ImpactTierUnavailable, NoCallEdges
+}
+
+// graphProbeFor returns the cached check of relator's instance, starting one
+// when there is none or it has expired.
+func (r *Resolver) graphProbeFor(ctx context.Context, relator FileRelator, files []string) *graphProbe {
+	key := graphKey{project: r.opts.ProjectID}
+	if reflect.TypeOf(relator).Comparable() {
+		key.client = relator
+	}
+	now := r.now()
+	r.graphMu.Lock()
+	defer r.graphMu.Unlock()
+	if p, ok := r.graphs[key]; ok {
+		select {
+		case <-p.done:
+			if now.Before(p.expires) {
+				return p
+			}
+		default:
+			return p
+		}
+	}
+	p := &graphProbe{done: make(chan struct{})}
+	if key.client != nil {
+		if r.graphs == nil {
+			r.graphs = map[graphKey]*graphProbe{}
+		}
+		r.graphs[key] = p
+	}
+	go r.runGraphProbe(context.WithoutCancel(ctx), relator, files, key, p)
+	return p
+}
+
+// runGraphProbe answers p. A check that could not answer is dropped from the
+// cache so the next query asks again.
+func (r *Resolver) runGraphProbe(parent context.Context, relator FileRelator, files []string, key graphKey, p *graphProbe) {
+	ctx, cancel := context.WithTimeout(parent, graphProbeTimeout)
+	defer cancel()
+	defer close(p.done)
+	for _, f := range files {
+		res, err := relator.RelatedFiles(ctx, r.opts.ProjectID, f, pando.RelatedFilesOptions{Limit: 1})
 		switch {
 		case err == nil && len(res.Files) > 0:
-			return core.ImpactTierOK, ""
+			p.edges, p.expires = true, r.now().Add(graphYesTTL)
+			return
 		case err != nil && (pando.IsUnavailable(err) || errors.Is(err, context.DeadlineExceeded)):
-			return pandoFailure(err)
+			p.failure = func() (core.ImpactTierStatus, string) { return pandoFailure(err) }
+			r.dropGraph(key, p)
+			return
 		}
 		// Any other failure is no evidence of a graph: try the next file.
 	}
-	return core.ImpactTierUnavailable, NoCallEdges
+	p.expires = r.now().Add(graphNoTTL)
+}
+
+func (r *Resolver) dropGraph(key graphKey, p *graphProbe) {
+	r.graphMu.Lock()
+	defer r.graphMu.Unlock()
+	if r.graphs[key] == p {
+		delete(r.graphs, key)
+	}
 }
 
 // sharedName reports whether a definition the diff did not change shares

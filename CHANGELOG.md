@@ -98,6 +98,13 @@ because a commit list cannot express them.
 
 ### Fixed
 
+- **The tier 2 graph probe no longer blocks impact** (`GIT-US-0179`, docs/03 R-IMP-3, docs/21
+  §6.1). `code_related_files` took 194 s on the benchmark repository, so tier 2 burned its whole
+  budget on every query. The check now runs once per Pando instance in the background and its
+  answer is cached (30 minutes for a graph with edges, 1 minute for none, again after a managed
+  restart); a check still running gives `unavailable` with a "still being checked" reason
+  instead of a timeout.
+
 - **An update that keeps an item's title no longer renames its file** (`GIT-US-0171`, docs/03 §3.4).
   A status-only `update_item` on an item whose slug was hand-made or longer than 60 bytes renamed
   the file to the 60-byte truncation, turning a two-line diff into a delete plus an add. The file

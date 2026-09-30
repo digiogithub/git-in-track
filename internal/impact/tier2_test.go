@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/digiogithub/git-in-track/internal/core"
 	"github.com/digiogithub/git-in-track/internal/pando"
@@ -468,6 +470,149 @@ func TestImpactTier2CodeGraph(t *testing.T) {
 		res := f.impact(f.resolver(noCallers(), nil), q)
 		if res.Tiers[1].Status != core.ImpactTierOK {
 			t.Errorf("tier 2 = %+v, want ok: without code_related_files the graph cannot be checked", res.Tiers[1])
+		}
+	})
+}
+
+// slowRelator is a fake Pando whose code_related_files blocks until release
+// is closed, and counts its calls (GIT-US-0179).
+type slowRelator struct {
+	*finderGraph
+	related map[string][]pando.RelatedFile
+	release chan struct{}
+	mu      sync.Mutex
+	calls   int
+}
+
+func (g *slowRelator) RelatedFiles(ctx context.Context, _, path string, _ pando.RelatedFilesOptions) (pando.RelatedFilesResult, error) {
+	g.mu.Lock()
+	g.calls++
+	g.mu.Unlock()
+	select {
+	case <-g.release:
+	case <-ctx.Done():
+		return pando.RelatedFilesResult{}, ctx.Err()
+	}
+	return pando.RelatedFilesResult{Files: g.related[path]}, nil
+}
+
+func (g *slowRelator) probeCalls() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.calls
+}
+
+// TestImpactTier2GraphProbeSpeed pins GIT-US-0179: the graph check never
+// holds the tier past its budget, its answer is cached, and a restarted
+// instance or an expired answer is asked again.
+func TestImpactTier2GraphProbeSpeed(t *testing.T) {
+	f, base := precisionFixture(t)
+	q := core.ImpactQuery{Base: base, Tiers: []int{1, 2}}
+	edges := map[string][]pando.RelatedFile{
+		"src/links/store.go": {{FilePath: "src/links/store_test.go", Score: 0.8}},
+	}
+	slow := func(related map[string][]pando.RelatedFile) *slowRelator {
+		return &slowRelator{
+			finderGraph: &finderGraph{fakeGraph: &fakeGraph{}, defs: precisionDefs()},
+			related:     related, release: make(chan struct{}),
+		}
+	}
+	budgeted := func(g CallGraph) *Resolver {
+		r := f.resolver(g, nil)
+		r.opts.CallBudget = 150 * time.Millisecond
+		return r
+	}
+	wait := func(t *testing.T, r *Resolver) {
+		t.Helper()
+		r.graphMu.Lock()
+		var ps []*graphProbe
+		for _, p := range r.graphs {
+			ps = append(ps, p)
+		}
+		r.graphMu.Unlock()
+		for _, p := range ps {
+			<-p.done
+		}
+	}
+
+	t.Run("a slow probe stays within the budget and is pending", func(t *testing.T) {
+		g := slow(edges)
+		defer close(g.release)
+		r := budgeted(g)
+		start := time.Now()
+		res := f.impact(r, q)
+		if d := time.Since(start); d > 5*time.Second {
+			t.Errorf("query took %s, want it bounded by the tier budget", d)
+		}
+		if tier := res.Tiers[1]; tier.Status != core.ImpactTierUnavailable || tier.Message != GraphPending {
+			t.Errorf("tier 2 = %+v, want unavailable with %q", tier, GraphPending)
+		}
+	})
+
+	t.Run("the answer of a probe that finishes later is cached and reused", func(t *testing.T) {
+		g := slow(edges)
+		r := budgeted(g)
+		if res := f.impact(r, q); res.Tiers[1].Message != GraphPending {
+			t.Fatalf("first query tier 2 = %+v, want pending", res.Tiers[1])
+		}
+		close(g.release)
+		wait(t, r)
+		calls := g.probeCalls()
+		for i := 0; i < 2; i++ {
+			if tier := f.impact(r, q).Tiers[1]; tier.Status != core.ImpactTierOK {
+				t.Fatalf("query %d tier 2 = %+v, want ok: the graph has edges", i, tier)
+			}
+		}
+		if got := g.probeCalls(); got != calls {
+			t.Errorf("probed %d more times, want the cached answer reused", got-calls)
+		}
+	})
+
+	t.Run("a missing graph stays unavailable with the BuildCodeGraph message", func(t *testing.T) {
+		g := slow(nil)
+		close(g.release)
+		r := budgeted(g)
+		for i := 0; i < 2; i++ {
+			tier := f.impact(r, q).Tiers[1]
+			if tier.Status != core.ImpactTierUnavailable || tier.Message != NoCallEdges {
+				t.Fatalf("query %d tier 2 = %+v, want unavailable with %q", i, tier, NoCallEdges)
+			}
+		}
+		if got := g.probeCalls(); got != 3 {
+			t.Errorf("probed %d times, want one pass over the 3 changed files", got)
+		}
+	})
+
+	t.Run("a replaced client and an expired answer are probed again", func(t *testing.T) {
+		g1 := slow(edges)
+		close(g1.release)
+		var current CallGraph = g1
+		opts := f.resolver(g1, nil).opts
+		opts.CallGraph = func() CallGraph { return current }
+		r := New(opts)
+		clock := time.Now()
+		r.now = func() time.Time { return clock }
+		if tier := f.impact(r, q).Tiers[1]; tier.Status != core.ImpactTierOK {
+			t.Fatalf("tier 2 = %+v, want ok", tier)
+		}
+		before := g1.probeCalls()
+		g2 := slow(nil)
+		close(g2.release)
+		current = g2 // a managed restart hands out a new client
+		if tier := f.impact(r, q).Tiers[1]; tier.Message != NoCallEdges {
+			t.Fatalf("tier 2 = %+v, want the new instance probed (no edges)", tier)
+		}
+		if g2.probeCalls() == 0 {
+			t.Error("the restarted instance was not probed")
+		}
+		clock = clock.Add(2 * graphNoTTL) // the missing-graph answer expires
+		calls := g2.probeCalls()
+		f.impact(r, q)
+		if g2.probeCalls() == calls {
+			t.Error("an expired answer was not probed again")
+		}
+		if g1.probeCalls() != before {
+			t.Error("the replaced client was probed again")
 		}
 	})
 }
