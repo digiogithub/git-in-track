@@ -68,6 +68,10 @@ type Options struct {
 	// as macOS, none on Windows.
 	Watchdog []string
 
+	// PortWait bounds how long a start waits for the previous port to be
+	// released (the old child may still be closing its socket) before falling
+	// back to another port. Default 2s.
+	PortWait time.Duration
 	// ReadyTimeout bounds the wait for a fresh child to pass Health. Default 30s.
 	ReadyTimeout time.Duration
 	// HealthInterval is the pause between health checks of a ready child.
@@ -115,6 +119,7 @@ func (o *Options) defaults() error {
 			*p = d
 		}
 	}
+	dur(&o.PortWait, 2*time.Second)
 	dur(&o.ReadyTimeout, 30*time.Second)
 	dur(&o.HealthInterval, 30*time.Second)
 	dur(&o.HealthTimeout, 5*time.Second)
@@ -262,6 +267,13 @@ func (s *Supervisor) Start(ctx context.Context) error {
 		return err
 	}
 
+	// The port of the last run survives in state.json; a fresh Supervisor
+	// (a new gintrack process) reads it back and tries it first.
+	if prev, err := ReadStatus(s.dir); err == nil && prev.LastPort > 0 {
+		s.mu.Lock()
+		s.status.LastPort = prev.LastPort
+		s.mu.Unlock()
+	}
 	s.reapOrphan(ctx)
 	version, err := s.checkBinary(ctx)
 	if err != nil {
@@ -287,7 +299,7 @@ func (s *Supervisor) Start(ctx context.Context) error {
 	s.mu.Unlock()
 	s.update(func(st *Status) {
 		*st = Status{
-			State: StateStarting, Key: st.Key, Root: st.Root, Project: st.Project,
+			State: StateStarting, Key: st.Key, Root: st.Root, Project: st.Project, LastPort: st.LastPort,
 			TokenFile: st.TokenFile, Binary: st.Binary, Version: version, SupervisorPID: os.Getpid(),
 		}
 	})
@@ -376,10 +388,10 @@ func (s *Supervisor) loop(ctx context.Context, sink *logSink) {
 		close(done)
 	}()
 
-	lastPort := 0
+	avoid := 0
 	for ctx.Err() == nil {
-		reason, port, counted := s.runOnce(ctx, sink, lastPort)
-		lastPort = port
+		reason, unhealthy, counted := s.runOnce(ctx, sink, avoid)
+		avoid = unhealthy
 		if ctx.Err() != nil {
 			return
 		}
@@ -446,15 +458,28 @@ func (s *Supervisor) recordCrash(reason string, tail []string) (time.Duration, b
 }
 
 // runOnce starts one child and supervises it until it ends. counted is false
-// when the end was a requested restart or a shutdown.
-func (s *Supervisor) runOnce(ctx context.Context, sink *logSink, avoid int) (reason string, port int, counted bool) {
-	port, err := pickPort(ctx, s.opts.PortMin, s.opts.PortMax, avoid)
+// when the end was a requested restart or a shutdown. avoid is a port on which
+// the previous child never became healthy (it moved silently); unhealthy is the
+// same for this child, 0 when the port did work.
+func (s *Supervisor) runOnce(ctx context.Context, sink *logSink, avoid int) (reason string, unhealthy int, counted bool) {
+	s.mu.Lock()
+	preferred := s.status.LastPort
+	s.mu.Unlock()
+	if preferred == avoid {
+		preferred = 0
+	}
+	port, err := s.choosePort(ctx, preferred, avoid)
 	if err != nil {
 		return err.Error(), 0, true
 	}
+	changedFrom := 0
+	if preferred > 0 && port != preferred {
+		changedFrom = preferred
+		s.opts.Logger.Warn("managed pando cannot reuse its previous port; using another", "key", s.opts.Key, "previous", preferred, "port", port)
+	}
 	cfg := generatedConfig(s.opts, s.dir, port, s.token)
 	if err := writeFileAtomic(filepath.Join(s.dir, configFileName), cfg, 0o600); err != nil {
-		return "write .pando.toml: " + err.Error(), port, true
+		return "write .pando.toml: " + err.Error(), 0, true
 	}
 
 	args := []string{"mcp-server", "--no-stdio", "--cwd", s.dir}
@@ -469,11 +494,11 @@ func (s *Supervisor) runOnce(ctx context.Context, sink *logSink, avoid int) (rea
 	cmd.WaitDelay = 2 * time.Second
 	life, err := prepareCmd(cmd, s.opts.Watchdog)
 	if err != nil {
-		return "prepare pando: " + err.Error(), port, true
+		return "prepare pando: " + err.Error(), 0, true
 	}
 	if err := cmd.Start(); err != nil {
 		life.Close()
-		return "start pando: " + err.Error(), port, true
+		return "start pando: " + err.Error(), 0, true
 	}
 	life.started()
 	exited := make(chan error, 1)
@@ -486,6 +511,7 @@ func (s *Supervisor) runOnce(ctx context.Context, sink *logSink, avoid int) (rea
 	url := "http://127.0.0.1:" + strconv.Itoa(port) + "/mcp"
 	s.update(func(st *Status) {
 		st.State, st.PID, st.Port, st.MCPURL = StateStarting, cmd.Process.Pid, port, url
+		st.LastPort, st.PortChangedFrom = port, changedFrom
 	})
 
 	stop := func() {
@@ -503,7 +529,7 @@ func (s *Supervisor) runOnce(ctx context.Context, sink *logSink, avoid int) (rea
 	client, err := pando.New(pando.Options{MCPURL: url, Token: s.token, Timeout: s.opts.HealthTimeout})
 	if err != nil {
 		stop()
-		return "build the health client: " + err.Error(), port, true
+		return "build the health client: " + err.Error(), 0, true
 	}
 	defer func() { _ = client.Close() }()
 
@@ -517,12 +543,12 @@ func (s *Supervisor) runOnce(ctx context.Context, sink *logSink, avoid int) (rea
 		select {
 		case <-ctx.Done():
 			stop()
-			return "", port, false
+			return "", 0, false
 		case <-s.restart:
 			stop()
-			return "", port, false
+			return "", 0, false
 		case err := <-exited:
-			return fmt.Sprintf("pando exited while starting: %v", err), port, true
+			return fmt.Sprintf("pando exited while starting: %v", err), 0, true
 		case <-deadline.C:
 			stop()
 			return fmt.Sprintf("pando was not healthy on port %d within %s (it may have moved to another port): %v", port, s.opts.ReadyTimeout, lastErr), port, true
@@ -543,12 +569,12 @@ func (s *Supervisor) runOnce(ctx context.Context, sink *logSink, avoid int) (rea
 		select {
 		case <-ctx.Done():
 			stop()
-			return "", port, false
+			return "", 0, false
 		case <-s.restart:
 			stop()
-			return "", port, false
+			return "", 0, false
 		case err := <-exited:
-			return fmt.Sprintf("pando exited: %v", err), port, true
+			return fmt.Sprintf("pando exited: %v", err), 0, true
 		case <-tick.C:
 			hctx, cancel := context.WithTimeout(ctx, s.opts.HealthTimeout)
 			err := client.Health(hctx)
@@ -563,10 +589,42 @@ func (s *Supervisor) runOnce(ctx context.Context, sink *logSink, avoid int) (rea
 			fails++
 			if fails >= s.opts.HealthFailures {
 				stop()
-				return fmt.Sprintf("%d health checks failed in a row: %v", fails, err), port, true
+				return fmt.Sprintf("%d health checks failed in a row: %v", fails, err), 0, true
 			}
 		}
 	}
+}
+
+// choosePort returns the port for the next child. It tries preferred first (the
+// last port, so agents that connect to Pando directly keep working), retrying
+// for up to PortWait because the previous child may not have released it yet.
+// A busy or out-of-range preferred port falls back to pickPort.
+func (s *Supervisor) choosePort(ctx context.Context, preferred, avoid int) (int, error) {
+	inRange := s.opts.PortMin == 0 && s.opts.PortMax == 0 ||
+		preferred >= s.opts.PortMin && preferred <= s.opts.PortMax
+	if preferred > 0 && inRange {
+		deadline := time.Now().Add(s.opts.PortWait)
+		for {
+			if portFree(ctx, preferred) {
+				return preferred, nil
+			}
+			if ctx.Err() != nil || !time.Now().Before(deadline) {
+				break
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+	return pickPort(ctx, s.opts.PortMin, s.opts.PortMax, max(avoid, preferred))
+}
+
+// portFree reports whether a loopback port can be bound right now.
+func portFree(ctx context.Context, p int) bool {
+	l, err := (&net.ListenConfig{}).Listen(ctx, "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(p)))
+	if err != nil {
+		return false
+	}
+	_ = l.Close()
+	return true
 }
 
 // pickPort binds a loopback port and releases it. With no range it asks the

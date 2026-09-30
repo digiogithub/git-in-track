@@ -14,6 +14,11 @@ because a commit list cannot express them.
 
 ### Added
 
+- **Managed Pando keeps its port across restarts** (`GIT-US-0184`, ADR-039 decision 2, docs/21,
+  docs/08). `state.json` records `lastPort`, which survives a stop; a start, a requested restart
+  and a crash restart try it first and wait up to 2 s for the old socket to close. A busy port
+  falls back to a free one, logs a warning and records `portChangedFrom`. Pando silently moving
+  ports is still detected by the health check.
 - **Managed Pando dies with `gintrack serve` on macOS** (`GIT-US-0187`, ADR-039 decision 5, docs/21).
   Without `Pdeathsig`, the child now runs under a watchdog (`gintrack __pando-watch`, this binary
   re-executed) that ends its process group when a lifeline pipe from `serve` closes, even if
