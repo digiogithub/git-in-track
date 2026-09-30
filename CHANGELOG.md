@@ -14,6 +14,13 @@ because a commit list cannot express them.
 
 ### Added
 
+- **Managed Pando dies with `gintrack serve` on macOS** (`GIT-US-0187`, ADR-039 decision 5, docs/21).
+  Without `Pdeathsig`, the child now runs under a watchdog (`gintrack __pando-watch`, this binary
+  re-executed) that ends its process group when a lifeline pipe from `serve` closes, even if
+  `serve` is SIGKILLed; the same code path is used on any unix that lacks `Pdeathsig`. On every
+  platform a start now ends an orphan left by a crashed supervisor, found through `state.json`
+  and confirmed by its command line. CI cross-vets the supervisor for darwin and windows. The
+  macOS path is tested on Linux through the watchdog; it has not run on a Mac.
 - **Coverage drift bounds declaration reach like impact** (`GIT-US-0169`, docs/03 §21.6-§21.7). A
   changed `const`, `var` or `type` used by more than 10 functions of its package no longer marks a
   passing requirement `suspect`; the row stays `passing` and shows `bounded:<n>`, the traced edges

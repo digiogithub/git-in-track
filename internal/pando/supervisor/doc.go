@@ -39,7 +39,9 @@
 // gintrack process supervises the instance: connect to it through ReadStatus
 // and ReadToken instead), checks `pando --version` against Options.MinVersion,
 // writes the token file and launches the supervision goroutine, then returns.
-// It never waits for the child to become ready.
+// It never waits for the child to become ready. Before starting it ends an
+// orphan: a child that state.json records, that is still alive although its
+// supervisor is dead, and whose command line names the instance directory.
 //
 // Each child run:
 //
@@ -48,7 +50,10 @@
 //  2. runs `pando mcp-server --no-stdio --cwd <dir>` in its own process group;
 //     on Linux it also sets Pdeathsig = SIGTERM, so the child dies with the
 //     supervisor, and the supervision goroutine is locked to its OS thread for
-//     that reason (Pdeathsig fires when the thread that started the child ends);
+//     that reason (Pdeathsig fires when the thread that started the child ends).
+//     Where there is no Pdeathsig (macOS) the child runs under Options.Watchdog,
+//     `gintrack __pando-watch`, which ends the child's group when the lifeline
+//     pipe to the supervisor closes, SIGKILL included (RunWatchdog);
 //  3. is ready when pando.Client.Health succeeds with our token on our port
 //     within ReadyTimeout. Pando silently moves to another port when the
 //     requested one is busy, and a 401 means someone else owns it: both look
