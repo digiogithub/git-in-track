@@ -63,8 +63,11 @@ func newSpecImpactCommand(flags *globalFlags) *cobra.Command {
 		Long: `Resolve the requirements a diff affects (docs/03 section 21.11), in three
 tiers: 1 the direct trace (Implements:/Verifies: markers, trace: entries, and
 the Spec Delta and implements/modifies links of --story), 2 the transitive
-callers and 3 semantic candidates. Tiers 2 and 3 read Pando; the command line
-has no Pando client, so they report unavailable and tier 1 still answers.
+callers and 3 semantic candidates. Tiers 2 and 3 read Pando: an external
+instance from search.pando.mcpUrl, or, in managed mode (ADR-039), the instance
+a running "gintrack serve" supervises, found through its state file and token.
+This command never starts Pando. When neither is reachable the tiers report
+unavailable with the reason, and tier 1 still answers.
 
 The diff runs from --since to --head; without --head it ends at the working
 tree. The report is ranked failing, then suspect, then by tier (test-only hits
