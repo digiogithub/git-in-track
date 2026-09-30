@@ -105,6 +105,15 @@ because a commit list cannot express them.
 
 ### Fixed
 
+- **The tier 2 graph probe no longer blocks impact** (`GIT-US-0179`, docs/03 R-IMP-3, docs/21
+  §6.1). `code_related_files` took 194 s on the benchmark repository, so tier 2 burned its whole
+  budget on every query. The check now runs once per Pando instance in the background and its
+  answer is cached (30 minutes for a graph with edges, 1 minute for none, again after a managed
+  restart); a check still running gives `unavailable` with a "still being checked" reason
+  instead of a timeout. In managed mode the answer is also persisted in the instance's cache
+  directory (keyed by pid and state change, so a restart drops it) and `gintrack serve` warms it
+  once the code project is registered, so short-lived `gintrack mcp` processes reuse it.
+
 - **Tier 2 keeps a narrow production caller as behaviour evidence over a test caller**
   (`GIT-US-0181`, docs/03 R-IMP-3, R-IMP-5). After `GIT-US-0166` a hit reached by a production
   caller carrying two requirement markers and by an unchanged test that calls the changed code

@@ -1180,7 +1180,8 @@ stdio `gintrack mcp` alike hand them to the impact seam (`GIT-US-0147`), so with
 `search.pando.mcpUrl` configured the two tiers answer over stdio exactly as over HTTP.
 When a tier cannot run — no Pando configured, Pando not answering, or, for tier 2, a code
 project indexed without call edges (`the Pando code project has no call edges: index the
-repository root with [TokenOptimization] BuildCodeGraph = true`, `GIT-US-0167`, doc 21 §6.1) — its
+repository root with [TokenOptimization] BuildCodeGraph = true`, `GIT-US-0167`, doc 21 §6.1), or when the graph check is still running on a large project (`the Pando
+call graph is still being checked`, `GIT-US-0179`; the answer is cached, so ask again) — its
 status says `unavailable` and the other tiers still answer, so an agent without Pando still gets
 the tier-1 hits: the direct trace, the Spec Delta and the links. Only a session that cannot read
 git history at all (browser-only mode, or a repository without git) refuses the whole call with
