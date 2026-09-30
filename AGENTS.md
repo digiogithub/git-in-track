@@ -515,8 +515,12 @@ A change is done when all of these hold:
   the files at any time, and must never be the source of truth.
 - **Do not break the WASM build.** Anything you add to `internal/core` must
   compile under `GOOS=js GOARCH=wasm`.
-- **Do not add code signing or notarization to the release pipeline.** Releases
-  are unsigned archives with checksums, by design.
+- **Do not change the release pipeline or its signing.** macOS and Windows
+  releases are code-signed and notarized (ADR-029, which supersedes ADR-011), and
+  Linux archives are checksum-only. `.github/workflows/release.yml`, the signing
+  secrets and `.goreleaser.yaml` are human-only: propose changes as stories. The
+  asset names are a contract that `gintrack update` depends on (ADR-040,
+  docs/09 §3.1).
 - Do not invent new front-matter fields, statuses or directory names on the fly.
 - Do not translate identifiers, file names or documentation into another
   language.

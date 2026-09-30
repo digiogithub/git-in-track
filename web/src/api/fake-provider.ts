@@ -133,6 +133,7 @@ import type {
   TeamSummary,
   McpSettings,
   TunnelStatus,
+  VersionStatus,
   Unsubscribe,
   UpdateOp,
   ProviderErrorCode,
@@ -238,6 +239,8 @@ export type FakeData = {
    * started without a token, or a tunnel that is already up.
    */
   tunnel?: Partial<TunnelStatus>;
+  /** Overrides on the update notice: a newer release, or an unsupported runtime. */
+  version?: Partial<VersionStatus>;
   /** Overrides on the MCP write surface: a runtime with none, or one already
    * advertising the write tools. */
   mcp?: Partial<McpSettings>;
@@ -1396,6 +1399,8 @@ export class FakeProvider implements DataProvider {
   private specTemplates: SpecTemplates;
   /** Commit-on-save settings, in memory (story GIT-US-0020). */
   private git: GitSettings;
+  /** The update status, in memory. */
+  private versionStatus: VersionStatus;
   /** The public tunnel, in memory. */
   private tunnel: TunnelStatus;
   /** The MCP write surface, in memory. */
@@ -1564,6 +1569,15 @@ export class FakeProvider implements DataProvider {
       pending: 0,
       supported: !opts.readOnly,
       ...(opts.readOnly ? { reason: 'This vault is read-only.' } : {}),
+    };
+    this.versionStatus = {
+      supported: true,
+      current: '2.2.0',
+      latest: '2.2.0',
+      updateAvailable: false,
+      checkedAt: null,
+      url: '',
+      ...data.version,
     };
     this.tunnel = {
       supported: true,
@@ -3964,7 +3978,10 @@ export class FakeProvider implements DataProvider {
     }
     if (current.mode !== 'managed') {
       return Promise.reject(
-        new ProviderError('search_not_managed', 'Semantic search is not managed by this companion.'),
+        new ProviderError(
+          'search_not_managed',
+          'Semantic search is not managed by this companion.',
+        ),
       );
     }
     if (!current.indexed.some((row) => row.repo === repo)) {
@@ -4055,6 +4072,10 @@ export class FakeProvider implements DataProvider {
     }
     this.mcp = { ...this.mcp, allowWrite, persisted: this.mcp.configPath !== '' };
     return Promise.resolve({ ...this.mcp });
+  }
+
+  getVersionStatus(): Promise<VersionStatus> {
+    return Promise.resolve({ ...this.versionStatus });
   }
 
   getTunnel(): Promise<TunnelStatus> {

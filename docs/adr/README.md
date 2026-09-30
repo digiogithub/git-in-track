@@ -73,6 +73,7 @@ Every ADR uses the same sections:
 | [ADR-037](ADR-037-specs-with-requirement-blocks.md) | Specs are items; requirements are addressable blocks inside them | Accepted | 11 |
 | [ADR-038](ADR-038-customisable-spec-templates.md) | Spec templates are embedded, and a backlog may override them with files | Accepted | 11 |
 | [ADR-039](ADR-039-gintrack-launches-and-manages-pando.md) | gintrack launches and manages Pando over the workspace | Accepted | 9 / 11 |
+| [ADR-040](ADR-040-gintrack-update-verified-self-update.md) | `gintrack update` is a stdlib self-update, verified against `checksums.txt` | Accepted | Post-1.0 |
 
 ## Related documents
 

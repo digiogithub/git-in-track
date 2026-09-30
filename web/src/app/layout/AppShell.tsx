@@ -32,6 +32,7 @@ import { ThemeToggle } from '@/components/ui/theme-toggle';
 import { ToastProvider } from '@/components/ui/toast';
 import { InboxNavLink } from '@/features/inbox/InboxNavLink';
 import { SyncJobToasts } from '@/features/sync/SyncJobToasts';
+import { UpdateNotice } from '@/features/update/UpdateNotice';
 import { cn } from '@/lib/cn';
 
 type NavItem = {
@@ -226,6 +227,7 @@ export function AppShell() {
           <ModeNoticeBanner />
           <TokenRequiredBanner />
           <ReadOnlyBanner />
+          <UpdateNotice />
           <main id="main" className="flex-1 px-6 py-6 lg:px-8">
             <div className="mx-auto w-full max-w-[100rem]">
               <Outlet />
