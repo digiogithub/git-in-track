@@ -199,6 +199,8 @@ func installMCPTraceSeams(mounts []mcpMount, backend config.Backend, pandoHost *
 			CallGraph:  func() impact.CallGraph { return pandoHost.CallGraphFor(m.id) },
 			Semantic:   func() corevault.SemanticSearcher { return pandoHost.SemanticFor(m.id) },
 			GraphStore: pandoHost.GraphStoreFor(m.id),
+			// Closing the host on exit cancels a graph check still running.
+			ProbeContext: pandoHost.ProbeContext(),
 		}
 		repo, err := gitops.Open(m.root, gitops.Options{Backend: gitops.Kind(backend)})
 		if err != nil {

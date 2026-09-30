@@ -3120,8 +3120,12 @@ answers `unavailable`.
   also persisted as derived cache data, `<cacheDir>/pando/<instance>/graph-probe.json` (never in
   the repository), keyed by project and the instance's pid and last state change, so a restart
   drops it; a missing or corrupt file is ignored and writes are atomic. `gintrack serve` warms it
-  once the code project is registered (a sample of source files; only a found graph is stored),
-  so the first query of a short-lived `gintrack mcp` finds a known answer. `gintrack spec impact`
+  once the code project is indexed, from a sample of source files ranked for likely call edges; a
+  found graph is stored for 30 minutes and a sample with no coupled file as "no edges" for 5
+  (`GIT-US-0190`), so the first query of a short-lived `gintrack mcp` finds a known answer. A
+  process that starts a check records an in-flight marker (`graph-probe.json.inflight`: instance
+  generation, project, pid, start time), live for the probe timeout of 10 minutes; another process
+  that finds it live starts no check of its own and waits within its budget for the answer. `gintrack spec impact`
   reads the same store, and an external Pando (`search.pando.mcpUrl`) is persisted in
   `<cacheDir>/pando/external/graph-probe-<hash>.json`, keyed by a hash of the endpoint URL and the project id and
   bounded by the same TTLs only (`GIT-US-0188`).
