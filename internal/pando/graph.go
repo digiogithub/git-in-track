@@ -211,7 +211,7 @@ func (c *Client) RelatedFiles(ctx context.Context, projectID, path string, o Rel
 	if o.Limit > 0 {
 		args["limit"] = o.Limit
 	}
-	res, err := c.call(ctx, toolCodeRelated, args)
+	res, err := c.callWithin(ctx, o.Timeout, toolCodeRelated, args)
 	if err != nil {
 		return RelatedFilesResult{}, err
 	}

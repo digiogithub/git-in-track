@@ -693,15 +693,151 @@ func TestImpactTier2GraphProbePersisted(t *testing.T) {
 		}
 	})
 
-	t.Run("warming stores a found graph and never a missing one", func(t *testing.T) {
+	t.Run("warming stores a found graph for the long TTL and a missing one for the short one", func(t *testing.T) {
 		st := &memStore{}
 		WarmGraph(context.Background(), newGraph(nil), "acme", []string{"src/links/store.go"}, st)
-		if _, _, ok := st.Load(); ok {
-			t.Error("a missing graph was stored by the warm-up")
+		if e, exp, ok := st.Load(); !ok || e || !exp.After(time.Now()) || exp.After(time.Now().Add(graphWarmNoTTL+time.Second)) {
+			t.Errorf("stored (%v, %v, %v), want a live no-edges answer within %s", e, exp, ok, graphWarmNoTTL)
 		}
 		WarmGraph(context.Background(), newGraph(edges), "acme", []string{"src/links/store.go"}, st)
-		if e, exp, ok := st.Load(); !ok || !e || !exp.After(time.Now()) {
-			t.Errorf("stored (%v, %v, %v), want a live found graph", e, exp, ok)
+		if e, exp, ok := st.Load(); !ok || !e || !exp.After(time.Now().Add(graphWarmNoTTL)) {
+			t.Errorf("stored (%v, %v, %v), want a found graph with the long TTL", e, exp, ok)
+		}
+	})
+
+	t.Run("warming stops at the first coupled file", func(t *testing.T) {
+		st := &memStore{}
+		g := newGraph(map[string][]pando.RelatedFile{"b.go": {{FilePath: "c.go"}}})
+		WarmGraph(context.Background(), g, "acme", []string{"a.go", "b.go", "c.go", "d.go"}, st)
+		if got := g.probeCalls(); got != 2 {
+			t.Errorf("probed %d files, want 2 (stop at the first coupled)", got)
+		}
+	})
+}
+
+// claimStore is a memStore with an in-flight marker, as fileGraphStore has.
+type claimStore struct {
+	memStore
+	cmu     sync.Mutex
+	started time.Time
+	held    bool
+}
+
+func (s *claimStore) live(now time.Time, stale time.Duration) bool {
+	return s.held && now.Before(s.started.Add(stale))
+}
+
+func (s *claimStore) Claim(now time.Time, stale time.Duration) (func(), bool) {
+	s.cmu.Lock()
+	defer s.cmu.Unlock()
+	if s.live(now, stale) {
+		return nil, false
+	}
+	s.held, s.started = true, now
+	return func() { s.cmu.Lock(); s.held = false; s.cmu.Unlock() }, true
+}
+
+func (s *claimStore) Claimed(now time.Time, stale time.Duration) bool {
+	s.cmu.Lock()
+	defer s.cmu.Unlock()
+	return s.live(now, stale)
+}
+
+// TestImpactTier2GraphProbeSingleFlight pins GIT-US-0190: one check runs per
+// instance across processes, a stale marker is ignored, and a host that exits
+// cancels its check.
+func TestImpactTier2GraphProbeSingleFlight(t *testing.T) {
+	f, base := precisionFixture(t)
+	q := core.ImpactQuery{Base: base, Tiers: []int{1, 2}}
+	edges := map[string][]pando.RelatedFile{"src/links/store.go": {{FilePath: "src/links/store_test.go"}}}
+	newGraph := func(release bool) *slowRelator {
+		g := &slowRelator{finderGraph: &finderGraph{fakeGraph: &fakeGraph{}, defs: precisionDefs()},
+			related: edges, release: make(chan struct{})}
+		if release {
+			close(g.release)
+		}
+		return g
+	}
+	runner := func(g CallGraph, st GraphStore, mod func(*Options)) *Resolver {
+		opts := f.resolver(g, nil).opts
+		opts.GraphStore = func(CallGraph) GraphStore { return st }
+		opts.CallBudget = 300 * time.Millisecond
+		if mod != nil {
+			mod(&opts)
+		}
+		return New(opts)
+	}
+
+	t.Run("a fresh marker prevents a second probe", func(t *testing.T) {
+		st := &claimStore{}
+		st.Claim(time.Now(), graphProbeTimeout) // another process holds the check
+		g := newGraph(true)
+		tier := f.impact(runner(g, st, nil), q).Tiers[1]
+		if tier.Status != core.ImpactTierUnavailable || tier.Message != GraphPending || g.probeCalls() != 0 {
+			t.Errorf("tier 2 = %+v after %d probes, want pending without probing", tier, g.probeCalls())
+		}
+	})
+
+	t.Run("the answer of the marker's owner is picked up from the store", func(t *testing.T) {
+		st := &claimStore{}
+		st.Claim(time.Now(), graphProbeTimeout)
+		g := newGraph(true)
+		go func() {
+			time.Sleep(60 * time.Millisecond)
+			st.Store(true, time.Now().Add(time.Minute))
+		}()
+		tier := f.impact(runner(g, st, nil), q).Tiers[1]
+		if tier.Status != core.ImpactTierOK || g.probeCalls() != 0 {
+			t.Errorf("tier 2 = %+v after %d probes, want ok from the store", tier, g.probeCalls())
+		}
+	})
+
+	t.Run("a stale marker is ignored", func(t *testing.T) {
+		st := &claimStore{}
+		st.Claim(time.Now().Add(-2*graphProbeTimeout), graphProbeTimeout)
+		g := newGraph(true)
+		tier := f.impact(runner(g, st, nil), q).Tiers[1]
+		if tier.Status != core.ImpactTierOK || g.probeCalls() == 0 {
+			t.Errorf("tier 2 = %+v after %d probes, want a fresh probe", tier, g.probeCalls())
+		}
+		if st.Claimed(time.Now(), graphProbeTimeout) {
+			t.Error("the marker was not released after the answer")
+		}
+	})
+
+	t.Run("two runners on one store probe once", func(t *testing.T) {
+		st := &claimStore{}
+		g := newGraph(false)
+		defer close(g.release)
+		f.impact(runner(g, st, nil), q)
+		g2 := newGraph(true)
+		tier := f.impact(runner(g2, st, nil), q).Tiers[1]
+		if g2.probeCalls() != 0 || tier.Message != GraphPending {
+			t.Errorf("second runner: tier 2 = %+v after %d probes, want pending without probing", tier, g2.probeCalls())
+		}
+	})
+
+	t.Run("canceling the probe context aborts the call and keeps the marker", func(t *testing.T) {
+		st := &claimStore{}
+		ctx, cancel := context.WithCancel(context.Background())
+		g := newGraph(false)
+		r := runner(g, st, func(o *Options) { o.ProbeContext = ctx })
+		f.impact(r, q)
+		cancel() // the CLI exits
+		r.graphMu.Lock()
+		var ps []*graphProbe
+		for _, p := range r.graphs {
+			ps = append(ps, p)
+		}
+		r.graphMu.Unlock()
+		for _, p := range ps {
+			<-p.done
+		}
+		if _, _, ok := st.Load(); ok {
+			t.Error("a cancelled check stored an answer")
+		}
+		if !st.Claimed(time.Now(), graphProbeTimeout) {
+			t.Error("a cancelled check released its marker; the call may still run in Pando")
 		}
 	})
 }

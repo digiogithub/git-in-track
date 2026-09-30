@@ -187,6 +187,10 @@ type Symbol struct {
 type RelatedFilesOptions struct {
 	// Limit caps the files returned; 0 leaves Pando's default of 20.
 	Limit int
+	// Timeout overrides the client's per-call deadline for this call; 0
+	// keeps it. The call scans every call edge of the project and takes
+	// minutes on a large one, far past the default of 20 s (GIT-US-0190).
+	Timeout time.Duration
 }
 
 // RelatedFilesResult is the outcome of RelatedFiles.

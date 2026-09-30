@@ -516,6 +516,58 @@ URL and the project id and bounded by its expiry alone (`<cacheDir>/pando/extern
 short-lived CLI, CI or hook run on a slow Pando reuses the last answer. To fix it, turn the setting on and
 re-index the project.
 
+**Making the probe finish on a slow Pando (`GIT-US-0190`).** On the benchmark repository no probe
+ever completed, for four reasons, each now handled:
+
+- **The client's own deadline.** Every Pando client has a per-call deadline of 20 s
+  (`pando.DefaultTimeout`), so a `code_related_files` of 184 s failed with `ErrTimeout` no matter how
+  long the background probe was allowed to run. `RelatedFilesOptions.Timeout` overrides it for that
+  one call, and the probe passes the probe timeout (10 minutes).
+- **The warm-up ran too early.** It started as soon as the project was registered, while Pando was
+  still indexing, and an empty answer then is no evidence. It now polls `code_list_projects` until
+  the project's `indexingStatus` is `completed` (at most 45 minutes) before it asks.
+- **The warm-up sampled the wrong files.** The first five source files in path order were
+  `cmd/gintrack/*.go`, files of a `main` package. It now ranks the tree by likely coupling: for Go,
+  the exported top-level functions and methods of a file (other files call them) plus its calls
+  through another package, with a `main` package's score quartered; for TypeScript, JavaScript,
+  Python, Rust and Java, the count of exported or public declarations. Tests, generated code and
+  hidden, vendored and `testdata` trees are skipped. The sample takes the best file of each
+  directory first, so it is spread across packages, and stops at the first coupled answer. A sample
+  in which none was coupled is stored as "no edges" for 5 minutes (a query's own check stores it for 1):
+  five well-chosen files without an edge are real evidence, but the files are a sample and not the diff.
+- **Runs piled up.** A short-lived `gintrack spec impact` exits after its budget, and the next run
+  started another probe. A process that starts a check now records an **in-flight marker**
+  (`graph-probe.json.inflight` next to the answer: the instance generation, the project, its pid and the start time,
+  created exclusively so two racing processes cannot both win). Another process that finds a live marker
+  starts no check: it waits within its budget for the answer to reach the store, then answers
+  `unavailable` with `still being checked`. A marker is live for the probe timeout, then ignored, so a
+  killed process cannot block the check for longer. The process that finishes removes it; one that is
+  canceled leaves it, because the call may still be running in Pando. `gintrack spec impact` and `gintrack mcp`
+  cancel their background probe when they exit (`SemanticHost.Close` cancels `Options.ProbeContext`).
+  Measured on a managed Pando, Pando stops the query when the client goes away: its CPU time stopped
+  the moment the CLI exited.
+
+**Why `code_related_files` is slow, and a proposed upstream change (Pando, not applied here).**
+`RelatedFiles` (`internal/rag/code/graph.go:178`) runs three queries. On a project of 68,380 call and
+import edges and 19,104 symbols (this repository, indexed), `EXPLAIN QUERY PLAN` of the out-calls query
+(`graph.go:234-243`: `code_edges e JOIN code_symbols s ON s.name = e.dst_name WHERE e.project_id = ?
+AND e.src_file = ? AND e.edge_type = 'calls' AND s.symbol_type IN (…)`) drives from `code_symbols`
+by `idx_code_symbols_type` and, for **each** definition symbol, searches `code_edges` by
+`idx_code_edges_type (project_id, edge_type)`, which is every call edge of the project: symbols
+times call edges, about 10^8 row visits for a file that has 217 edges. There is no index on
+`code_edges.src_file` (`internal/db/migrations/20260630000001_add_code_edges.sql:23-28` indexes
+project, file id, `(project_id, edge_type)`, `dst_name`, `dst_path` and `src_symbol`). The imports query
+(`graph.go:205-208`) and the in-calls query (`graph.go:262-273`) also filter on `src_file` or scan every call edge.
+Measured on a copy of the instance's database, out-calls for one file took **52.5 s** and, after
+`CREATE INDEX idx_code_edges_src ON code_edges(project_id, src_file, edge_type)`, **0.146 s**, with the same
+81 rows; the query plan then searches `code_edges` by the new index. Proposed change: add that index in a new
+migration next to the one above (the in-calls query would also gain from `(project_id, edge_type, dst_name)`,
+not measured). A cheap signal would also help: extend `GetProjectStats` (`internal/rag/code/indexer.go:811-841`)
+with `total_edges` and `call_edges`, `SELECT edge_type, COUNT(*) FROM code_edges WHERE project_id = ? GROUP BY edge_type`,
+which `idx_code_edges_type` answers from the index alone; `tier 2` could then ask `code_get_project_stats`
+("has call edges") in milliseconds and keep `code_related_files` for nothing. Neither change is made in this
+repository; they are proposals for Pando.
+
 The code project tier 2 asks about is **derived from the repository root**, never from
 `search.pando.projectId` alone: `pando.SanitizeProjectID(<absolute repository path>)`, Pando's own
 rule, so `/www/git-in-track` is `www_git-in-track` (§0.1). A project registered under another id

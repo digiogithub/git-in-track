@@ -128,6 +128,16 @@ because a commit list cannot express them.
 
 ### Fixed
 
+- **The tier 2 graph probe now completes on a slow Pando** (`GIT-US-0190`, docs/21 §6.1, docs/03
+  R-IMP-3, docs/07 §4.20). On the benchmark repository no probe ever finished: the Pando client's 20 s
+  call deadline cut `code_related_files` (about 184 s) off, the `serve` warm-up ran while Pando was
+  still indexing and sampled `main`-package files, and every short-lived run started another probe.
+  The probe call now has its own deadline, the warm-up waits for the index, samples files ranked for
+  likely call edges (spread across packages, stopping at the first coupled one) and stores "no edges"
+  for 5 minutes, and a process starting a check records an in-flight marker so others wait for its
+  answer instead of starting one. `spec impact` and `gintrack mcp` cancel their probe on exit. The
+  slow query is Pando's (a missing index on `code_edges.src_file`); a proposed upstream change is in
+  docs/21 §6.1.
 - **`gintrack spec impact` reuses the persisted tier 2 graph probe** (`GIT-US-0188`, docs/21 §6.1,
   docs/03 R-IMP-3, docs/07 §4.20). The CLI (and `gintrack mcp`) read the managed instance's store,
   and an external `search.pando.mcpUrl` now has one too: `<cacheDir>/pando/external/graph-probe-<hash>.json`,

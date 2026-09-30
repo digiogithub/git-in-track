@@ -168,10 +168,20 @@ func (c *Client) Health(ctx context.Context) error {
 // the last call is rebuilt once, so a Pando restart heals itself instead of
 // surfacing as a permanent failure.
 func (c *Client) call(ctx context.Context, name string, args map[string]any) (*toolResult, error) {
+	return c.callWithin(ctx, c.timeout, name, args)
+}
+
+// callWithin is call with an explicit deadline, for the one tool that is known
+// to outlast the client's per-call default (code_related_files on a large
+// project, GIT-US-0190). A non-positive timeout means the client's own.
+func (c *Client) callWithin(ctx context.Context, timeout time.Duration, name string, args map[string]any) (*toolResult, error) {
 	if c.opts.MCPURL == "" {
 		return nil, fmt.Errorf("%w: no Pando MCP URL", ErrNotConfigured)
 	}
-	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	if timeout <= 0 {
+		timeout = c.timeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	for attempt := 0; attempt < 2; attempt++ {

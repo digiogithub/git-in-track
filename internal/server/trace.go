@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"time"
 
 	"github.com/digiogithub/git-in-track/internal/core/osfs"
@@ -48,6 +49,9 @@ type TraceSeams struct {
 	// GraphStore persists the tier 2 graph check across processes; nil keeps
 	// the answer in memory only (GIT-US-0179).
 	GraphStore func(impact.CallGraph) impact.GraphStore
+	// ProbeContext is the base context of the background graph checks; a
+	// short-lived host cancels it on exit. Nil means context.Background().
+	ProbeContext context.Context
 	// Now is the clock of the marker scan; nil means time.Now.
 	Now func() time.Time
 }
@@ -83,7 +87,7 @@ func InstallTraceSeams(v *vault.Vault, o TraceSeams) {
 		ProjectID:  o.ProjectID,
 		CallGraph:  o.CallGraph,
 		Semantic:   o.Semantic,
-		GraphStore: o.GraphStore,
+		GraphStore: o.GraphStore, ProbeContext: o.ProbeContext,
 	}))
 }
 
