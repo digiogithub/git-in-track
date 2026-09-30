@@ -12,6 +12,15 @@ because a commit list cannot express them.
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [2.3.0] — 2026-09-30
+
+A minor release: `gintrack update`, a verified self-update from GitHub Releases (ADR-040), update
+notices in `gintrack doctor`, the API and the web UI, and detection of a running `gintrack serve`
+after an update. No configuration key, data-model path, CLI flag or API field is removed, so
+nothing breaks for an existing setup.
+
 ### Added
 
 - **A running `gintrack serve` is detected after an update** (`GIT-US-0197`, docs/07 §4.24). `serve`
@@ -30,8 +39,8 @@ because a commit list cannot express them.
   (`internal/selfupdate`, `<cacheDir>/update-check.json`, 6 h after a success, 15 min after a
   failure, 5 s lookup timeout, tolerant of a corrupt file) feeds three surfaces: an `update` line in
   `gintrack doctor` (info when one exists, a warning, never an error, when the lookup fails, not
-  checked on development builds, Homebrew, Scoop or container installs), `GET /api/v1/version` and a dismissible notice in the web UI
-  (hidden in browser-only mode), and, opt-in with the new `update.checkOnStart` key (default
+  checked on development builds, Homebrew, Scoop or container installs), `GET /api/v1/version` and a dismissible notice in the web
+  UI (hidden in browser-only mode), and, opt-in with the new `update.checkOnStart` key (default
   `false`), one stderr line after an interactive command. The line is never printed for `--json`,
   `--quiet`, a non-terminal stderr, `mcp`, `serve`, `update`, `version` or `doctor`.
 
@@ -1867,7 +1876,8 @@ each, `Contents: read and write`. GHCR needs no secret. The release workflow ver
 tokens before it builds anything and fails with the fix in the message when either is
 missing. Full procedure: [docs/09](docs/09-ci-cd-and-releases.md) §9 and §10.
 
-[Unreleased]: https://github.com/digiogithub/git-in-track/compare/v2.2.0...HEAD
+[Unreleased]: https://github.com/digiogithub/git-in-track/compare/v2.3.0...HEAD
+[2.3.0]: https://github.com/digiogithub/git-in-track/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/digiogithub/git-in-track/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/digiogithub/git-in-track/compare/v2.0.1...v2.1.0
 [2.0.1]: https://github.com/digiogithub/git-in-track/compare/v2.0.0...v2.0.1
