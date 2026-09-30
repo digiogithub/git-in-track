@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -234,6 +235,26 @@ func TestRelatedFiles(t *testing.T) {
 		got, err := c.RelatedFiles(context.Background(), "p", "a.go", RelatedFilesOptions{})
 		if err != nil || len(got.Files) != 0 {
 			t.Fatalf("RelatedFiles() = %#v, %v; want empty, nil", got, err)
+		}
+	})
+
+	t.Run("a per-call timeout outlasts the client default", func(t *testing.T) {
+		t.Parallel()
+		f := newFakePando(t, "")
+		f.setTool(toolCodeRelated, func(ctx context.Context, _ map[string]any) (*mcpsdk.CallToolResult, error) {
+			select {
+			case <-time.After(400 * time.Millisecond):
+			case <-ctx.Done():
+			}
+			return textResult(relatedTOON), nil
+		})
+		c := newTestClient(t, f, func(o *Options) { o.Timeout = 100 * time.Millisecond })
+		if _, err := c.RelatedFiles(context.Background(), "p", "a.go", RelatedFilesOptions{}); !errors.Is(err, ErrTimeout) {
+			t.Fatalf("default timeout: error = %v, want ErrTimeout", err)
+		}
+		got, err := c.RelatedFiles(context.Background(), "p", "a.go", RelatedFilesOptions{Timeout: 10 * time.Second})
+		if err != nil || len(got.Files) == 0 {
+			t.Fatalf("RelatedFiles() = %#v, %v; want the slow answer", got, err)
 		}
 	})
 

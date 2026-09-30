@@ -743,6 +743,25 @@ S1, S3 and S4 were replayed with `gintrack spec impact` against a managed Pando 
   gave tier 2 `ok` (0 hits) and tier 3 `ok`, in about 0.4 s, twice in a row: S1 `1 ok 2; 2 ok 0; 3 ok 6`, S3 the same, S4 `1 ok 4; 2 ok 0; 3 ok 6`.
 - **Open gap:** the warm-up samples the first five source files in path order (`cmd/gintrack/*.go` here, main-package files that may have no coupling) and stores only a found graph, so on this repository it may never store; it also queues behind any probe a CLI run leaves running in Pando.
 
+### 10.9 Replay with the probe fixes (`GIT-US-0190`)
+
+Managed Pando again, a fresh instance directory and a fresh index (1,124 files), replaying S1, S3 and S4 with `gintrack spec impact`
+and nothing seeded by hand.
+
+- **Why nothing was ever stored (§10.8's open gap).** Three causes, not one. The Pando client's per-call deadline is 20 s, so the
+  184 s `code_related_files` always failed with a timeout; the warm-up asked while Pando was still indexing (a first attempt, before the wait for
+  the index, stored a false "no edges" 4 s after start); and it sampled `main`-package files. Below, the probe call has its own
+  10 min deadline, the warm-up waits for `indexingStatus: completed`, and the sample is ranked (here `internal/core/sprint.go` first).
+- **Serve start to a stored answer.** Index done at about 100 s, then the first sampled file was coupled: `graph-probe.json`
+  (`edges: true`) was written 286 s after `serve` started, with no seeding.
+- **Tier 2 from the store.** Every run answered `tiers: 1 ok 2; 2 ok 0; 3 ok 3` (S1, S3) and `1 ok 4; 2 ok 0; 3 ok 0` (S4), 0.41 to 0.43 s each, twice per patch.
+- **No pile-up.** With the answer removed, six runs in a row took 10.4 s each and all showed `still being checked`, but the marker kept
+  the first run's pid and start time: runs 2 to 6 started no probe. Pando's CPU time rose by 1,034 ticks (about one core) during one 10 s run
+  and by 0 in the 15 s after it exited, so Pando drops the call when the client goes away.
+- **Why the call is slow** (Pando, not changed): `code_related_files` visits every call edge of the project for each definition
+  symbol because `code_edges` has no index on `src_file`; on a copy of the instance's database the out-calls query took 52.5 s
+  and 0.146 s with `CREATE INDEX ... ON code_edges(project_id, src_file, edge_type)` (docs/21 §6.1).
+
 ## 11. Tier 3 cut by score (`GIT-US-0180`)
 
 §10.5 and §10.6 (2) found that tier 3 returned 8 candidates whatever the diff, and that scores of 0.014 to 0.016 order

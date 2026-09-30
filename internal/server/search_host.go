@@ -1,10 +1,12 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/digiogithub/git-in-track/internal/config"
 	"github.com/digiogithub/git-in-track/internal/impact"
@@ -114,6 +116,28 @@ type SemanticHost struct {
 	graphCache string
 	endpoint   string
 	projects   map[string]string
+
+	// probeMu guards probeCtx, the base context of the background graph
+	// checks; Close cancels it (GIT-US-0190).
+	probeMu     sync.Mutex
+	probeCtx    context.Context
+	probeCancel context.CancelFunc
+}
+
+// ProbeContext is the context the background tier 2 graph checks run under. A
+// short-lived host cancels it in Close, so a check still running when the
+// process exits does not stay queued in Pando. Nil-safe: a nil host answers
+// context.Background().
+func (h *SemanticHost) ProbeContext() context.Context {
+	if h == nil {
+		return context.Background()
+	}
+	h.probeMu.Lock()
+	defer h.probeMu.Unlock()
+	if h.probeCtx == nil {
+		h.probeCtx, h.probeCancel = context.WithCancel(context.Background())
+	}
+	return h.probeCtx
 }
 
 // CallGraph is the Pando client tier 2 of the impact query calls; nil when no
@@ -179,6 +203,12 @@ func (h *SemanticHost) Semantic() vault.SemanticSearcher {
 
 // Close ends the Pando session, if there is one.
 func (h *SemanticHost) Close() error {
+	if h != nil {
+		h.ProbeContext() // make sure there is one to cancel
+		h.probeMu.Lock()
+		h.probeCancel()
+		h.probeMu.Unlock()
+	}
 	if h != nil && h.discovered != nil {
 		for _, slot := range h.discovered.slots() {
 			slot.mu.Lock()
