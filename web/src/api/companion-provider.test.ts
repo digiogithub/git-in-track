@@ -1273,6 +1273,31 @@ describe('CompanionProvider tunnel surface', () => {
   });
 });
 
+describe('CompanionProvider — update notice (GIT-US-0195)', () => {
+  it('reads the version status from GET /version', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      response({
+        current: '2.2.0',
+        latest: '2.3.0',
+        updateAvailable: true,
+        checkedAt: '2026-09-30T10:00:00Z',
+        url: 'https://example.test/v2.3.0',
+      }),
+    );
+    const status = await provider(fetchImpl).getVersionStatus();
+
+    expect(lastCall(fetchImpl).url).toBe(`${BASE}/api/v1/version`);
+    expect(status).toEqual({
+      supported: true,
+      current: '2.2.0',
+      latest: '2.3.0',
+      updateAvailable: true,
+      checkedAt: '2026-09-30T10:00:00Z',
+      url: 'https://example.test/v2.3.0',
+    });
+  });
+});
+
 describe('CompanionProvider — sync (GIT-US-0021)', () => {
   const syncSettingsBody = {
     pullStrategy: 'rebase',

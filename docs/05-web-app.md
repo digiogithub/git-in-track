@@ -865,6 +865,18 @@ also lists commands ("Sync all", "New story", "Toggle theme").
 
 ---
 
+### 3.2 The update notice (as built, GIT-US-0195)
+
+`AppShell` renders a thin strip under the mode banners when the provider reports a newer
+gintrack release: "gintrack X is available", the command `gintrack update` and a link to
+the release notes. `DataProvider.getVersionStatus()` backs it: `CompanionProvider` reads
+`GET /api/v1/version` (docs/07 §5.5), `BrowserProvider` answers `supported: false` — there
+is no binary to update — and the strip stays hidden, and `FakeProvider` takes a `version`
+override. The strip is dismissible; the dismissed version is kept in
+`localStorage` under `gintrack.update.dismissedVersion`, so the next release is announced
+again. Every storage access is wrapped in `try/catch`: with storage blocked the notice
+still closes for the session and returns on the next load.
+
 ## 4. The data provider boundary
 
 `src/data/provider.ts` defines one interface. Both implementations satisfy it and

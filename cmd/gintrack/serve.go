@@ -201,6 +201,9 @@ func runServe(cmd *cobra.Command, build buildInfo, flags *serveFlags) error {
 		Search: searchSettings(cfg),
 		// Where the managed Pando instances keep `pando/<key>/` (ADR-039).
 		CacheDir: cfg.CacheDir(res.Path),
+		// GET /api/v1/version: a cached, bounded lookup made only when the
+		// web UI asks, so serving never waits on GitHub (GIT-US-0195).
+		Update: newUpdateChecker(build, cfg.CacheDir(res.Path)),
 		// The public tunnel. Only the startup path may turn it on implicitly;
 		// a toggle made in the web UI is never written back to the file.
 		Tunnel: config.Tunnel{Enabled: tunnelOn, Provider: cfg.Server.Tunnel.Provider},

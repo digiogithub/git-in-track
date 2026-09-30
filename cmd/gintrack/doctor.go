@@ -18,6 +18,7 @@ import (
 	"github.com/digiogithub/git-in-track/internal/config"
 	"github.com/digiogithub/git-in-track/internal/core"
 	"github.com/digiogithub/git-in-track/internal/gitops"
+	"github.com/digiogithub/git-in-track/internal/selfupdate"
 )
 
 // The marks doctor prints in front of a line.
@@ -25,7 +26,12 @@ const (
 	markOK      = "✔"
 	markWarning = "⚠"
 	markError   = "✖"
+	markInfo    = "ℹ"
 )
+
+// severityInfo marks a finding that needs no action to stay healthy. It is
+// counted as neither an error nor a warning.
+const severityInfo = "info"
 
 // doctorFlags mirrors the flags of docs/07 section 4.8.
 type doctorFlags struct {
@@ -74,7 +80,7 @@ type doctorPayload struct {
 }
 
 // newDoctorCommand runs the health check.
-func newDoctorCommand(flags *globalFlags) *cobra.Command {
+func newDoctorCommand(flags *globalFlags, build buildInfo) *cobra.Command {
 	local := &doctorFlags{}
 
 	cmd := &cobra.Command{
@@ -90,7 +96,7 @@ separate and destructive, because ids are public identifiers: it prints the full
 plan and asks before touching anything.`,
 		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runDoctor(cmd, flags, local)
+			return runDoctor(cmd, flags, local, build)
 		},
 	}
 
@@ -105,15 +111,17 @@ plan and asks before touching anything.`,
 }
 
 // runDoctor checks everything and reports it.
-func runDoctor(cmd *cobra.Command, flags *globalFlags, local *doctorFlags) error {
+func runDoctor(cmd *cobra.Command, flags *globalFlags, local *doctorFlags, build buildInfo) error {
 	res, err := flags.resolve()
 	if err != nil {
 		return err
 	}
 	payload := doctorPayload{Config: append(checkConfig(res), checkGit(res.Config)...)}
 	payload.Config = append(payload.Config, checkJujutsu(res.Config)...)
-	payload.Config = append(payload.Config, checkPando(res.Config, exec.LookPath))
-	payload.Config = append(payload.Config, checkRunningServes(res.Config.CacheDir(res.Path), cmd.Root().Version)...)
+	payload.Config = append(payload.Config,
+		checkPando(res.Config, exec.LookPath),
+		checkUpdate(cmd.Context(), newUpdateChecker(build, updateCacheDir(res))))
+	payload.Config = append(payload.Config, checkRunningServes(res.Config.CacheDir(res.Path), build.Version)...)
 
 	repos := res.Config.WorkspaceRepos(res.Workspace)
 	if local.repo != "" {
@@ -193,6 +201,27 @@ func checkPando(cfg *config.Config, lookPath func(string) (string, error)) check
 		message += " [" + r.Binary + "]"
 	}
 	return checkResult{Scope: "pando", Severity: "ok", Message: message}
+}
+
+// checkUpdate reports whether a newer gintrack is published. It is never worse
+// than a warning: being offline or rate limited is not a fault of the
+// installation, and a development build is not checked at all.
+func checkUpdate(ctx context.Context, checker *selfupdate.Checker) checkResult {
+	st := checker.Check(ctx)
+	switch {
+	case st.NotApplicable != "":
+		return checkResult{Scope: "update", Severity: "ok", Message: "not checked: " + st.NotApplicable}
+	case st.Err != "":
+		return checkResult{Scope: "update", Severity: string(core.SeverityWarning),
+			Message: "could not check for a newer gintrack: " + st.Err}
+	case st.UpdateAvailable:
+		return checkResult{Scope: "update", Severity: severityInfo,
+			Message: fmt.Sprintf("gintrack %s is available (running %s)", st.Latest, strings.TrimPrefix(st.Current, "v")),
+			Fix:     "run `gintrack update`"}
+	default:
+		return checkResult{Scope: "update", Severity: "ok",
+			Message: fmt.Sprintf("gintrack %s is up to date", strings.TrimPrefix(st.Current, "v"))}
+	}
 }
 
 // checkJujutsu reports the jj binary when any registered repository is managed
@@ -592,6 +621,8 @@ func mark(severity string) string {
 		return markError
 	case string(core.SeverityWarning):
 		return markWarning
+	case severityInfo:
+		return markInfo
 	default:
 		return markOK
 	}

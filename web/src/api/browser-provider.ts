@@ -99,6 +99,7 @@ import type {
   SyncSettingsPatch,
   SyncStatus,
   TunnelStatus,
+  VersionStatus,
   YouTrackFieldList,
   YouTrackImportPreviewResult,
   YouTrackImportRun,
@@ -1350,6 +1351,17 @@ export class BrowserProvider implements DataProvider {
    * workspace never leaves this machine. `supported: false` makes the settings
    * card hide itself rather than offer a switch that could do nothing.
    */
+  getVersionStatus(): Promise<VersionStatus> {
+    return Promise.resolve({
+      supported: false,
+      current: '',
+      latest: '',
+      updateAvailable: false,
+      checkedAt: null,
+      url: '',
+    });
+  }
+
   getTunnel(): Promise<TunnelStatus> {
     return Promise.resolve({
       supported: false,

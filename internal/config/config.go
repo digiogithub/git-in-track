@@ -90,6 +90,9 @@ type Config struct {
 	Index            Index       `json:"index"                      yaml:"index"`
 	MCP              MCP         `json:"mcp"                        yaml:"mcp"`
 	Log              Log         `json:"log"                        yaml:"log"`
+	// Update configures the notice about newer gintrack releases
+	// (GIT-EP-0032, ADR-040).
+	Update Update `json:"update" yaml:"update"`
 	// Agent is the companion agent surface: the proxy to a local Pando AG-UI
 	// adapter served at /api/v1/agent (GIT-US-0049).
 	Agent Agent `json:"agent" yaml:"agent"`
@@ -519,6 +522,15 @@ type SearchPando struct {
 func (s SearchPando) String() string {
 	return "SearchPando{mcpUrl: " + s.MCPURL + ", restUrl: " + s.RESTURL +
 		", mcpToken: " + redacted(s.MCPToken) + ", restToken: " + redacted(s.RESTToken) + "}"
+}
+
+// Update is the `update` section.
+type Update struct {
+	// CheckOnStart makes interactive commands print one stderr line when a
+	// newer release exists, from a cached lookup refreshed in the background.
+	// It is off by default: nothing contacts GitHub unless the user asks
+	// (`gintrack doctor`, `gintrack update`, the web UI notice) or opts in.
+	CheckOnStart bool `json:"checkOnStart" yaml:"checkOnStart"`
 }
 
 // Log is the logging section.
