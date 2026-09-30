@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io/fs"
 	"os"
@@ -62,6 +64,26 @@ func (s fileGraphStore) Store(edges bool, expires time.Time) {
 	cerr := tmp.Close()
 	if werr != nil || cerr != nil || os.Rename(tmp.Name(), s.path) != nil {
 		_ = os.Remove(tmp.Name())
+	}
+}
+
+// externalGraphStore is the store of an external (unmanaged) Pando. There is no
+// instance generation to key the answer by, so the key is the endpoint URL and
+// the project id, and only the record's expiry bounds it (GIT-US-0188). Each key
+// has its own file under <cacheDir>/pando/external; the endpoint is hashed
+// so a URL with credentials never reaches the disk. Nil when the directory
+// cannot be created.
+func externalGraphStore(cacheDir, endpoint, project string) impact.GraphStore {
+	dir := filepath.Join(cacheDir, "pando", "external")
+	if os.MkdirAll(dir, 0o755) != nil {
+		return nil
+	}
+	sum := sha256.Sum256([]byte(endpoint + "\x00" + project))
+	name := hex.EncodeToString(sum[:8])
+	return fileGraphStore{
+		path:       filepath.Join(dir, "graph-probe-"+name+".json"),
+		generation: hex.EncodeToString(sum[:]),
+		project:    project,
 	}
 }
 

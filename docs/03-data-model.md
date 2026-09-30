@@ -3121,7 +3121,10 @@ answers `unavailable`.
   the repository), keyed by project and the instance's pid and last state change, so a restart
   drops it; a missing or corrupt file is ignored and writes are atomic. `gintrack serve` warms it
   once the code project is registered (a sample of source files; only a found graph is stored),
-  so the first query of a short-lived `gintrack mcp` finds a known answer.
+  so the first query of a short-lived `gintrack mcp` finds a known answer. `gintrack spec impact`
+  reads the same store, and an external Pando (`search.pando.mcpUrl`) is persisted in
+  `<cacheDir>/pando/external/graph-probe-<hash>.json`, keyed by a hash of the endpoint URL and the project id and
+  bounded by the same TTLs only (`GIT-US-0188`).
 - **R-IMP-4 Tier 3, semantic.** One semantic search of kind `requirement` (docs/21 §2.1), which
   searches spec files only: Pando's `path_prefix` filter on `.pmngr/specs/`, asked again once
   without it when nothing is indexed under that prefix, and no code search (`GIT-US-0165`).

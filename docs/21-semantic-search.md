@@ -503,7 +503,10 @@ does not, and again after a managed restart), so a slow `code_related_files` nev
 tier past its budget: a probe still running gives `unavailable` with `the Pando call graph is
 still being checked … ask again in a moment` (`GIT-US-0179`). In managed mode the answer is also persisted under the instance directory
 (`graph-probe.json`, keyed by the instance's pid and start time) and `gintrack serve` warms it
-after registering the code project, so a fresh `gintrack mcp` process reads a known answer. To fix it, turn the setting on and
+after registering the code project, so a fresh `gintrack mcp` process reads a known answer. `gintrack spec impact` and `gintrack mcp` read the same store (`GIT-US-0188`), and an
+external `search.pando.mcpUrl` is persisted too: no instance generation exists, so the answer is keyed by the endpoint
+URL and the project id and bounded by its expiry alone (`<cacheDir>/pando/external/graph-probe-<hash>.json`, the endpoint hashed, never the token), so a
+short-lived CLI, CI or hook run on a slow Pando reuses the last answer. To fix it, turn the setting on and
 re-index the project.
 
 The code project tier 2 asks about is **derived from the repository root**, never from

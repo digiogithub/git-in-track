@@ -732,3 +732,13 @@ Managed mode worked end to end for this benchmark:
 - The difference from the hand setup of §9.1 that matters: `KBWatch = true` (the hand setup had it off). The knowledge base
   therefore follows the replayed working tree, which is why `replay.sh` waits for Pando to settle. The code index does not
   follow it.
+
+### 10.8 Replay with the persisted tier 2 graph probe (`GIT-US-0188`)
+
+S1, S3 and S4 were replayed with `gintrack spec impact` against a managed Pando (1,124 files, indexed in about 100 s).
+
+- **Without a stored answer**, tier 2 stayed `unavailable` (`the Pando call graph is still being checked`) on all three, at about 20 s per run:
+  `code_related_files` takes about 184 s on this project, and a CLI run exits after its budget, so its probe never completes.
+- **With a stored answer** (`graph-probe.json` in the instance directory, hand-seeded because the serve warm-up had not stored one after 45 min), the same runs
+  gave tier 2 `ok` (0 hits) and tier 3 `ok`, in about 0.4 s, twice in a row: S1 `1 ok 2; 2 ok 0; 3 ok 6`, S3 the same, S4 `1 ok 4; 2 ok 0; 3 ok 6`.
+- **Open gap:** the warm-up samples the first five source files in path order (`cmd/gintrack/*.go` here, main-package files that may have no coupling) and stores only a found graph, so on this repository it may never store; it also queues behind any probe a CLI run leaves running in Pando.
