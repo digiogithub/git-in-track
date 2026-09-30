@@ -184,8 +184,10 @@ func TestSpecImpactTier3Query(t *testing.T) {
 		t.Fatalf("tier 3 = %q, want ok (%+v)", s, got.Report.Tiers)
 	}
 	calls := fake.kbSearches()
-	if len(calls) != 2 {
-		t.Fatalf("kb_search_documents calls = %v, want the prefixed one and its unfiltered retry", calls)
+	// The long query and the name-word query (GIT-US-0180), each prefixed and
+	// then retried unfiltered.
+	if len(calls) != 4 {
+		t.Fatalf("kb_search_documents calls = %v, want the prefixed one and its unfiltered retry, twice", calls)
 	}
 	if p, _ := calls[0]["path_prefix"].(string); p != ".pmngr/specs/" {
 		t.Errorf("first call path_prefix = %q, want .pmngr/specs/", p)
@@ -195,6 +197,9 @@ func TestSpecImpactTier3Query(t *testing.T) {
 	}
 	if q, _ := calls[0]["query"].(string); q != "Story ACME-US-0001\nnext id" {
 		t.Errorf("query = %q, want the story title and the changed declaration in words", q)
+	}
+	if q, _ := calls[2]["query"].(string); q != "next id" {
+		t.Errorf("name query = %q, want the changed declaration in words alone", q)
 	}
 	if n := fake.called("code_hybrid_search"); n != 0 {
 		t.Errorf("code_hybrid_search called %d times for a requirement query", n)

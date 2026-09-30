@@ -5,7 +5,7 @@ updated: 2026-09-30
 author: claude
 status: measured
 item: GIT-US-0137
-rerun: GIT-US-0161, GIT-US-0170
+rerun: GIT-US-0161, GIT-US-0170, GIT-US-0180
 ---
 
 # Spec impact benchmark — the impact report against reading the specs
@@ -742,3 +742,54 @@ S1, S3 and S4 were replayed with `gintrack spec impact` against a managed Pando 
 - **With a stored answer** (`graph-probe.json` in the instance directory, hand-seeded because the serve warm-up had not stored one after 45 min), the same runs
   gave tier 2 `ok` (0 hits) and tier 3 `ok`, in about 0.4 s, twice in a row: S1 `1 ok 2; 2 ok 0; 3 ok 6`, S3 the same, S4 `1 ok 4; 2 ok 0; 3 ok 6`.
 - **Open gap:** the warm-up samples the first five source files in path order (`cmd/gintrack/*.go` here, main-package files that may have no coupling) and stores only a found graph, so on this repository it may never store; it also queues behind any probe a CLI run leaves running in Pando.
+
+## 11. Tier 3 cut by score (`GIT-US-0180`)
+
+§10.5 and §10.6 (2) found that tier 3 returned 8 candidates whatever the diff, and that scores of 0.014 to 0.016 order
+nothing. `GIT-US-0180` changes tier 3 (docs/03 R-IMP-4, docs/21 §6.1) and the replay ran again, on the same base, the
+same 14 diffs, the same managed Pando (v1.1.2-0.20260929221650-d4cc8e9f8f6a, 1,124 files indexed) and a fresh throwaway
+configuration, once with the binary from `main` (`0e46786e`) and once with the change.
+
+**The change.**
+
+- One short query per changed declaration is added to the long one: its name in words (`next number`), only names of two
+  words or more, at most 6. Pando's full-text leg can match these (§10.4). The best score per requirement over the
+  queries wins.
+- A candidate is listed only when its score is at least **0.017** (a single leg gives at most 0.0164, so both legs must
+  have matched), at least **80 %** of the best candidate's score, and within the first **5** (or the query's `limit`).
+  A flat single-leg ranking lists none.
+
+**Results** (12 PRs and 2 controls, tiers 1, 2 and 3 with tier 3 alone in the last two rows):
+
+| Measure | Before | After |
+|---|---|---|
+| Tier-3 candidates no other tier reached (behaviour / evidence / unrelated) | 83 (2 / 0 / 81) | 16 (1 / 0 / 15) |
+| Report with no hit, default tiers (C1, C2, P6) | 470, 467, 473 tokens | 70, 69, 70 tokens |
+| Median report, default tiers | 707 tokens | 405 tokens |
+| Worst report, default tiers (P4) | 1,366 tokens | 1,309 tokens |
+| Median report, tier 3 alone | 477 tokens | 253 tokens |
+| Cumulative recall over the 21 behaviour requirements | 19 of 21 | **18 of 21** |
+| Byte-identical pairs of runs | 56 of 56 | 56 of 56 |
+| Median latency, default tiers / tier 3 alone | 0.87 s / 0.32 s | 0.79 s / 0.41 s |
+
+Precision of the candidates that remain is 1 of 16 (6 %), against 2 of 83 (2 %), and tier 3 alone lists 9 behaviour hits
+against 14 before, over 33 hits against 112. A name query that both legs match lands at 0.025 to 0.033 for the
+requirements that share its words.
+
+**Recall is one requirement lower, and the acceptance criterion (not below 19 of 21) is not met.** The two tier-3 finds of
+§10.2 were both single-leg candidates: P5 `SP-0004.R6` (score 0.014, rank 8 of 8) and S3 `SP-0004.R5` (0.015, rank 6
+of 8). They sit inside a ranking of 0.014 to 0.016 in which the right answer is not distinguishable from 7 wrong
+ones, so no score, gap or count threshold keeps them without keeping the other candidates: any cut that lists them lists
+the flat ranking too. The name query gains one requirement the old tier never listed, S3 `SP-0004.R4` (`list items`,
+0.028), which is why the loss is one and not two. `SP-0004.R6` says "A projection keeps the identity and the rev" and
+`SP-0004.R5` says "The list_items cursor is bound to its sort": nothing in the changed declaration's name (`registerTools`,
+`listItems`) matches their words, so only the vector leg can find them.
+
+**The trade-off, stated.** The cut trades one requirement of recall (18 of 21 rather than 19) for a tier that no longer adds
+400 tokens of unrelated candidates to a report with nothing in it, and cuts 83 candidates to 16. Two ways to have both
+were not taken: raising the fetch depth of the vector leg does not help (the ranking is flat, not short), and listing
+the top single-leg candidate whenever the diff has no two-leg hit would bring back a candidate that was right 2 times in 83 and
+restore the tokens for the controls. A question a person can answer better than a threshold, and the reason the two are kept as
+`candidate`s rather than hits, is whether one more recall point is worth a report with no hit going back to 470 tokens.
+
+The replay kit's `summarise.py` now reads a report with no `hits` key (tier 3 answered and nothing passed the cut).
