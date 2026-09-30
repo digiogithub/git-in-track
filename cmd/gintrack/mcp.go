@@ -236,7 +236,7 @@ func installMCPSemantic(cfg *config.Config, configPath string, space *corevault.
 	if res := config.ResolvePandoMode(cfg.Search.Pando, exec.LookPath); res.Mode == config.PandoModeManaged {
 		return server.InstallDiscoveredSemanticSearch(cfg.CacheDir(configPath), space, repos, log)
 	}
-	return server.InstallSemanticSearch(searchSettings(cfg).Pando, space, repos, log)
+	return server.InstallSemanticSearch(searchSettings(cfg).Pando, cfg.CacheDir(configPath), space, repos, log)
 }
 
 // writeMode renders the posture on the startup line.

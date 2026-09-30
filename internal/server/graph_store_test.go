@@ -3,9 +3,11 @@ package server
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/digiogithub/git-in-track/internal/impact"
 	"github.com/digiogithub/git-in-track/internal/pando/supervisor"
 )
 
@@ -99,4 +101,45 @@ func TestGenerationOf(t *testing.T) {
 	if a == b || a == c {
 		t.Errorf("generations %q %q %q must differ across a restart", a, b, c)
 	}
+}
+
+// Verifies: GIT-US-0188
+func TestExternalGraphStore(t *testing.T) {
+	dir := t.TempDir()
+	exp := time.Now().Add(time.Minute).Truncate(time.Second)
+	a := externalGraphStore(dir, "http://127.0.0.1:8080/mcp", "acme")
+	a.Store(true, exp)
+
+	t.Run("the same endpoint and project read the stored answer", func(t *testing.T) {
+		edges, got, ok := externalGraphStore(dir, "http://127.0.0.1:8080/mcp", "acme").Load()
+		if !ok || !edges || !got.Equal(exp) {
+			t.Errorf("Load = (%v, %v, %v)", edges, got, ok)
+		}
+	})
+	t.Run("another endpoint or project has its own entry", func(t *testing.T) {
+		for _, s := range []impact.GraphStore{
+			externalGraphStore(dir, "http://127.0.0.1:9090/mcp", "acme"),
+			externalGraphStore(dir, "http://127.0.0.1:8080/mcp", "other"),
+		} {
+			if _, _, ok := s.Load(); ok {
+				t.Error("an answer of another key was reused")
+			}
+		}
+		externalGraphStore(dir, "http://127.0.0.1:9090/mcp", "acme").Store(false, exp)
+		if edges, _, ok := a.Load(); !ok || !edges {
+			t.Error("another key's write clobbered the first entry")
+		}
+		if m, _ := filepath.Glob(filepath.Join(dir, "pando", "external", "*.json")); len(m) != 2 {
+			t.Errorf("files = %v, want two", m)
+		}
+	})
+	t.Run("the endpoint is not written in clear", func(t *testing.T) {
+		m, _ := filepath.Glob(filepath.Join(dir, "pando", "external", "*.json"))
+		for _, f := range m {
+			b, _ := os.ReadFile(f)
+			if strings.Contains(string(b), "127.0.0.1") {
+				t.Errorf("%s holds the endpoint URL", f)
+			}
+		}
+	})
 }

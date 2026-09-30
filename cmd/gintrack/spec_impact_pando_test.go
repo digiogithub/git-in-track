@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/digiogithub/git-in-track/internal/config"
 	"github.com/digiogithub/git-in-track/internal/core"
 	"github.com/digiogithub/git-in-track/internal/impact"
 )
@@ -202,4 +204,103 @@ func TestSpecImpactTier3Query(t *testing.T) {
 	if n := fake.called("code_hybrid_search"); n != 0 {
 		t.Errorf("code_hybrid_search called %d times for a requirement query", n)
 	}
+}
+
+// externalGraphFiles lists the persisted graph checks of external Pando
+// endpoints under the configuration's cache directory.
+func externalGraphFiles(t *testing.T, configPath string) []string {
+	t.Helper()
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatalf("load the configuration: %v", err)
+	}
+	files, err := filepath.Glob(filepath.Join(cfg.CacheDir(configPath), "pando", "external", "graph-probe-*.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return files
+}
+
+// TestSpecImpactPersistsGraphProbe is GIT-US-0188: a short-lived
+// `gintrack spec impact` run against an external Pando reuses the graph check
+// an earlier run persisted, so it does not pay for the slow probe again.
+func TestSpecImpactPersistsGraphProbe(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	run := func(h *harness) specImpactPayload {
+		return decode[specImpactPayload](t, h.mustRun("spec", "impact", "--since", "HEAD", "--json"))
+	}
+	setup := func(t *testing.T) (*harness, *fakeSemanticPando) {
+		h := newHarness(t)
+		touchNextID(t, gitSpecRepo(t, h))
+		fake := newFakeSemanticPando(t)
+		fake.usePando(t, h.Config)
+		return h, fake
+	}
+
+	// Verifies: GIT-US-0188
+	t.Run("a stored answer is reused by the next run", func(t *testing.T) {
+		h, fake := setup(t)
+		first := run(h)
+		if s := tierStatus(first.Report.Tiers, core.ImpactTierTransitive); s != core.ImpactTierOK {
+			t.Fatalf("first run tier 2 = %q, want ok", s)
+		}
+		probes := fake.called("code_related_files")
+		if probes == 0 {
+			t.Fatal("the first run never probed the graph")
+		}
+		if len(externalGraphFiles(t, h.Config)) != 1 {
+			t.Fatalf("stored files = %v, want one", externalGraphFiles(t, h.Config))
+		}
+		second := run(h)
+		if s := tierStatus(second.Report.Tiers, core.ImpactTierTransitive); s != core.ImpactTierOK {
+			t.Errorf("second run tier 2 = %q, want ok", s)
+		}
+		if got := fake.called("code_related_files"); got != probes {
+			t.Errorf("the second run probed again: %d calls, want %d", got, probes)
+		}
+	})
+
+	t.Run("an expired answer is probed again", func(t *testing.T) {
+		h, fake := setup(t)
+		run(h)
+		probes := fake.called("code_related_files")
+		files := externalGraphFiles(t, h.Config)
+		if len(files) != 1 {
+			t.Fatalf("stored files = %v, want one", files)
+		}
+		b, err := os.ReadFile(files[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		var rec map[string]any
+		if err := json.Unmarshal(b, &rec); err != nil {
+			t.Fatal(err)
+		}
+		rec["expires"] = time.Now().Add(-time.Minute).UTC().Format(time.RFC3339Nano)
+		b, _ = json.Marshal(rec)
+		if err := os.WriteFile(files[0], b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		run(h)
+		if got := fake.called("code_related_files"); got <= probes {
+			t.Errorf("an expired answer was reused: %d calls, still %d", got, probes)
+		}
+	})
+
+	t.Run("another endpoint does not reuse the answer", func(t *testing.T) {
+		h, fake := setup(t)
+		run(h)
+		other := newFakeSemanticPando(t)
+		other.usePando(t, h.Config)
+		run(h)
+		if other.called("code_related_files") == 0 {
+			t.Error("a different endpoint reused the answer of the first")
+		}
+		if got := len(externalGraphFiles(t, h.Config)); got != 2 {
+			t.Errorf("stored files = %d, want one per endpoint", got)
+		}
+		_ = fake
+	})
 }

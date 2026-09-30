@@ -128,6 +128,12 @@ because a commit list cannot express them.
 
 ### Fixed
 
+- **`gintrack spec impact` reuses the persisted tier 2 graph probe** (`GIT-US-0188`, docs/21 §6.1,
+  docs/03 R-IMP-3, docs/07 §4.20). The CLI (and `gintrack mcp`) read the managed instance's store,
+  and an external `search.pando.mcpUrl` now has one too: `<cacheDir>/pando/external/graph-probe-<hash>.json`,
+  keyed by the endpoint URL (hashed) and the project id, expiring by TTL alone. A short-lived CLI, CI
+  or hook run on a slow Pando no longer answers "still being checked" while an earlier run knew.
+
 - **The tier 2 graph probe no longer blocks impact** (`GIT-US-0179`, docs/03 R-IMP-3, docs/21
   §6.1). `code_related_files` took 194 s on the benchmark repository, so tier 2 burned its whole
   budget on every query. The check now runs once per Pando instance in the background and its
