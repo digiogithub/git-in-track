@@ -148,6 +148,10 @@ type Options struct {
 	// CacheDir is where the managed Pando instances keep their directories,
 	// `<CacheDir>/pando/<key>/` (ADR-039). Empty means no instance can run.
 	CacheDir string
+	// OnListen, when set, is called once with the resolved listen address as
+	// soon as the listener is bound, before any request is served. `gintrack
+	// serve` uses it to record its runtime file (GIT-US-0197).
+	OnListen func(addr string)
 
 	// The managed-Pando seams. Production leaves them nil; a test replaces them
 	// so that no process is spawned.
@@ -380,6 +384,9 @@ func (s *Server) Start(ctx context.Context) error {
 	s.mu.Lock()
 	s.addr = listener.Addr().String()
 	s.mu.Unlock()
+	if s.opts.OnListen != nil {
+		s.opts.OnListen(listener.Addr().String())
+	}
 
 	s.startWatch(ctx)
 	defer s.stopWatch()

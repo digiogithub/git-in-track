@@ -1208,6 +1208,10 @@ $ gintrack doctor
 2 errors, 2 warnings
 ```
 
+The environment section also lists each live `gintrack serve` (from `<cacheDir>/serve/<port>.json`,
+§4.24) whose version differs from this binary as a `serve` warning, fix `restart gintrack serve`;
+a serve at the same version is not mentioned.
+
 ### 4.9 `gintrack mcp`
 
 Runs the Model Context Protocol server over stdin and stdout, so that an agent runtime can
@@ -2333,11 +2337,21 @@ install directory is reported with a hint to re-run with the privileges that ins
 `action` is `up_to_date`, `available`, `updated`, `refused` or `failed`; `warning`, `oldPath` and
 `running` appear only when set.
 
-After a successful update it looks for processes still running the old binary, from the supervisor
-state files under the cache directory (`<cacheDir>/pando/*/state.json`, §4.23): the `gintrack serve`
-that supervises a managed Pando and that Pando. It prints them and tells you to restart; **it never
-restarts anything**. A `gintrack serve` without a managed Pando leaves no state file and is not
-detected.
+After a successful update it looks for processes still running the old binary and lists them in
+`running` (and in the human output). **It never restarts anything.** Two sources are read, both under
+the cache directory:
+
+- the runtime file every `gintrack serve` writes, `<cacheDir>/serve/<port>.json` (GIT-US-0197):
+  `{pid, port, bind, version, startedAt, config}`. It is written atomically once the listener is
+  bound, removed on a clean shutdown, and one file exists per port, so several serves are all
+  listed with their version. A file whose pid is no longer alive (a crash or a kill) is stale: it is
+  ignored and deleted. A serve already at the new version is not listed. This finds a serve that
+  has no managed Pando;
+- the supervisor state files of a managed Pando (`<cacheDir>/pando/*/state.json`, §4.23): the serve
+  that supervises it and the Pando itself.
+
+`gintrack doctor` reports a live serve whose version differs from the running binary as a
+`serve` warning with the fix "restart gintrack serve" (§4.8).
 
 ## 5. Local REST API
 
@@ -3503,7 +3517,7 @@ Both answer the same document:
 Unlike the tunnel above, **this toggle is written back to the configuration
 file**, and deliberately so: the whole point of the setting is that an agent
 runtime spawns a bare `gintrack mcp`, which reads `mcp.allowWrite` at startup
-(§4.9). A switch that did not outlive the process would leave every agent
+(§4.8). A switch that did not outlive the process would leave every agent
 read-only, which is the problem it exists to solve. The direction of the risk is
 also the other way around: the tunnel publishes the workspace to the internet,
 while this grants an agent the user already runs the same edits the user can make

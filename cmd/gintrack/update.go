@@ -377,6 +377,15 @@ func (u *updater) running() []string {
 	states, _ := filepath.Glob(filepath.Join(cache, "pando", "*", "state.json"))
 	var out []string
 	seen := map[int]bool{}
+	// Serves that left a runtime file (GIT-US-0197): this covers a serve with
+	// no managed Pando too. Each one is listed with the version it runs.
+	for _, sv := range liveServes(cache) {
+		if strings.TrimPrefix(sv.Version, "v") == u.res.Latest {
+			continue
+		}
+		seen[sv.PID] = true
+		out = append(out, sv.describe()+" runs the old binary; stop it and start `gintrack serve` again")
+	}
 	for _, sf := range states {
 		st, live := supervisor.Inspect(filepath.Dir(sf))
 		if live != supervisor.LiveRunning || st.State == supervisor.StateStopped {

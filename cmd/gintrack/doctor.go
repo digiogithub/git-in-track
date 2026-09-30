@@ -113,6 +113,7 @@ func runDoctor(cmd *cobra.Command, flags *globalFlags, local *doctorFlags) error
 	payload := doctorPayload{Config: append(checkConfig(res), checkGit(res.Config)...)}
 	payload.Config = append(payload.Config, checkJujutsu(res.Config)...)
 	payload.Config = append(payload.Config, checkPando(res.Config, exec.LookPath))
+	payload.Config = append(payload.Config, checkRunningServes(res.Config.CacheDir(res.Path), cmd.Root().Version)...)
 
 	repos := res.Config.WorkspaceRepos(res.Workspace)
 	if local.repo != "" {

@@ -209,6 +209,8 @@ func runServe(cmd *cobra.Command, build buildInfo, flags *serveFlags) error {
 		// out.
 		SyncEngine: engine,
 	}
+	rt := &serveRuntime{dir: serveRuntimeDir(opts.CacheDir), version: build.Version, bind: opts.Bind, config: res.Path, log: slog.Default()}
+	opts.OnListen = rt.record
 	srv, err := server.New(opts)
 	if err != nil {
 		return fmt.Errorf("start the server: %w", err)
@@ -226,6 +228,7 @@ func runServe(cmd *cobra.Command, build buildInfo, flags *serveFlags) error {
 		go announceTunnel(ctx, cmd, srv, token)
 	}
 
+	defer rt.remove()
 	if err := srv.Start(ctx); err != nil {
 		return fmt.Errorf("serve: %w", err)
 	}
