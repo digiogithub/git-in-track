@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/digiogithub/git-in-track/internal/config"
 )
 
 // specRepo copies the trace graph fixture of internal/trace (a backlog with
@@ -145,4 +147,29 @@ func TestSpecIngest(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestRegisteredDocsFolders(t *testing.T) {
+	root := t.TempDir()
+	cfg := &config.Config{Repos: []config.Repo{
+		{ID: "acme", Path: root, DocsFolder: ".kb", DocsFolders: []string{".kb", "handbook"}},
+		{ID: "api", Path: filepath.Join(root, "apps", "api"), DocsFolder: "docs"},
+		{ID: "other", Path: filepath.Join(filepath.Dir(root), "other"), DocsFolder: "docs"},
+	}}
+	for _, tc := range []struct {
+		name string
+		cfg  *config.Config
+		root string
+		want string
+	}{
+		{"no configuration", nil, root, ""},
+		{"exact and nested registrations", cfg, root, ".kb,handbook,apps/api/docs"},
+		{"an unregistered repository", cfg, filepath.Join(filepath.Dir(root), "elsewhere"), ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := strings.Join(registeredDocsFolders(tc.cfg, tc.root), ","); got != tc.want {
+				t.Errorf("folders = %q, want %q", got, tc.want)
+			}
+		})
+	}
 }

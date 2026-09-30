@@ -4,11 +4,14 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/digiogithub/git-in-track/internal/config"
 	"github.com/digiogithub/git-in-track/internal/gitops"
 	"github.com/digiogithub/git-in-track/internal/trace"
 )
@@ -112,12 +115,14 @@ func runSpecIngest(cmd *cobra.Command, flags *globalFlags, local *specIngestFlag
 		return failf(exitNotFound, "repository %s is not a directory", local.repo)
 	}
 	cachePath := local.cache
-	if cachePath == "" {
-		res, err := flags.resolve()
-		if err != nil {
-			return err
+	var docsFolders []string
+	if res, err := flags.resolve(); err == nil {
+		if cachePath == "" {
+			cachePath = trace.DefaultResultCachePath(res.Config.CacheDir(res.Path), root)
 		}
-		cachePath = trace.DefaultResultCachePath(res.Config.CacheDir(res.Path), root)
+		docsFolders = registeredDocsFolders(res.Config, root)
+	} else if cachePath == "" {
+		return err
 	}
 	commit := local.commit
 	if commit == "" {
@@ -151,11 +156,18 @@ func runSpecIngest(cmd *cobra.Command, flags *globalFlags, local *specIngestFlag
 	if err != nil {
 		return fmt.Errorf("read the results: %w", err)
 	}
-	fsys, ix, g, err := trace.RepositoryTrace(cmd.Context(), root)
+	fsys, ix, g, err := trace.RepositoryTrace(cmd.Context(), root, docsFolders)
 	if err != nil {
 		return fmt.Errorf("build the requirement trace of %s: %w", root, err)
 	}
-	if g != nil {
+	if g == nil {
+		// The results are recorded, but nothing maps them to a requirement:
+		// say so instead of printing a report that looks like no test is
+		// linked (GIT-US-0198).
+		flags.printer(cmd, local.asJSON).Warnf(
+			"warning: no project backlog found under %s; is the docs folder declared? (gintrack add %s --docs <folder>)\n",
+			root, root)
+	} else {
 		for _, rr := range trace.MatchRequirements(g, all) {
 			if len(rr.Tests) > 0 {
 				payload.Requirements = append(payload.Requirements, rr)
@@ -168,6 +180,46 @@ func runSpecIngest(cmd *cobra.Command, flags *globalFlags, local *specIngestFlag
 		}
 	}
 	return renderSpecIngest(cmd, flags, local, payload)
+}
+
+// registeredDocsFolders returns the documentation folders the registrations
+// of the repository at root declare, root-relative, nil when none matches. A
+// registration of a folder inside root (a monorepo package registered on its
+// own) contributes its folders under that folder. They are what lets the trace
+// reach a backlog the bounded discovery rule skips, such as one under a hidden
+// .kb (ADR-018).
+func registeredDocsFolders(cfg *config.Config, root string) []string {
+	if cfg == nil {
+		return nil
+	}
+	base := sameDir(root)
+	var out []string
+	for _, repo := range cfg.Repos {
+		if repo.Path == "" {
+			continue
+		}
+		rel, err := filepath.Rel(base, sameDir(repo.Path))
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			continue
+		}
+		for _, folder := range repo.DeclaredDocsFolders() {
+			out = append(out, path.Join(filepath.ToSlash(rel), folder))
+		}
+	}
+	return out
+}
+
+// sameDir is the canonical form of a directory path two spellings of one
+// directory share: absolute, cleaned and with its symbolic links resolved
+// when it exists.
+func sameDir(dir string) string {
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
+	}
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = resolved
+	}
+	return filepath.Clean(dir)
 }
 
 // parseReportFile parses one report file, "-" being standard input.

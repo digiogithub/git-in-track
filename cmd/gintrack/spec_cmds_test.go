@@ -374,3 +374,94 @@ func TestSpecVerifyCoverageTrace(t *testing.T) {
 		}
 	})
 }
+
+// dotDocsSpecRepo is gitSpecRepo with its backlog under the dot-prefixed
+// documentation folder .kb, which only a declared folder reaches: discovery
+// never walks into a hidden directory (GIT-US-0198).
+func dotDocsSpecRepo(t *testing.T, h *harness) string {
+	t.Helper()
+	root := specRepo(t)
+	if err := os.Rename(filepath.Join(root, "docs"), filepath.Join(root, ".kb")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(root, ".git")); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, root, "init", "--initial-branch=main")
+	identify(t, root)
+	gitIn(t, root, "add", "-A")
+	gitIn(t, root, "commit", "-m", "chore: seed")
+	if _, stderr, code := h.run("add", root, "--docs", ".kb"); code != exitOK {
+		t.Fatalf("add: exit %d\n%s", code, stderr)
+	}
+	return root
+}
+
+func TestSpecIngestDeclaredDotDocs(t *testing.T) {
+	h := newHarness(t)
+	root := dotDocsSpecRepo(t, h)
+	report := filepath.Join(t.TempDir(), "go.json")
+	if err := os.WriteFile(report, []byte(r1Passes), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("ingest maps the results through the declared folder", func(t *testing.T) {
+		stdout, stderr, code := h.run("spec", "ingest", "--repo", root, "--json", report)
+		if code != exitOK {
+			t.Fatalf("exit %d\n%s", code, stderr)
+		}
+		got := decode[specIngestPayload](t, stdout)
+		var r1 string
+		for _, rr := range got.Requirements {
+			if rr.Ref.String() == "ACME-SP-0001.R1" {
+				r1 = string(rr.Result)
+			}
+		}
+		if r1 != "pass" {
+			t.Errorf("R1 = %q, want pass; requirements = %+v", r1, got.Requirements)
+		}
+		if len(got.Verify) != 1 || got.Verify[0].Path != ".kb/.pmngr/verify.json" || got.Verify[0].Added == 0 {
+			t.Errorf("verify = %+v, want entries added to .kb/.pmngr/verify.json", got.Verify)
+		}
+		if _, err := os.Stat(filepath.Join(root, ".kb", ".pmngr", "verify.json")); err != nil {
+			t.Errorf("verify.json: %v", err)
+		}
+		if strings.Contains(stderr, "no project backlog") {
+			t.Errorf("unexpected warning:\n%s", stderr)
+		}
+	})
+	t.Run("coverage reads the recorded evidence", func(t *testing.T) {
+		got := decode[specCoveragePayload](t, h.mustRun("spec", "coverage", "--spec", "ACME-SP-0001", "--json"))
+		status := map[string]string{}
+		for _, r := range got.Coverage {
+			status[r.Ref.String()] = string(r.Status)
+		}
+		if status["ACME-SP-0001.R1"] != "passing" {
+			t.Errorf("coverage = %v, want ACME-SP-0001.R1 passing", status)
+		}
+	})
+}
+
+func TestSpecIngestWarnsWithoutBacklog(t *testing.T) {
+	h := newHarness(t)
+	root := specRepo(t)
+	// The backlog sits in a hidden folder no registration declares.
+	if err := os.Rename(filepath.Join(root, "docs"), filepath.Join(root, ".kb")); err != nil {
+		t.Fatal(err)
+	}
+	cache := filepath.Join(t.TempDir(), "results.json")
+	report := filepath.Join(t.TempDir(), "go.json")
+	if err := os.WriteFile(report, []byte(r1Passes), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, code := h.run("spec", "ingest", "--repo", root, "--cache", cache, report)
+	if code != exitOK {
+		t.Fatalf("exit %d, want %d: the results are still recorded\n%s", code, exitOK, stderr)
+	}
+	if !strings.Contains(stdout, "1 added") {
+		t.Errorf("the results were not recorded:\n%s", stdout)
+	}
+	if want := "warning: no project backlog found under " + root; !strings.Contains(stderr, want) {
+		t.Errorf("stderr lacks %q:\n%s", want, stderr)
+	}
+}

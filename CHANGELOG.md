@@ -12,7 +12,15 @@ because a commit list cannot express them.
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- **`gintrack spec ingest` finds a backlog in a declared dot folder** (`GIT-US-0198`, docs/07
+  §4.19). Ingest discovered projects with the bare root and first-level rule, which never probes a
+  dot folder, so a repository registered with `--docs .kb` got no per-requirement results, no
+  `.kb/.pmngr/verify.json`, and every requirement read `untested` in `spec coverage`, `spec verify`
+  and the MCP `spec_coverage` / `verify_requirement`. Ingest now feeds discovery the documentation
+  folders of the repository's registration, as every other command does, and warns on stderr when
+  it finds no backlog instead of succeeding silently.
 
 ## [2.3.0] — 2026-09-30
 
