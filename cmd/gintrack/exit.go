@@ -24,6 +24,23 @@ const (
 	// every error code so that a CI gate can tell "the check failed" from "the
 	// check could not run".
 	exitGate = 7
+	// The codes of `gintrack update` (docs/07, section 4.24). Up to date and
+	// updated are exitOK; these four tell a script what else happened without
+	// parsing the output.
+	//
+	// exitUpdateAvailable is `gintrack update --check` finding a newer release.
+	exitUpdateAvailable = 10
+	// exitUpdateRefused is an update that was not attempted: the install
+	// channel owns upgrades, the version is not comparable, the session is not
+	// interactive and --yes is missing, or the user answered no.
+	exitUpdateRefused = 11
+	// exitUpdateVerify is a download that failed verification: checksum,
+	// size or a release without a checksum manifest. The installed binary is
+	// untouched.
+	exitUpdateVerify = 12
+	// exitUpdateApply is a verified binary that could not be installed. When
+	// the old binary may be missing the message names where it was moved to.
+	exitUpdateApply = 13
 )
 
 // exitError is an error carrying the exit code the process should end with.

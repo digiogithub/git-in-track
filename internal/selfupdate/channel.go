@@ -108,7 +108,7 @@ func CheckChannel(exePath string, env Env, force bool) (warning string, err erro
 		if env.ExplicitVersion {
 			return "", nil
 		}
-		ce = &ChannelError{ch, "pass an explicit version to update a source build, for example `gintrack update --version v1.2.3`"}
+		ce = &ChannelError{ch, "pass an explicit version to update a source build, for example `gintrack update v1.2.3`"}
 	default:
 		return "", nil
 	}
