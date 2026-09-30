@@ -2,12 +2,14 @@
 id: GIT-EP-0032
 type: epic
 title: "gintrack update: verified self-update from GitHub Releases"
-status: backlog
+status: done
 priority: medium
 author: mcp
 labels: [cli, server, web, docs]
 created: 2026-09-30T19:15:45Z
-updated: 2026-09-30T19:15:45Z
+updated: 2026-09-30T20:34:30Z
+started: 2026-09-30T19:25:29Z
+closed: 2026-09-30T20:34:30Z
 ---
 
 ## Description
@@ -30,6 +32,10 @@ The code lives in a native package such as `internal/selfupdate` plus `cmd/gintr
 
 ## Acceptance Criteria
 
-- [ ] All child stories are done.
+- [x] All child stories are done.
 - [ ] `gintrack update` upgrades a release build on Linux, macOS and Windows end to end against a real GitHub release, and refuses package-manager installs.
-- [ ] ADR-040 records the decisions; docs/07 and docs/09 describe the command and the asset contract.
+- [x] ADR-040 records the decisions; docs/07 and docs/09 describe the command and the asset contract.
+
+## Notes
+
+Delivered in PRs #124–#129 (GIT-US-0191..0195 and 0197). End-to-end verification against the real GitHub releases was done on Linux only, with scratch copies: a dev build was refused, `update 2.2.0 --force` succeeded, and a 2.1.0 build went to 2.2.0. macOS and Windows compile, and their swap paths are covered by simulation tests, but they have not been run on those systems, so that criterion stays open until a manual check after v2.3.0. The goreleaser drift is tracked separately in GIT-US-0196 (human-only).
