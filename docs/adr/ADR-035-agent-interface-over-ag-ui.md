@@ -128,6 +128,16 @@ The allow-list only sees a tool by name, and Pando's MCP gateway takes the names
 per-tool approval. `gintrack agent init` therefore writes `[ToolDiscovery] Enabled = false` and
 `[MCPGateway] Enabled = false`; the boundary above assumes both.
 
+### Note (2026-09-30): who starts `agui-serve`
+
+This ADR's deployment (one `pando agui-serve` per repository, started by hand from a
+`gintrack agent init` configuration) is now the **external** mode. In managed search mode,
+`gintrack serve` supervises the adapter itself, per [ADR-039](ADR-039-gintrack-launches-and-manages-pando.md)
+decision 4 (GIT-US-0185): same supervisor as the search instance, same generated configuration
+as `agent init` (`internal/agentcfg`), written to the instance's cache directory instead of the
+repository. The panel's contract does not change: the browser talks to `/api/v1/agent` and the
+companion picks the upstream (docs/20 §2.4).
+
 ## Alternatives considered
 
 **CopilotKit with a Node sidecar.** Pando ships CopilotKit glue and an example that uses

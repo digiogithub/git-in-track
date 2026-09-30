@@ -171,6 +171,13 @@ of being started twice, and it is never stopped from here.
   closes, even if `serve` was SIGKILLed. At the next start, a child recorded in `state.json` whose
   supervisor is dead but whose process is alive and whose command line names the instance
   directory is an orphan and is ended first, on every platform.
+- **The AG-UI adapter (GIT-US-0185).** With the agent proxy on (`serve --agent`) and the MCP
+  endpoint on (`--mcp-http`), the same supervisor also runs one `pando agui-serve` per opted-in
+  repository, in `<key>-agui/` beside the instance's directory, for the agent panel. It shares
+  the lifecycle, the stable port, the watchdog and the orphan reaping described here; its
+  health check is `GET /api/v1/agui/healthz` plus `/info` with its token on the first check,
+  which is what tells it from another process holding the port. It does not register a code
+  project. docs/20 §2.4 has the configuration, the discovery order and the external cases.
 - **Not managed.** External mode is exactly as described above. Explicit `mode: off` disables
   Pando entirely even with an `mcpUrl` set (rule 1): no client is built, the backend is `core`,
   and semantic search answers `unavailable` naming `search.pando.mode: off`. Neither constructs

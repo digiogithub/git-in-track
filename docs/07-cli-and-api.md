@@ -278,6 +278,7 @@ agent:
     insecureTls: false           # for an agui-serve left on its self-signed cert
     allowRemote: false           # true to dial a host that is not loopback
     maxRuns: 8                   # runs in flight before a 503 + Retry-After, 0-256
+    managed: true                # managed search mode: serve runs agui-serve per opted-in repo (docs/20 §2.4)
     repos:                       # per-repository upstreams, matched on the mounted id
       - repo: git-in-track
         url: http://127.0.0.1:8091
@@ -4443,8 +4444,10 @@ token, and `/run` posts to `{path}/{agent}`, where `{agent}` is the configured
 `agent.pando.agent` — the browser does not choose which agent runs.
 
 **Routing.** The deployment is one `agui-serve` process per repository, so
-`?repo=<id>` selects the upstream from the `agent.pando.repos` table, falling
-back to the section-wide URL. An id that names neither a table row nor a mounted
+`?repo=<id>` selects the upstream: first the managed adapter `gintrack serve`
+runs for that repository (docs/20 §2.4; while it is not ready the route answers
+`503` with `Retry-After`, never the default upstream), then the
+`agent.pando.repos` table, falling back to the section-wide URL. An id that names neither a table row nor a mounted
 repository is an `agent_repo_unknown` **404** — never a silent fallback to
 another repository's agent.
 

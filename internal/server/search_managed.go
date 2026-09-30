@@ -79,6 +79,23 @@ type managedInstanceView struct {
 	Crashes int `json:"crashes,omitempty"`
 	// Error is the last error, or why the instance was skipped.
 	Error string `json:"error,omitempty"`
+	// AGUI is the managed AG-UI adapter of the agent panel (GIT-US-0185). It is
+	// absent when the agent proxy is off or the repository has an explicit
+	// `agent.pando.repos` row.
+	AGUI *managedAGUIView `json:"agui,omitempty"`
+}
+
+// managedAGUIView is what the settings response says about the managed
+// `pando agui-serve` of one repository. It never carries the token, nor the URL.
+type managedAGUIView struct {
+	// State is the supervisor's (starting, ready, restarting, failed, stopped)
+	// or skipped when it was not started; Error says why.
+	State   string     `json:"state"`
+	PID     int        `json:"pid,omitempty"`
+	Port    int        `json:"port,omitempty"`
+	Since   *time.Time `json:"since,omitempty"`
+	Crashes int        `json:"crashes,omitempty"`
+	Error   string     `json:"error,omitempty"`
 }
 
 // managedRepo is one repository's slot: its instance, or the reason it has none.
@@ -104,6 +121,14 @@ type managedRepo struct {
 	nextTry    time.Time
 	// stop ends the watcher of this slot.
 	stop context.CancelFunc
+
+	// agui is the managed `pando agui-serve` of the repository, nil when none
+	// runs. aguiSkipped says why it was not started (empty when the agent
+	// proxy simply does not use one), aguiStartErr is a Start failure that left
+	// no status to read.
+	agui         ManagedInstance
+	aguiSkipped  string
+	aguiStartErr string
 }
 
 // managedState owns the instances of one `gintrack serve`.
@@ -119,6 +144,10 @@ type managedState struct {
 	newInstance func(supervisor.Options) (ManagedInstance, error)
 	newClient   func(mcpURL, token, project string) (pandoAPI, error)
 	tick        time.Duration
+
+	// agui is the settings of the managed AG-UI adapters; nil means none is run
+	// (agent proxy off, or a caller that only reads).
+	agui *managedAGUI
 
 	mu     sync.Mutex
 	byRepo map[string]*managedRepo
@@ -210,6 +239,9 @@ func (ms *managedState) enable(runCtx context.Context, repo string) managedInsta
 			slot.sup = sup
 		}
 	}
+	if slot.sup != nil {
+		ms.prepareAGUILocked(slot, m)
+	}
 	if _, seen := ms.byRepo[repo]; !seen {
 		ms.order = append(ms.order, repo)
 	}
@@ -218,6 +250,9 @@ func (ms *managedState) enable(runCtx context.Context, repo string) managedInsta
 	if slot.sup != nil {
 		slot.stop = stop
 		ms.wg.Add(1)
+		if slot.agui != nil {
+			ms.wg.Add(1)
+		}
 	} else {
 		stop()
 	}
@@ -228,6 +263,9 @@ func (ms *managedState) enable(runCtx context.Context, repo string) managedInsta
 		return ms.viewOf(slot, true)
 	}
 	go ms.run(ctx, slot)
+	if slot.agui != nil {
+		go ms.runAGUI(ctx, slot)
+	}
 	return ms.viewOf(slot, true)
 }
 
@@ -290,7 +328,7 @@ func (ms *managedState) Disable(ctx context.Context, repo string) error {
 
 func (ms *managedState) stopSlot(ctx context.Context, slot *managedRepo) error {
 	slot.mu.Lock()
-	sup, stop, client := slot.sup, slot.stop, slot.client
+	sup, stop, client, agui := slot.sup, slot.stop, slot.client, slot.agui
 	slot.client = nil
 	slot.mu.Unlock()
 	if stop != nil {
@@ -299,13 +337,18 @@ func (ms *managedState) stopSlot(ctx context.Context, slot *managedRepo) error {
 	if client != nil {
 		_ = client.Close()
 	}
-	if sup == nil {
-		return nil
+	var errs []error
+	if agui != nil {
+		if err := agui.Stop(ctx); err != nil {
+			errs = append(errs, fmt.Errorf("stop the managed AG-UI adapter of %s: %w", slot.repo, err))
+		}
 	}
-	if err := sup.Stop(ctx); err != nil {
-		return fmt.Errorf("stop the managed Pando of %s: %w", slot.repo, err)
+	if sup != nil {
+		if err := sup.Stop(ctx); err != nil {
+			errs = append(errs, fmt.Errorf("stop the managed Pando of %s: %w", slot.repo, err))
+		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // stopAll ends every instance and waits for their goroutines: it is the
@@ -517,7 +560,7 @@ func (ms *managedState) viewOf(slot *managedRepo, optedIn bool) managedInstanceV
 	st := slot.status()
 	v := managedInstanceView{
 		OptedIn: optedIn, State: string(st.State), PID: st.PID, Port: st.Port, Version: st.Version,
-		Crashes: st.Crashes, Error: st.LastError,
+		Crashes: st.Crashes, Error: st.LastError, AGUI: ms.aguiViewOf(slot),
 	}
 	if !st.Since.IsZero() {
 		since := st.Since
@@ -552,8 +595,12 @@ func (ms *managedState) restart(repo string) int {
 		}
 		slot.mu.Lock()
 		slot.forceIndex = true
+		agui := slot.agui
 		slot.mu.Unlock()
 		sup.Restart()
+		if agui != nil {
+			agui.Restart()
+		}
 		n++
 	}
 	return n
@@ -564,7 +611,11 @@ func (ms *managedState) restart(repo string) int {
 // foreignInstance is an instance another `gintrack serve` supervises. It is
 // read through its state file and token, and it is never started, stopped or
 // restarted from here.
-type foreignInstance struct{ dir string }
+type foreignInstance struct {
+	dir string
+	// agui reads the AG-UI endpoint of the state file instead of the MCP one.
+	agui bool
+}
 
 func (foreignInstance) Start(context.Context) error { return nil }
 func (foreignInstance) Stop(context.Context) error  { return nil }
@@ -584,14 +635,18 @@ func (f foreignInstance) Status() supervisor.Status {
 
 func (f foreignInstance) Endpoint() (mcpURL, token string, ok bool) {
 	st := f.Status()
-	if st.State != supervisor.StateReady || st.MCPURL == "" || !supervisor.PIDAlive(st.PID) {
+	url := st.MCPURL
+	if f.agui {
+		url = st.AGUIURL
+	}
+	if st.State != supervisor.StateReady || url == "" || !supervisor.PIDAlive(st.PID) {
 		return "", "", false
 	}
 	token, err := supervisor.ReadToken(f.dir)
 	if err != nil || token == "" {
 		return "", "", false
 	}
-	return st.MCPURL, token, true
+	return url, token, true
 }
 
 // ------------------------------------------------------------- search ------

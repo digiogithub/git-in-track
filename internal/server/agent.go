@@ -19,6 +19,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/digiogithub/git-in-track/internal/agentcfg"
 	"github.com/digiogithub/git-in-track/internal/config"
 )
 
@@ -69,6 +70,9 @@ type agentState struct {
 	// targets is the resolved `projectId -> {url, token}` routing table.
 	targets config.PandoTargets
 	log     *slog.Logger
+	// managed answers the AG-UI adapters `serve` runs itself (GIT-US-0185); nil
+	// when the search mode is not managed. It is consulted before targets.
+	managed *managedState
 	// sem is the global in-flight run cap. A send that cannot proceed is a 503,
 	// never a queue: a browser waiting on an unbounded queue looks identical to
 	// a hung agent.
@@ -100,7 +104,7 @@ func newAgentState(opts Options) *agentState {
 // be switched on and an upstream has to be configured. It is what
 // `features.agent` reports.
 func (a *agentState) available() bool {
-	return a != nil && a.enabled && a.targets.Configured()
+	return a != nil && a.enabled && (a.targets.Configured() || a.managed.hasAGUI())
 }
 
 // acquire takes one of the in-flight run slots. It reports false immediately
@@ -170,11 +174,12 @@ func (s *Server) mountAgent(r chi.Router) {
 // own origin, and this rewrites every one of them to a companion-relative URL
 // and drops whatever is left that would name the Pando listener.
 func (s *Server) handleAgentInfo(w http.ResponseWriter, r *http.Request) {
-	target, repoID, ok := s.agentUpstream(w, r)
+	route, ok := s.agentUpstream(w, r)
 	if !ok {
 		return
 	}
-	doc, ok := s.agentFetchJSON(w, r, target, s.agent.targets.Token(repoID), target.Path+"/info")
+	target := route.target
+	doc, ok := s.agentFetchJSON(w, r, target, route.token, target.Path+"/info")
 	if !ok {
 		return
 	}
@@ -194,10 +199,11 @@ func (s *Server) handleAgentHealth(w http.ResponseWriter, r *http.Request) {
 // token, then copies the SSE frames through unbuffered until the upstream ends
 // the run or the client goes away.
 func (s *Server) handleAgentRun(w http.ResponseWriter, r *http.Request) {
-	target, _, ok := s.agentUpstream(w, r)
+	route, ok := s.agentUpstream(w, r)
 	if !ok {
 		return
 	}
+	target := route.target
 	release, ok := s.agent.acquire()
 	if !ok {
 		w.Header().Set("Retry-After", agentRetryAfter)
@@ -270,10 +276,11 @@ type agentRelay struct {
 // inbound request context is passed straight through, so a browser that aborts
 // cancels the upstream run rather than leaving an agent talking to nobody.
 func (s *Server) relayAgent(w http.ResponseWriter, r *http.Request, rel agentRelay) {
-	target, repoID, ok := s.agentUpstream(w, r)
+	route, ok := s.agentUpstream(w, r)
 	if !ok {
 		return
 	}
+	target := route.target
 	base, err := url.Parse(target.URL)
 	if err != nil {
 		writeProblem(w, r, http.StatusBadGateway, codeAgentUpstream, "Agent upstream",
@@ -285,7 +292,7 @@ func (s *Server) relayAgent(w http.ResponseWriter, r *http.Request, rel agentRel
 	}
 	token := ""
 	if !rel.anonymous {
-		token = s.agent.targets.Token(repoID)
+		token = route.token
 	}
 	upstreamPath := target.Path + rel.suffix
 	query := forwardedAgentQuery(r.URL.Query())
@@ -369,29 +376,54 @@ func bufferAgentBody(w http.ResponseWriter, r *http.Request, maxBytes int64) boo
 	return true
 }
 
+// agentRoute is one resolved upstream: where to dial and the token to present.
+// The token is unexported by type only in spirit: it goes into an Authorization
+// header and nowhere else.
+type agentRoute struct {
+	target config.PandoTarget
+	token  string
+}
+
 // agentUpstream resolves the upstream one request relays to, writing the
-// problem document itself when it cannot.
-func (s *Server) agentUpstream(w http.ResponseWriter, r *http.Request) (config.PandoTarget, string, bool) {
+// problem document itself when it cannot. A repository with a managed AG-UI
+// adapter (GIT-US-0185) is served by that adapter; one without falls back to
+// the `agent.pando` table. A managed adapter that is not ready answers 503
+// rather than falling back: the default upstream belongs to another repository.
+func (s *Server) agentUpstream(w http.ResponseWriter, r *http.Request) (agentRoute, bool) {
 	if !s.agent.available() {
 		failProblem(w, r, codeNotImplemented,
 			"The agent proxy is off. Start the companion with `gintrack serve --agent` and set agent.pando.url in the configuration.")
-		return config.PandoTarget{}, "", false
+		return agentRoute{}, false
 	}
 	repoID := strings.TrimSpace(r.URL.Query().Get("repo"))
+	if repoID != "" {
+		if adapter, found := s.agent.managed.aguiEndpoint(repoID); found {
+			if adapter.URL == "" {
+				w.Header().Set("Retry-After", agentRetryAfter)
+				writeProblem(w, r, http.StatusServiceUnavailable, codeAgentUpstream, "Agent upstream",
+					"The agent adapter of this repository is not ready: "+adapter.NotReady)
+				return agentRoute{}, false
+			}
+			return agentRoute{
+				target: config.PandoTarget{URL: adapter.URL, Path: agentcfg.DefaultAGUIPath, Agent: agentcfg.PersonaID},
+				token:  adapter.Token,
+			}, true
+		}
+	}
 	if repoID != "" && !s.agent.targets.Known(repoID) {
 		if _, mounted := s.repos.lookup(repoID); !mounted {
 			writeProblem(w, r, http.StatusNotFound, codeAgentRepoUnknown, "Unknown repository",
 				fmt.Sprintf("No mounted repository is called %q, and agent.pando.repos declares no upstream for it.", repoID))
-			return config.PandoTarget{}, "", false
+			return agentRoute{}, false
 		}
 	}
 	target, ok := s.agent.targets.Target(repoID)
 	if !ok {
 		failProblem(w, r, codeNotImplemented,
 			"No agent upstream is configured for this repository; set agent.pando.url or an agent.pando.repos row.")
-		return config.PandoTarget{}, "", false
+		return agentRoute{}, false
 	}
-	return target, repoID, true
+	return agentRoute{target: target, token: s.agent.targets.Token(repoID)}, true
 }
 
 // agentFetchJSON performs one short, non-streaming upstream call and decodes
