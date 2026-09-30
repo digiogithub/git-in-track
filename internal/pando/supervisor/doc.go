@@ -73,6 +73,18 @@
 // every child start and is never reused on purpose; clients resolve it through
 // state.json.
 //
+// # AG-UI instances
+//
+// Options.Kind = KindAGUI runs `pando agui-serve --cwd <dir> --host 127.0.0.1 --port N
+// --no-tls --token-file <dir>/token` instead (GIT-US-0185), for the agent panel of ADR-035. It
+// lives in <CacheDir>/pando/<AGUIKey>/ (InstanceKey plus "-agui"), so it has its own lock, state
+// file, token, log and data directory and runs beside the repository's MCP instance. Everything
+// in Lifecycle applies unchanged; what differs is the configuration, which the caller renders
+// (Options.Files, called on every start with the chosen port), and the health check: GET
+// <AGUIPath>/healthz, and on the first check also /info with the bearer token, which is what
+// tells our child from another process that holds the port. Status.AGUIURL replaces MCPURL, and
+// Endpoint returns it.
+//
 // # Windows
 //
 // The package compiles on Windows, but managed mode is not supported there yet

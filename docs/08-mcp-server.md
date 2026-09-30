@@ -1693,8 +1693,10 @@ gintrack pando status --json --repo acme-api
 # instances[0].tokenFile -> <cacheDir>/pando/<key>/token   (0600; read it, the status never prints it)
 ```
 
-Point the client at `mcpUrl` with `Authorization: Bearer <contents of tokenFile>`. The port and
-token change when the instance restarts, so read them again rather than pinning them.
+Point the client at `mcpUrl` with `Authorization: Bearer <contents of tokenFile>`. The port is
+reused across restarts when it is free (GIT-US-0184), so a pinned URL usually survives; if another
+process took it the port changes, so read it again when a connection fails. The token changes
+whenever `serve` starts the instance.
 
 **Warning:** that connection is Pando's own MCP server, not this one. It exposes Pando's write
 tools (memory, knowledge-base and code-index writes, file and browser tools), and none of the
@@ -2080,7 +2082,8 @@ The output is `{mode, rule, reason, binary, instances[]}`, and each instance row
 (never the token). `--repo <id>` narrows it to one repository. Use an instance only when `state` is
 `ready` and `stale` is not true; the client sends the token file's contents as
 `Authorization: Bearer ...`. Resolve it each time the client launches: the
-port changes whenever `serve` restarts an instance. Only repositories that opted in have an
+port is kept across restarts of an instance when it is free (GIT-US-0184) but changes if another
+process took it. Only repositories that opted in have an
 instance (the workspace list's **Enable semantic search**, or `repos[].semanticSearch`).
 
 **Warning: a direct connection exposes Pando's write tools.** The agent then sees Pando's full

@@ -68,8 +68,15 @@ type Status struct {
 	MCPURL string `json:"mcpUrl"`
 	// AGUIURL is the base URL of a KindAGUI instance's listener, empty for
 	// KindMCP.
-	AGUIURL   string `json:"aguiUrl,omitempty"`
-	TokenFile string `json:"tokenFile"`
+	AGUIURL string `json:"aguiUrl,omitempty"`
+	// LastPort is the port of the last child, kept while stopped: the next start
+	// (a restart, a crash restart or a new process) tries it first so an agent
+	// configured with the direct endpoint keeps working (GIT-US-0184).
+	// PortChangedFrom is the port that was wanted but busy, set for as long as
+	// the current child runs elsewhere; it is 0 when the port was reused.
+	LastPort        int    `json:"lastPort,omitempty"`
+	PortChangedFrom int    `json:"portChangedFrom,omitempty"`
+	TokenFile       string `json:"tokenFile"`
 	// Version is the first line of `pando --version`.
 	Version string `json:"version"`
 	Binary  string `json:"binary"`

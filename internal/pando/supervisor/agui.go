@@ -74,25 +74,25 @@ func (s *Supervisor) healthCheck(mcpURL, base string) (check func(ctx context.Co
 	if s.opts.Kind != KindAGUI {
 		client, err := pando.New(pando.Options{MCPURL: mcpURL, Token: s.token, Timeout: s.opts.HealthTimeout})
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, fmt.Errorf("build the pando client: %w", err)
 		}
 		return func(ctx context.Context, _ bool) error { return client.Health(ctx) },
 			func() { _ = client.Close() }, nil
 	}
 	hc := &http.Client{Timeout: s.opts.HealthTimeout, Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true}}
 	get := func(ctx context.Context, route, token string) error {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+s.opts.AGUIPath+route, nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+s.opts.AGUIPath+route, http.NoBody)
 		if err != nil {
-			return err
+			return fmt.Errorf("build the request: %w", err)
 		}
 		if token != "" {
 			req.Header.Set("Authorization", "Bearer "+token)
 		}
 		resp, err := hc.Do(req)
 		if err != nil {
-			return err
+			return fmt.Errorf("GET %s: %w", route, err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
 		if resp.StatusCode != http.StatusOK {
 			return fmt.Errorf("GET %s answered %d", route, resp.StatusCode)

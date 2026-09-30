@@ -168,6 +168,20 @@ func TestAGUIInstance(t *testing.T) {
 		}
 	})
 
+	t.Run("the AG-UI port is reused across restarts like the MCP one (GIT-US-0184)", func(t *testing.T) {
+		var ports []int
+		r := newRig(t, nil, func(o *Options) { o.Kind, o.Files = KindAGUI, aguiFiles(&ports) })
+		r.start()
+		first := r.waitState(StateReady)
+		if err := r.sup.Stop(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		r.start()
+		if st := r.waitState(StateReady); st.Port != first.Port || st.AGUIURL != first.AGUIURL {
+			t.Errorf("endpoint after a restart = %s (port %d), want %s (port %d)", st.AGUIURL, st.Port, first.AGUIURL, first.Port)
+		}
+	})
+
 	t.Run("stop ends the child and reports stopped", func(t *testing.T) {
 		var ports []int
 		r := newRig(t, nil, func(o *Options) { o.Kind, o.Files = KindAGUI, aguiFiles(&ports) })

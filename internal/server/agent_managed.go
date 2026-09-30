@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"path/filepath"
 
@@ -109,7 +110,7 @@ func renderManagedAGUI(cfg *managedAGUI, repoID, root, docs string, port int) (m
 	} {
 		out, err := agentcfg.Render(tmpl, data)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("render %s: %w", name, err)
 		}
 		files[name] = out
 	}

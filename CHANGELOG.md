@@ -14,6 +14,21 @@ because a commit list cannot express them.
 
 ### Added
 
+- **`gintrack serve` runs `pando agui-serve` for the agent panel** (`GIT-US-0185`, ADR-039
+  decision 4, ADR-035, docs/20 §2.4, docs/21, docs/05). In managed search mode with `--agent` and
+  `--mcp-http`, each opted-in repository gets a supervised adapter in `<cache>/pando/<key>-agui/`
+  (same lifecycle, health, backoff, orphan reaping and stable port as the search instance),
+  configured from the `gintrack agent init` templates without writing to the repository. The agent
+  proxy routes to it before `agent.pando`, answers `503` with `Retry-After` while it is not ready
+  and never falls back to another repository's upstream. `indexed[].managed.agui` reports its
+  state. External setups are unchanged; `agent.pando.managed: false` or an `agent.pando.repos` row
+  keeps a repository external. The adapter has no code project, so the two code-search tools are
+  not in its allow-list. The `agent init` templates moved to `internal/agentcfg`.
+- **Managed Pando keeps its port across restarts** (`GIT-US-0184`, ADR-039 decision 2, docs/21,
+  docs/08). `state.json` records `lastPort`, which survives a stop; a start, a requested restart
+  and a crash restart try it first and wait up to 2 s for the old socket to close. A busy port
+  falls back to a free one, logs a warning and records `portChangedFrom`. Pando silently moving
+  ports is still detected by the health check.
 - **Managed Pando dies with `gintrack serve` on macOS** (`GIT-US-0187`, ADR-039 decision 5, docs/21).
   Without `Pdeathsig`, the child now runs under a watchdog (`gintrack __pando-watch`, this binary
   re-executed) that ends its process group when a lifeline pipe from `serve` closes, even if

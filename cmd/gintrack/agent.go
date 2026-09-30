@@ -488,7 +488,11 @@ func agentRedact(text, secret string) string {
 
 // renderAgentTemplate renders one embedded template.
 func renderAgentTemplate(name string, data agentTemplateData) ([]byte, error) {
-	return agentcfg.Render(name, data)
+	out, err := agentcfg.Render(name, data)
+	if err != nil {
+		return nil, fmt.Errorf("render %s: %w", name, err)
+	}
+	return out, nil
 }
 
 // agentRepoID is the id the AG-UI token file and the companion route are keyed

@@ -156,6 +156,13 @@ of being started twice, and it is never stopped from here.
   did not opt in gets the same "no Pando is configured" as before.
 - **Reindex.** See docs/07: the `kb` phase restarts the instance instead of calling a REST
   route, and `kbNote` says so.
+- **Stable port (GIT-US-0184).** The port of the last child is kept in `state.json` (`lastPort`)
+  even while the instance is stopped. A start, a requested restart and a crash restart try it
+  first, waiting up to 2 s for the previous child to release it, so an agent that connects to
+  Pando directly keeps its configuration. If the port is busy, or outside the configured port
+  range, the supervisor logs a warning, picks a free port and records the old one as
+  `portChangedFrom`. Pando silently moving to another port is unchanged: the health check
+  fails, the run counts as a crash, and the next run does not prefer that port.
 - **Shutdown.** Every instance is stopped (SIGTERM, then SIGKILL after 10 s) when the server
   stops, and the child also dies with `gintrack serve` if that is killed, on
   Linux and macOS (Windows is not supported yet, GIT-US-0186). Linux uses `Pdeathsig`. macOS has no
@@ -164,6 +171,13 @@ of being started twice, and it is never stopped from here.
   closes, even if `serve` was SIGKILLed. At the next start, a child recorded in `state.json` whose
   supervisor is dead but whose process is alive and whose command line names the instance
   directory is an orphan and is ended first, on every platform.
+- **The AG-UI adapter (GIT-US-0185).** With the agent proxy on (`serve --agent`) and the MCP
+  endpoint on (`--mcp-http`), the same supervisor also runs one `pando agui-serve` per opted-in
+  repository, in `<key>-agui/` beside the instance's directory, for the agent panel. It shares
+  the lifecycle, the stable port, the watchdog and the orphan reaping described here; its
+  health check is `GET /api/v1/agui/healthz` plus `/info` with its token on the first check,
+  which is what tells it from another process holding the port. It does not register a code
+  project. docs/20 §2.4 has the configuration, the discovery order and the external cases.
 - **Not managed.** External mode is exactly as described above. Explicit `mode: off` disables
   Pando entirely even with an `mcpUrl` set (rule 1): no client is built, the backend is `core`,
   and semantic search answers `unavailable` naming `search.pando.mode: off`. Neither constructs
