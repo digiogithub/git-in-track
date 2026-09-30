@@ -46,6 +46,22 @@ func TestNoticeAllowed(t *testing.T) {
 	}
 }
 
+func TestChannelReason(t *testing.T) {
+	t.Parallel()
+
+	for ch, want := range map[selfupdate.Channel]string{
+		selfupdate.ChannelRelease:   "",
+		selfupdate.ChannelSource:    "development build",
+		selfupdate.ChannelHomebrew:  "installed through homebrew",
+		selfupdate.ChannelScoop:     "installed through scoop",
+		selfupdate.ChannelContainer: "running in a container",
+	} {
+		if got := channelReason(ch); got != want {
+			t.Errorf("channelReason(%s) = %q, want %q", ch, got, want)
+		}
+	}
+}
+
 func TestNoticeLine(t *testing.T) {
 	t.Parallel()
 
@@ -74,8 +90,16 @@ func fakeRelease(t *testing.T, latest string) *int {
 		_, _ = w.Write([]byte(`[{"tag_name":"v` + latest + `","html_url":"https://example.test/r"}]`))
 	}))
 	t.Cleanup(srv.Close)
-	prev, prevTTY := newUpdateChecker, stderrIsTerminal
-	t.Cleanup(func() { newUpdateChecker, stderrIsTerminal = prev, prevTTY })
+	prev, prevTTY, prevNA := newUpdateChecker, stderrIsTerminal, installNotApplicable
+	t.Cleanup(func() { newUpdateChecker, stderrIsTerminal, installNotApplicable = prev, prevTTY, prevNA })
+	// The test binary lives in a temp dir, possibly inside a container: pin the
+	// channel to "release" so only the version decides.
+	installNotApplicable = func(build buildInfo) string {
+		return channelReason(selfupdate.DetectChannel("/usr/local/bin/gintrack", selfupdate.Env{
+			ReadFile: func(string) ([]byte, error) { return nil, os.ErrNotExist },
+			Version:  build.Version, BuiltBy: build.BuiltBy,
+		}))
+	}
 	newUpdateChecker = func(build buildInfo, dir string) *selfupdate.Checker {
 		return &selfupdate.Checker{
 			Dir: dir, Current: build.Version,

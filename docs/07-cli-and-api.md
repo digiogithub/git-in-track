@@ -333,7 +333,8 @@ after a failure, lookup timeout 5 s). A stale cache is refreshed in the backgrou
 the command runs; the command waits at most 300 ms for it at exit. The line is never
 printed for `--json`, `--quiet`, a non-terminal stderr, `gintrack mcp`, `serve`,
 `update`, `version`, `doctor` (which reports the state itself) or completion, nor on a
-development build.
+development build, a Homebrew or Scoop install or a container (`selfupdate.DetectChannel`: those
+are upgraded by their own tooling).
 
 The file is written with `gintrack config init` or by the first `gintrack add`,
 always with mode `0600`. Keys this build does not know are ignored rather than
@@ -1171,7 +1172,7 @@ permissions, the readability of every registered path, the presence and validity
 slug drifted from the title.
 
 An `update` line (GIT-US-0195) reports whether a newer gintrack release is published: `ok`
-when up to date or when the build is not checked (development builds), `info` — counted
+when up to date or when the install is not checked (development builds, Homebrew, Scoop, containers), `info` — counted
 as neither a warning nor an error — with `run gintrack update` when one exists, and a
 `warning` when the lookup failed (offline, rate limited). It uses the cache described in
 §3.2 `update.checkOnStart`, so repeated runs do not hit GitHub.

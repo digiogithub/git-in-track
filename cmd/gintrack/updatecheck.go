@@ -20,14 +20,33 @@ import (
 const noticeWait = 300 * time.Millisecond
 
 // installNotApplicable says why update checks make no sense for this build, or
-// returns "". It is the seam GIT-US-0194 points at the install-channel
-// detection (package-manager installs); today it knows development builds
-// only. It is a variable so that tests can replace it.
+// returns "". It classifies the install with selfupdate.DetectChannel, the one
+// place that owns the channel path rules (GIT-US-0193). It is a variable so
+// that tests can replace it.
 var installNotApplicable = func(build buildInfo) string {
-	if build.Version == "dev" || build.BuiltBy == "source" {
-		return "development build"
+	exe, err := selfupdate.CurrentExecutable()
+	if err != nil {
+		exe = ""
 	}
-	return ""
+	return channelReason(selfupdate.DetectChannel(exe, selfupdate.Env{
+		Version: build.Version, BuiltBy: build.BuiltBy,
+	}))
+}
+
+// channelReason is why an install channel is not checked for updates, or "".
+// Package-manager and container installs are upgraded by their own tooling, so
+// announcing a release for them would only mislead.
+func channelReason(ch selfupdate.Channel) string {
+	switch ch {
+	case selfupdate.ChannelSource:
+		return "development build"
+	case selfupdate.ChannelHomebrew, selfupdate.ChannelScoop:
+		return "installed through " + string(ch)
+	case selfupdate.ChannelContainer:
+		return "running in a container"
+	default:
+		return ""
+	}
 }
 
 // newUpdateChecker builds the cached latest-version checker of this process.

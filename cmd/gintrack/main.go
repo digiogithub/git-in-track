@@ -10,8 +10,10 @@ package main
 import (
 	"fmt"
 	"os"
+	"runtime"
 
 	"github.com/digiogithub/git-in-track/internal/pando/supervisor"
+	"github.com/digiogithub/git-in-track/internal/selfupdate"
 )
 
 // Build information, set by the release pipeline with:
@@ -30,6 +32,13 @@ func main() {
 	// logging setup, and it is not a command users see.
 	if len(os.Args) > 1 && os.Args[1] == supervisor.WatchdogCommandName {
 		os.Exit(supervisor.RunWatchdog(os.Args[2:]))
+	}
+	// A Windows self-update leaves the previous image behind as .<name>.old
+	// because a running .exe cannot be deleted; remove it now (GIT-US-0193).
+	if runtime.GOOS == "windows" {
+		if exe, err := selfupdate.CurrentExecutable(); err == nil {
+			selfupdate.CleanupOld(exe)
+		}
 	}
 	err := Execute(buildInfo{
 		Version: version,
