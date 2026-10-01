@@ -124,7 +124,8 @@ to carry — test fixtures, vendored samples, a second checkout — as a project
 - **R-DISC-2** Declared folders are repository-relative. One that does not exist is not an error;
   one that escapes the repository (`..`, an absolute path) is ignored.
 - **R-DISC-3** `.git/`, `node_modules/`, `dist/`, `vendor/` and dot folders other than `.pmngr` are
-  never probed, whatever the rule says.
+  never probed by the root and first-level rule. A declared folder is probed as declared, so a
+  backlog under a dot folder (`gintrack add . --docs .kb`) is reached only by declaring it.
 - **R-DISC-4** **Detection is deeper than discovery, and is a different act.** When a repository is
   registered, `gintrack add` and the web wizard look up to four levels down and *offer* every
   backlog they find; the user declares the ones that are theirs. A monorepo
@@ -138,7 +139,8 @@ to carry — test fixtures, vendored samples, a second checkout — as a project
   in browser-only mode, in the persisted folder record. Creating a project declares its folder.
 - **R-DISC-5** Both runtimes apply the same rule: the shared core implements it once
   (`core.DiscoverProjectsWith`) and every host — CLI, companion, WebAssembly worker — feeds it the
-  same declaration.
+  same declaration. `gintrack spec ingest`, which addresses a repository by path, feeds it the
+  folders of the registration of that path (`GIT-US-0198`).
 
 ### 2.2 Creating a backlog
 

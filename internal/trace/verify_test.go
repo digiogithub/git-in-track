@@ -55,7 +55,7 @@ func (r *covRepo) record(commit string, hours int, outcomes map[string]Outcome) 
 	if err != nil {
 		r.t.Fatal(err)
 	}
-	fsys, ix, g, err := RepositoryTrace(context.Background(), r.root)
+	fsys, ix, g, err := RepositoryTrace(context.Background(), r.root, nil)
 	if err != nil {
 		r.t.Fatal(err)
 	}
@@ -298,6 +298,56 @@ func TestDoneTransitionStamps(t *testing.T) {
 		got := r.done(id)
 		if len(got.SpecDelta.Stamped) != 1 || got.SpecDelta.Stamped[0].Verified.By != "marta" {
 			t.Errorf("done = %+v, want R2 stamped by marta", got.SpecDelta)
+		}
+	})
+}
+
+// TestRepositoryTraceDeclaredDocs checks that the trace an ingest builds finds
+// a backlog in a hidden documentation folder once the folder is declared, as
+// the registration declares it (GIT-US-0198), and that ingest then records
+// the verification cache inside that folder.
+func TestRepositoryTraceDeclaredDocs(t *testing.T) {
+	root := t.TempDir()
+	for p, text := range map[string]string{
+		".kb/.pmngr/project.yaml":                        covProject,
+		strings.Replace(covSpecPath, "docs/", ".kb/", 1): covSpec,
+		"src/alloc.go":                                   covCode,
+		"src/alloc_test.go":                              covTests,
+	} {
+		abs := filepath.Join(root, filepath.FromSlash(p))
+		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(abs, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx := context.Background()
+
+	t.Run("undeclared hidden folder is not discovered", func(t *testing.T) {
+		_, _, g, err := RepositoryTrace(ctx, root, nil)
+		if err != nil || g != nil {
+			t.Errorf("graph = %v, %v; want nil, nil", g, err)
+		}
+	})
+	t.Run("declared hidden folder is traced and recorded", func(t *testing.T) {
+		fsys, ix, g, err := RepositoryTrace(ctx, root, []string{".kb"})
+		if err != nil || g == nil {
+			t.Fatalf("graph = %v, %v; want a graph", g, err)
+		}
+		if _, ok := g.Requirement(core.RequirementRef{Spec: "ACME-SP-0001", Number: 1}); !ok {
+			t.Fatalf("ACME-SP-0001.R1 is not in the graph: %+v", g.Requirements())
+		}
+		fresh := []TestResult{{
+			ID: "example.com/acme/src#TestNextID", Format: FormatGoTest, Path: "src/alloc_test.go",
+			Symbol: "TestNextID", Result: OutcomePass, Commit: "c1", At: time.Now(),
+		}}
+		recs, err := RecordVerification(fsys, ix, VerificationEntries(ix, g, fresh, fresh, "ci"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(recs) != 1 || recs[0].Path != ".kb/.pmngr/verify.json" || recs[0].Added == 0 {
+			t.Errorf("records = %+v, want entries added to .kb/.pmngr/verify.json", recs)
 		}
 	})
 }

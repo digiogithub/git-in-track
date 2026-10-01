@@ -1960,6 +1960,16 @@ A corrupt file is rebuilt, never an error. This file, not the test-result cache,
 `spec coverage`, `spec verify`, the MCP `verify_requirement` and the done transition read: the
 test-result cache is the raw per-test input, the verification cache the per-requirement evidence.
 
+**Which backlog (`GIT-US-0198`).** The requirements are read from the backlogs of the repository
+root, discovered as doc 03 §2.1 says: the root and first-level rule plus every documentation
+folder the registration of that root declares (`repos[].docsFolders`, §3.2; a registration of a
+folder inside the root contributes its folders under that folder). A backlog in a dot folder such
+as `.kb/` is therefore found only when it is declared (`gintrack add . --docs .kb`). When no
+backlog is found the results are still recorded in the test-result cache, nothing is mapped and
+no `verify.json` is written, and the command prints
+`warning: no project backlog found under <root>; is the docs folder declared?` on stderr and
+exits 0 — as `gintrack add` warns about a repository without a `project.yaml`.
+
 ### 4.20 `gintrack spec lint|impact|coverage|verify|trace`
 
 > **Implemented** by `GIT-US-0125`. Native only. These are the scriptable face of the MCP spec

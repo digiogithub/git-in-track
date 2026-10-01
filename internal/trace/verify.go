@@ -188,14 +188,18 @@ type VerifyRecord struct {
 
 // RepositoryTrace builds the backlog index and the trace graph of the
 // repository at root from scratch, like RepositoryGraph, and also returns the
-// file system they were read from. It returns nil values and no error when
-// the repository holds no backlog.
-func RepositoryTrace(ctx context.Context, root string) (core.FS, *core.Index, *Graph, error) {
+// file system they were read from. Projects are discovered the way a mounted
+// repository discovers them: the bounded rule at root plus docsFolders, the
+// repository-relative documentation folders its registration declares — the
+// only way to reach one the rule skips, such as a hidden .kb (ADR-018,
+// GIT-US-0198). It returns nil values and no error when the repository holds
+// no backlog.
+func RepositoryTrace(ctx context.Context, root string, docsFolders []string) (core.FS, *core.Index, *Graph, error) {
 	fsys, err := osfs.New(root)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("open %s: %w", root, err)
 	}
-	projects, err := core.DiscoverProjects(fsys, ".")
+	projects, err := core.DiscoverProjectsWith(fsys, core.DiscoveryOptions{DocsFolders: docsFolders})
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("discover the projects of %s: %w", root, err)
 	}

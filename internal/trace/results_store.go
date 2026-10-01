@@ -195,10 +195,11 @@ func Stamp(r *TestResolver, raws []RawResult, commit string, at time.Time) ([]Te
 }
 
 // RepositoryGraph builds the trace graph of the repository at root from
-// scratch: its backlog index, a full marker scan and the working tree. It
-// returns nil and no error when the repository holds no backlog.
-func RepositoryGraph(ctx context.Context, root string) (*Graph, error) {
-	_, _, g, err := RepositoryTrace(ctx, root)
+// scratch: its backlog index, a full marker scan and the working tree, with
+// projects discovered as RepositoryTrace discovers them. It returns nil and no
+// error when the repository holds no backlog.
+func RepositoryGraph(ctx context.Context, root string, docsFolders []string) (*Graph, error) {
+	_, _, g, err := RepositoryTrace(ctx, root, docsFolders)
 	return g, err
 }
 
