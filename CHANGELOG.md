@@ -22,6 +22,13 @@ because a commit list cannot express them.
   folders of the repository's registration, as every other command does, and warns on stderr when
   it finds no backlog instead of succeeding silently.
 
+- **Accepting and rejecting an inbox item works when `workflow.transitions` omits triage** (docs/03
+  §6.1, R-INBOX-7). In a project whose `project.yaml` declared transitions without a `triage:` key,
+  every move out of triage was an undeclared transition, so `triage_inbox_item`, `inbox.triage` and
+  the web inbox refused accept and reject with `transition triage -> … is not allowed`. A
+  triage-category status without its own key may now move to any declared status; an explicit
+  `triage: [...]` entry is still enforced, and moving into triage is unchanged.
+
 ## [2.3.0] — 2026-09-30
 
 A minor release: `gintrack update`, a verified self-update from GitHub Releases (ADR-040), update

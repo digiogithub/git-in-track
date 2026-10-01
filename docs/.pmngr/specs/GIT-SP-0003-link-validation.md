@@ -2,11 +2,12 @@
 id: GIT-SP-0003
 type: spec
 title: Link validation
-status: in_review
+status: done
 labels: [core]
 created: 2026-09-24T22:59:00Z
-updated: 2026-09-24T22:59:36Z
+updated: 2026-09-30T21:14:11Z
 started: 2026-09-24T22:59:00Z
+closed: 2026-09-30T21:14:11Z
 requirements:
   R1:
     status: in_review

@@ -417,3 +417,57 @@ func hasLink(links []core.Link, kind core.LinkKind, target string) bool {
 	}
 	return false
 }
+
+// inboxTransitionsProjectYAML is the inbox fixture with a declared transition
+// graph that has no triage key — the shape that used to trap every submission
+// in the inbox, because leaving triage was an undeclared transition.
+const inboxTransitionsProjectYAML = `schema: 1
+key: INBX
+name: Inbox Fixture
+timezone: UTC
+docs:
+  path: docs
+workflow:
+  initial: backlog
+  statuses:
+    - { id: triage,      name: Triage,      category: triage }
+    - { id: backlog,     name: Backlog,     category: todo }
+    - { id: in_progress, name: In Progress, category: in_progress }
+    - { id: done,        name: Done,        category: done, terminal: true }
+    - { id: cancelled,   name: Cancelled,   category: cancelled, terminal: true }
+  transitions:
+    backlog:     [in_progress, cancelled]
+    in_progress: [done, backlog]
+priorities: [critical, high, medium, low]
+`
+
+// TestInboxTriageWithDeclaredTransitions pins R-INBOX-7 on a project whose
+// transitions omit the triage status: accept and reject still leave the inbox.
+func TestInboxTriageWithDeclaredTransitions(t *testing.T) {
+	tests := []struct {
+		name   string
+		params map[string]any
+		want   core.Status
+	}{
+		{name: "accept into the initial status", params: map[string]any{"action": "accept"}, want: "backlog"},
+		{name: "accept into a chosen status", params: map[string]any{"action": "accept", "status": "in_progress"}, want: "in_progress"},
+		{name: "reject into cancelled", params: map[string]any{"action": "reject"}, want: "cancelled"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			v := NewInMemory()
+			v.SetClock(func() time.Time { return inboxClock })
+			call(t, v, "vault.load", map[string]any{"files": []map[string]string{
+				{"path": "docs/.pmngr/project.yaml", "text": inboxTransitionsProjectYAML},
+			}})
+			it := submit(t, v, "The checkout page hangs on Safari", "web")
+			params := map[string]any{"id": it.ID, "rev": it.Rev}
+			for k, val := range tt.params {
+				params[k] = val
+			}
+			if out := triage(t, v, params); out.Item.Status != tt.want {
+				t.Errorf("status = %q, want %q", out.Item.Status, tt.want)
+			}
+		})
+	}
+}

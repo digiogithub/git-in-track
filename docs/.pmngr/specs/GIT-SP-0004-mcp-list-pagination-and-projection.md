@@ -2,11 +2,12 @@
 id: GIT-SP-0004
 type: spec
 title: MCP list pagination and projection
-status: in_review
+status: done
 labels: [mcp]
 created: 2026-09-24T22:59:01Z
-updated: 2026-09-29T18:43:46Z
+updated: 2026-09-30T21:14:16Z
 started: 2026-09-24T22:59:01Z
+closed: 2026-09-30T21:14:16Z
 requirements:
   R1:
     status: in_review
