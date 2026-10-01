@@ -2,12 +2,13 @@
 id: GIT-US-0198
 type: story
 title: "Bug: `spec ingest`/`spec coverage` ignore projects whose docs folder is dot-prefixed (e.g. `.kb/`) — requirements stay \"untested\" despite passing results"
-status: in_review
+status: done
 priority: high
 assignees: [claude-code]
 created: 2026-09-30T21:09:29Z
-updated: 2026-10-01T07:27:20Z
+updated: 2026-10-01T07:45:30Z
 started: 2026-09-30T21:42:29Z
+closed: 2026-10-01T07:45:30Z
 links:
   - { kind: duplicated_by, target: GIT-T-0239 }
 deleted: true
