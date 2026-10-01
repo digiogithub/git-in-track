@@ -12,6 +12,13 @@ because a commit list cannot express them.
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [2.3.1] — 2026-10-01
+
+A patch release: two fixes, one for the inbox and one for `gintrack spec ingest`. No configuration
+key, data-model path, CLI flag or API field changes, so nothing breaks for an existing setup.
+
 ### Fixed
 
 - **`gintrack spec ingest` finds a backlog in a declared dot folder** (`GIT-US-0198`, docs/07
@@ -1891,7 +1898,8 @@ each, `Contents: read and write`. GHCR needs no secret. The release workflow ver
 tokens before it builds anything and fails with the fix in the message when either is
 missing. Full procedure: [docs/09](docs/09-ci-cd-and-releases.md) §9 and §10.
 
-[Unreleased]: https://github.com/digiogithub/git-in-track/compare/v2.3.0...HEAD
+[Unreleased]: https://github.com/digiogithub/git-in-track/compare/v2.3.1...HEAD
+[2.3.1]: https://github.com/digiogithub/git-in-track/compare/v2.3.0...v2.3.1
 [2.3.0]: https://github.com/digiogithub/git-in-track/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/digiogithub/git-in-track/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/digiogithub/git-in-track/compare/v2.0.1...v2.1.0
