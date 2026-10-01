@@ -2,11 +2,12 @@
 id: GIT-SP-0002
 type: spec
 title: Item and requirement ID allocation
-status: in_review
+status: done
 labels: [core]
 created: 2026-09-24T22:53:55Z
-updated: 2026-09-24T22:54:17Z
+updated: 2026-09-30T21:14:02Z
 started: 2026-09-24T22:53:55Z
+closed: 2026-09-30T21:14:02Z
 requirements:
   R1:
     status: in_review
