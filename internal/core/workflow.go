@@ -22,6 +22,12 @@ func TransitionAllowed(cfg *ProjectConfig, from, to Status) bool {
 // An empty from means "the item is being created": only the existence of the
 // target status is checked. An absent or empty transitions mapping means every
 // transition is allowed.
+//
+// Work leaves triage by being accepted or rejected (docs/03 section 6.4,
+// R-INBOX-7), so a status of the triage category with no key of its own in the
+// transitions mapping may move to any declared status. A project that does
+// declare a key for its triage status is held to that list. Moving into triage
+// follows the ordinary rules.
 func ValidateTransition(cfg *ProjectConfig, from, to Status) Diagnostic {
 	transition := Diagnostic{Path: ProjectFileName, Field: "status"}
 	if to == "" {
@@ -51,7 +57,11 @@ func ValidateTransition(cfg *ProjectConfig, from, to Status) Diagnostic {
 	if len(cfg.Workflow.Transitions) == 0 {
 		return Diagnostic{}
 	}
-	for _, candidate := range cfg.Workflow.Transitions[from] {
+	targets, declared := cfg.Workflow.Transitions[from]
+	if !declared && cfg.IsTriageStatus(from) {
+		return Diagnostic{}
+	}
+	for _, candidate := range targets {
 		if candidate == to {
 			return Diagnostic{}
 		}
