@@ -6,6 +6,9 @@
 [![Release](https://github.com/digiogithub/git-in-track/actions/workflows/release.yml/badge.svg)](https://github.com/digiogithub/git-in-track/releases)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
+Project site: <https://digiogithub.github.io/git-in-track/> (source in [`pages/`](pages/),
+deployed by [`pages.yml`](.github/workflows/pages.yml)).
+
 ## What is git-in-track
 
 git-in-track is a project management tool with no central server and no database.

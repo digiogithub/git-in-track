@@ -1,0 +1,48 @@
+# Deploys the static project site in pages/ to GitHub Pages.
+#
+# The site is plain HTML, CSS and JavaScript with no build step, so the job
+# uploads the folder as it is. Repository setting required once:
+# Settings -> Pages -> Build and deployment -> Source: "GitHub Actions".
+# docs/09-ci-cd-and-releases.md §2.1 describes this workflow.
+name: Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "pages/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time; let an in-flight production deployment finish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to GitHub Pages
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload site artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: pages
+
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,542 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>git-in-track — your backlog is a git repo</title>
+  <meta name="description" content="git-in-track is git-native, Markdown-first project management for teams and their AI agents: tasks, specs and a knowledge base as plain Markdown files with YAML front matter. No server, no database, an MCP server built for agents.">
+  <meta name="theme-color" content="#07080d">
+  <meta property="og:title" content="git-in-track — your backlog is a git repo">
+  <meta property="og:description" content="Tasks, specs and knowledge as Markdown in git. No server, no database. Built for humans and AI agents.">
+  <meta property="og:type" content="website">
+  <link rel="icon" type="image/svg+xml" href="assets/img/favicon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/css/site.css">
+  <script>
+    try { var t = localStorage.getItem('git-in-track-site:theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch (e) {}
+  </script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <canvas id="graph-bg" aria-hidden="true"></canvas>
+  <div class="glow glow-a" aria-hidden="true"></div>
+  <div class="glow glow-b" aria-hidden="true"></div>
+
+  <header class="nav" id="top">
+    <a class="brand" href="#top" aria-label="git-in-track home">
+      <img src="assets/img/favicon.svg" alt="" width="28" height="28">
+      <span>git-in-track</span>
+    </a>
+    <nav aria-label="Sections">
+      <ul class="nav-links">
+        <li><a href="#pillars">Features</a></li>
+        <li><a href="#disk">On disk</a></li>
+        <li><a href="#agents">Agents</a></li>
+        <li><a href="#specs">Specs</a></li>
+        <li><a href="#tour">Tour</a></li>
+        <li><a href="#install">Install</a></li>
+      </ul>
+    </nav>
+    <div class="nav-actions">
+      <button class="icon-btn" id="theme-toggle" type="button" aria-label="Toggle light and dark theme" title="Toggle theme">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z" fill="currentColor"/></svg>
+      </button>
+      <a class="btn btn-ghost btn-sm" href="https://github.com/digiogithub/git-in-track" rel="noopener">
+        <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        <span>GitHub</span>
+      </a>
+    </div>
+  </header>
+
+  <main id="main">
+    <!-- ───────────────────────── HERO ───────────────────────── -->
+    <section class="hero">
+      <div class="hero-copy reveal">
+        <p class="kicker"><span class="prompt">$</span> git log --oneline --graph backlog</p>
+        <h1>Your backlog is<br><span class="grad">a git repo.</span></h1>
+        <p class="lede">
+          git-in-track tracks <strong>tasks</strong>, <strong>specs</strong> and <strong>knowledge</strong>
+          as plain Markdown files with YAML front matter, right next to your code.
+          No server. No database. No vendor. And an MCP server built so AI agents can pick up
+          a story, prove it against its spec and hand it back — on the same bytes you review.
+        </p>
+        <div class="cta">
+          <a class="btn btn-primary" href="#install">Get started</a>
+          <a class="btn btn-ghost" href="https://github.com/digiogithub/git-in-track" rel="noopener">Star on GitHub</a>
+        </div>
+        <ul class="badges" aria-label="Highlights">
+          <li>MIT licensed</li>
+          <li>Go + WebAssembly</li>
+          <li>32 MCP tools</li>
+          <li>any git host</li>
+        </ul>
+      </div>
+      <div class="hero-term reveal" data-delay="1">
+        <div class="term" aria-label="Terminal demo">
+          <div class="term-bar"><i></i><i></i><i></i><span>~/acme — zsh</span></div>
+          <pre class="term-body" id="hero-term" aria-live="off"></pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- ───────────────────────── STATS ───────────────────────── -->
+    <section class="stats reveal" aria-label="By the numbers">
+      <div class="stat"><b data-count="0">0</b><span>servers to host</span></div>
+      <div class="stat"><b data-count="0">0</b><span>databases</span></div>
+      <div class="stat"><b data-count="32">32</b><span>MCP tools for agents</span></div>
+      <div class="stat"><b data-count="1">1</b><span>Go core, two runtimes</span></div>
+    </section>
+
+    <!-- ───────────────────────── PILLARS ───────────────────────── -->
+    <section id="pillars" class="section">
+      <header class="sec-head reveal">
+        <pre class="fm">---
+type: feature
+title: One system, three kinds of truth
+---</pre>
+        <h2>Tasks, specs and knowledge. <span class="muted">In one repo.</span></h2>
+        <p>Most teams split planning, requirements and documentation across three SaaS tools that never agree.
+          git-in-track keeps all three as files in git, linked by ID, versioned by every commit you already make.</p>
+      </header>
+
+      <div class="cards">
+        <article class="card tilt reveal">
+          <div class="card-icon c1" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M4 5h16M4 12h10M4 19h7" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/><path d="M17 16l2 2 4-4" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg>
+          </div>
+          <h3>Tasks</h3>
+          <p>Epics, stories, tasks and milestones with statuses, priorities, estimates and typed links
+            (<code>blocks</code>, <code>blocked_by</code>, <code>relates_to</code>…). Comments are files too.</p>
+          <ul class="ticks">
+            <li>Kanban and Scrum boards in a team repo, by reference — never copies</li>
+            <li>Sprints, retrospectives and per-sprint metrics derived from git history</li>
+            <li>Inbox with triage for incoming work</li>
+          </ul>
+        </article>
+
+        <article class="card tilt reveal" data-delay="1">
+          <div class="card-icon c2" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M7 4h7l5 5v11H7z" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round"/><path d="M10 13h6M10 17h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          </div>
+          <h3>Specs</h3>
+          <p>Spec items hold numbered requirement blocks — <code>### GIT-SP-0001.R2 — …</code> — with
+            WHEN/SHALL statements and GIVEN/WHEN/THEN scenarios.</p>
+          <ul class="ticks">
+            <li><code>// Implements:</code> and <code>// Verifies:</code> markers tie them to code and tests</li>
+            <li><code>spec impact</code> tells you which requirements a diff touches</li>
+            <li>A CI gate that fails on failing or suspect requirements</li>
+          </ul>
+        </article>
+
+        <article class="card tilt reveal" data-delay="2">
+          <div class="card-icon c3" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M4 5.5C4 4.7 4.7 4 5.5 4H11v16H5.5A1.5 1.5 0 0 1 4 18.5zM20 5.5c0-.8-.7-1.5-1.5-1.5H13v16h5.5c.8 0 1.5-.7 1.5-1.5z" stroke="currentColor" stroke-width="2" fill="none"/></svg>
+          </div>
+          <h3>Knowledge base</h3>
+          <p>Any docs folder becomes a rendered KB: GFM tables, task lists, footnotes, callouts,
+            <code>[[wikilinks]]</code> and Mermaid diagrams. Obsidian vault meets Kanban board.</p>
+          <ul class="ticks">
+            <li>Project KB next to the code, team KB in the team repo</li>
+            <li>Full-text search everywhere, no setup</li>
+            <li>Semantic search when a Pando backend is configured</li>
+          </ul>
+        </article>
+      </div>
+
+      <div class="search-strip reveal">
+        <div class="search-copy">
+          <h3><span class="tag">search_semantic</span> Find it by meaning, not by wording</h3>
+          <p>“Where did we decide how conflicts are merged?” is not a substring. With the optional
+            <a href="https://github.com/digiogithub/git-in-track/blob/main/docs/21-semantic-search.md" rel="noopener">Pando backend</a>
+            configured, git-in-track ranks stories and KB pages by meaning. Without it you still get fast
+            full-text search, and the semantic tool says <code>unavailable</code> — honestly — instead of returning an empty list.</p>
+        </div>
+        <div class="search-box" aria-hidden="true">
+          <div class="sb-input"><span class="prompt">?</span><span id="sem-q">how are merge conflicts resolved</span><i class="caret"></i></div>
+          <ol class="sb-hits">
+            <li><span class="id">kb</span> 06-git-sync.md <em>§ Conflict resolution</em><b>0.91</b></li>
+            <li><span class="id">GIT-SP-0001</span> The rev write protocol<b>0.84</b></li>
+            <li><span class="id">GIT-US-0026</span> Document the rev retry protocol<b>0.79</b></li>
+          </ol>
+        </div>
+      </div>
+    </section>
+
+    <!-- ───────────────────────── ON DISK ───────────────────────── -->
+    <section id="disk" class="section">
+      <header class="sec-head reveal">
+        <pre class="fm">---
+type: feature
+title: How it looks on disk
+---</pre>
+        <h2>It is just files. <span class="muted">Open them in vim.</span></h2>
+        <p>Every item is a Markdown file with YAML front matter. IDs are permanent and readable,
+          history is <code>git log</code>, review is a pull request, and offline is the default.</p>
+      </header>
+
+      <div class="disk reveal">
+        <div class="tree" aria-label="Repository layout">
+          <div class="tree-title">my-repo/</div>
+<pre><span class="d">docs/</span>                      <span class="c"># your knowledge base</span>
+├─ 02-architecture.md
+├─ adr/
+└─ <span class="d">.pmngr/</span>                  <span class="c"># the backlog</span>
+   ├─ project.yaml          <span class="c"># key, statuses, labels</span>
+   ├─ <span class="d">epics/</span>
+   ├─ <span class="d">stories/</span>
+   │  └─ <span class="hl">ACME-US-0042-login-with-sso.md</span>
+   ├─ <span class="d">tasks/</span>
+   ├─ <span class="d">milestones/</span>
+   ├─ <span class="d">specs/</span>
+   └─ <span class="d">comments/</span>ACME-US-0042/
+      └─ 20260218T091500Z-jane.md
+<span class="d">src/</span>                       <span class="c"># your code, unchanged</span></pre>
+        </div>
+
+        <div class="codefile">
+          <div class="codefile-bar">
+            <span class="dot-file"></span><span class="fname">docs/.pmngr/stories/ACME-US-0042-login-with-sso.md</span>
+            <button class="copy" type="button" data-copy="story-src">copy</button>
+          </div>
+<pre class="code" id="story-src"><span class="fm-d">---</span>
+<span class="k">id</span>: <span class="v">ACME-US-0042</span>
+<span class="k">type</span>: <span class="v">story</span>
+<span class="k">title</span>: <span class="s">Login with SSO</span>
+<span class="k">status</span>: <span class="v st">in_progress</span>
+<span class="k">created</span>: <span class="n">2026-02-10</span>
+<span class="k">updated</span>: <span class="n">2026-02-18</span>
+<span class="k">author</span>: <span class="v">jane.doe</span>
+<span class="k">assignees</span>: [<span class="v">john.roe</span>]
+<span class="k">labels</span>: [<span class="v">auth</span>, <span class="v">security</span>, <span class="v">agent-ok</span>]
+<span class="k">priority</span>: <span class="v">high</span>
+<span class="k">parent</span>: <span class="v">ACME-EP-0003</span>
+<span class="k">milestone</span>: <span class="v">ACME-M-0001</span>
+<span class="k">estimate</span>: <span class="n">5</span>
+<span class="k">links</span>:
+  - <span class="k">kind</span>: <span class="v">blocked_by</span>
+    <span class="k">target</span>: <span class="v">ACME-US-0038</span>
+  - <span class="k">kind</span>: <span class="v">implements</span>
+    <span class="k">target</span>: <span class="v">ACME-SP-0003.R2</span>
+<span class="fm-d">---</span>
+
+<span class="h">## Description</span>
+
+As a user I want to sign in with the company IdP so that
+I do not manage another password. See <span class="wl">[[auth/sso-overview]]</span>.
+
+<span class="h">## Acceptance Criteria</span>
+
+- [x] OIDC discovery from the issuer URL
+- [ ] Session survives a browser restart
+- [ ] Logout revokes the refresh token</pre>
+        </div>
+      </div>
+
+      <ul class="mini-grid reveal">
+        <li><b>No lock-in</b><span>Readable with any editor, greppable with any tool.</span></li>
+        <li><b>Permanent IDs</b><span><code>&lt;KEY&gt;-US-0042</code> — never renumbered, never reused.</span></li>
+        <li><b><code>rev</code> is computed</b><span>A content hash at read time; nothing extra stored in the file.</span></li>
+        <li><b>Derived caches only</b><span>Indexes can always be rebuilt from the files.</span></li>
+      </ul>
+    </section>
+
+    <!-- ───────────────────────── AGENTS ───────────────────────── -->
+    <section id="agents" class="section">
+      <header class="sec-head reveal">
+        <pre class="fm">---
+type: feature
+title: Built for AI agents
+labels: [mcp, agent-ok]
+---</pre>
+        <h2>Agents work the same backlog. <span class="muted">Safely.</span></h2>
+        <p><code>gintrack mcp</code> serves the backlog, the knowledge base and the specs over MCP on stdio;
+          <code>gintrack serve --mcp-http</code> serves the same tools over HTTP. Writes go through the same validation as the web UI,
+          so an agent cannot invent a status, duplicate an ID or silently overwrite a human.</p>
+      </header>
+
+      <div class="agents reveal">
+        <div class="agents-left">
+          <div class="codefile small">
+            <div class="codefile-bar"><span class="dot-file"></span><span class="fname">.mcp.json</span>
+              <button class="copy" type="button" data-copy="mcp-src">copy</button></div>
+<pre class="code" id="mcp-src">{
+  <span class="k">"mcpServers"</span>: {
+    <span class="k">"git-in-track"</span>: {
+      <span class="k">"command"</span>: <span class="s">"gintrack"</span>,
+      <span class="k">"args"</span>: [<span class="s">"mcp"</span>, <span class="s">"--allow-write"</span>,
+               <span class="s">"--agent"</span>, <span class="s">"claude-code"</span>]
+    }
+  }
+}</pre>
+          </div>
+          <ul class="feat-list">
+            <li>
+              <b>32 tools, 13 read + 19 write</b>
+              <span>Write tools are simply absent without <code>--allow-write</code> — not failing, absent.</span>
+            </li>
+            <li>
+              <b>Optimistic concurrency with <code>rev</code></b>
+              <span>Every read returns a content hash; every write quotes it. A stale write is refused with
+                <code>stale_revision</code>, <code>currentRev</code> and the fields still in <code>conflicts[]</code>.</span>
+            </li>
+            <li>
+              <b>Token-economic by design</b>
+              <span>Compact rows, <code>fields</code> projections, cursor pagination, token budgets and a
+                one-line-per-requirement <code>text</code> format.</span>
+            </li>
+            <li>
+              <b>Content is data, never instructions</b>
+              <span>Bodies, comments, KB pages and specs are flagged as data in the handshake and in every content tool — a
+                prompt-injection guard rail, not an afterthought.</span>
+            </li>
+            <li>
+              <b>Guard rails for humans</b>
+              <span>WIP limits, an <code>agent-ok</code> label to opt stories in, and a human review on every agent PR.</span>
+            </li>
+          </ul>
+        </div>
+
+        <div class="agents-right">
+          <div class="term tall">
+            <div class="term-bar"><i></i><i></i><i></i><span>agent ⇄ gintrack mcp</span>
+              <button class="replay" type="button" id="replay-loop" aria-label="Replay the pick-up loop animation">↻ replay</button></div>
+            <pre class="term-body" id="loop-term" aria-live="off"></pre>
+          </div>
+          <ol class="loop-steps" aria-label="The pick-up loop">
+            <li><span>1</span>list_items</li>
+            <li><span>2</span>get_item</li>
+            <li><span>3</span>update_item</li>
+            <li><span>4</span>implement</li>
+            <li><span>5</span>add_comment</li>
+            <li><span>6</span>in_review</li>
+          </ol>
+        </div>
+      </div>
+    </section>
+
+    <!-- ───────────────────────── SPECS ───────────────────────── -->
+    <section id="specs" class="section">
+      <header class="sec-head reveal">
+        <pre class="fm">---
+type: feature
+title: Spec-driven development
+---</pre>
+        <h2>Requirements that know <span class="grad">which code they live in.</span></h2>
+        <p>A spec is a Markdown file with numbered requirement blocks. Markers in code and tests trace them.
+          Then <code>spec impact</code> reads your diff and tells you — or your agent, or your CI — which requirements it
+          touched and whether they still pass.</p>
+      </header>
+
+      <div class="spec-grid reveal">
+        <div class="codefile">
+          <div class="codefile-bar"><span class="dot-file"></span><span class="fname">docs/.pmngr/specs/GIT-SP-0001-the-rev-write-protocol.md</span></div>
+<pre class="code"><span class="h">### GIT-SP-0001.R2 — Refuse a write based on a stale rev</span>
+
+<span class="kw">WHEN</span> a conditional write quotes a `rev` that differs from
+the `rev` of the file on disk, the store <span class="kw">SHALL</span> refuse the
+write with `stale_revision`, carrying the current `rev`,
+and leave the file unchanged.
+
+<span class="h">#### Scenario: two agents claim one story</span>
+- <b>GIVEN</b> two agents read `GIT-US-0042` at the same `rev`
+- <b>WHEN</b> the first agent's `update_item` lands
+- <b>THEN</b> the second write is refused with `stale_revision`</pre>
+        </div>
+        <div class="spec-right">
+          <div class="codefile small">
+            <div class="codefile-bar"><span class="dot-file go"></span><span class="fname">internal/vault/store.go</span></div>
+<pre class="code"><span class="c">// Implements: GIT-SP-0001.R2</span>
+<span class="kw">func</span> (s *Store) <span class="fn">WriteIf</span>(rev Rev, b []<span class="kw">byte</span>) <span class="kw">error</span> { … }
+
+<span class="c">// Verifies: GIT-SP-0001.R2</span>
+<span class="kw">func</span> <span class="fn">TestStaleRevIsRefused</span>(t *testing.T) { … }</pre>
+          </div>
+          <div class="term">
+            <div class="term-bar"><i></i><i></i><i></i><span>CI · spec-impact</span></div>
+<pre class="term-body static"><span class="p">$</span> gintrack spec impact --since origin/main --fail-on failing,suspect
+impact origin/main..worktree: 1 files, 2 symbols, 2 hits
+tiers: 1 ok 1; 2 ok 1; 3 unavailable (no Pando semantic search is configured)
+GIT-SP-0001.R2 t1 <span class="ok">passing</span> "Refuse a write based on a stale rev"
+GIT-SP-0001.R3 t2 <span class="warn">suspect</span> "Name the fields still in conflict"
+<span class="err">gintrack: 1 requirement is in a --fail-on state</span>
+<span class="p">$</span> echo $?
+<span class="err">7</span></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="timeline reveal" aria-label="The SDD loop">
+        <div class="tl-line" aria-hidden="true"></div>
+        <div class="tl-node"><i></i><b>context</b><span><code>spec_context</code> returns just the requirements your story touches, inside a token budget.</span></div>
+        <div class="tl-node"><i></i><b>mark</b><span>Put <code>Implements:</code> on the code and <code>Verifies:</code> on the test.</span></div>
+        <div class="tl-node"><i></i><b>impact</b><span><code>spec_impact</code> ranks every hit: failing first, then suspect, with why.</span></div>
+        <div class="tl-node"><i></i><b>resolve</b><span>Fix the code, propose a <code>## Spec Delta</code>, or ask a human.</span></div>
+        <div class="tl-node"><i></i><b>verify</b><span>Ingest test results; <code>verify_requirement</code> stamps only what passed.</span></div>
+        <div class="tl-node merge"><i></i><b>merge</b><span>The spec changes when the story reaches <code>done</code> — never to make code pass.</span></div>
+      </div>
+      <p class="footnote reveal">Impact tier 1 (markers and line-to-symbol mapping) works everywhere. Tiers 2 and 3 (call graph and semantic
+        neighbours) need a Pando backend and report <code>unavailable</code> without one — never “nothing affected”.</p>
+    </section>
+
+    <!-- ───────────────────────── ARCHITECTURE ───────────────────────── -->
+    <section id="modes" class="section">
+      <header class="sec-head reveal">
+        <pre class="fm">---
+type: feature
+title: Two runtimes, one core
+---</pre>
+        <h2>Run it in a tab. <span class="muted">Or run it next to your repo.</span></h2>
+      </header>
+      <div class="cards two">
+        <article class="card tilt reveal">
+          <div class="mode-tag">browser-only</div>
+          <h3>Open a folder, that's it</h3>
+          <p>In a Chromium-based browser, pick a folder through the File System Access API. The Go core runs as
+            WebAssembly in a Web Worker and the index is cached in IndexedDB. No binary, no install.</p>
+          <p class="note">Honest fine print: Firefox and Safari are read-only, commit-on-save does not run in the browser yet,
+            and browser git needs a CORS proxy.</p>
+        </article>
+        <article class="card tilt reveal" data-delay="1">
+          <div class="mode-tag alt">companion</div>
+          <h3><code>gintrack serve</code></h3>
+          <p>A local process that embeds the same web app, watches files with fsnotify for instant updates, indexes natively,
+            runs git natively and exposes REST, WebSocket events and MCP over HTTP — all bound to <code>127.0.0.1</code>.</p>
+          <p class="note">The web app detects the companion and upgrades itself automatically.</p>
+        </article>
+      </div>
+      <div class="hosts reveal">
+        <span class="hosts-label">Sync is <code>git fetch</code> / <code>git push</code>. Works with</span>
+        <ul>
+          <li>GitHub</li><li>GitLab</li><li>Gitea</li><li>Bitbucket</li><li>a bare repo on your NAS</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ───────────────────────── TOUR ───────────────────────── -->
+    <section id="tour" class="section">
+      <header class="sec-head reveal">
+        <pre class="fm">---
+type: feature
+title: A tour of the web app
+---</pre>
+        <h2>Feels like a vault. <span class="muted">Works like a board.</span></h2>
+        <p>Real screenshots of the web app running on git-in-track's own backlog — the project is dogfooded from day one. Click to enlarge.</p>
+      </header>
+
+      <div class="gallery reveal" id="gallery">
+        <figure class="shot"><img src="assets/img/screen-backlog.webp" alt="Backlog — every epic, story, task and spec of this repo, filterable" width="1388" height="868" loading="lazy" decoding="async"><figcaption>Backlog — every epic, story, task and spec of this repo, filterable</figcaption></figure>
+        <figure class="shot"><img src="assets/img/screen-item.webp" alt="Story detail — front matter, acceptance criteria and the file path on disk" width="1388" height="868" loading="lazy" decoding="async"><figcaption>Story detail — front matter, acceptance criteria and the file path on disk</figcaption></figure>
+        <figure class="shot"><img src="assets/img/screen-specs.webp" alt="Specs — one row per requirement, with status and coverage" width="1388" height="868" loading="lazy" decoding="async"><figcaption>Specs — one row per requirement, with status and coverage</figcaption></figure>
+        <figure class="shot"><img src="assets/img/screen-requirement.webp" alt="Requirement — WHEN/SHALL text, scenarios, and the code and tests that trace it" width="1388" height="868" loading="lazy" decoding="async"><figcaption>Requirement — WHEN/SHALL text, scenarios, and the code and tests that trace it</figcaption></figure>
+        <figure class="shot"><img src="assets/img/screen-coverage.webp" alt="Coverage matrix — requirements against their linked tests" width="1388" height="868" loading="lazy" decoding="async"><figcaption>Coverage matrix — requirements against their linked tests</figcaption></figure>
+        <figure class="shot"><img src="assets/img/screen-kb.webp" alt="Knowledge base — the docs folder, rendered, with Mermaid diagrams and an outline" width="1388" height="868" loading="lazy" decoding="async"><figcaption>Knowledge base — the docs folder, rendered, with Mermaid diagrams and an outline</figcaption></figure>
+      </div>
+
+      <div class="mock-tour reveal" id="mock-tour" hidden>
+        <div class="mock-board" aria-label="Illustration of a git-in-track board">
+          <div class="mock-col"><h4>todo <em>3</em></h4>
+            <div class="mock-card"><span>ACME-US-0201</span>Board swimlanes by epic<i class="lbl a">web</i></div>
+            <div class="mock-card"><span>ACME-US-0204</span>Spec delta preview<i class="lbl b">core</i></div>
+            <div class="mock-card"><span>ACME-T-0412</span>Golden files for callouts<i class="lbl c">agent-ok</i></div>
+          </div>
+          <div class="mock-col"><h4>in_progress <em>2/4</em></h4>
+            <div class="mock-card hot"><span>ACME-US-0198</span>Login with SSO<i class="lbl b">cli</i><b class="who">claude</b></div>
+            <div class="mock-card"><span>ACME-US-0199</span>Inbox triage transitions<i class="lbl a">core</i><b class="who">jane</b></div>
+          </div>
+          <div class="mock-col"><h4>in_review <em>1/4</em></h4>
+            <div class="mock-card"><span>ACME-US-0196</span>Rotate signing keys<i class="lbl c">docs</i><b class="who">claude</b></div>
+          </div>
+          <div class="mock-col"><h4>done</h4>
+            <div class="mock-card done"><span>ACME-US-0190</span>rev conflict fields</div>
+            <div class="mock-card done"><span>ACME-US-0187</span>search_semantic tool</div>
+          </div>
+        </div>
+        <p class="footnote">Illustration of a team board. Try the real thing locally with <code>gintrack serve</code>.</p>
+      </div>
+    </section>
+
+    <!-- ───────────────────────── INSTALL ───────────────────────── -->
+    <section id="install" class="section">
+      <header class="sec-head reveal">
+        <pre class="fm">---
+type: feature
+title: Install and quick start
+---</pre>
+        <h2>Up in three commands.</h2>
+      </header>
+
+      <div class="install reveal">
+        <div class="tabs" role="tablist" aria-label="Install method">
+          <button role="tab" aria-selected="true" aria-controls="tab-release" id="t-release" type="button">Release archive</button>
+          <button role="tab" aria-selected="false" aria-controls="tab-go" id="t-go" type="button" tabindex="-1">go install</button>
+          <button role="tab" aria-selected="false" aria-controls="tab-src" id="t-src" type="button" tabindex="-1">From source</button>
+          <button role="tab" aria-selected="false" aria-controls="tab-pkg" id="t-pkg" type="button" tabindex="-1">Homebrew · Scoop · Docker</button>
+        </div>
+        <div class="tabpanel" role="tabpanel" id="tab-release" aria-labelledby="t-release">
+<pre class="code"><span class="c"># Download for your platform from GitHub Releases:</span>
+<span class="c">#   https://github.com/digiogithub/git-in-track/releases/latest</span>
+<span class="c"># macOS archives are signed and notarized, Windows ones Authenticode-signed.</span>
+<span class="p">$</span> tar -xzf gintrack_*_linux_amd64.tar.gz && sudo install gintrack /usr/local/bin/
+<span class="p">$</span> sha256sum -c checksums.txt --ignore-missing</pre>
+          <button class="copy" type="button" data-copy-text="tar -xzf gintrack_*_linux_amd64.tar.gz &amp;&amp; sudo install gintrack /usr/local/bin/">copy</button>
+        </div>
+        <div class="tabpanel" role="tabpanel" id="tab-go" aria-labelledby="t-go" hidden>
+<pre class="code"><span class="p">$</span> go install github.com/digiogithub/git-in-track/cmd/gintrack@latest
+<span class="c"># builds without the embedded web UI: `gintrack mcp` and the file</span>
+<span class="c"># commands work; `gintrack serve` reports no embedded UI.</span></pre>
+          <button class="copy" type="button" data-copy-text="go install github.com/digiogithub/git-in-track/cmd/gintrack@latest">copy</button>
+        </div>
+        <div class="tabpanel" role="tabpanel" id="tab-src" aria-labelledby="t-src" hidden>
+<pre class="code"><span class="p">$</span> git clone https://github.com/digiogithub/git-in-track
+<span class="p">$</span> cd git-in-track
+<span class="p">$</span> make deps && make build      <span class="c"># -> bin/gintrack, web UI embedded</span></pre>
+          <button class="copy" type="button" data-copy-text="git clone https://github.com/digiogithub/git-in-track &amp;&amp; cd git-in-track &amp;&amp; make deps &amp;&amp; make build">copy</button>
+        </div>
+        <div class="tabpanel" role="tabpanel" id="tab-pkg" aria-labelledby="t-pkg" hidden>
+          <p class="paused"><b>Paused for now.</b> The Homebrew cask, the Scoop bucket and the GHCR images are being re-plumbed on top of the
+            signed release archives. Until they are back, use a release archive. The commands they will use:</p>
+<pre class="code"><span class="p">$</span> brew install digiogithub/tap/gintrack                       <span class="c"># macOS</span>
+<span class="p">$</span> scoop bucket add digiogithub https://github.com/digiogithub/scoop-bucket
+<span class="p">$</span> scoop install gintrack                                      <span class="c"># Windows</span>
+<span class="p">$</span> docker run --rm -p 127.0.0.1:7317:7317 -v "$PWD:/work" \
+    --user "$(id -u):$(id -g)" ghcr.io/digiogithub/git-in-track:latest</pre>
+        </div>
+
+        <div class="quick">
+          <div class="q"><span>1</span><div><b>Register a repo you already have</b><code>gintrack add ./my-repo</code></div></div>
+          <div class="q"><span>2</span><div><b>Start the companion</b><code>gintrack serve</code><em>→ http://127.0.0.1:7317</em></div></div>
+          <div class="q"><span>3</span><div><b>Plug in your agent</b><code>gintrack mcp --allow-write --agent claude-code</code></div></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="final reveal">
+      <h2>Stop syncing your tracker with your repo.<br><span class="grad">Make it the repo.</span></h2>
+      <div class="cta center">
+        <a class="btn btn-primary" href="https://github.com/digiogithub/git-in-track" rel="noopener">View on GitHub</a>
+        <a class="btn btn-ghost" href="https://github.com/digiogithub/git-in-track/tree/main/docs" rel="noopener">Read the docs</a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="foot-graph" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+    <div class="foot-row">
+      <span class="brand small"><img src="assets/img/favicon.svg" alt="" width="20" height="20"> git-in-track</span>
+      <nav aria-label="Footer">
+        <a href="https://github.com/digiogithub/git-in-track" rel="noopener">GitHub</a>
+        <a href="https://github.com/digiogithub/git-in-track/releases" rel="noopener">Releases</a>
+        <a href="https://github.com/digiogithub/git-in-track/blob/main/CHANGELOG.md" rel="noopener">Changelog</a>
+        <a href="https://github.com/digiogithub/git-in-track/blob/main/AGENTS.md" rel="noopener">AGENTS.md</a>
+        <a href="https://github.com/digiogithub/git-in-track/blob/main/LICENSE" rel="noopener">MIT License</a>
+      </nav>
+    </div>
+    <p class="foot-note"><span class="prompt">$</span> echo "Made of Markdown, YAML and git. No databases were harmed." <span class="hint">psst: ↑ ↑ ↓ ↓ ← → ← → b a</span></p>
+  </footer>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="assets/js/site.js" defer></script>
+</body>
+</html>

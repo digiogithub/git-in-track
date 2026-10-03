@@ -56,7 +56,7 @@ graph LR
 
 **Source of truth: [`.github/workflows/ci.yml`](../.github/workflows/ci.yml).** The file is
 the specification; this section explains it and is kept in step with it. `make lint-ci`
-parses both workflows as YAML and runs `actionlint` when it is installed.
+parses every workflow as YAML and runs `actionlint` when it is installed.
 
 Runs on every push to `main`, on every pull request, and on demand. Fails fast on
 formatting and static analysis, then runs the full test suite and a real build.
@@ -213,6 +213,30 @@ the results could prove, and every touched passing requirement stays suspect.
 - Later phases add an `e2e` job running Playwright against `gintrack serve` (Phase 2+) and
   a `matrix` of `ubuntu-latest`, `macos-latest`, `windows-latest` for the Go job once file
   watching is implemented (Phase 2), because `fsnotify` behaviour is platform specific.
+
+### 2.1 `.github/workflows/pages.yml` — the project site
+
+**Source of truth: [`.github/workflows/pages.yml`](../.github/workflows/pages.yml).** The
+static project site lives in [`pages/`](../pages/): plain HTML, CSS and JavaScript with no
+build step and no dependency on the Go or web toolchains. The workflow deploys that folder
+to GitHub Pages as it is.
+
+- **Triggers:** a push to `main` that touches `pages/**` or the workflow file itself, and
+  `workflow_dispatch` for a manual redeploy.
+- **Steps:** `actions/checkout`, `actions/configure-pages`, `actions/upload-pages-artifact`
+  with `path: pages`, then `actions/deploy-pages` in the `github-pages` environment. Actions
+  are pinned by major tag, as in `ci.yml`.
+- **Permissions:** `contents: read`, `pages: write`, `id-token: write` — the minimum the
+  Pages deployment needs. Nothing else in the repository is writable from this job.
+- **Concurrency:** group `pages` without cancellation, so an in-flight deployment finishes.
+- **One-time setting:** *Settings → Pages → Build and deployment → Source* must be
+  **GitHub Actions**; with the legacy "Deploy from a branch" source the deploy step fails.
+- `pages/.nojekyll` keeps GitHub from running Jekyll over the folder. `make lint-ci` (and the
+  `workflows` job of `ci.yml`) validate this workflow with the other two.
+
+Screenshots of the web app live in `pages/assets/img/screen-*.webp` (about 1400×870, dark
+theme, sidebar collapsed, this repository's own `GIT` backlog only). If none of them loads,
+the tour section falls back to an illustrated board.
 
 ---
 
