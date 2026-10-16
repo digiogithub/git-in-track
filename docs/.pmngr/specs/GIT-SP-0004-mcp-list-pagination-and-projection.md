@@ -5,12 +5,12 @@ title: MCP list pagination and projection
 status: done
 labels: [mcp]
 created: 2026-09-24T22:59:01Z
-updated: 2026-09-30T21:14:16Z
+updated: 2026-10-14T08:10:53Z
 started: 2026-09-24T22:59:01Z
 closed: 2026-09-30T21:14:16Z
 requirements:
   R1:
-    status: in_review
+    status: done
   R2:
     status: in_review
   R3:

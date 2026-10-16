@@ -38,8 +38,8 @@ id_allocation:
   write_counters: true
   counters: # hints only, NOT authoritative (the index scan wins)
     epic: 32
-    story: 199
-    task: 239
+    story: 200
+    task: 241
     milestone: 18
     spec: 4
 priorities: [critical, high, medium, low]
