@@ -14,6 +14,24 @@ because a commit list cannot express them.
 
 Nothing yet.
 
+## [2.3.2] — 2026-10-16
+
+A patch release that refreshes vulnerable transitive dependencies of the web app. No configuration
+key, data-model path, CLI flag or API field changes, so nothing breaks for an existing setup.
+
+### Security
+
+- **Patched transitive web dependencies reported by Dependabot.** `dompurify` 3.4.17 (bundled
+  through `mermaid`; a DOM XSS when an `afterSanitize` hook removes nodes), `undici` 8.12.2 (through
+  `jsdom`, test-only), `brace-expansion` 1.1.21 and 5.0.12 and `source-map-js` 1.2.2 (build and
+  lint tooling). Only `dompurify` ships in the embedded web app.
+
+### Known issues
+
+- `npm audit` still reports advisories in `braces`, `postcss-selector-parser` (both build-time,
+  through Tailwind CSS 3) and `katex` (through `mermaid` and `remark-math`). Their fixes need a
+  major upgrade of Tailwind CSS or `mermaid` and are left for a separate change.
+
 ## [2.3.1] — 2026-10-01
 
 A patch release: two fixes, one for the inbox and one for `gintrack spec ingest`. No configuration
