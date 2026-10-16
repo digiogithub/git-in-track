@@ -331,6 +331,10 @@ main { width: 100%; }
 .foot-row nav { display: flex; flex-wrap: wrap; gap: 6px 18px; }
 .foot-row nav a { color: var(--muted); text-decoration: none; font-size: 14px; }
 .foot-row nav a:hover { color: var(--text); }
+.foot-credit { font-size: 14px; color: var(--muted); margin: 18px 0 0; }
+.foot-credit a { color: var(--text); text-decoration: none; border-bottom: 1px solid var(--border-strong); }
+.foot-credit a:hover { border-bottom-color: currentColor; }
+.foot-credit strong { color: var(--text); font-weight: 600; }
 .foot-note { font: 13px var(--mono); color: var(--faint); margin: 18px 0 0; overflow-wrap: anywhere; }
 .hint { opacity: 0; transition: opacity .4s; margin-left: 8px; }
 .foot-note:hover .hint { opacity: .8; }
