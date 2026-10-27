@@ -610,6 +610,15 @@ carries the token is a second, quieter control with the warning that **the link 
 credential** next to it. That link is assembled in the tab from the token this session
 already holds — it is never asked of the API and never logged.
 
+The card also says, in every state, whether the tunnel is — or would be when opened —
+**protected by Cloudflare Access one-time PIN** (`protected` and `allowedRecipients` in
+the status, ADR-041). A protected tunnel is described by its recipient counts ("2
+allowed addresses and 1 domain rule"), never by the addresses, which the server does not
+send; the public-internet notice stays while it is up, worded for the PIN in front of the
+token. A public tunnel carries a short hint on how to protect it:
+`server.tunnel.allowedEmails` in the configuration or `gintrack serve --tunnel-allow-email`.
+The card cannot edit the list — that is decided when the companion starts.
+
 A companion started with `--token none` reports `tokenConfigured: false`, and a refused
 enable (`tunnel_requires_token`, HTTP 409) is rendered as an explanation with the fix —
 restart without `--token none` — rather than as a failure to retry.

@@ -11,9 +11,12 @@
 // A Manager can be started and stopped repeatedly inside one long-running
 // process, which is what the "share this board" toggle in the web UI needs.
 //
-// The tunnel is anonymous and unauthenticated: anyone holding the URL reaches
-// the origin. Callers decide whether that is acceptable and are responsible for
-// tearing the tunnel down.
+// By default the tunnel is anonymous and unauthenticated: anyone holding the
+// URL reaches the origin. Options.AllowedEmails switches it to a protected
+// quick tunnel, where Cloudflare Access asks every visitor for a one-time PIN
+// sent to an allowed address before a single request reaches the origin.
+// Either way, callers decide whether the exposure is acceptable and are
+// responsible for tearing the tunnel down.
 package tunnel
 
 import (
@@ -26,6 +29,7 @@ import (
 	"time"
 
 	"github.com/cloudflare/cloudflared/connection"
+	"github.com/cloudflare/cloudflared/quicktunnelauth"
 )
 
 // gracePeriod is how long cloudflared waits for in-flight requests when the
@@ -75,6 +79,55 @@ type Status struct {
 	Connections int       // established edge connections
 	Since       time.Time // when the current state was entered; zero when off
 	Err         string    // last error, cleared on a successful start
+
+	// Protected reports that the manager was configured with an allow-list,
+	// so every tunnel it opens sits behind Cloudflare Access one-time PIN. It
+	// is a property of the manager, not of the round, and is reported in
+	// every state, including off: the UI says what opening the tunnel WOULD
+	// do before anyone clicks.
+	Protected bool
+	// Recipients counts the allow-list. Only the counts ever leave the
+	// manager: the addresses themselves are not in Status, logs or events.
+	Recipients Recipients
+}
+
+// Recipients summarizes a protected tunnel's allow-list without disclosing it:
+// how many exact addresses and how many "*@domain" rules it holds, after
+// normalization and de-duplication.
+type Recipients struct {
+	Emails  int
+	Domains int
+}
+
+// ValidateAllowedEmails checks an allow-list the way a protected tunnel will
+// read it and returns its counts. Each element may itself be a comma-separated
+// list; an entry is an exact address or "*@domain". An empty list is valid and
+// means a public tunnel.
+//
+// It exists so configuration can be rejected at startup, long before anyone
+// opens the tunnel: a typo in the list must stop `gintrack serve`, not surface
+// as a failed toggle hours later.
+func ValidateAllowedEmails(rules []string) (Recipients, error) {
+	policy, err := recipientPolicy(rules)
+	if err != nil || policy == nil {
+		return Recipients{}, err
+	}
+	emails, domains := policy.AllowedRecipientCounts()
+	return Recipients{Emails: emails, Domains: domains}, nil
+}
+
+// recipientPolicy builds the upstream policy, or nil for a public tunnel.
+// The validation itself is cloudflared's, so gintrack accepts exactly what
+// `cloudflared tunnel --allowed-mail` accepts and the two cannot drift.
+func recipientPolicy(rules []string) (*quicktunnelauth.QuickTunnelAuthRecipientPolicy, error) {
+	if len(rules) == 0 {
+		return nil, nil
+	}
+	policy, err := quicktunnelauth.NewQuickTunnelAuthRecipientPolicy(rules)
+	if err != nil {
+		return nil, fmt.Errorf("invalid recipient list: %w", err)
+	}
+	return policy, nil
 }
 
 // Options configures a Manager.
@@ -87,6 +140,11 @@ type Options struct {
 	Version string
 	// Logger receives cloudflared's own log stream. Nil means slog.Default().
 	Logger *slog.Logger
+	// AllowedEmails, when non-empty, makes every tunnel a protected quick
+	// tunnel: exact addresses or "*@domain" rules, each element optionally
+	// comma-separated, validated by ValidateAllowedEmails. Empty means the
+	// public, unauthenticated tunnel.
+	AllowedEmails []string
 
 	// endpoint overrides the trycloudflare.com broker base URL. Tests point it
 	// at an httptest.Server; production always uses defaultAPIEndpoint.
@@ -102,6 +160,15 @@ type Manager struct {
 	version  string
 	endpoint string
 	log      *slog.Logger
+
+	// policy is the allow-list of a protected manager, nil for a public one.
+	// policyErr is set instead when the list was given but is invalid: the
+	// manager then refuses to start rather than silently opening a PUBLIC
+	// tunnel its operator believed was protected.
+	policy     *quicktunnelauth.QuickTunnelAuthRecipientPolicy
+	policyErr  error
+	protected  bool
+	recipients Recipients
 
 	// quiet is read by the zerolog bridge to demote cloudflared's cancellation
 	// noise while a tunnel is being torn down.
@@ -133,7 +200,7 @@ type Manager struct {
 	// now and runTunnel are indirection points for tests: the state machine can
 	// be driven with a fake clock and without reaching Cloudflare.
 	now       func() time.Time
-	runTunnel func(ctx context.Context, creds connection.Credentials, hostname string) error
+	runTunnel func(ctx context.Context, creds connection.Credentials, hostname string, auth connection.HTTPRequestAuthorizer) error
 }
 
 // stampedEvent is a cloudflared event tagged with the generation that was
@@ -155,16 +222,31 @@ func NewManager(opts Options) *Manager {
 		endpoint = defaultAPIEndpoint
 	}
 	m := &Manager{
-		origin:   opts.Origin,
-		version:  opts.Version,
-		endpoint: endpoint,
-		log:      log,
-		conns:    make(map[uint8]struct{}),
-		status:   Status{State: StateOff},
-		now:      time.Now,
+		origin:    opts.Origin,
+		version:   opts.Version,
+		endpoint:  endpoint,
+		log:       log,
+		protected: len(opts.AllowedEmails) > 0,
+		conns:     make(map[uint8]struct{}),
+		now:       time.Now,
 	}
+	m.policy, m.policyErr = recipientPolicy(opts.AllowedEmails)
+	if m.policyErr != nil {
+		m.policyErr = fmt.Errorf("tunnel allowed emails: %w", m.policyErr)
+	}
+	if m.policy != nil {
+		emails, domains := m.policy.AllowedRecipientCounts()
+		m.recipients = Recipients{Emails: emails, Domains: domains}
+	}
+	m.status = m.baseStatus(StateOff)
 	m.runTunnel = m.runCloudflared
 	return m
+}
+
+// baseStatus is a fresh snapshot in state carrying the manager's fixed
+// protection fields, which survive every reset between rounds.
+func (m *Manager) baseStatus(state State) Status {
+	return Status{State: state, Protected: m.protected, Recipients: m.recipients}
 }
 
 // Status returns the current snapshot.
@@ -196,6 +278,9 @@ func (m *Manager) Start(ctx context.Context) (Status, error) {
 	if m.origin == "" {
 		return m.Status(), ErrNoOrigin
 	}
+	if m.policyErr != nil {
+		return m.Status(), m.policyErr
+	}
 
 	m.mu.Lock()
 	if m.running {
@@ -215,10 +300,20 @@ func (m *Manager) Start(ctx context.Context) (Status, error) {
 	m.mu.Unlock()
 
 	m.set(generation, func(s *Status) {
-		*s = Status{State: StateStarting}
+		*s = m.baseStatus(StateStarting)
 	})
 
-	creds, hostname, err := provision(runCtx, m.endpoint, "cloudflared/"+m.version)
+	creds, hostname, err := provision(runCtx, m.endpoint, "cloudflared/"+m.version, m.policy != nil)
+	if err != nil {
+		cancel()
+		close(done)
+		m.fail(generation, err)
+		return m.Status(), err
+	}
+
+	// The authorizer is per round: its login state is bound to this round's
+	// hostname, and its sessions must not outlive the tunnel that issued them.
+	auth, closeAuth, err := newAuthorizer(hostname, m.policy)
 	if err != nil {
 		cancel()
 		close(done)
@@ -231,11 +326,17 @@ func (m *Manager) Start(ctx context.Context) (Status, error) {
 		s.State = StateStarting
 		s.URL = "https://" + hostname
 	})
-	m.log.Info("cloudflare quick tunnel provisioned", "url", current.URL, "origin", m.origin)
+	// Counts only: the allow-list itself never reaches the log.
+	m.log.Info("cloudflare quick tunnel provisioned", "url", current.URL, "origin", m.origin,
+		"protected", current.Protected, "allowedEmails", current.Recipients.Emails,
+		"allowedDomains", current.Recipients.Domains)
 
 	go func() {
 		defer close(done)
-		runErr := m.runTunnel(runCtx, creds, hostname)
+		// Runs before close(done), so Stop returning means the assertion
+		// validator's refresh goroutine is gone too.
+		defer closeAuth()
+		runErr := m.runTunnel(runCtx, creds, hostname, auth)
 		// Read the cancellation cause before canceling, otherwise the cleanup
 		// below would make every exit look deliberate.
 		cancelled := runCtx.Err() != nil
@@ -286,7 +387,7 @@ func (m *Manager) Stop(ctx context.Context) error {
 		}
 	}
 
-	m.set(generation, func(s *Status) { *s = Status{State: StateOff} })
+	m.set(generation, func(s *Status) { *s = m.baseStatus(StateOff) })
 
 	m.mu.Lock()
 	m.stopping = false
@@ -346,11 +447,16 @@ func (m *Manager) set(generation uint64, mutate func(*Status)) Status {
 
 // runCloudflared is the production tunnel runner: it builds the cloudflared
 // configuration and blocks until ctx is cancelled or the tunnel dies.
-func (m *Manager) runCloudflared(ctx context.Context, creds connection.Credentials, hostname string) error {
+func (m *Manager) runCloudflared(
+	ctx context.Context,
+	creds connection.Credentials,
+	hostname string,
+	auth connection.HTTPRequestAuthorizer,
+) error {
 	observer := m.ensureObserver()
 	zlog := newZerolog(m.log, &m.quiet)
 
-	tun, err := buildTunnel(ctx, creds, hostname, m.origin, m.version, observer, &zlog)
+	tun, err := buildTunnel(ctx, creds, hostname, m.origin, m.version, auth, observer, &zlog)
 	if err != nil {
 		return err
 	}

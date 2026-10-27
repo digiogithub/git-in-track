@@ -198,6 +198,15 @@ type Tunnel struct {
 	// the feature report itself as unsupported rather than silently using
 	// Cloudflare anyway.
 	Provider string `json:"provider" yaml:"provider"`
+	// AllowedEmails, when non-empty, makes the tunnel a protected quick tunnel:
+	// Cloudflare Access asks every visitor for a one-time PIN sent to an
+	// address on this list before any request reaches the companion
+	// (ADR-041). Entries are exact addresses or "*@domain" rules, and an entry
+	// may itself be a comma-separated list. Empty keeps today's public tunnel.
+	// The bearer token is still required either way: this is a second gate in
+	// front of it, not a replacement. `--tunnel-allow-email` replaces the list
+	// for one run.
+	AllowedEmails []string `json:"allowedEmails,omitempty" yaml:"allowedEmails,omitempty"`
 }
 
 // DefaultTunnelProvider is the shipped `server.tunnel.provider`.
@@ -587,6 +596,7 @@ func (c *Config) Clone() *Config {
 	for i, w := range c.Workspaces {
 		out.Workspaces[i] = Workspace{Name: w.Name, Repos: append([]string(nil), w.Repos...)}
 	}
+	out.Server.Tunnel.AllowedEmails = append([]string(nil), c.Server.Tunnel.AllowedEmails...)
 	out.Repos = append([]Repo(nil), c.Repos...)
 	for i, r := range c.Repos {
 		out.Repos[i].DocsFolders = append([]string(nil), r.DocsFolders...)

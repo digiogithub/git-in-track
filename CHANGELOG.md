@@ -12,15 +12,31 @@ because a commit list cannot express them.
 
 ## [Unreleased]
 
+### Added
+
+- **Protected quick tunnels** (ADR-041, docs/07 §4.1 and §5.1.1). A non-empty
+  `server.tunnel.allowedEmails` — or `gintrack serve --tunnel-allow-email <rule>`, repeatable
+  and comma-separated, which replaces the configured list for one run — makes the Cloudflare
+  quick tunnel a protected one: Cloudflare Access asks every visitor for a one-time PIN sent
+  to an allowed address (exact, or `*@domain`) before any request reaches the companion.
+  **The bearer token is still required** behind it, and a tunnel without a token is still
+  refused. The list is validated with cloudflared's own rules at startup, and only its counts
+  are ever shown: `GET /api/v1/tunnel` gains `protected` and
+  `allowedRecipients: {"emails": n, "domains": n}`, the banner reads
+  `(protected: Cloudflare Access one-time PIN for 2 addresses, 1 domain rule; the token is
+  still required)`, and the settings card shows the protection state with a hint on how to
+  enable it. Unset, the tunnel is the public one, unchanged.
+
 ### Changed
 
 - **cloudflared upgraded to the October 2026 library** (`v0.0.0-20261027105943-a1dd44f389c6`,
   matching cloudflared 2026.10.4). Cloudflare reworked quick tunnels upstream — protected
   quick tunnels behind Access One-Time PIN, path normalisation before Access rule matching
   (VULN-141859), sturdier QUIC error classification and shutdown — and removed the transport
-  logger the embedded tunnel used to pass in. `gintrack serve --tunnel` keeps provisioning a
-  public `*.trycloudflare.com` tunnel guarded by the bearer token; nothing changes in its
-  flags, configuration keys or status API. ADR-027 carries an amendment.
+  logger the embedded tunnel used to pass in. Without an allow-list `gintrack serve --tunnel`
+  keeps provisioning a public `*.trycloudflare.com` tunnel guarded by the bearer token; the
+  upgrade itself changes none of its flags, configuration keys or status fields — protected
+  mode is the opt-in addition above. ADR-027 carries an amendment.
 - **Building git-in-track now requires Go 1.27** (was 1.26). `go.mod` declares `go 1.27.3`
   because cloudflared's own `go.mod` does, and CI's `GO_VERSION` moved to `1.27`. Release
   binaries are unaffected; contributors and `go install` users need a 1.27.3+ toolchain

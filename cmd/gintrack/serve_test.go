@@ -11,6 +11,7 @@ import (
 
 	"github.com/digiogithub/git-in-track/internal/config"
 	"github.com/digiogithub/git-in-track/internal/server"
+	"github.com/digiogithub/git-in-track/internal/tunnel"
 )
 
 // TestServeTunnelFlagIsDeclared pins the flag and, above all, its default: the
@@ -50,6 +51,11 @@ func TestServeRefusesATunnelWithoutAToken(t *testing.T) {
 			name:   "the configuration key on a server without a token",
 			config: "version: 1\nserver:\n  tunnel:\n    enabled: true\n",
 			args:   []string{"serve", "--token", "none"},
+		},
+		{
+			// Cloudflare Access is a second gate, never a replacement.
+			name: "a protected tunnel on a server without a token",
+			args: []string{"serve", "--tunnel", "--tunnel-allow-email", "ana@example.com", "--token", "none"},
 		},
 	}
 
@@ -116,6 +122,21 @@ func TestAnnounceTunnelPrintsAnOpenLink(t *testing.T) {
 			want:   []string{"tunnel:     https://example.trycloudflare.com"},
 			unwant: []string{"open:", "token="},
 		},
+		{
+			name: "a protected tunnel names the gate by count and keeps the token",
+			status: server.TunnelInfo{
+				State: "connected", URL: "https://example.trycloudflare.com",
+				Protected: true, Recipients: tunnel.Recipients{Emails: 2, Domains: 1},
+			},
+			token: "s3cret",
+			want: []string{
+				"tunnel:     https://example.trycloudflare.com   (protected: Cloudflare Access one-time PIN for " +
+					"2 addresses, 1 domain rule; the token is still required)\n",
+				"open:       https://example.trycloudflare.com/?token=s3cret",
+				"anyone allowed through the one-time PIN",
+			},
+			unwant: []string{"(public;"},
+		},
 	}
 
 	for _, tc := range tests {
@@ -141,6 +162,171 @@ func TestAnnounceTunnelPrintsAnOpenLink(t *testing.T) {
 			}
 			if stderr.Len() != 0 {
 				t.Errorf("stderr is not empty:\n%s", stderr.String())
+			}
+		})
+	}
+}
+
+// TestRecipientCounts pins the banner's allow-list summary, which follows the
+// wording of cloudflared's own startup table.
+func TestRecipientCounts(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		in   tunnel.Recipients
+		want string
+	}{
+		{in: tunnel.Recipients{Emails: 1}, want: "1 address"},
+		{in: tunnel.Recipients{Emails: 2}, want: "2 addresses"},
+		{in: tunnel.Recipients{Domains: 1}, want: "1 domain rule"},
+		{in: tunnel.Recipients{Emails: 3, Domains: 2}, want: "3 addresses, 2 domain rules"},
+		{in: tunnel.Recipients{}, want: "no recipients"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.want, func(t *testing.T) {
+			t.Parallel()
+			if got := recipientCounts(tc.in); got != tc.want {
+				t.Errorf("recipientCounts(%+v) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestTunnelAllowEmailPrecedence checks that --tunnel-allow-email replaces the
+// configured list wholesale, accepts both repetition and commas, and leaves the
+// file's list alone when it is not given.
+func TestTunnelAllowEmailPrecedence(t *testing.T) {
+	t.Parallel()
+
+	configured := []string{"file@example.com"}
+	tests := []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{name: "the file applies when the flag is absent", want: configured},
+		{
+			name: "the flag replaces the file",
+			args: []string{"--tunnel-allow-email", "ana@example.com"},
+			want: []string{"ana@example.com"},
+		},
+		{
+			name: "the flag is repeatable and comma-separated",
+			args: []string{"--tunnel-allow-email", "ana@example.com,*@corp.example", "--tunnel-allow-email", "bob@example.com"},
+			want: []string{"ana@example.com", "*@corp.example", "bob@example.com"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cmd := newServeCommand(buildInfo{Version: "test"})
+			if err := cmd.ParseFlags(tc.args); err != nil {
+				t.Fatalf("parse flags: %v", err)
+			}
+			flag, err := cmd.Flags().GetStringSlice("tunnel-allow-email")
+			if err != nil {
+				t.Fatalf("get flag: %v", err)
+			}
+			got := pickStrings(cmd, "tunnel-allow-email", flag, configured)
+			if strings.Join(got, "|") != strings.Join(tc.want, "|") {
+				t.Errorf("allowed emails = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestServeRefusesAnInvalidAllowList stops `serve` before it listens when the
+// allow-list is malformed, whether it came from the flag or the file.
+func TestServeRefusesAnInvalidAllowList(t *testing.T) {
+	tests := []struct {
+		name   string
+		config string
+		args   []string
+		want   string
+	}{
+		{
+			name: "the flag",
+			args: []string{"serve", "--tunnel-allow-email", "not-an-address", "--no-open"},
+			want: "--tunnel-allow-email",
+		},
+		{
+			name:   "the configuration key",
+			config: "version: 1\nserver:\n  tunnel:\n    allowedEmails: [\"not-an-address\"]\n",
+			args:   []string{"serve", "--no-open"},
+			want:   "server.tunnel.allowedEmails",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			if tc.config != "" {
+				if err := os.MkdirAll(filepath.Dir(h.Config), 0o755); err != nil {
+					t.Fatalf("create the configuration directory: %v", err)
+				}
+				if err := os.WriteFile(h.Config, []byte(tc.config), 0o600); err != nil {
+					t.Fatalf("write the configuration: %v", err)
+				}
+			}
+
+			stdout, stderr, code := h.run(tc.args...)
+			if code == exitOK {
+				t.Fatalf("the server started with an invalid allow-list\nstdout:\n%s", stdout)
+			}
+			if !strings.Contains(stderr, tc.want) || !strings.Contains(stderr, "not a valid email address") {
+				t.Errorf("stderr does not explain the refusal:\n%s", stderr)
+			}
+			if strings.Contains(stdout, "listening on") {
+				t.Errorf("the server listened before refusing:\n%s", stdout)
+			}
+		})
+	}
+}
+
+// TestBannerAnnouncesAProtectedTunnel checks the line printed before the URL
+// exists, so an operator can tell at a glance which kind is being opened.
+func TestBannerAnnouncesAProtectedTunnel(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		allowed []string
+		want    string
+	}{
+		{name: "public", want: "tunnel:     opening a public cloudflare tunnel…"},
+		{name: "protected", allowed: []string{"ana@example.com"}, want: "tunnel:     opening a protected cloudflare tunnel…"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			opts := server.Options{
+				Bind:      "127.0.0.1",
+				Token:     "companion-token",
+				Workspace: "default",
+				// Enabled only on the options handed to the banner: the server
+				// itself is never started, so nothing is provisioned.
+				Tunnel: config.Tunnel{AllowedEmails: tc.allowed},
+			}
+			srv, err := server.New(opts)
+			if err != nil {
+				t.Fatalf("server.New(): %v", err)
+			}
+			opts.Tunnel.Enabled = true
+
+			cmd := &cobra.Command{}
+			var stdout bytes.Buffer
+			cmd.SetOut(&stdout)
+			printBanner(cmd, buildInfo{Version: "test"}, srv, opts.Token, opts)
+
+			out := stdout.String()
+			if !strings.Contains(out, tc.want) {
+				t.Errorf("the banner does not contain %q:\n%s", tc.want, out)
+			}
+			if strings.Contains(out, "ana@example.com") {
+				t.Errorf("the banner printed the allow-list:\n%s", out)
 			}
 		})
 	}

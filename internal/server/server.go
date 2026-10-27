@@ -257,6 +257,9 @@ func New(opts Options) (*Server, error) {
 	if opts.Tunnel.Enabled && opts.Token == "" {
 		return nil, errTunnelNeedsToken
 	}
+	if err := validateTunnelAllowList(opts.Tunnel.AllowedEmails); err != nil {
+		return nil, err
+	}
 	if opts.Tunnel.Enabled && opts.Tunnel.Provider != "" && opts.Tunnel.Provider != config.DefaultTunnelProvider {
 		return nil, fmt.Errorf("refusing to open a %q tunnel: this build only implements %q",
 			opts.Tunnel.Provider, config.DefaultTunnelProvider)

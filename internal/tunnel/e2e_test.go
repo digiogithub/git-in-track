@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"testing"
 	"time"
@@ -105,6 +106,119 @@ func TestQuickTunnelEndToEnd(t *testing.T) {
 	if got := probe(t, second.URL, 90*time.Second); got != "gintrack origin" {
 		t.Fatalf("second body = %q, want the origin's response", got)
 	}
+}
+
+// TestQuickTunnelProtectedEndToEnd starts a real PROTECTED quick tunnel and
+// checks that a visitor without a Cloudflare Access session is sent to the
+// one-time PIN login — a 302 to a host other than the tunnel's own — and that
+// the origin never sees the request. Gated exactly like TestQuickTunnelEndToEnd:
+//
+//	GINTRACK_TUNNEL_E2E=1 go test ./internal/tunnel/ -run EndToEnd -v
+func TestQuickTunnelProtectedEndToEnd(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this test reaches trycloudflare.com; skipped under -short")
+	}
+	if os.Getenv("GINTRACK_TUNNEL_E2E") != "1" {
+		t.Skip("set GINTRACK_TUNNEL_E2E=1 to run the live Cloudflare tunnel test")
+	}
+	if raceEnabled {
+		t.Skip("cloudflared's DNS resolver trips the race detector; run this test without -race")
+	}
+
+	var listenConfig net.ListenConfig
+	listener, err := listenConfig.Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	reached := make(chan struct{}, 1)
+	server := &http.Server{
+		ReadHeaderTimeout: 5 * time.Second,
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			select {
+			case reached <- struct{}{}:
+			default:
+			}
+			fmt.Fprint(w, "gintrack origin")
+		}),
+	}
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(func() { _ = server.Close() })
+
+	m := NewManager(Options{
+		Origin:        listener.Addr().String(),
+		Version:       "0.0.0-e2e",
+		Logger:        discardLogger(),
+		AllowedEmails: []string{"nobody@example.com"},
+	})
+	status, err := m.Start(t.Context())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Logf("public URL: %s", status.URL)
+	if !status.Protected || status.Recipients != (Recipients{Emails: 1}) {
+		t.Fatalf("status = %+v, want a protected tunnel with one address", status)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := m.Stop(ctx); err != nil {
+			t.Errorf("Stop: %v", err)
+		}
+	})
+
+	public, err := url.Parse(status.URL)
+	if err != nil {
+		t.Fatalf("parse public URL: %v", err)
+	}
+	location := probeRedirect(t, status.URL, 90*time.Second)
+	if location.Host == "" || location.Host == public.Host {
+		t.Fatalf("redirect Location = %q, want the Cloudflare Access login on another host", location)
+	}
+	t.Logf("redirected to %s://%s%s", location.Scheme, location.Host, location.Path)
+
+	select {
+	case <-reached:
+		t.Fatal("an unauthenticated request reached the origin through a protected tunnel")
+	default:
+	}
+}
+
+// probeRedirect polls url without following redirects until it answers 302,
+// and returns the Location it pointed at.
+func probeRedirect(t *testing.T, target string, budget time.Duration) *url.URL {
+	t.Helper()
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	deadline := time.Now().Add(budget)
+	var last error
+	for time.Now().Before(deadline) {
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, target, nil)
+		if err != nil {
+			t.Fatalf("build probe request: %v", err)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			last = err
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode == http.StatusFound {
+			location, err := resp.Location()
+			if err != nil {
+				t.Fatalf("302 without a usable Location: %v", err)
+			}
+			return location
+		}
+		last = fmt.Errorf("status %d", resp.StatusCode)
+		time.Sleep(2 * time.Second)
+	}
+	t.Fatalf("the protected tunnel never redirected within %v: %v", budget, last)
+	return nil
 }
 
 // probe polls url until it answers 200 or the budget runs out.

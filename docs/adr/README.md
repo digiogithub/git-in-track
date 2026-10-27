@@ -74,6 +74,7 @@ Every ADR uses the same sections:
 | [ADR-038](ADR-038-customisable-spec-templates.md) | Spec templates are embedded, and a backlog may override them with files | Accepted | 11 |
 | [ADR-039](ADR-039-gintrack-launches-and-manages-pando.md) | gintrack launches and manages Pando over the workspace | Accepted | 9 / 11 |
 | [ADR-040](ADR-040-gintrack-update-verified-self-update.md) | `gintrack update` is a stdlib self-update, verified against `checksums.txt` | Accepted | Post-1.0 |
+| [ADR-041](ADR-041-protected-quick-tunnels-put-otp-in-front-of-the-token.md) | Protected quick tunnels put Cloudflare Access OTP in front of the token | Accepted | Post-1.0 |
 
 ## Related documents
 

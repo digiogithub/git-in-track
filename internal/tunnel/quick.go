@@ -22,6 +22,7 @@ import (
 	"github.com/cloudflare/cloudflared/ingress"
 	"github.com/cloudflare/cloudflared/ingress/origins"
 	"github.com/cloudflare/cloudflared/orchestration"
+	"github.com/cloudflare/cloudflared/quicktunnelauth"
 	"github.com/cloudflare/cloudflared/signal"
 	"github.com/cloudflare/cloudflared/supervisor"
 	"github.com/cloudflare/cloudflared/tlsconfig"
@@ -35,6 +36,13 @@ import (
 // with an empty body returns credentials and a *.trycloudflare.com hostname; no
 // Cloudflare account and no authentication are involved.
 const defaultAPIEndpoint = "https://api.trycloudflare.com"
+
+// protectedRequestBody asks the broker for a protected quick tunnel instead of
+// a public one. It is byte-for-byte what `cloudflared tunnel --allowed-mail`
+// sends (cmd/cloudflared/tunnel/quick_tunnel.go), which this package may not
+// import; the broker registers the hostname with Cloudflare Access so the
+// one-time PIN login it later redirects to can be issued for it.
+const protectedRequestBody = `{"auth_mode":"otp"}`
 
 // provisionTimeout bounds the single HTTP call that creates the tunnel.
 const provisionTimeout = 15 * time.Second
@@ -55,12 +63,22 @@ type quickTunnelResponse struct {
 	} `json:"errors"`
 }
 
-// provision asks the broker at endpoint for an anonymous tunnel and returns its
+// provisionBody is the provisioning request body: empty for a public tunnel,
+// the OTP auth mode for a protected one.
+func provisionBody(protected bool) []byte {
+	if !protected {
+		return nil
+	}
+	return []byte(protectedRequestBody)
+}
+
+// provision asks the broker at endpoint for an anonymous tunnel — protected by
+// Cloudflare Access one-time PIN when protected is true — and returns its
 // credentials together with the public hostname (no scheme).
-func provision(ctx context.Context, endpoint, userAgent string) (connection.Credentials, string, error) {
+func provision(ctx context.Context, endpoint, userAgent string, protected bool) (connection.Credentials, string, error) {
 	var zero connection.Credentials
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/tunnel", bytes.NewReader(nil))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/tunnel", bytes.NewReader(provisionBody(protected)))
 	if err != nil {
 		return zero, "", fmt.Errorf("build quick tunnel request: %w", err)
 	}
@@ -108,6 +126,56 @@ func provision(ctx context.Context, endpoint, userAgent string) (connection.Cred
 	}, data.Result.Hostname, nil
 }
 
+// newAuthorizer builds the per-round request authorizer of a protected tunnel,
+// mirroring cloudflared's own RunQuickTunnel: login state bound to hostname,
+// the broker assertion validator, a process-local session store and the
+// recipient policy. A nil policy means a public tunnel and yields a nil
+// authorizer, which cloudflared treats as "let every request through".
+//
+// The returned close function must run when the round ends: the assertion
+// validator owns a JWKS refresh goroutine that would otherwise leak once per
+// Start. It is safe to call for a public tunnel.
+//
+// The authorizer runs inside cloudflared, BEFORE ingress, so a visitor without
+// a session never reaches the origin at all: GET and HEAD are redirected to the
+// Cloudflare Access login, other methods get 401, and the session cookie it
+// issues is stripped before a request is forwarded.
+func newAuthorizer(
+	hostname string,
+	policy *quicktunnelauth.QuickTunnelAuthRecipientPolicy,
+) (connection.HTTPRequestAuthorizer, func(), error) {
+	noop := func() {}
+	if policy == nil {
+		return nil, noop, nil
+	}
+	// Rejects anything but <label>.trycloudflare.com, so a broker that hands
+	// back an unexpected hostname fails the start instead of guarding nothing.
+	stateManager, err := quicktunnelauth.NewQuickTunnelAuthStateManager(hostname)
+	if err != nil {
+		return nil, noop, fmt.Errorf("initialize quick tunnel authentication state: %w", err)
+	}
+	sessionManager, err := quicktunnelauth.NewQuickTunnelAuthSessionManager()
+	if err != nil {
+		return nil, noop, fmt.Errorf("initialize quick tunnel session manager: %w", err)
+	}
+	// Created last so no early return above has a goroutine to clean up.
+	assertionValidator, err := quicktunnelauth.NewQuickTunnelAuthAssertionValidator()
+	if err != nil {
+		return nil, noop, fmt.Errorf("initialize quick tunnel assertion validator: %w", err)
+	}
+	handler, err := quicktunnelauth.NewQuickTunnelAuthHandlerWithAuthorization(
+		stateManager,
+		assertionValidator,
+		sessionManager,
+		policy,
+	)
+	if err != nil {
+		assertionValidator.Close()
+		return nil, noop, fmt.Errorf("initialize quick tunnel authentication handler: %w", err)
+	}
+	return handler, assertionValidator.Close, nil
+}
+
 // truncate shortens a response body so a broker failure cannot flood the log.
 func truncate(b []byte, n int) string {
 	s := strings.TrimSpace(string(b))
@@ -139,6 +207,7 @@ func buildTunnel(
 	ctx context.Context,
 	creds connection.Credentials,
 	hostname, origin, version string,
+	auth connection.HTTPRequestAuthorizer,
 	observer *connection.Observer,
 	log *zerolog.Logger,
 ) (*quickTunnel, error) {
@@ -211,6 +280,9 @@ func buildTunnel(
 		NamedTunnel: &connection.TunnelProperties{
 			Credentials:    creds,
 			QuickTunnelUrl: hostname,
+			// Recorded for parity with cloudflared; the orchestrator below is
+			// what actually enforces it.
+			QuickTunnelAuthorizer: auth,
 		},
 		ProtocolSelector:   protocolSelector,
 		EdgeTLSConfigs:     edgeTLSConfigs,
@@ -232,12 +304,18 @@ func buildTunnel(
 	// the internal rules before the real ones, so passing
 	// ingress.GetDefaultIngressRules(log) makes every request 503 while the
 	// logs still look healthy.
-	orchestrator, err := orchestration.NewOrchestrator(ctx, &orchestration.Config{
+	//
+	// The fifth argument is the protected tunnel's authorizer, consulted on
+	// every request before ingress selection; nil (a public tunnel) makes this
+	// identical to orchestration.NewOrchestrator. cloudflared reads it from the
+	// orchestrator only, not from TunnelProperties, so this is the one place
+	// that must not be forgotten.
+	orchestrator, err := orchestration.NewOrchestratorWithHTTPRequestAuthorizer(ctx, &orchestration.Config{
 		Ingress:             &ingressRules,
 		WarpRouting:         warpRouting,
 		OriginDialerService: originDialer,
 		ConfigurationFlags:  map[string]string{"protocol": "quic", "ha-connections": "1"},
-	}, tags, nil, log)
+	}, tags, nil, auth, log)
 	if err != nil {
 		return nil, fmt.Errorf("build tunnel orchestrator: %w", err)
 	}

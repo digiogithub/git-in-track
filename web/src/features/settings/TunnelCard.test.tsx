@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FakeProvider, type FakeData } from '@/api/fake-provider';
 import { ProviderContext } from '@/api/provider-context';
 import { clearToken, resetTokenCache, setToken } from '@/api/token';
+import { recipientSummary } from '@/features/settings/tunnel-recipients';
 import { TunnelCard } from '@/features/settings/TunnelCard';
 
 /** Renders the card against a fake provider; the poll is sped up to be testable. */
@@ -30,6 +31,18 @@ function stubClipboard() {
 }
 
 const SWITCH = { name: 'Share over a public URL' };
+
+describe('recipientSummary', () => {
+  it.each([
+    [{ emails: 1, domains: 0 }, '1 allowed address'],
+    [{ emails: 3, domains: 0 }, '3 allowed addresses'],
+    [{ emails: 0, domains: 2 }, '2 domain rules'],
+    [{ emails: 2, domains: 1 }, '2 allowed addresses and 1 domain rule'],
+    [{ emails: 0, domains: 0 }, 'no allowed recipients'],
+  ])('summarizes %o as %s', (recipients, want) => {
+    expect(recipientSummary(recipients)).toBe(want);
+  });
+});
 
 describe('TunnelCard', () => {
   beforeEach(() => {
@@ -88,6 +101,31 @@ describe('TunnelCard', () => {
     expect(screen.getByText(/This workspace is on the public internet\./)).toBeInTheDocument();
     expect(screen.queryByText(/still propagating through DNS/)).toBeNull();
     await expect(provider.getTunnel()).resolves.toMatchObject({ state: 'connected' });
+  });
+
+  it('says a public tunnel is not protected and how to protect it', async () => {
+    renderCard();
+
+    expect(await screen.findByText('Not protected by Cloudflare Access.')).toBeInTheDocument();
+    expect(screen.getByText('server.tunnel.allowedEmails')).toBeInTheDocument();
+    expect(screen.getByText(/--tunnel-allow-email/)).toBeInTheDocument();
+  });
+
+  it('shows a protected tunnel with its recipient counts, before and after it opens', async () => {
+    renderCard({ tunnel: { protected: true, allowedRecipients: { emails: 2, domains: 1 } } });
+
+    expect(await screen.findByText('Protected by Cloudflare Access.')).toBeInTheDocument();
+    expect(screen.getByText(/2 allowed addresses and 1 domain rule/)).toBeInTheDocument();
+    expect(screen.queryByText('Not protected by Cloudflare Access.')).toBeNull();
+
+    await userEvent.click(screen.getByRole('switch', SWITCH));
+
+    expect(await screen.findByText('Public')).toBeInTheDocument();
+    // Still on the internet, still behind the token: the warning stays, worded
+    // for the gate in front of it.
+    expect(screen.getByText(/This workspace is on the public internet\./)).toBeInTheDocument();
+    expect(screen.getByText(/Only visitors who pass the one-time PIN/)).toBeInTheDocument();
+    expect(screen.getByText(/2 allowed addresses and 1 domain rule/)).toBeInTheDocument();
   });
 
   it('copies the bare URL, without the token in it', async () => {

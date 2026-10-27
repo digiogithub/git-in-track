@@ -1588,6 +1588,8 @@ export class FakeProvider implements DataProvider {
       since: null,
       error: '',
       tokenConfigured: true,
+      protected: false,
+      allowedRecipients: { emails: 0, domains: 0 },
       ...data.tunnel,
     };
     this.mcp = {

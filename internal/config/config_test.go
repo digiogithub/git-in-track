@@ -73,7 +73,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if got.Server != want.Server || !reflect.DeepEqual(got.Git, want.Git) || got.Index != want.Index || got.MCP != want.MCP || got.Log != want.Log {
+	if !reflect.DeepEqual(got.Server, want.Server) || !reflect.DeepEqual(got.Git, want.Git) || got.Index != want.Index || got.MCP != want.MCP || got.Log != want.Log {
 		t.Errorf("round trip lost a section:\ngot  %+v\nwant %+v", got, want)
 	}
 	if len(got.Repos) != 1 || !reflect.DeepEqual(got.Repos[0], want.Repos[0]) {
@@ -405,6 +405,11 @@ func TestServerTunnelRoundTrip(t *testing.T) {
 			yaml: "version: 1\nserver:\n  tunnel:\n    provider: cloudflare\n",
 			want: Tunnel{Provider: "cloudflare"},
 		},
+		{
+			name: "an allow-list makes the tunnel protected",
+			yaml: "version: 1\nserver:\n  tunnel:\n    allowedEmails:\n      - ana@example.com\n      - \"*@corp.example\"\n",
+			want: Tunnel{Provider: DefaultTunnelProvider, AllowedEmails: []string{"ana@example.com", "*@corp.example"}},
+		},
 	}
 
 	for _, tc := range tests {
@@ -439,6 +444,45 @@ func TestDefaultTunnelIsOff(t *testing.T) {
 	}
 	if got := Default().Server.Tunnel.Provider; got != DefaultTunnelProvider {
 		t.Errorf("provider = %q, want %q", got, DefaultTunnelProvider)
+	}
+}
+
+// TestValidateTunnelAllowedEmails checks `server.tunnel.allowedEmails` with
+// cloudflared's own rules, so a list the file accepts can never fail the
+// toggle later.
+func TestValidateTunnelAllowedEmails(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		allowed []string
+		wantErr string
+	}{
+		{name: "no list is a public tunnel"},
+		{name: "addresses and domain rules are accepted", allowed: []string{"ana@example.com", "*@corp.example"}},
+		{name: "a malformed address is refused", allowed: []string{"ana"}, wantErr: "not a valid email address"},
+		{name: "an empty entry is refused", allowed: []string{""}, wantErr: "is empty"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			c := Default()
+			c.Server.Tunnel.AllowedEmails = tt.allowed
+			err := c.Validate()
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("validate: %v", err)
+				}
+				return
+			}
+			var fields FieldErrors
+			if !errors.As(err, &fields) || len(fields) != 1 || fields[0].Field != "server.tunnel.allowedEmails" ||
+				!strings.Contains(fields[0].Message, tt.wantErr) {
+				t.Fatalf("validate: err = %v, want one server.tunnel.allowedEmails finding mentioning %q", err, tt.wantErr)
+			}
+		})
 	}
 }
 

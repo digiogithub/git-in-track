@@ -16,6 +16,7 @@ import (
 
 	"github.com/digiogithub/git-in-track/internal/config"
 	"github.com/digiogithub/git-in-track/internal/server"
+	"github.com/digiogithub/git-in-track/internal/tunnel"
 	"github.com/digiogithub/git-in-track/web"
 )
 
@@ -40,6 +41,9 @@ type serveFlags struct {
 	// tunnel opens a public tunnel to this server as soon as it is listening
 	// (`server.tunnel` in the configuration).
 	tunnel bool
+	// tunnelAllowEmail replaces `server.tunnel.allowedEmails` for this run:
+	// when non-empty the tunnel is protected by Cloudflare Access one-time PIN.
+	tunnelAllowEmail []string
 	// The background job engine of GIT-US-0084: the worker pool, the batch
 	// size, the shared outbound rate limit and the retry budget.
 	syncWorkers     int
@@ -79,7 +83,14 @@ without registering it in the configuration.
 quick tunnel. It is refused without a token, because the token is then the only
 thing standing between the URL and write access to your repositories. The
 public hostname and a ready-to-open ?token= link are both printed on this
-terminal: share the first, and the second only with whoever may write.`,
+terminal: share the first, and the second only with whoever may write.
+
+--tunnel-allow-email (repeatable, or comma-separated) makes that tunnel a
+protected one: Cloudflare Access asks every visitor for a one-time PIN sent to
+an allowed address — an exact address or *@domain — before any request reaches
+this server. The token is still required behind it. The flag replaces
+server.tunnel.allowedEmails for this run and also applies to a tunnel opened
+later from the web UI.`,
 		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runServe(cmd, build, flags)
@@ -105,6 +116,9 @@ terminal: share the first, and the second only with whoever may write.`,
 		"serve the agent proxy at /api/v1/agent, relaying to the configured Pando AG-UI adapter")
 	cmd.Flags().BoolVar(&flags.tunnel, "tunnel", false,
 		"publish this server on the internet through a Cloudflare quick tunnel; requires a token")
+	cmd.Flags().StringSliceVar(&flags.tunnelAllowEmail, "tunnel-allow-email", nil,
+		"protect the tunnel with a Cloudflare Access one-time PIN for this address or *@domain; "+
+			"repeatable or comma-separated, replaces server.tunnel.allowedEmails")
 	cmd.Flags().IntVar(&flags.syncWorkers, "sync-workers", server.DefaultSyncWorkers,
 		"background job workers")
 	cmd.Flags().IntVar(&flags.syncBatch, "sync-batch", server.DefaultSyncBatchSize,
@@ -141,6 +155,12 @@ func runServe(cmd *cobra.Command, build buildInfo, flags *serveFlags) error {
 		return errors.New("opening a tunnel requires a bearer token: --tunnel (or server.tunnel.enabled) " +
 			"publishes this server, with write access to your repositories, to anyone holding the URL; " +
 			"drop --token none")
+	}
+	allowedEmails := pickStrings(cmd, "tunnel-allow-email", flags.tunnelAllowEmail, cfg.Server.Tunnel.AllowedEmails)
+	// The configuration file was validated on load; the flag was not. Checked
+	// here, before anything listens, so the error names the flag.
+	if _, err := tunnel.ValidateAllowedEmails(allowedEmails); err != nil {
+		return fmt.Errorf("--tunnel-allow-email / server.tunnel.allowedEmails: %w", err)
 	}
 
 	repos, err := mountList(cfg, res.Workspace, flags.repos)
@@ -206,7 +226,11 @@ func runServe(cmd *cobra.Command, build buildInfo, flags *serveFlags) error {
 		Update: newUpdateChecker(build, cfg.CacheDir(res.Path)),
 		// The public tunnel. Only the startup path may turn it on implicitly;
 		// a toggle made in the web UI is never written back to the file.
-		Tunnel: config.Tunnel{Enabled: tunnelOn, Provider: cfg.Server.Tunnel.Provider},
+		Tunnel: config.Tunnel{
+			Enabled:       tunnelOn,
+			Provider:      cfg.Server.Tunnel.Provider,
+			AllowedEmails: allowedEmails,
+		},
 		// The background job engine (GIT-US-0084). It starts with the server,
 		// idle when nothing has registered a job handler, and drains on the way
 		// out.
@@ -389,8 +413,12 @@ func printBanner(cmd *cobra.Command, build buildInfo, srv *server.Server, token 
 		if provider == "" {
 			provider = config.DefaultTunnelProvider
 		}
+		kind := "public"
+		if len(opts.Tunnel.AllowedEmails) > 0 {
+			kind = "protected"
+		}
 		// The URL does not exist yet; announceTunnel prints it when it does.
-		banner("tunnel:     opening a public %s tunnel…\n", provider)
+		banner("tunnel:     opening a %s %s tunnel…\n", kind, provider)
 	}
 	banner("listening on %s\n", srv.URL())
 	if token != "" {
@@ -440,10 +468,14 @@ func announceTunnel(ctx context.Context, cmd *cobra.Command, srv tunnelReporter,
 		switch status := srv.TunnelStatus(); {
 		case status.URL != "":
 			out := cmd.OutOrStdout()
-			_, _ = fmt.Fprintf(out, "tunnel:     %s   (public; the token is still required)\n", status.URL)
+			_, _ = fmt.Fprintf(out, "tunnel:     %s   (%s)\n", status.URL, tunnelGate(status))
 			if token != "" {
-				_, _ = fmt.Fprintf(out, "open:       %s/?token=%s   (public link; anyone holding it has write access)\n",
-					status.URL, token)
+				holder := "anyone holding it"
+				if status.Protected {
+					holder = "anyone allowed through the one-time PIN and holding it"
+				}
+				_, _ = fmt.Fprintf(out, "open:       %s/?token=%s   (public link; %s has write access)\n",
+					status.URL, token, holder)
 			}
 			return
 		case status.Err != "":
@@ -451,6 +483,34 @@ func announceTunnel(ctx context.Context, cmd *cobra.Command, srv tunnelReporter,
 			return
 		}
 	}
+}
+
+// tunnelGate describes what stands in front of the published server, for the
+// banner. A protected tunnel names the allow-list by count only: this line may
+// be scrolled back or pasted into an issue, and the addresses are nobody's
+// business there.
+func tunnelGate(status server.TunnelInfo) string {
+	if !status.Protected {
+		return "public; the token is still required"
+	}
+	return "protected: Cloudflare Access one-time PIN for " +
+		recipientCounts(status.Recipients) + "; the token is still required"
+}
+
+// recipientCounts renders an allow-list summary such as "2 addresses, 1 domain
+// rule", matching the wording of cloudflared's own startup table.
+func recipientCounts(r tunnel.Recipients) string {
+	var parts []string
+	if r.Emails > 0 {
+		parts = append(parts, plural(r.Emails, "address", "addresses"))
+	}
+	if r.Domains > 0 {
+		parts = append(parts, plural(r.Domains, "domain rule", "domain rules"))
+	}
+	if len(parts) == 0 {
+		return "no recipients"
+	}
+	return strings.Join(parts, ", ")
 }
 
 // openWhenReady opens the browser once the listener has had a moment to come
@@ -490,6 +550,16 @@ func pickInt(cmd *cobra.Command, name string, flag, configured int) int {
 // pickBool is pick for a boolean flag, where "not given" cannot be told from
 // "given as false" by the value alone.
 func pickBool(cmd *cobra.Command, name string, flag, configured bool) bool {
+	if cmd.Flags().Changed(name) {
+		return flag
+	}
+	return configured
+}
+
+// pickStrings is pick for a list flag: a flag given on the command line
+// replaces the configured list wholesale rather than appending to it, so the
+// command line always says exactly who is allowed for this run.
+func pickStrings(cmd *cobra.Command, name string, flag, configured []string) []string {
 	if cmd.Flags().Changed(name) {
 		return flag
 	}

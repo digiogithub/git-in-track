@@ -14,7 +14,11 @@
  *   the warning next to it, and the token is read from this tab's session
  *   storage — it never travels in an API response and is never logged;
  * - the URL is known while the state is still `starting`, before DNS has
- *   propagated, so it is shown as "propagating" rather than as a live link.
+ *   propagated, so it is shown as "propagating" rather than as a live link;
+ * - whether Cloudflare Access protects the tunnel with a one-time PIN is shown
+ *   in every state, by recipient count only, and a public tunnel says how to
+ *   protect it. Protection is configured on the companion, never here: the
+ *   card cannot edit the allow-list, and the server never sends it.
  *
  * The hostname changes on every enable, so nothing here is cached: the card
  * reads the status, and polls it while the tunnel is coming up.
@@ -31,6 +35,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
+import { recipientSummary } from '@/features/settings/tunnel-recipients';
 import { accessLink } from '@/features/workspace/share-link';
 
 /** How often a `starting` tunnel is re-read while it comes up. */
@@ -166,11 +171,30 @@ export function TunnelCard({
         <p className="text-muted-foreground">
           A quick tunnel publishes this companion through{' '}
           {status.provider === '' ? 'a tunnelling service' : status.provider} and gives you a
-          temporary <code>https</code> address to share. The app itself is served without
-          authentication, so anyone holding the address loads the interface; only the{' '}
-          <code>/api/v1</code> calls behind it require the access token. A new address is minted
-          every time you turn the tunnel on, and the previous one stops working.
+          temporary <code>https</code> address to share.{' '}
+          {status.protected
+            ? 'Visitors first sign in with a one-time PIN, after which the app itself loads without authentication'
+            : 'The app itself is served without authentication, so anyone holding the address loads the interface'}
+          ; only the <code>/api/v1</code> calls behind it require the access token. A new address is
+          minted every time you turn the tunnel on, and the previous one stops working.
         </p>
+
+        {status.protected ? (
+          <p className="rounded-md border border-border bg-secondary/50 p-3">
+            <strong className="font-semibold">Protected by Cloudflare Access.</strong> Every visitor
+            must enter a one-time PIN sent by email to one of{' '}
+            {recipientSummary(status.allowedRecipients)} before any request reaches this companion.
+            The access token is still required behind it.
+          </p>
+        ) : (
+          <p className="text-muted-foreground">
+            <strong className="font-semibold">Not protected by Cloudflare Access.</strong> To make
+            visitors sign in with a one-time PIN sent to an allowed email address first, list the
+            addresses (or <code>*@domain</code> rules) in <code>server.tunnel.allowedEmails</code>{' '}
+            or start the companion with{' '}
+            <code>gintrack serve --tunnel-allow-email you@example.com</code>.
+          </p>
+        )}
 
         {running ? (
           <p
@@ -178,9 +202,10 @@ export function TunnelCard({
             className="rounded-md border border-destructive/60 bg-destructive/10 p-3 text-destructive"
           >
             <strong className="font-semibold">This workspace is on the public internet.</strong>{' '}
-            Anyone with the address can reach this companion, and the access token is the only thing
-            standing between them and read and write access to every repository you have open. Turn
-            the tunnel off as soon as you are done sharing.
+            {status.protected
+              ? 'Only visitors who pass the one-time PIN can reach this companion, and the access token still stands between them and read and write access to every repository you have open.'
+              : 'Anyone with the address can reach this companion, and the access token is the only thing standing between them and read and write access to every repository you have open.'}{' '}
+            Turn the tunnel off as soon as you are done sharing.
           </p>
         ) : null}
 
@@ -303,7 +328,6 @@ export function TunnelCard({
     </Card>
   );
 }
-
 
 function messageOf(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);

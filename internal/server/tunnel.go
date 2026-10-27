@@ -19,7 +19,12 @@ package server
 //     (config.Tunnel documents the reasoning);
 //   - the token appears in no response, no log line and no event payload. The
 //     public hostname does: it is not a secret, and an operator needs to see
-//     what was published and when.
+//     what was published and when;
+//   - `server.tunnel.allowedEmails` puts Cloudflare Access one-time PIN in
+//     front of the tunnel (ADR-041). It is a second gate, never a replacement
+//     for the token: every refusal above holds unchanged for a protected
+//     tunnel. Like the token, the list itself is in no response, log line or
+//     event — only how many addresses and domain rules it holds.
 
 import (
 	"context"
@@ -79,6 +84,12 @@ type tunnelState struct {
 	// are read without the lock.
 	provider  string
 	supported bool
+	// allowedEmails is the protected-mode allow-list, validated by New, and
+	// recipients its counts. They come from the configuration, not from the
+	// driver, so the UI can say whether opening the tunnel would protect it
+	// before any driver exists.
+	allowedEmails []string
+	recipients    tunnel.Recipients
 	// factory builds the driver on first use.
 	factory TunnelFactory
 
@@ -107,6 +118,19 @@ type tunnelBody struct {
 	// TokenConfigured says whether this server has a bearer token at all. It
 	// never carries the token itself.
 	TokenConfigured bool `json:"tokenConfigured"`
+	// Protected says the tunnel is, or would be when opened, a protected quick
+	// tunnel behind Cloudflare Access one-time PIN. It is reported in every
+	// state, including off.
+	Protected bool `json:"protected"`
+	// AllowedRecipients counts the allow-list; both are zero for a public
+	// tunnel. The addresses themselves never leave the process.
+	AllowedRecipients tunnelRecipientsBody `json:"allowedRecipients"`
+}
+
+// tunnelRecipientsBody is the `allowedRecipients` object of tunnelBody.
+type tunnelRecipientsBody struct {
+	Emails  int `json:"emails"`
+	Domains int `json:"domains"`
 }
 
 // TunnelInfo is what the command line needs to print about the tunnel, without
@@ -115,6 +139,10 @@ type TunnelInfo struct {
 	State string
 	URL   string
 	Err   string
+	// Protected and Recipients describe the Cloudflare Access gate, by count
+	// only, so the banner can say who may pass it without printing the list.
+	Protected  bool
+	Recipients tunnel.Recipients
 }
 
 // newTunnelState builds the tunnel layer for a set of options. An unknown
@@ -128,12 +156,32 @@ func newTunnelState(opts Options) *tunnelState {
 	if factory == nil {
 		factory = defaultTunnel
 	}
+	// New has already refused an invalid list, so the error is impossible
+	// here; were it not, the driver would refuse to start on its own rather
+	// than open a public tunnel.
+	recipients, _ := tunnel.ValidateAllowedEmails(opts.Tunnel.AllowedEmails)
 	return &tunnelState{
-		provider:  provider,
-		supported: provider == config.DefaultTunnelProvider,
-		factory:   factory,
+		provider:      provider,
+		supported:     provider == config.DefaultTunnelProvider,
+		allowedEmails: opts.Tunnel.AllowedEmails,
+		recipients:    recipients,
+		factory:       factory,
 	}
 }
+
+// validateTunnelAllowList is New's check of `server.tunnel.allowedEmails`. It
+// runs whether or not the tunnel autostarts: the list also applies to a tunnel
+// opened later from the web UI, and a typo must stop the server at startup
+// rather than fail a toggle hours later.
+func validateTunnelAllowList(rules []string) error {
+	if _, err := tunnel.ValidateAllowedEmails(rules); err != nil {
+		return fmt.Errorf("server.tunnel.allowedEmails: %w", err)
+	}
+	return nil
+}
+
+// protected reports whether this server's tunnel sits behind Cloudflare Access.
+func (t *tunnelState) protected() bool { return len(t.allowedEmails) > 0 }
 
 // tunnelSupported reports whether this build and configuration can tunnel at
 // all. It is what /capabilities advertises as `features.tunnel`.
@@ -207,7 +255,8 @@ func (s *Server) enableTunnel(ctx context.Context) (tunnel.Status, error) {
 	// WARN, not INFO: publishing a workspace on the internet is worth a line an
 	// operator will actually see. The hostname is public; the token is not
 	// logged here or anywhere else.
-	s.log.Warn("public tunnel opened", "provider", t.provider, "url", status.URL, "origin", s.Addr())
+	s.log.Warn("public tunnel opened", "provider", t.provider, "url", status.URL, "origin", s.Addr(),
+		"protected", t.protected(), "allowedEmails", t.recipients.Emails, "allowedDomains", t.recipients.Domains)
 	return status, nil
 }
 
@@ -245,9 +294,10 @@ func (t *tunnelState) driverLocked(s *Server) (TunnelDriver, error) {
 		return t.driver, nil
 	}
 	driver, err := t.factory(tunnel.Options{
-		Origin:  s.Addr(),
-		Version: s.opts.Version,
-		Logger:  s.log,
+		Origin:        s.Addr(),
+		Version:       s.opts.Version,
+		Logger:        s.log,
+		AllowedEmails: t.allowedEmails,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build the tunnel driver: %w", err)
@@ -283,7 +333,13 @@ func (s *Server) tunnelSnapshot() tunnel.Status {
 // public URL on the startup banner once it exists.
 func (s *Server) TunnelStatus() TunnelInfo {
 	status := s.tunnelSnapshot()
-	return TunnelInfo{State: string(normalizeTunnelState(status.State)), URL: status.URL, Err: status.Err}
+	return TunnelInfo{
+		State:      string(normalizeTunnelState(status.State)),
+		URL:        status.URL,
+		Err:        status.Err,
+		Protected:  s.tunnel.protected(),
+		Recipients: s.tunnel.recipients,
+	}
 }
 
 // normalizeTunnelState normalizes the zero State, which internal/tunnel documents as
@@ -312,6 +368,12 @@ func (s *Server) tunnelView(status tunnel.Status) tunnelBody {
 		Error:       status.Err,
 		// Whether a token exists, never the token.
 		TokenConfigured: s.opts.Token != "",
+		// Counts, never the addresses.
+		Protected: s.tunnel.protected(),
+		AllowedRecipients: tunnelRecipientsBody{
+			Emails:  s.tunnel.recipients.Emails,
+			Domains: s.tunnel.recipients.Domains,
+		},
 	}
 }
 

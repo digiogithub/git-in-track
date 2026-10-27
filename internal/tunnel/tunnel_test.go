@@ -83,7 +83,7 @@ func newTestManager(t *testing.T) (*Manager, chan struct{}) {
 		endpoint: broker.URL,
 	})
 	running := make(chan struct{}, 8)
-	m.runTunnel = func(ctx context.Context, _ connection.Credentials, _ string) error {
+	m.runTunnel = func(ctx context.Context, _ connection.Credentials, _ string, _ connection.HTTPRequestAuthorizer) error {
 		running <- struct{}{}
 		<-ctx.Done()
 		return nil
@@ -419,7 +419,7 @@ func TestManagerRunnerFailureMovesToError(t *testing.T) {
 		endpoint: broker.URL,
 	})
 	failed := make(chan struct{})
-	m.runTunnel = func(_ context.Context, _ connection.Credentials, _ string) error {
+	m.runTunnel = func(_ context.Context, _ connection.Credentials, _ string, _ connection.HTTPRequestAuthorizer) error {
 		defer close(failed)
 		return errTunnelExited
 	}
@@ -459,7 +459,7 @@ func TestManagerStopHonorsItsContext(t *testing.T) {
 		endpoint: broker.URL,
 	})
 	release := make(chan struct{})
-	m.runTunnel = func(_ context.Context, _ connection.Credentials, _ string) error {
+	m.runTunnel = func(_ context.Context, _ connection.Credentials, _ string, _ connection.HTTPRequestAuthorizer) error {
 		<-release
 		return nil
 	}
@@ -568,7 +568,7 @@ func TestProvision(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			creds, hostname, err := provision(t.Context(), srv.URL, "cloudflared/0.0.0-test")
+			creds, hostname, err := provision(t.Context(), srv.URL, "cloudflared/0.0.0-test", false)
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Fatalf("err = %v, want it to mention %q", err, tt.wantErr)
@@ -608,7 +608,7 @@ func TestProvisionHonorsItsContext(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 	defer cancel()
-	if _, _, err := provision(ctx, srv.URL, "cloudflared/0.0.0-test"); err == nil {
+	if _, _, err := provision(ctx, srv.URL, "cloudflared/0.0.0-test", false); err == nil {
 		t.Fatal("provision: want an error when the context expires")
 	}
 }

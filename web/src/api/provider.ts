@@ -371,6 +371,26 @@ export type TunnelStatus = {
   error: string;
   /** False when the companion was started with authentication disabled. */
   tokenConfigured: boolean;
+  /**
+   * True when the tunnel is — or, while off, would be when opened — a
+   * protected quick tunnel: Cloudflare Access asks every visitor for a
+   * one-time PIN sent to an allowed address before any request reaches the
+   * companion. It is configured with `server.tunnel.allowedEmails` or
+   * `--tunnel-allow-email` and is a second gate in front of the token, never a
+   * replacement for it.
+   */
+  protected: boolean;
+  /**
+   * How many exact addresses and `*@domain` rules the allow-list holds. The
+   * addresses themselves are never sent to the browser. Both zero when public.
+   */
+  allowedRecipients: TunnelRecipients;
+};
+
+/** The allow-list of a protected tunnel, by count only. */
+export type TunnelRecipients = {
+  emails: number;
+  domains: number;
 };
 
 /**

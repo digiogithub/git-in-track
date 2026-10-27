@@ -227,8 +227,11 @@ changed with it. The dependency moves to the pseudo-version
   `1.27`, and golangci-lint moves to **v2.15.0** because the linter compares the
   Go minor it was built with against the module's directive and v2.13.2 was built
   with Go 1.26.
-- **Protected mode is not adopted here.** It would put Cloudflare Access OTP in
-  front of the bearer token, which is a change to the security model this ADR
-  defines rather than to how the companion speaks to the broker. It stays a
-  separate decision; until then `gintrack` keeps provisioning public quick
-  tunnels with the token as the only gate, exactly as described above.
+- **Protected mode is decided separately, in
+  [ADR-041](ADR-041-protected-quick-tunnels-put-otp-in-front-of-the-token.md)**,
+  which supersedes this bullet only. It puts Cloudflare Access OTP in front of
+  the bearer token, which is a change to the security model this ADR defines
+  rather than to how the companion speaks to the broker. It is opt-in through
+  `server.tunnel.allowedEmails`; without it `gintrack` keeps provisioning public
+  quick tunnels with the token as the only gate, exactly as described above, and
+  with it the token is still required.

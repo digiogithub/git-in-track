@@ -1203,6 +1203,8 @@ describe('CompanionProvider tunnel surface', () => {
     since: '2026-09-04T09:00:00Z',
     error: '',
     tokenConfigured: true,
+    protected: false,
+    allowedRecipients: { emails: 0, domains: 0 },
   };
 
   it('reads the tunnel from GET /tunnel', async () => {
@@ -1270,6 +1272,25 @@ describe('CompanionProvider tunnel surface', () => {
     const status = await provider(fetchImpl).getTunnel();
 
     expect(status).toMatchObject({ supported: false, state: 'off', tokenConfigured: false });
+  });
+
+  it('reads the protection and recipient counts of a protected tunnel', async () => {
+    const body = { ...tunnelBody, protected: true, allowedRecipients: { emails: 2, domains: 1 } };
+    const fetchImpl = vi.fn().mockResolvedValue(response(body));
+    const status = await provider(fetchImpl).getTunnel();
+
+    expect(status).toMatchObject({ protected: true, allowedRecipients: { emails: 2, domains: 1 } });
+  });
+
+  it('reads a server that predates protection as a public tunnel', async () => {
+    const { protected: _p, allowedRecipients: _r, ...legacy } = tunnelBody;
+    const fetchImpl = vi.fn().mockResolvedValue(response(legacy));
+    const status = await provider(fetchImpl).getTunnel();
+
+    expect(status).toMatchObject({
+      protected: false,
+      allowedRecipients: { emails: 0, domains: 0 },
+    });
   });
 });
 
@@ -2481,7 +2502,9 @@ describe('CompanionProvider semantic search settings (story GIT-US-0091)', () =>
       optedIn: true,
       state: 'ready',
     });
-    expect(toSearchManaged({ optedIn: true, state: 'ready', agui: { state: 'weird' } })?.agui).toEqual({
+    expect(
+      toSearchManaged({ optedIn: true, state: 'ready', agui: { state: 'weird' } })?.agui,
+    ).toEqual({
       state: 'failed',
     });
   });

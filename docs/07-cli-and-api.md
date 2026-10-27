@@ -225,6 +225,13 @@ server:
     provider: cloudflare # the only one implemented; any other value reports the
                          # feature as unsupported rather than quietly using
                          # Cloudflare anyway
+    # Protected mode (ADR-041). Non-empty puts Cloudflare Access one-time PIN in
+    # front of the tunnel: a visitor must receive a PIN at an address on this
+    # list before any request reaches the server. Exact addresses or
+    # "*@domain" rules; an entry may be comma-separated. Empty (the default)
+    # keeps the public tunnel. The token is still required either way.
+    # `serve --tunnel-allow-email` replaces the list for one run.
+    allowedEmails: []    # e.g. ["ana@example.com", "*@example.org"]
 
 git:
   backend: auto          # auto | go-git | system
@@ -540,6 +547,11 @@ gintrack serve [flags]
   --tunnel            Publish this server through a Cloudflare quick tunnel and print
                       the temporary public https URL (off by default; refused with
                       --token none). See the warning below before using it.
+  --tunnel-allow-email rule
+                      Protect the tunnel with a Cloudflare Access one-time PIN for
+                      this address or *@domain; repeatable or comma-separated.
+                      Replaces server.tunnel.allowedEmails for this run and also
+                      applies to a tunnel opened later from the web UI (ADR-041).
   --sync-workers int  Background job workers (default 2)
   --sync-batch int    Jobs handed to one handler call (default 20)
   --sync-rate float   Shared outbound limit for background jobs, req/s (default 5)
@@ -705,6 +717,30 @@ hostname is minted on every enable**, so nothing survives a toggle and turning
 the tunnel off invalidates every link already shared — which is the only
 revocation the service offers.
 
+**Protected mode** (ADR-041) narrows who can reach the server at all.
+`server.tunnel.allowedEmails`, or `--tunnel-allow-email` for one run (repeatable
+or comma-separated; the flag replaces the configured list rather than adding to
+it), makes every tunnel this process opens a *protected* quick tunnel. Each entry
+is an exact address (`ana@example.com`) or a domain rule (`*@example.org`),
+validated with cloudflared's own rules — at most 100 entries of 320 bytes each —
+so a malformed list stops `serve` before anything listens, whether or not
+`--tunnel` was given. A remote visitor then sees two gates, in order:
+
+1. **Cloudflare Access one-time PIN.** The first visit is redirected to a
+   Cloudflare login page that asks for an email address and mails a PIN to it
+   if, and only if, the address is on the list. Until that succeeds no request —
+   not even the web app's HTML — reaches the companion: `GET` and `HEAD` are
+   redirected, every other method gets `401`. The session it grants lives in
+   this process and dies with the tunnel.
+2. **The bearer token**, exactly as on a public tunnel: the web app loads and
+   asks for it, or takes it from the `?token=` link.
+
+Protection is a second gate, **never a replacement** for the token: a protected
+tunnel with `--token none` is refused just like a public one. The list is never
+printed, logged or returned by the API — only how many addresses and domain
+rules it holds — and it cannot be edited at runtime: change the configuration or
+the flag and restart.
+
 The tunnel is opened after the listener has an address, so the banner announces
 it in two steps and prints the public URL when it exists:
 
@@ -714,6 +750,15 @@ listening on http://127.0.0.1:7317
 …
 tunnel:     https://gentle-pine-mist-42.trycloudflare.com   (public; the token is still required)
 open:       https://gentle-pine-mist-42.trycloudflare.com/?token=s7Q1e...9Zk   (public link; anyone holding it has write access)
+```
+
+A protected tunnel says so on both lines and names its allow-list by count:
+
+```
+tunnel:     opening a protected cloudflare tunnel…
+…
+tunnel:     https://gentle-pine-mist-42.trycloudflare.com   (protected: Cloudflare Access one-time PIN for 2 addresses, 1 domain rule; the token is still required)
+open:       https://gentle-pine-mist-42.trycloudflare.com/?token=s7Q1e...9Zk   (public link; anyone allowed through the one-time PIN and holding it has write access)
 ```
 
 The bare hostname comes first and the `?token=` link below it, so that "share
@@ -2422,16 +2467,27 @@ being blunt about what is left.
   create, edit and delete items, move cards, run a sync and commit to the user's
   repositories. Whoever gets through the token has the access the user has, over
   every mounted repository.
-- **The bearer token is the only protection.** There is no second factor, no
-  allow-list of visitors, no rate limit that would matter and no way to see who
-  is connected. That is exactly why opening a tunnel on a server started with
-  `--token none` is **refused**, with `409` and the `tunnel_requires_token`
-  problem, rather than being permitted with a warning: an unauthenticated server
-  on a public URL has no protection at all.
+- **On a public tunnel, the bearer token is the only protection.** There is no
+  second factor, no allow-list of visitors, no rate limit that would matter and
+  no way to see who is connected. That is exactly why opening a tunnel on a
+  server started with `--token none` is **refused**, with `409` and the
+  `tunnel_requires_token` problem, rather than being permitted with a warning:
+  an unauthenticated server on a public URL has no protection at all.
+- **A protected tunnel adds one gate in front of the token, not instead of
+  it.** With `server.tunnel.allowedEmails` set (§4.1, ADR-041), cloudflared
+  itself refuses every request that does not carry a Cloudflare Access session
+  for an allowed address, before it is forwarded to the companion, so a stranger
+  holding the URL — or even the `?token=` link — gets a login page and nothing
+  else. The refusal without a token still applies. What it does not change: the
+  gate is only as strong as the mailboxes on the list and a `*@domain` rule
+  admits everyone at that domain; the session cookie is process-local and dies
+  with the tunnel; and anyone who passes it is back to facing the token alone,
+  with everything below still true for them.
 - **The web app is served without authentication.** The SPA bundle sits outside
   the auth group — it has to, because the tab needs the code that will ask for
-  the token — so *anyone holding the URL loads the interface*. Only `/api/v1`
-  demands the token. A stranger who finds the address therefore sees the login
+  the token — so *anyone holding the URL of a public tunnel loads the
+  interface*, and anyone through the one-time PIN of a protected one does. Only
+  `/api/v1` demands the token. A stranger who finds the address therefore sees the login
   surface of a real workspace, and the address, while random, travels through
   Cloudflare's infrastructure and through whatever channel it was shared on.
 - **`https://<host>/?token=<token>` is a full credential, not a convenience
@@ -3468,7 +3524,8 @@ DELETE /api/v1/tunnel        # close it;       200 with the status, now `off`
 All three answer the same document:
 
 ```json
-{"supported":true,"provider":"cloudflare","state":"off","url":"","connections":0,"since":null,"error":"","tokenConfigured":true}
+{"supported":true,"provider":"cloudflare","state":"off","url":"","connections":0,"since":null,"error":"","tokenConfigured":true,
+ "protected":false,"allowedRecipients":{"emails":0,"domains":0}}
 ```
 
 | Field | Meaning |
@@ -3481,6 +3538,8 @@ All three answer the same document:
 | `since` | RFC 3339 UTC instant the current state was entered; `null` when the tunnel is off. |
 | `error` | Why the tunnel failed, when `state` is `error`. Empty otherwise, and cleared by a successful start. |
 | `tokenConfigured` | False when the server was started with `--token none`, in which case `POST` is refused. |
+| `protected` | True when the tunnel is — or, while `off`, would be when opened — protected by Cloudflare Access one-time PIN (`server.tunnel.allowedEmails` or `--tunnel-allow-email`, ADR-041). Reported in every state, so a client can say what the switch will do before anyone flips it. |
+| `allowedRecipients` | `{"emails": n, "domains": n}`: how many exact addresses and `*@domain` rules the allow-list holds, both `0` for a public tunnel. **The addresses themselves are never returned**, logged or broadcast. |
 
 **`POST` answers `202 Accepted`, not `200`**, and it means what the code says: the
 tunnel is provisioned but not yet reachable. The body carries `state: "starting"`
@@ -3494,7 +3553,8 @@ POST /api/v1/tunnel
 202
 {"supported":true,"provider":"cloudflare","state":"starting",
  "url":"https://gentle-pine-mist-42.trycloudflare.com","connections":0,
- "since":"2026-09-06T09:12:44Z","error":"","tokenConfigured":true}
+ "since":"2026-09-06T09:12:44Z","error":"","tokenConfigured":true,
+ "protected":false,"allowedRecipients":{"emails":0,"domains":0}}
 ```
 
 `DELETE` tears the tunnel down and waits for it, then answers `200` with the
@@ -3532,7 +3592,9 @@ for the life of the process and nothing more: an API toggle that persisted would
 republish the workspace on the next `gintrack serve` with nobody watching, which
 is a worse failure than having to flip the switch again. `server.tunnel.enabled`
 is the only thing that opens a tunnel at startup, and only `gintrack config`
-edits it.
+edits it. The same goes for protection: there is no route to change
+`server.tunnel.allowedEmails`, and `POST` always opens the tunnel with the list
+the process started with.
 
 Read §5.1.1 before using any of this: what these three routes publish is a server
 with read and write access to every mounted repository, guarded by one token.

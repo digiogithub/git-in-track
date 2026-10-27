@@ -558,6 +558,18 @@ function toTunnelStatus(body: unknown): TunnelStatus {
     since: asString(record['since']) ?? null,
     error: asString(record['error']) ?? '',
     tokenConfigured: record['tokenConfigured'] === true,
+    // Unknown reads as public: the card then carries the louder warning,
+    // never a reassurance the server did not give.
+    protected: record['protected'] === true,
+    allowedRecipients: toTunnelRecipients(record['allowedRecipients']),
+  };
+}
+
+function toTunnelRecipients(body: unknown): TunnelStatus['allowedRecipients'] {
+  const record = asRecord(body) ?? {};
+  return {
+    emails: asNumber(record['emails']) ?? 0,
+    domains: asNumber(record['domains']) ?? 0,
   };
 }
 

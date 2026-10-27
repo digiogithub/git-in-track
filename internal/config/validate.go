@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/digiogithub/git-in-track/internal/tunnel"
 )
 
 // ErrInvalid is the sentinel behind every configuration validation failure, so
@@ -111,6 +113,11 @@ func (c *Config) validateServer(add func(field, format string, args ...any)) {
 	}
 	if c.Server.IdleTimeout < 0 {
 		add("server.idleTimeout", "must not be negative")
+	}
+	// cloudflared's own parser, so the file accepts exactly what a protected
+	// tunnel will: a list that loads here can never fail the toggle later.
+	if _, err := tunnel.ValidateAllowedEmails(c.Server.Tunnel.AllowedEmails); err != nil {
+		add("server.tunnel.allowedEmails", "%s", err.Error())
 	}
 }
 

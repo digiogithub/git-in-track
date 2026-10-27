@@ -1372,6 +1372,8 @@ export class BrowserProvider implements DataProvider {
       since: null,
       error: '',
       tokenConfigured: false,
+      protected: false,
+      allowedRecipients: { emails: 0, domains: 0 },
     });
   }
 

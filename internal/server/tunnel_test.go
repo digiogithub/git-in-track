@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -168,6 +169,11 @@ func TestTunnelStatusOnAFreshServer(t *testing.T) {
 		"since":           nil,
 		"error":           "",
 		"tokenConfigured": true,
+		"protected":       false,
+		"allowedRecipients": map[string]any{
+			"emails":  float64(0),
+			"domains": float64(0),
+		},
 	}
 	if len(body) != len(want) {
 		t.Fatalf("body has %d fields, want %d: %v", len(body), len(want), body)
@@ -178,9 +184,125 @@ func TestTunnelStatusOnAFreshServer(t *testing.T) {
 			t.Errorf("the response has no %q field", field)
 			continue
 		}
-		if got != expected {
+		if !reflect.DeepEqual(got, expected) {
 			t.Errorf("%s = %v, want %v", field, got, expected)
 		}
+	}
+}
+
+// TestTunnelProtection covers `server.tunnel.allowedEmails`: the status body
+// reports the protection and the recipient counts in every state — before any
+// driver exists, while running and after — the driver is built with the list,
+// and the list itself never appears in a response.
+func TestTunnelProtection(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		allowed       []string
+		wantProtected bool
+		wantEmails    int
+		wantDomains   int
+	}{
+		{name: "no allow-list is a public tunnel"},
+		{
+			name:          "an allow-list is a protected tunnel",
+			allowed:       []string{"ana@example.com", "bob@example.com,*@corp.example"},
+			wantProtected: true,
+			wantEmails:    2,
+			wantDomains:   1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			driver := newFakeTunnel("https://demo.trycloudflare.com")
+			var gotAllowed []string
+			s, err := New(Options{
+				Token:     "test-token",
+				Version:   "0.0.1-test",
+				Workspace: "test",
+				Tunnel:    config.Tunnel{AllowedEmails: tt.allowed},
+				NewTunnel: func(opts tunnel.Options) (TunnelDriver, error) {
+					gotAllowed = opts.AllowedEmails
+					return driver, nil
+				},
+			})
+			if err != nil {
+				t.Fatalf("New(): %v", err)
+			}
+
+			check := func(phase string, rec *httptest.ResponseRecorder, status int) {
+				t.Helper()
+				if strings.Contains(rec.Body.String(), "example.com") {
+					t.Errorf("%s: the response discloses the allow-list: %s", phase, rec.Body.String())
+				}
+				var body tunnelBody
+				decode(t, rec, status, &body)
+				want := tunnelRecipientsBody{Emails: tt.wantEmails, Domains: tt.wantDomains}
+				if body.Protected != tt.wantProtected || body.AllowedRecipients != want {
+					t.Errorf("%s: protected=%v recipients=%+v, want %v %+v",
+						phase, body.Protected, body.AllowedRecipients, tt.wantProtected, want)
+				}
+			}
+
+			check("before the first enable", tunnelRequest(t, s, http.MethodGet, "test-token"), http.StatusOK)
+			check("enable", tunnelRequest(t, s, http.MethodPost, "test-token"), http.StatusAccepted)
+			if !reflect.DeepEqual(gotAllowed, tt.allowed) {
+				t.Errorf("driver built with allowed emails %q, want %q", gotAllowed, tt.allowed)
+			}
+			check("disable", tunnelRequest(t, s, http.MethodDelete, "test-token"), http.StatusOK)
+
+			info := s.TunnelStatus()
+			if info.Protected != tt.wantProtected || info.Recipients != (tunnel.Recipients{Emails: tt.wantEmails, Domains: tt.wantDomains}) {
+				t.Errorf("TunnelStatus = %+v, want protected=%v", info, tt.wantProtected)
+			}
+		})
+	}
+}
+
+// TestTunnelRejectsAnInvalidAllowList checks that New refuses a bad list even
+// when the tunnel does not autostart: the list also governs a tunnel opened
+// later from the UI, and the token stays mandatory for a protected tunnel.
+func TestTunnelRejectsAnInvalidAllowList(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		token   string
+		tunnel  config.Tunnel
+		wantErr string
+	}{
+		{
+			name:    "a malformed entry stops the server",
+			token:   "test-token",
+			tunnel:  config.Tunnel{AllowedEmails: []string{"not-an-address"}},
+			wantErr: "server.tunnel.allowedEmails",
+		},
+		{
+			name:    "an empty entry stops the server",
+			token:   "test-token",
+			tunnel:  config.Tunnel{AllowedEmails: []string{"ana@example.com,"}},
+			wantErr: "rule 2 is empty",
+		},
+		{
+			name:    "protection does not replace the token",
+			tunnel:  config.Tunnel{Enabled: true, AllowedEmails: []string{"ana@example.com"}},
+			wantErr: "without a bearer token",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := New(Options{Token: tt.token, Version: "0.0.1-test", Workspace: "test", Tunnel: tt.tunnel})
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("New(): err = %v, want it to mention %q", err, tt.wantErr)
+			}
+		})
 	}
 }
 
