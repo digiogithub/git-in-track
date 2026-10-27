@@ -203,7 +203,6 @@ func buildTunnel(
 		HAConnections:   1,
 		Tags:            tags,
 		Log:             log,
-		LogTransport:    log,
 		Observer:        observer,
 		ReportedVersion: version,
 		Retries:         5,

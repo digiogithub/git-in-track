@@ -368,7 +368,7 @@ func (m *Manager) runCloudflared(ctx context.Context, creds connection.Credentia
 func (m *Manager) ensureObserver() *connection.Observer {
 	m.observerOnce.Do(func() {
 		zlog := newZerolog(m.log, &m.quiet)
-		m.observer = connection.NewObserver(&zlog, &zlog)
+		m.observer = connection.NewObserver(&zlog)
 		m.events = make(chan stampedEvent, eventBuffer)
 
 		events := m.events

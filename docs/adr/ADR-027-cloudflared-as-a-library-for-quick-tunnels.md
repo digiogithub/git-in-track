@@ -205,3 +205,30 @@ user is deciding.
   a public bind with no token, a stranger's tunnel service — are all worse than a
   toggle that refuses to run without a token and regenerates the address every
   time.
+
+## Amendment — 2026-10-27: upgrade to the protected-quick-tunnel era of cloudflared
+
+Cloudflare reworked quick tunnels between September and October 2026 (cloudflared
+2026.9.0–2026.10.4): provisioning can now negotiate a **protected** mode
+(`{"auth_mode":"otp"}`, gated by Cloudflare Access One-Time PIN and an
+`--allowed-mail` recipient list), and the library surface this package drives
+changed with it. The dependency moves to the pseudo-version
+`v0.0.0-20261027105943-a1dd44f389c6`, and three consequences follow:
+
+- **Two library breaks, both mechanical.** `supervisor.TunnelConfig.LogTransport`
+  is gone (the transport log level is a deprecated no-op upstream), and
+  `connection.NewObserver` takes one logger instead of two. Nothing else in
+  `buildTunnel` changed: the anonymous `POST /tunnel` with an empty body still
+  provisions a **public** quick tunnel, and `connection.TunnelProperties` gained
+  `QuickTunnelAuthorizer` (replacing the never-reachable `IsProtected`), which a
+  public tunnel leaves nil.
+- **It forces `go 1.27.3` on this module**, for the same reason the original
+  pin forced 1.26: cloudflared's `go.mod` declares it. CI's `GO_VERSION` moves to
+  `1.27`, and golangci-lint moves to **v2.15.0** because the linter compares the
+  Go minor it was built with against the module's directive and v2.13.2 was built
+  with Go 1.26.
+- **Protected mode is not adopted here.** It would put Cloudflare Access OTP in
+  front of the bearer token, which is a change to the security model this ADR
+  defines rather than to how the companion speaks to the broker. It stays a
+  separate decision; until then `gintrack` keeps provisioning public quick
+  tunnels with the token as the only gate, exactly as described above.

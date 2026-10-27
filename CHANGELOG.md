@@ -12,7 +12,23 @@ because a commit list cannot express them.
 
 ## [Unreleased]
 
-Nothing yet.
+### Changed
+
+- **cloudflared upgraded to the October 2026 library** (`v0.0.0-20261027105943-a1dd44f389c6`,
+  matching cloudflared 2026.10.4). Cloudflare reworked quick tunnels upstream — protected
+  quick tunnels behind Access One-Time PIN, path normalisation before Access rule matching
+  (VULN-141859), sturdier QUIC error classification and shutdown — and removed the transport
+  logger the embedded tunnel used to pass in. `gintrack serve --tunnel` keeps provisioning a
+  public `*.trycloudflare.com` tunnel guarded by the bearer token; nothing changes in its
+  flags, configuration keys or status API. ADR-027 carries an amendment.
+- **Building git-in-track now requires Go 1.27** (was 1.26). `go.mod` declares `go 1.27.3`
+  because cloudflared's own `go.mod` does, and CI's `GO_VERSION` moved to `1.27`. Release
+  binaries are unaffected; contributors and `go install` users need a 1.27.3+ toolchain
+  (`GOTOOLCHAIN=auto` fetches it).
+- golangci-lint is pinned to **v2.15.0** (was v2.13.2). The linter refuses a module whose Go
+  directive is newer than the Go minor it was built with, and v2.13.2 is built with Go 1.26.
+- The same upgrade refreshes `go-chi/chi` to v5.5.0, `klauspost/compress` to v1.20.3 and the
+  `golang.org/x` modules.
 
 ## [2.3.2] — 2026-10-16
 

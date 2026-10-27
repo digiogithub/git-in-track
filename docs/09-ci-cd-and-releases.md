@@ -12,7 +12,7 @@ versioning policy, branch strategy, release checklist and the distribution chann
 
 - Module path: `github.com/digiogithub/git-in-track`
 - CLI binary: `gintrack`
-- Toolchain: Go 1.26 in CI, matching the `go 1.26.0` directive in `go.mod` (cloudflared requires it; ADR-027), Node 22, npm
+- Toolchain: Go 1.27 in CI, matching the `go 1.27.3` directive in `go.mod` (cloudflared requires it; ADR-027), Node 22, npm
 - Build artifacts: `web/dist` (Vite bundle), `web/public/core.wasm` + `web/public/wasm_exec.js`
   (Go → WASM core, both git-ignored), `gintrack` (single static binary embedding `web/dist`
   via `go:embed`)
