@@ -12,6 +12,15 @@ because a commit list cannot express them.
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [2.4.0] — 2026-10-27
+
+A minor release that follows Cloudflare's rework of quick tunnels: the embedded cloudflared moves
+to the October 2026 library, and the tunnel gains an opt-in protected mode behind Cloudflare
+Access one-time PIN. A public tunnel behaves exactly as before. Building from source now needs
+Go 1.27.3; release binaries are unaffected.
+
 ### Added
 
 - **Protected quick tunnels** (ADR-041, docs/07 §4.1 and §5.1.1). A non-empty
@@ -1948,7 +1957,9 @@ each, `Contents: read and write`. GHCR needs no secret. The release workflow ver
 tokens before it builds anything and fails with the fix in the message when either is
 missing. Full procedure: [docs/09](docs/09-ci-cd-and-releases.md) §9 and §10.
 
-[Unreleased]: https://github.com/digiogithub/git-in-track/compare/v2.3.1...HEAD
+[Unreleased]: https://github.com/digiogithub/git-in-track/compare/v2.4.0...HEAD
+[2.4.0]: https://github.com/digiogithub/git-in-track/compare/v2.3.2...v2.4.0
+[2.3.2]: https://github.com/digiogithub/git-in-track/compare/v2.3.1...v2.3.2
 [2.3.1]: https://github.com/digiogithub/git-in-track/compare/v2.3.0...v2.3.1
 [2.3.0]: https://github.com/digiogithub/git-in-track/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/digiogithub/git-in-track/compare/v2.1.0...v2.2.0
