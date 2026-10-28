@@ -29,8 +29,8 @@ import { ToastProvider } from '@/components/ui/toast';
 import { KbViewer } from '@/features/kb/KbViewer';
 import { clearMarkdownCache } from '@/markdown';
 
-vi.mock('mermaid', () => ({
-  default: { initialize: vi.fn(), render: vi.fn(() => new Promise(() => undefined)) },
+vi.mock('pele/lazy', () => ({
+  renderAsync: vi.fn(() => new Promise(() => undefined)),
 }));
 
 const PAGE = 'docs/architecture/overview.md';

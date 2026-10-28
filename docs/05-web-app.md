@@ -1418,11 +1418,24 @@ weight matters; the sanitize schema accepts both class prefixes.
 **Mermaid.** Never at parse time. The rehype plugin emits
 `<pre class="mermaid" data-mermaid>` holding the verbatim source, so the diagram
 degrades to readable text; a React component intersection-observes
-it, dynamically `import('mermaid')` on first visibility, initialises with
-`{ startOnLoad: false, securityLevel: 'strict', theme: currentTheme }`, renders to
-SVG in a detached container, sanitises the SVG, and injects it. Failures render
-the source in a `<pre>` with an error note. Diagrams re-render on theme change
-(debounced) and expose a zoom/pan overlay on click.
+it, dynamically imports [Pele](https://pele.run) (`pele/lazy`, pinned to an exact
+version; ADR-042) on first visibility, and renders the source to an SVG string,
+which replaces the `<pre>`. `pele/lazy` is a small entry that loads each diagram
+type on demand, so a page with one sequence diagram downloads the core and the
+sequence renderer only. The render options are fixed in the component and the
+diagram source cannot supply them: links are limited to `http`, `https` and
+`mailto` (the schemes the sanitiser allows on a Markdown `href`) with
+`rel="noopener noreferrer nofollow"`, diagram images are off (they would bypass
+the asset resolver), every diagram gets its own `idPrefix` so SVG ids never
+collide, and the `icons` and `math` hooks, which insert unfiltered markup, are
+never passed. Pele escapes label text, emits no HTML labels or scripts, ignores
+`click` callbacks, always blocks `javascript:`, `data:` and `vbscript:` URLs and
+enforces input, output and edge limits. A syntax error keeps the source in its
+`<pre>` with the error message as a text note, never as HTML. Colours come from
+`--pele-*` CSS variables mapped to the design tokens in `markdown.css`
+(docs/13-design-system.md §11), so a theme switch restyles diagrams without a
+re-render. Pele targets Mermaid's syntax but uses its own layout and visual
+style, so diagrams do not look identical to GitHub's rendering.
 
 **Wikilinks.** Resolution order: exact relative path → path with `.md` appended →
 unique basename match in the same scope → case-insensitive basename match →
@@ -1846,7 +1859,7 @@ disabled with the same reason rather than being enabled and failing with a raw
 ## 10. Offline and PWA
 
 - `vite-plugin-pwa` in `generateSW` mode: precache the app shell, `core.wasm`,
-  `wasm_exec.js`, fonts and icons; runtime-cache shiki grammars and mermaid chunks
+  `wasm_exec.js`, fonts and icons; runtime-cache shiki grammars and Pele diagram chunks
   with stale-while-revalidate. `/api/**` (including the `/api/v1/events` WebSocket
   upgrade) is **never** cached.
 - Browser-only mode is fully offline-capable: handles, index snapshot, drafts and
@@ -1892,8 +1905,7 @@ disabled with the same reason rather than being enabled and failing with a raw
   icon, diff views mark added/removed with symbols.
 - Contrast targets WCAG 2.1 AA in both themes; the prose and code themes are
   checked with automated contrast tests.
-- `prefers-reduced-motion` disables drag animations, page transitions and mermaid
-  re-render animation.
+- `prefers-reduced-motion` disables drag animations and page transitions.
 - Automated checks: `axe-core` via `@axe-core/playwright` on every e2e screen, plus
   `jest-axe`-style assertions in component tests for the complex widgets.
 
@@ -1967,7 +1979,7 @@ Firefox and WebKit projects run a reduced suite covering the read-only fallback.
 both themes, with a small pixel tolerance; `axe` scan per screen.
 
 **Performance budgets in CI.** Initial JS ≤ 300 KB gzip (excluding `core.wasm`,
-shiki grammars and mermaid, all lazily loaded); index 5k items ≤ 3 s in the
+shiki grammars and the Pele diagram renderer, all lazily loaded); index 5k items ≤ 3 s in the
 worker benchmark; board with 500 cards renders ≤ 100 ms per interaction. Budgets
 are asserted by a script over the Vite bundle report and a Playwright trace.
 
@@ -1989,7 +2001,7 @@ SPA fallback (any unknown path that is not under `/api` returns `index.html`).
 `web/dist` contains a `.gitkeep` and a build-time generated `version.json` so the
 embed never fails on a clean checkout; CI always builds the web app before the Go
 binary. Vite config: `base: '/'`, hashed asset filenames, manual chunks for
-`react`, `codemirror`, `shiki`, `mermaid`, `isomorphic-git`, and
+`react`, `codemirror`, `shiki`, `isomorphic-git`, and
 `build.target: 'es2022'`. `core.wasm` is served from `public/` (not hashed) so the
 service worker can precache it by a stable name; its version is checked against a
 `version` string exported by the module at init and a mismatch forces a reload.

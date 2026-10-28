@@ -853,7 +853,9 @@ Repository content is untrusted input. Consequences:
   Raw `<script>`, event handlers, and `javascript:` URLs never survive rendering.
 - A Content Security Policy is served with the app: no inline scripts, no remote
   script origins, `frame-ancestors 'none'`.
-- Mermaid diagrams are rendered in a sandboxed context with `securityLevel: 'strict'`.
+- Mermaid diagrams are rendered by Pele (ADR-042) with fixed options the diagram
+  source cannot change: label text is escaped, no HTML labels or scripts, `click`
+  callbacks ignored, links limited to `http`/`https`/`mailto`, diagram images off.
 - Images and links to remote URLs are shown but external images are not loaded by
   default in the KB viewer (a per-project setting), because a remote image is a
   read receipt.

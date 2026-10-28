@@ -252,6 +252,35 @@
   overflow-x: auto;
 }
 
+/* Pele draws diagrams with `--pele-*` variables, so they read the design
+   tokens directly (docs/13-design-system.md §11, ADR-042). The tokens already
+   switch between light and dark, so a theme change restyles every diagram
+   without re-rendering it. Ordinary nodes stay neutral; the accent is kept for
+   "this one matters" marks, and the series follow the chart tokens. */
+.mermaid-diagram {
+  --pele-bg: hsl(var(--background));
+  --pele-fg: hsl(var(--foreground));
+  --pele-muted: hsl(var(--muted-foreground));
+  --pele-line: hsl(var(--muted-foreground));
+  --pele-surface: hsl(var(--surface-muted));
+  --pele-surface-alt: hsl(var(--code));
+  --pele-border: hsl(var(--border-strong));
+  --pele-accent: hsl(var(--accent));
+  --pele-critical: hsl(var(--destructive));
+  --pele-error: hsl(var(--destructive));
+  --pele-font: var(--font-sans);
+  --pele-font-mono: var(--font-mono);
+  --pele-radius: var(--radius-sm);
+  --pele-series-1: hsl(var(--chart-todo));
+  --pele-series-2: hsl(var(--chart-progress));
+  --pele-series-3: hsl(var(--chart-done));
+  --pele-series-4: hsl(var(--status-in-review));
+  --pele-series-5: hsl(var(--destructive));
+  --pele-series-6: hsl(var(--status-todo));
+  --pele-series-7: hsl(var(--chart-cancelled));
+  --pele-series-8: hsl(var(--chart-unknown));
+}
+
 .markdown-body .mermaid-error {
   color: hsl(var(--destructive));
   font-size: 0.8125rem;

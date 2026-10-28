@@ -20,14 +20,11 @@ import { resetFeedbackCache } from '@/features/feedback/feedback-store';
 import { KbViewer } from '@/features/kb/KbViewer';
 import { clearMarkdownCache } from '@/markdown';
 
-// Mermaid never runs in jsdom: the dynamic import resolves to a stub whose
-// `render` never settles, so the block stays in its `<pre class="mermaid">`
-// fallback — exactly what a user without a rendered diagram sees.
-vi.mock('mermaid', () => ({
-  default: {
-    initialize: vi.fn(),
-    render: vi.fn(() => new Promise(() => undefined)),
-  },
+// The diagram renderer is stubbed with a `renderAsync` that never settles, so
+// the block stays in its `<pre class="mermaid">` fallback — exactly what a
+// user without a rendered diagram sees.
+vi.mock('pele/lazy', () => ({
+  renderAsync: vi.fn(() => new Promise(() => undefined)),
 }));
 
 function ItemStub() {

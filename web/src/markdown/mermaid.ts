@@ -4,7 +4,8 @@
  * A ```mermaid fence becomes `<pre class="mermaid" data-mermaid>` holding the
  * verbatim source. That element is the graceful-degradation state (the source
  * stays readable when the diagram fails or JavaScript is off) and the hook the
- * React `MermaidBlock` uses to dynamically import `mermaid` on first visibility.
+ * React `MermaidBlock` uses to dynamically import the Pele renderer on first
+ * visibility (ADR-042).
  */
 
 import type { Element, Root } from 'hast';

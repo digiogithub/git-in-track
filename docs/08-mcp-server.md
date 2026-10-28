@@ -1757,14 +1757,14 @@ sequenceDiagram
 
     Note over Agent: Agent implements the change in the codebase<br/>(normal file edits, tests, commit)
 
-    Agent->>MCP: add_comment {id:ACME-T-0311, rev:sha256:7ab0…,<br/>body:"Implemented in internal/auth/oidc.go; PR #218."}
+    Agent->>MCP: add_comment {id:ACME-T-0311, rev:sha256:7ab0…,<br/>body:"Implemented in internal/auth/oidc.go (PR #218)."}
     MCP->>FS: docs/.pmngr/comments/ACME-T-0311/20260903T110431Z-claude-code.md
     MCP-->>Agent: {comment:{author:claude-code, rev:…}, changed:[…]}
 
     Agent->>MCP: update_item {id:ACME-T-0311, rev:sha256:7ab0…, status:in_review}
     MCP-->>Agent: {item:{status:in_review, rev:sha256:5e884b1c02a7f339}}
 
-    Agent-->>Dev: "ACME-T-0311 is in review; PR #218 opened."
+    Agent-->>Dev: "ACME-T-0311 is in review, PR #218 opened."
     Dev->>MCP: (web UI) reviews the diff in git history
 ```
 

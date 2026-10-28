@@ -25,7 +25,6 @@ export {
 } from '@/markdown/paths';
 export { kbSanitizeSchema } from '@/markdown/sanitize';
 export { taskLineOf } from '@/markdown/tasklist';
-export { readThemeMode, useThemeMode, type ThemeMode } from '@/markdown/theme';
 export type {
   Heading,
   LinkResolution,
