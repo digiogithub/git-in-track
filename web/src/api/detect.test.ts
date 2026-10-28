@@ -45,6 +45,9 @@ describe('probeCompanion', () => {
     const [url, init] = fetchImpl.mock.calls[0] ?? [];
     expect(url).toBe(`http://127.0.0.1:7317${HEALTH_PATH}`);
     expect(init?.mode).toBe('cors');
+    // A protected tunnel's Cloudflare Access session is a cookie: omitting it
+    // turns the probe into a redirect to the login broker (ADR-041).
+    expect(init?.credentials).toBe('same-origin');
     expect(init?.signal).toBeInstanceOf(AbortSignal);
   });
 

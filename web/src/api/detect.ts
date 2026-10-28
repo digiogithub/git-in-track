@@ -83,7 +83,11 @@ export async function probeCompanion(options: ProbeOptions = {}): Promise<Health
     const response = await fetchImpl(`${baseUrl}${HEALTH_PATH}`, {
       method: 'GET',
       mode: 'cors',
-      credentials: 'omit',
+      // `same-origin`, not `omit`: behind a protected quick tunnel the
+      // Cloudflare Access session is a cookie on the app's own origin, and a
+      // probe without it is redirected to the login broker (ADR-041). A
+      // cross-origin companion still gets no cookies.
+      credentials: 'same-origin',
       headers: { Accept: 'application/json' },
       signal: controller.signal,
     });

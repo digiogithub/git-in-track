@@ -2483,6 +2483,12 @@ being blunt about what is left.
   admits everyone at that domain; the session cookie is process-local and dies
   with the tunnel; and anyone who passes it is back to facing the token alone,
   with everything below still true for them.
+  The session is a `SameSite=Lax` cookie on the tunnel's own origin, so the web
+  app sends its API calls and its health probe with `credentials:
+  'same-origin'`: a request without the cookie is answered by cloudflared, not
+  the companion, and a cross-origin redirect to the login broker reads to the
+  tab as "no companion". The companion itself never sees the cookie —
+  cloudflared strips it before forwarding.
 - **The web app is served without authentication.** The SPA bundle sits outside
   the auth group — it has to, because the tab needs the code that will ask for
   the token — so *anyone holding the URL of a public tunnel loads the

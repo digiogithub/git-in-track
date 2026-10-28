@@ -3504,7 +3504,10 @@ export class CompanionProvider implements DataProvider {
       response = await this.#fetch(this.#url(path), {
         method: options.method ?? 'GET',
         mode: 'cors',
-        credentials: 'omit',
+        // The bearer token authenticates; the only cookie a same-origin call
+        // carries is the protected tunnel's Access session, without which
+        // cloudflared redirects every request to its login (ADR-041).
+        credentials: 'same-origin',
         headers,
         ...(options.signal === undefined ? {} : { signal: options.signal }),
         ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),

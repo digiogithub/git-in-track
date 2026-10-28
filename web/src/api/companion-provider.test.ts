@@ -118,6 +118,7 @@ describe('CompanionProvider reads', () => {
       `${BASE}/api/v1/items?project=ACME&type=story&status=todo&status=in_progress&sort=-updated&limit=2`,
     );
     expect(init.method).toBe('GET');
+    expect(init.credentials).toBe('same-origin');
     expect(page.total).toBe(37);
     expect(page.nextCursor).toBe('eyJvIjoyfQ');
     expect(page.items[0]).toMatchObject({

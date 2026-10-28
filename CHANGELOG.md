@@ -12,7 +12,14 @@ because a commit list cannot express them.
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- **A protected quick tunnel no longer loses the companion after the one-time PIN.** The web
+  app fetched the API and its health probe with `credentials: 'omit'`, so the Cloudflare
+  Access session cookie never reached cloudflared: the probe was redirected to the login
+  broker, detection fell back to browser-only mode and the `?token=` link appeared to do
+  nothing. Same-origin calls now carry cookies (`credentials: 'same-origin'`); a cross-origin
+  companion still receives none, and authentication is still the bearer token.
 
 ## [2.4.0] — 2026-10-27
 
