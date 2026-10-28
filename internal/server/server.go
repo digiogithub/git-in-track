@@ -450,7 +450,7 @@ func (s *Server) Start(ctx context.Context) error {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("shutdown: %w", err)
 	}
-	<-errCh
+	<-errCh //nolint:errcheck // after Shutdown, Serve only reports http.ErrServerClosed
 	return nil
 }
 
