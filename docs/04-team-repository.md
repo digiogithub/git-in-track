@@ -703,7 +703,7 @@ sequenceDiagram
     Note over P,B: two working trees changed -> two commits
     R->>S: refresh snapshot entry (on next `gintrack sync`)
   else project not cloned
-    R-->>U: read-only card; move refused with<br/>"Clone acme/platform to edit this item"
+    R-->>U: read-only card, move refused with<br/>"Clone acme/platform to edit this item"
   end
 ```
 

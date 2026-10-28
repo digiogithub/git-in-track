@@ -1,22 +1,45 @@
 /**
- * Mermaid, never at parse time (docs/05-web-app.md §7, "Mermaid").
+ * Mermaid diagrams, never at parse time (docs/05-web-app.md §7, "Mermaid").
  *
  * The block starts as the diagram source in a `<pre>`. On first visibility it
- * dynamically imports `mermaid` — its own chunk, downloaded only by pages that
- * actually contain a diagram — renders to SVG in a detached container and swaps
- * it in. A syntax error keeps the source visible with an error note, and a
- * theme change re-renders.
+ * dynamically imports Pele (`pele/lazy`, ADR-042), whose entry is small and
+ * which loads each diagram type on demand, so only pages that actually contain
+ * a diagram download a renderer, and only for the types they use. The SVG
+ * replaces the source; a syntax error keeps the source visible with the error
+ * as a text note.
  *
- * `securityLevel: 'strict'` makes Mermaid sanitise its own output and disables
- * click handlers and inline HTML in diagram labels.
+ * Colours come from `--pele-*` CSS variables mapped to the design tokens in
+ * `markdown.css`, so a theme switch restyles the SVG without a re-render.
+ *
+ * Security (https://pele.run/security): Pele escapes diagram text, emits no
+ * HTML labels or scripts, ignores `click` callbacks and always blocks
+ * `javascript:`/`data:`/`vbscript:` links. The render options are fixed here —
+ * nothing in the diagram source can supply them — and narrow links to the same
+ * schemes the Markdown sanitiser allows. The `icons` and `math` hooks, which
+ * insert unfiltered markup, are never passed.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import type { RenderOptions } from 'pele/lazy';
+import { useEffect, useId, useRef, useState } from 'react';
 
-import { mermaidThemeVariables } from '@/markdown/mermaid-theme';
-import { useThemeMode } from '@/markdown/theme';
+/** The same schemes `sanitize.ts` allows on a Markdown `href`. */
+const LINK_SCHEMES = ['http', 'https', 'mailto'];
 
-let sequence = 0;
+/**
+ * The fixed options every diagram renders with. Diagram images would make
+ * network requests the asset resolver never sees, so they are off.
+ */
+function peleOptions(idPrefix: string, fontFamily: string): RenderOptions {
+  return {
+    idPrefix,
+    // The size mermaid used here, so a diagram sits at prose scale.
+    fontSize: 14,
+    linkSchemes: LINK_SCHEMES,
+    linkRel: 'noopener noreferrer nofollow',
+    images: false,
+    ...(fontFamily ? { fontFamily } : {}),
+  };
+}
 
 export type MermaidBlockProps = {
   source: string;
@@ -24,7 +47,9 @@ export type MermaidBlockProps = {
 };
 
 export function MermaidBlock({ source, className }: MermaidBlockProps) {
-  const theme = useThemeMode();
+  // SVG ids (markers, gradients) are document-global: give every diagram its
+  // own prefix so two diagrams on one page never share an arrowhead.
+  const idPrefix = `pele${useId().replace(/[^\w-]/g, '')}`;
   const container = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(() => typeof IntersectionObserver === 'undefined');
   const [svg, setSvg] = useState<string | null>(null);
@@ -45,19 +70,14 @@ export function MermaidBlock({ source, className }: MermaidBlockProps) {
   useEffect(() => {
     if (!visible) return;
     let cancelled = false;
-    sequence += 1;
-    const id = `mermaid-${sequence}`;
 
     const run = async () => {
       try {
-        const mermaid = (await import('mermaid')).default;
-        mermaid.initialize({
-          startOnLoad: false,
-          securityLevel: 'strict',
-          theme: 'base',
-          themeVariables: mermaidThemeVariables(theme),
-        });
-        const rendered = await mermaid.render(id, source);
+        const { renderAsync } = await import('pele/lazy');
+        // Measure labels in the font the SVG will be drawn in.
+        const node = container.current;
+        const font = node ? getComputedStyle(node).fontFamily : '';
+        const rendered = await renderAsync(source, peleOptions(idPrefix, font));
         if (!cancelled) {
           setSvg(rendered.svg);
           setError(null);
@@ -73,9 +93,8 @@ export function MermaidBlock({ source, className }: MermaidBlockProps) {
     void run();
     return () => {
       cancelled = true;
-      document.getElementById(`d${id}`)?.remove();
     };
-  }, [source, theme, visible]);
+  }, [idPrefix, source, visible]);
 
   if (svg && !error) {
     return (
@@ -83,8 +102,8 @@ export function MermaidBlock({ source, className }: MermaidBlockProps) {
         ref={container}
         className={className ?? 'mermaid-diagram'}
         role="img"
-        // Mermaid ran with `securityLevel: 'strict'`, which sanitises the SVG
-        // it returns; the diagram source itself already passed our sanitiser.
+        // Pele escapes every label and filters links and styles; the options
+        // above are fixed and the diagram source cannot change them.
         dangerouslySetInnerHTML={{ __html: svg }}
       />
     );
@@ -93,6 +112,8 @@ export function MermaidBlock({ source, className }: MermaidBlockProps) {
   return (
     <div ref={container} className="mermaid-fallback">
       {error ? (
+        // A React text node: an error message that quotes the source is
+        // shown as text, never parsed as HTML.
         <p className="mermaid-error" role="status">
           Diagram could not be rendered: {error}
         </p>

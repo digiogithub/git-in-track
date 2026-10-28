@@ -12,6 +12,21 @@ because a commit list cannot express them.
 
 ## [Unreleased]
 
+### Changed
+
+- **Mermaid diagrams render with Pele instead of mermaid** (`GIT-US-0202`, ADR-042, docs/05
+  §7). Fenced `mermaid` blocks still render on first visibility and still fall back to their
+  source, but the renderer is now [Pele](https://pele.run) 1.12.0 (pinned exactly), loaded
+  through `pele/lazy` so a page downloads only the diagram types it shows: about 67 KB gzip
+  for a flowchart and 58 KB for a sequence diagram, against about 170 KB for `mermaid.core`
+  alone before. Colours come from `--pele-*` CSS variables mapped to the design tokens, so a
+  theme switch restyles diagrams without re-rendering them. Render options are fixed in the
+  app: links limited to `http`, `https` and `mailto`, diagram images off, no icon or math
+  hooks; a syntax error is shown as text next to the source. Pele has its own layout and
+  style, so diagrams no longer look like GitHub's rendering. Two sequence diagrams in
+  docs/04 and docs/08 with a `;` inside a message, which neither renderer accepted, are
+  reworded.
+
 ### Security
 
 - **Patched web dependencies reported by Dependabot.** `vite` 6.4.4 (dev server: files outside
@@ -23,8 +38,9 @@ because a commit list cannot express them.
 
 ### Known issues
 
-- `katex` 0.16 (through `mermaid` and `remark-math`) still carries a low-severity advisory; its
-  fix, `katex` 0.18, needs `mermaid` 12 and a `remark-math` release that accepts it.
+- `katex` 0.16 (through `remark-math`) still carries a low-severity advisory; its fix, `katex`
+  0.18, needs a `remark-math` release that accepts it. `mermaid` no longer pulls in a second
+  copy.
 
 ## [2.4.1] — 2026-10-28
 

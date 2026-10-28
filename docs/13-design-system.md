@@ -15,7 +15,7 @@ The system has one hard rule, and it is mechanical rather than aesthetic: **a
 colour in a component is a bug**. Every value is a token in
 [`web/src/index.css`](../web/src/index.css), exposed to Tailwind in
 [`web/tailwind.config.ts`](../web/tailwind.config.ts) and checked by
-`npm run tokens:check`. The two documented exceptions are listed in §11.
+`npm run tokens:check`. The one documented exception is listed in §11.
 
 `npm run styleguide` opens a living gallery of everything described here,
 rendered by the very components it documents, with the contrast ratios computed
@@ -308,15 +308,20 @@ communicated by colour alone.
 
 ## 11. Documented exceptions
 
-Two places cannot read a CSS variable, and both are marked in the code:
+One place cannot read a CSS variable, and it is marked in the code:
 
-1. **Mermaid** bakes colours into the SVG it renders, so
-   [`mermaid-theme.ts`](../web/src/markdown/mermaid-theme.ts) holds literal hex
-   values for both themes. Keep it in step with §3.
-2. **The `<select>` chevron** is a `background-image` data URI, which cannot
+1. **The `<select>` chevron** is a `background-image` data URI, which cannot
    inherit `currentColor`, and a `dark:` utility would not fire for people on
    `system`. It is a single mid warm neutral measured at 3.5:1 on the light
    field and 4.0:1 on the dark one.
+
+Mermaid diagrams used to be the second exception (mermaid bakes colours into
+its SVG). Pele, the renderer since GIT-US-0202 (ADR-042), reads `--pele-*` CSS
+variables instead, so [`markdown.css`](../web/src/markdown/markdown.css) maps
+them onto the tokens above (`--pele-bg` to `--background`, `--pele-fg` to
+`--foreground`, `--pele-surface` to `--surface-muted`, `--pele-border` to
+`--border-strong`, `--pele-accent` to `--accent`, the series to the chart
+tokens) and diagrams follow a theme switch without being re-rendered.
 
 Syntax highlighting is Shiki's `vitesse-light` / `vitesse-dark` pair (chosen for
 being low-saturation and warm); only the *text* colours come from it, while the
