@@ -12,7 +12,19 @@ because a commit list cannot express them.
 
 ## [Unreleased]
 
-Nothing yet.
+### Security
+
+- **Patched web dependencies reported by Dependabot.** `vite` 6.4.4 (dev server: files outside
+  `server.fs.allow`, cross-origin script execution through custom middleware, and the bundled
+  `launch-editor` command-injection and Windows escaping issues), `zod` 4.6.6 (memory exhaustion
+  on oversized constrained collections), `vitest` 4.1.12 with `@vitest/mocker` 4.1.12 (mock
+  registration hardening, test-only) and `postcss-selector-parser` 6.1.5 (quadratic selector
+  parsing, build-time through Tailwind CSS). Only `zod` ships in the embedded web app.
+
+### Known issues
+
+- `katex` 0.16 (through `mermaid` and `remark-math`) still carries a low-severity advisory; its
+  fix, `katex` 0.18, needs `mermaid` 12 and a `remark-math` release that accepts it.
 
 ## [2.4.1] — 2026-10-28
 

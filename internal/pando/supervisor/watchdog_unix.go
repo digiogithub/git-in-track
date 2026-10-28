@@ -86,7 +86,7 @@ func RunWatchdog(args []string) int {
 			case <-time.After(watchdogGrace):
 				_ = cmd.Process.Kill()
 				killAll(syscall.SIGKILL)
-				<-exited
+				<-exited //nolint:errcheck // killed on purpose; the exit status adds nothing
 				return 1
 			}
 		}

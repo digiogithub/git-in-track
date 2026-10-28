@@ -558,11 +558,12 @@ func (s *Supervisor) runOnce(ctx context.Context, sink *logSink, avoid int) (rea
 		signalGroup(cmd, false)
 		t := time.NewTimer(s.opts.StopTimeout)
 		defer t.Stop()
+		// Stopping on purpose: how the process exited is no longer news.
 		select {
-		case <-exited:
+		case <-exited: //nolint:errcheck // the exit status of a requested stop is not reported
 		case <-t.C:
 			signalGroup(cmd, true)
-			<-exited
+			<-exited //nolint:errcheck // the exit status of a requested stop is not reported
 		}
 	}
 
