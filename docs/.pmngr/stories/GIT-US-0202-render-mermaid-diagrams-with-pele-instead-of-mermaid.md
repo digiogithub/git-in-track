@@ -2,7 +2,7 @@
 id: GIT-US-0202
 type: story
 title: Render Mermaid diagrams with Pele instead of mermaid
-status: in_review
+status: done
 priority: medium
 parent: GIT-EP-0002
 assignees: [claude-code]
@@ -10,8 +10,9 @@ author: mcp
 labels: [web, agent-ok]
 estimate: 3
 created: 2026-10-28T21:30:01Z
-updated: 2026-10-28T21:42:18Z
+updated: 2026-10-28T22:11:14Z
 started: 2026-10-28T21:30:05Z
+closed: 2026-10-28T22:11:14Z
 ---
 
 ## Description
@@ -44,20 +45,20 @@ stays because `remark-math` still pulls it.
 
 ## Acceptance Criteria
 
-- [ ] `MermaidBlock` renders with Pele loaded on demand (`pele/lazy` or an
+- [x] `MermaidBlock` renders with Pele loaded on demand (`pele/lazy` or an
       equivalent dynamic import), keeping the visibility-gated lazy load and the
       `pre.mermaid` placeholder; `mermaid` is removed from `web/package.json`.
-- [ ] `pele` is pinned to an exact version.
-- [ ] Theme colours come from `--pele-*` CSS variables mapped to the design
+- [x] `pele` is pinned to an exact version.
+- [x] Theme colours come from `--pele-*` CSS variables mapped to the design
       system tokens, in light and dark, with no re-render on theme change.
-- [ ] A syntax error keeps the source visible and shows the error as text,
+- [x] A syntax error keeps the source visible and shows the error as text,
       never as HTML.
-- [ ] Links in diagrams are limited to safe schemes; diagram authors cannot
+- [x] Links in diagrams are limited to safe schemes; diagram authors cannot
       pass Pele options.
-- [ ] Vitest covers render, error and theme behaviour; `make test`, `make lint`
+- [x] Vitest covers render, error and theme behaviour; `make test`, `make lint`
       and `make wasm` pass.
-- [ ] The two doc diagrams with a `;` inside a sequence message are fixed.
-- [ ] `docs/05-web-app.md` (§7 "Mermaid") and any other doc naming the renderer
+- [x] The two doc diagrams with a `;` inside a sequence message are fixed.
+- [x] `docs/05-web-app.md` (§7 "Mermaid") and any other doc naming the renderer
       are updated, an ADR records the switch, and `CHANGELOG.md` has an entry.
 
 ## Notes
