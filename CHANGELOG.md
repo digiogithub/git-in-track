@@ -12,6 +12,13 @@ because a commit list cannot express them.
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [2.4.1] — 2026-10-28
+
+A patch release that makes the protected quick tunnel of 2.4.0 usable from the browser. No
+configuration key, data-model path, CLI flag or API field changes.
+
 ### Fixed
 
 - **A protected quick tunnel no longer loses the companion after the one-time PIN.** The web
@@ -1964,7 +1971,8 @@ each, `Contents: read and write`. GHCR needs no secret. The release workflow ver
 tokens before it builds anything and fails with the fix in the message when either is
 missing. Full procedure: [docs/09](docs/09-ci-cd-and-releases.md) §9 and §10.
 
-[Unreleased]: https://github.com/digiogithub/git-in-track/compare/v2.4.0...HEAD
+[Unreleased]: https://github.com/digiogithub/git-in-track/compare/v2.4.1...HEAD
+[2.4.1]: https://github.com/digiogithub/git-in-track/compare/v2.4.0...v2.4.1
 [2.4.0]: https://github.com/digiogithub/git-in-track/compare/v2.3.2...v2.4.0
 [2.3.2]: https://github.com/digiogithub/git-in-track/compare/v2.3.1...v2.3.2
 [2.3.1]: https://github.com/digiogithub/git-in-track/compare/v2.3.0...v2.3.1
