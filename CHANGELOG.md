@@ -12,6 +12,15 @@ because a commit list cannot express them.
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [2.5.0] — 2026-10-28
+
+A minor release: Mermaid diagrams in item bodies and knowledge-base pages render with Pele, a
+much smaller renderer, and the web dependencies flagged by Dependabot are patched. No
+configuration key, data-model path, CLI flag or API field changes. Diagrams look different
+from before, because Pele lays them out in its own style.
+
 ### Changed
 
 - **Mermaid diagrams render with Pele instead of mermaid** (`GIT-US-0202`, ADR-042, docs/05
@@ -1999,7 +2008,8 @@ each, `Contents: read and write`. GHCR needs no secret. The release workflow ver
 tokens before it builds anything and fails with the fix in the message when either is
 missing. Full procedure: [docs/09](docs/09-ci-cd-and-releases.md) §9 and §10.
 
-[Unreleased]: https://github.com/digiogithub/git-in-track/compare/v2.4.1...HEAD
+[Unreleased]: https://github.com/digiogithub/git-in-track/compare/v2.5.0...HEAD
+[2.5.0]: https://github.com/digiogithub/git-in-track/compare/v2.4.1...v2.5.0
 [2.4.1]: https://github.com/digiogithub/git-in-track/compare/v2.4.0...v2.4.1
 [2.4.0]: https://github.com/digiogithub/git-in-track/compare/v2.3.2...v2.4.0
 [2.3.2]: https://github.com/digiogithub/git-in-track/compare/v2.3.1...v2.3.2
