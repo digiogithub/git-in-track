@@ -1,4 +1,4 @@
-import { X } from 'lucide-react';
+import { RotateCcw, X } from 'lucide-react';
 import { useEffect, useId, useState } from 'react';
 
 import type { Item, ProjectSummary } from '@/api/provider';
@@ -9,9 +9,12 @@ import { Select } from '@/components/ui/select';
 import { useIdentity } from '@/features/backlog/identity';
 import { typeName } from '@/features/backlog/item-meta';
 import {
+  clearedSearch,
   defaultPriorities,
+  defaultSearch,
   filterableItemTypes,
-  isEmptySearch,
+  isDefaultSearch,
+  showsEverything,
   statusCategories,
   type ItemSearch,
 } from '@/features/backlog/search';
@@ -88,7 +91,10 @@ export type FilterBarProps = {
   milestones: Item[];
 };
 
-/** Filters bar. Every control writes straight into the URL search params. */
+/**
+ * Filters bar. Every control writes straight into the URL search params, and
+ * the backlog remembers the result per project (`filter-memory.ts`).
+ */
 export function FilterBar({ search, project, milestones }: FilterBarProps) {
   const setSearch = useSetItemSearch();
   const { remember } = useIdentity();
@@ -262,23 +268,26 @@ export function FilterBar({ search, project, milestones }: FilterBarProps) {
         />
       </div>
 
-      {!isEmptySearch(search) ? (
+      {!isDefaultSearch(search) ? (
+        <Button
+          variant="ghost"
+          size="sm"
+          title="Show pending work only: every status that is not done or cancelled"
+          onClick={() => {
+            setSearch(defaultSearch);
+          }}
+        >
+          <RotateCcw aria-hidden="true" className="h-3.5 w-3.5" />
+          Reset to default
+        </Button>
+      ) : null}
+
+      {!showsEverything(search) ? (
         <Button
           variant="ghost"
           size="sm"
           onClick={() => {
-            setSearch({
-              q: undefined,
-              type: undefined,
-              status: undefined,
-              category: undefined,
-              priority: undefined,
-              label: undefined,
-              assignee: undefined,
-              milestone: undefined,
-              parent: undefined,
-              view: undefined,
-            });
+            setSearch(clearedSearch);
           }}
         >
           <X aria-hidden="true" className="h-3.5 w-3.5" />

@@ -1,7 +1,9 @@
 /**
  * Backlog filter state lives in the URL (docs/05-web-app.md §3.1 and §5): the
  * search params ARE the filter, so a view is shareable, bookmarkable and
- * restored on reload. Nothing about a filter is kept in a store.
+ * restored on reload. The last filter is also remembered per project in
+ * `localStorage` (`filter-memory.ts`), but only to fill an empty URL: the URL
+ * stays the source of truth for what the list shows.
  *
  * Values are written as comma-separated lists (`?status=todo,in_progress`)
  * rather than JSON arrays so the URL stays readable, and every field is
@@ -130,7 +132,7 @@ export function toSearchInput(search: ItemSearch): ItemSearchInput {
   };
 }
 
-/** True when no filter at all is applied (drives the "no filters" empty state). */
+/** True when no filter field is set (the quick-view id alone is not a field). */
 export function isEmptySearch(search: ItemSearch): boolean {
   return (
     !search.q &&
@@ -143,6 +145,15 @@ export function isEmptySearch(search: ItemSearch): boolean {
     !search.milestone &&
     !search.parent
   );
+}
+
+/**
+ * True when the list shows every item: no filter field and no quick view that
+ * narrows by itself (only "All open" does, since it resolves at render time).
+ * Drives the "no items yet" versus "no items match" empty state.
+ */
+export function showsEverything(search: ItemSearch): boolean {
+  return isEmptySearch(search) && search.view !== 'open';
 }
 
 /** Status ids belonging to a coarse workflow category, from `project.yaml`. */
@@ -271,11 +282,34 @@ export const quickViews: QuickView[] = [
 ];
 
 /**
+ * Every filter field cleared and the "All" view picked. Clearing writes this
+ * rather than an empty URL, because an empty URL means "restore the stored
+ * filter or the default" (GIT-US-0203): opting out of the default must stick.
+ */
+export const clearedSearch: ItemSearchInput = { ...filterFieldsCleared(), view: 'all' };
+
+/** The filter the backlog opens on without a stored one: pending work only. */
+export const defaultSearch: ItemSearchInput = { ...filterFieldsCleared(), view: 'open' };
+
+/** Every filter field unset; the sort is a view preference and is kept. */
+function filterFieldsCleared(): ItemSearchInput {
+  const { sort: _sort, order: _order, ...fields } = emptyView;
+  return fields;
+}
+
+/** True when the search is exactly the default filter (sort aside). */
+export function isDefaultSearch(search: ItemSearch): boolean {
+  return isEmptySearch(search) && search.view === 'open';
+}
+
+/**
  * The "All open" view has no single category, so it is applied as a status
- * list computed from the project workflow at render time.
+ * list computed from the project workflow at render time: every status whose
+ * category is neither `done` nor `cancelled`, so a project's own categories
+ * (a `triage` queue, for one) count as pending work too.
  */
 export function openStatuses(project: ProjectSummary | undefined): string[] {
   return (project?.statuses ?? [])
-    .filter((s) => s.category === 'todo' || s.category === 'in_progress')
+    .filter((s) => s.category !== 'done' && s.category !== 'cancelled')
     .map((s) => s.id);
 }
