@@ -194,6 +194,41 @@ On success the answer replaces the project in the shared `['projects']` query, s
 away and the sidebar *Inbox* entry appears without a reload; a refusal — an inbox that already
 exists, an ordinary status already called `triage`, a stale revision — is a destructive toast.
 
+**Repository KPIs and layout (as built, story GIT-US-0205)** — under its project chips, every
+*ready* repository shows one row of figures per project (`features/workspace/ProjectKpiPanel.tsx`),
+each a link into its section:
+
+| Figure | Shown as | Links to |
+|---|---|---|
+| Knowledge-base docs | page count of the project's docs folder | `/p/<KEY>/kb/` |
+| Milestones | `open / total` | `/p/<KEY>/milestones` |
+| Epics | `open / total` | `/p/<KEY>/items?type=epic` |
+| User stories | `left / total` | `/p/<KEY>/items?type=story` |
+| Specs | `total`, plus `· N unverified` in the destructive colour | `/p/<KEY>/specs` |
+
+*Open* and *left* mean neither in a `done` nor in a `cancelled` category. Soft-deleted items and
+inbox submissions (`triage` category) are not counted. A spec is *unverified* when it is not
+cancelled and holds at least one requirement, itself not cancelled, without a `verified` stamp whose
+`rev` is its current block rev (doc 03 §21.5, R-REQ-11a) — the stored evidence, so browser-only
+mode, which has no coverage, reports the same number as the companion. The backlog links pass the
+`type` filter in the URL, which wins over any filter the backlog remembers.
+
+Below the figures a progress bar shows the estimated share of the project that is closed: done
+stories ÷ non-cancelled stories. When at least one of those stories carries an `estimate` the ratio
+is in story points, and a story without one weighs the mean estimate of the estimated stories. The
+*N% closed* label next to the bar is a button whose tooltip (and accessible name) states the
+formula with the project's own numbers.
+
+The figures are one core query, `project.kpis` (`core.Index.ProjectKPIs`; `GET
+/api/v1/projects/{key}/kpis` on the companion, docs/07), read with `getProjectKpis(project)` under
+the query key `['kpis', <KEY>]`. Item, page, index and repository change events invalidate
+`['kpis']`, as does *Reindex*. Each project has its own loading and error line, so one unreadable
+project never blanks the page; a repository that needs permission asks for no figures.
+
+A *List / Cards* switch next to the *Repositories* heading lays the repositories out as the
+stacked list (the default) or as a responsive grid of cards. The choice is the `workspaceLayout`
+preference (`'list' | 'cards'`) in `gintrack:ui-prefs` (`app/ui-prefs.ts`), per browser.
+
 A **workspace search panel** (`features/workspace/WorkspaceSearch.tsx`) queries every
 open repository at once and labels each row with the project it came from, because in
 a workspace the same title can exist in two repositories. With more than one project

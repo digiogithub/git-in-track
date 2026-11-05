@@ -2,14 +2,15 @@
 id: GIT-US-0205
 type: story
 title: Workspace home shows each repository with KPIs, as a list or as cards
-status: todo
+status: in_review
 priority: medium
 parent: GIT-EP-0033
 author: mcp
+assignees: [claude-code]
 labels: [web, agent-ok]
 estimate: 5
 created: 2026-11-05T14:58:06Z
-updated: 2026-11-05T14:58:06Z
+updated: 2026-11-05T15:12:53Z
 ---
 
 ## Description

@@ -4,17 +4,20 @@ import {
   BookOpen,
   FolderGit2,
   Inbox,
+  LayoutGrid,
+  List,
   ListChecks,
   RefreshCw,
   ShieldAlert,
   Trash2,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 
 import type { ProjectSummary, RepoInfo } from '@/api/provider';
 import { isJujutsu, JUJUTSU_SUMMARY } from '@/api/provider';
 import { useProvider } from '@/api/provider-context';
 import { useAppStore } from '@/app/store';
+import { useUiPrefs, type WorkspaceLayout } from '@/app/ui-prefs';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/components/ui/toast';
@@ -24,6 +27,8 @@ import { hasTriageStatus } from '@/features/inbox/search';
 import { FsaVault, getHandleRecord, registerVault, requestPermission } from '@/fs';
 
 import { FolderPickers } from './FolderPickers';
+import { kpiKeys, useKpiEvents } from './kpis';
+import { ProjectKpiPanel } from './ProjectKpiPanel';
 import { RepoSemanticSearch } from './RepoSemanticSearch';
 import { TeamPanel } from './TeamPanel';
 import { WorkspaceSearch } from './WorkspaceSearch';
@@ -56,6 +61,9 @@ export function WorkspaceHome() {
   // browser folder picker would be misleading: `gintrack add` is the way in.
   const companion = useAppStore((state) => state.mode) === 'companion';
   const [error, setError] = useState<string | null>(null);
+  const layout = useUiPrefs((state) => state.workspaceLayout);
+  const setLayout = useUiPrefs((state) => state.setWorkspaceLayout);
+  useKpiEvents();
 
   const repos = useQuery({ queryKey: ['repos'], queryFn: () => provider.listRepos() });
   const projects = useProjects();
@@ -71,6 +79,7 @@ export function WorkspaceHome() {
   const invalidate = async () => {
     await queryClient.invalidateQueries({ queryKey: ['repos'] });
     await queryClient.invalidateQueries({ queryKey: ['projects'] });
+    await queryClient.invalidateQueries({ queryKey: kpiKeys.all() });
   };
 
   const reindex = useMutation({
@@ -179,9 +188,12 @@ export function WorkspaceHome() {
       <WorkspaceSearch />
 
       <section aria-labelledby="repos-heading" className="space-y-3">
-        <h2 id="repos-heading" className="text-base font-semibold tracking-tight">
-          Repositories
-        </h2>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 id="repos-heading" className="text-base font-semibold tracking-tight">
+            Repositories
+          </h2>
+          {rows.length > 0 ? <LayoutSwitch layout={layout} onChange={setLayout} /> : null}
+        </div>
 
         {repos.isPending ? (
           <p className="text-sm text-muted-foreground">Loading repositories…</p>
@@ -199,10 +211,13 @@ export function WorkspaceHome() {
           </Card>
         ) : null}
 
-        <ul className="space-y-3">
+        <ul
+          data-layout={layout}
+          className={layout === 'cards' ? 'grid gap-3 sm:grid-cols-2 xl:grid-cols-3' : 'space-y-3'}
+        >
           {rows.map((repo) => (
             <li key={repo.id}>
-              <Card>
+              <Card className={layout === 'cards' ? 'h-full' : undefined}>
                 <CardHeader>
                   <CardTitle className="flex flex-wrap items-center gap-2">
                     {repo.name}
@@ -236,32 +251,39 @@ export function WorkspaceHome() {
                   ) : null}
 
                   {repo.projects.length > 0 ? (
-                    <ul className="flex flex-wrap gap-2">
-                      {repo.projects.map((project) => {
-                        const candidate = inboxCandidate(project, repo);
-                        return (
-                          <li key={project} className="flex items-center gap-1">
-                            <Link
-                              to="/p/$project/items"
-                              params={{ project }}
-                              className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-xs hover:bg-secondary"
-                            >
-                              <ListChecks aria-hidden="true" className="h-3 w-3" />
-                              {project} backlog
-                            </Link>
-                            <Link
-                              to="/p/$project/kb/$"
-                              params={{ project, _splat: '' }}
-                              className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-xs hover:bg-secondary"
-                            >
-                              <BookOpen aria-hidden="true" className="h-3 w-3" />
-                              {project} docs
-                            </Link>
-                            {candidate ? <EnableInboxButton project={candidate} /> : null}
-                          </li>
-                        );
-                      })}
-                    </ul>
+                    <>
+                      <ul className="flex flex-wrap gap-2">
+                        {repo.projects.map((project) => {
+                          const candidate = inboxCandidate(project, repo);
+                          return (
+                            <li key={project} className="flex items-center gap-1">
+                              <Link
+                                to="/p/$project/items"
+                                params={{ project }}
+                                className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-xs hover:bg-secondary"
+                              >
+                                <ListChecks aria-hidden="true" className="h-3 w-3" />
+                                {project} backlog
+                              </Link>
+                              <Link
+                                to="/p/$project/kb/$"
+                                params={{ project, _splat: '' }}
+                                className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-xs hover:bg-secondary"
+                              >
+                                <BookOpen aria-hidden="true" className="h-3 w-3" />
+                                {project} docs
+                              </Link>
+                              {candidate ? <EnableInboxButton project={candidate} /> : null}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                      {repo.state === 'ready'
+                        ? repo.projects.map((project) => (
+                            <ProjectKpiPanel key={project} project={project} layout={layout} />
+                          ))
+                        : null}
+                    </>
                   ) : (
                     <p className="text-sm text-muted-foreground">
                       No project was found in this folder yet.
@@ -314,6 +336,41 @@ export function WorkspaceHome() {
           ))}
         </ul>
       </section>
+    </div>
+  );
+}
+
+/**
+ * The list/cards switch of the repository section (GIT-US-0205). The choice is
+ * a per-browser preference kept in `ui-prefs`; the list is the default.
+ */
+function LayoutSwitch({
+  layout,
+  onChange,
+}: {
+  layout: WorkspaceLayout;
+  onChange: (layout: WorkspaceLayout) => void;
+}) {
+  const options: { value: WorkspaceLayout; label: string; icon: ReactNode }[] = [
+    { value: 'list', label: 'List', icon: <List aria-hidden="true" className="h-4 w-4" /> },
+    { value: 'cards', label: 'Cards', icon: <LayoutGrid aria-hidden="true" className="h-4 w-4" /> },
+  ];
+  return (
+    <div role="group" aria-label="Repository layout" className="flex gap-1">
+      {options.map((option) => (
+        <Button
+          key={option.value}
+          variant={layout === option.value ? 'secondary' : 'ghost'}
+          size="sm"
+          aria-pressed={layout === option.value}
+          onClick={() => {
+            onChange(option.value);
+          }}
+        >
+          {option.icon}
+          {option.label}
+        </Button>
+      ))}
     </div>
   );
 }

@@ -79,6 +79,7 @@ import type {
   KbScope,
   MountInput,
   ProjectSummary,
+  ProjectKpis,
   RefResolution,
   RepoInfo,
   SearchHit,
@@ -289,6 +290,12 @@ export type FakeData = {
    * with no override. Fields left out keep their embedded default.
    */
   specTemplates?: Partial<SpecTemplates>;
+  /**
+   * Scripted `project.kpis` answers by project key (GIT-US-0205); an `Error`
+   * makes that project's call fail. A project the map does not name gets a
+   * rough count of `items` and `pages` — the fake is no second core.
+   */
+  kpis?: Record<string, ProjectKpis | Error>;
 };
 
 /** Scripted `spec.lint` and `spec.delta.preview` answers (GIT-US-0132). */
@@ -1397,6 +1404,7 @@ export class FakeProvider implements DataProvider {
   private specAnalysis: FakeSpecAnalysis | null;
   private specLive: FakeSpecLive;
   private specTemplates: SpecTemplates;
+  private kpis: Record<string, ProjectKpis | Error>;
   /** Commit-on-save settings, in memory (story GIT-US-0020). */
   private git: GitSettings;
   /** The update status, in memory. */
@@ -1486,6 +1494,7 @@ export class FakeProvider implements DataProvider {
     this.requirements = new Map((data.requirements ?? []).map((r) => [r.ref, structuredClone(r)]));
     this.specAnalysis = data.specAnalysis ?? null;
     this.specLive = data.specLive ?? {};
+    this.kpis = data.kpis ?? {};
     this.specTemplates = {
       spec: specTemplateSource,
       requirement: requirementTemplateSource,
@@ -1880,6 +1889,51 @@ export class FakeProvider implements DataProvider {
       this.emit({ kind: 'repo', repoId: repo.id });
     }
     return Promise.resolve(structuredClone(project));
+  }
+
+  getProjectKpis(project: string): Promise<ProjectKpis> {
+    const scripted = this.kpis[project];
+    if (scripted instanceof Error) return Promise.reject(scripted);
+    if (scripted) return Promise.resolve(structuredClone(scripted));
+    const summary = this.projects.find((p) => p.key === project);
+    if (!summary) {
+      return Promise.reject(new ProviderError('not_found', `No project ${project}`));
+    }
+    const categoryOf = (status?: string) =>
+      summary.statuses.find((s) => s.id === status)?.category ?? '';
+    const items = [...this.items.values()].filter(
+      (it) => it.id.startsWith(`${project}-`) && !it.deleted && categoryOf(it.status) !== 'triage',
+    );
+    const count = (type: string) => {
+      const ofType = items.filter((it) => it.type === type);
+      const open = ofType.filter((it) => !['done', 'cancelled'].includes(categoryOf(it.status)));
+      return { total: ofType.length, open: open.length };
+    };
+    const stories = count('story');
+    const done = items.filter((it) => it.type === 'story' && categoryOf(it.status) === 'done');
+    const cancelled = items.filter(
+      (it) => it.type === 'story' && categoryOf(it.status) === 'cancelled',
+    ).length;
+    const scope = stories.total - cancelled;
+    return Promise.resolve({
+      project,
+      kbPages: this.pages.size,
+      milestones: count('milestone'),
+      epics: count('epic'),
+      stories: { ...stories, done: done.length, cancelled, estimated: 0 },
+      specs: {
+        total: count('spec').total,
+        unverified: 0,
+        requirements: 0,
+        unverifiedRequirements: 0,
+      },
+      progress: {
+        ratio: scope > 0 ? done.length / scope : 0,
+        weighted: false,
+        done: done.length,
+        scope,
+      },
+    });
   }
 
   enableInbox(input: EnableInboxInput): Promise<ProjectSummary> {

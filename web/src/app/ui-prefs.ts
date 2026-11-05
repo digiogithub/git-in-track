@@ -34,7 +34,12 @@ type StoredPrefs = {
    * section only ever exists where the capability says it can.
    */
   semanticResults: boolean;
+  /** How the workspace home lays out its repositories (GIT-US-0205). */
+  workspaceLayout: WorkspaceLayout;
 };
+
+/** The two layouts of the workspace home's repository list; `list` is the default. */
+export type WorkspaceLayout = 'list' | 'cards';
 
 export type UiPrefsState = StoredPrefs & {
   setSidebarCollapsed: (collapsed: boolean) => void;
@@ -44,6 +49,7 @@ export type UiPrefsState = StoredPrefs & {
   setKbMaximized: (maximized: boolean) => void;
   toggleRepoHidden: (repoId: string) => void;
   setSemanticResults: (enabled: boolean) => void;
+  setWorkspaceLayout: (layout: WorkspaceLayout) => void;
 };
 
 export function clampKbTreeWidth(width: number): number {
@@ -64,6 +70,7 @@ function defaults(): StoredPrefs {
     sidebarBeforeMaximize: null,
     hiddenRepos: [],
     semanticResults: true,
+    workspaceLayout: 'list',
   };
 }
 
@@ -92,6 +99,7 @@ function readPrefs(): StoredPrefs {
         ? parsed.hiddenRepos.filter((id): id is string => typeof id === 'string')
         : base.hiddenRepos,
       semanticResults: bool(parsed.semanticResults, base.semanticResults),
+      workspaceLayout: parsed.workspaceLayout === 'cards' ? 'cards' : base.workspaceLayout,
     };
   } catch {
     // Private modes and sandboxes can throw, and old values can be malformed:
@@ -121,6 +129,7 @@ export const useUiPrefs = create<UiPrefsState>((set, get) => {
       sidebarBeforeMaximize: state.sidebarBeforeMaximize,
       hiddenRepos: state.hiddenRepos,
       semanticResults: state.semanticResults,
+      workspaceLayout: state.workspaceLayout,
     });
   };
 
@@ -149,6 +158,7 @@ export const useUiPrefs = create<UiPrefsState>((set, get) => {
       }
     },
     setSemanticResults: (semanticResults) => update({ semanticResults }),
+    setWorkspaceLayout: (workspaceLayout) => update({ workspaceLayout }),
     toggleRepoHidden: (repoId) => {
       const hidden = get().hiddenRepos;
       update({

@@ -405,6 +405,8 @@ func (v *Vault) Dispatch(ctx context.Context, method string, raw []byte) (any, e
 		return v.projectCreate(ctx, raw)
 	case "project.inbox.enable":
 		return v.projectInboxEnable(ctx, raw)
+	case "project.kpis":
+		return v.projectKPIs(raw)
 
 	case "team.get":
 		return v.teamGet()

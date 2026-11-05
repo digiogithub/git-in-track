@@ -196,6 +196,7 @@ import type {
   RequirementWriteResult,
   SpecFilter,
   TracedRequirement,
+  ProjectKpis,
 } from '@/api/provider';
 import { ProviderError, searchProjectKeys } from '@/api/provider';
 import { authorizationHeader, clearToken, hasToken, withTokenQuery } from '@/api/token';
@@ -2069,6 +2070,21 @@ export class CompanionProvider implements DataProvider {
     );
     const record = asRecord(body);
     return toProjectSummary(record?.['project'] ?? body);
+  }
+
+  /** `GET /projects/{key}/kpis`: the core's workspace-home figures (GIT-US-0205). */
+  async getProjectKpis(project: string): Promise<ProjectKpis> {
+    const body = asRecord(
+      await this.#json(`${API_PREFIX}/projects/${encodeURIComponent(project)}/kpis`),
+    );
+    if (
+      body === null ||
+      typeof body['project'] !== 'string' ||
+      asRecord(body['progress']) === null
+    ) {
+      throw malformed('project kpis');
+    }
+    return body as unknown as ProjectKpis;
   }
 
   /**

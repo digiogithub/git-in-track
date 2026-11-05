@@ -72,6 +72,17 @@ export function renderWithRouter(options: RenderWithRouterOptions): RenderResult
       path: '/p/$project/items/$id',
       component: Placeholder,
     }),
+    // The sections the workspace KPIs link to (GIT-US-0205).
+    createRoute({
+      getParentRoute: () => rootRoute,
+      path: '/p/$project/milestones',
+      component: Placeholder,
+    }),
+    createRoute({
+      getParentRoute: () => rootRoute,
+      path: '/p/$project/specs',
+      component: Placeholder,
+    }),
     // The triage queue. Every surface that links back to it — the accept form,
     // the sidebar count, a toast after a triage action — needs the target to
     // resolve, or the link renders as a dead one in the test tree only.
