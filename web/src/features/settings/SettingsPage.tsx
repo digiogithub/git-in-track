@@ -14,11 +14,13 @@ import type { ConnectionState } from '@/api/companion-provider';
 import { probeCompanionNow } from '@/api/detect';
 import { clearToken, hasToken, onTokenChange, setToken } from '@/api/token';
 import { useAppStore } from '@/app/store';
+import { useUiPrefs } from '@/app/ui-prefs';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import { GitSettingsCard } from '@/features/settings/GitSettingsCard';
 import { McpToolsCard } from '@/features/settings/McpToolsCard';
 import { PandoSearchCard } from '@/features/settings/PandoSearchCard';
@@ -111,6 +113,7 @@ export function SettingsPage() {
       {companion ? <CompanionTokenCard /> : null}
       {companion ? <TunnelCard /> : null}
 
+      <TeamViewsCard />
       <TeamProjectsCard />
 
       <GitSettingsCard />
@@ -139,6 +142,36 @@ export function SettingsPage() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+/**
+ * "Show team views" (GIT-US-0204): a per-browser switch, kept in
+ * `localStorage` through the UI preferences, that folds the team surface away
+ * — the workspace team panel and the Boards, Sprints, Retros and Metrics views.
+ * It never touches the team repository, which stays connected.
+ */
+function TeamViewsCard() {
+  const showTeamViews = useUiPrefs((state) => state.showTeamViews);
+  const setShowTeamViews = useUiPrefs((state) => state.setShowTeamViews);
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Team views</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-1 text-sm">
+        <div className="flex items-center justify-between gap-4">
+          <Label htmlFor="show-team-views">Show team views</Label>
+          <Switch id="show-team-views" checked={showTeamViews} onCheckedChange={setShowTeamViews} />
+        </div>
+        <p className="text-muted-foreground">
+          The team panel on the workspace and the Boards, Sprints, Retros and Metrics pages. Turning
+          this off hides them in this browser only; a connected team repository stays connected and
+          unchanged.
+        </p>
+      </CardContent>
+    </Card>
   );
 }
 

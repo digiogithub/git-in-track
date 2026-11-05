@@ -886,6 +886,27 @@ override. The strip is dismissible; the dismissed version is kept in
 again. Every storage access is wrapped in `try/catch`: with storage blocked the notice
 still closes for the session and returns on the next load.
 
+### 3.3 Hiding the team views (as built, GIT-US-0204)
+
+Settings carries a **Team views** card with one switch, **Show team views**, on by default. It is
+a per-browser preference: `showTeamViews` in `web/src/app/ui-prefs.ts`, stored in `localStorage`
+under `gintrack:ui-prefs` with the other layout preferences, and never written to a repository.
+
+While it is off:
+
+- the workspace home renders no team panel, and so no `TeamSelector` (`TeamPanel` returns
+  nothing), however many team repositories are connected;
+- the sidebar drops the team entries — Boards, Retros and Metrics (Sprints has no sidebar entry;
+  it is reached from the boards) — keeping Workspace, Sync, Agent and Settings;
+- `AppShell` answers a visit to `/boards`, `/sprints`, `/retros`, `/metrics` or any of their
+  children (`/boards/$slug`, `/retros/$retroId`, `/metrics/$sprintId`) with a short "Team views
+  are hidden" notice linking to Settings, in place of the routed page. The route list lives in
+  `web/src/app/team-views.ts` (`TEAM_VIEW_ROUTES`, `isTeamViewPath`).
+
+Nothing else changes: the team repository stays mounted, its files are untouched, and the team
+knowledge base and the team projects card in Settings still work. Turning the switch back on
+restores every view without a reload.
+
 ## 4. The data provider boundary
 
 `src/data/provider.ts` defines one interface. Both implementations satisfy it and

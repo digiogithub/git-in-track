@@ -34,6 +34,12 @@ type StoredPrefs = {
    * section only ever exists where the capability says it can.
    */
   semanticResults: boolean;
+  /**
+   * Whether the team surface shows: the workspace team panel and the Boards,
+   * Sprints, Retros and Metrics views (GIT-US-0204). On by default; turning
+   * it off hides the views only and leaves the team repository connected.
+   */
+  showTeamViews: boolean;
 };
 
 export type UiPrefsState = StoredPrefs & {
@@ -44,6 +50,7 @@ export type UiPrefsState = StoredPrefs & {
   setKbMaximized: (maximized: boolean) => void;
   toggleRepoHidden: (repoId: string) => void;
   setSemanticResults: (enabled: boolean) => void;
+  setShowTeamViews: (show: boolean) => void;
 };
 
 export function clampKbTreeWidth(width: number): number {
@@ -64,6 +71,7 @@ function defaults(): StoredPrefs {
     sidebarBeforeMaximize: null,
     hiddenRepos: [],
     semanticResults: true,
+    showTeamViews: true,
   };
 }
 
@@ -92,6 +100,7 @@ function readPrefs(): StoredPrefs {
         ? parsed.hiddenRepos.filter((id): id is string => typeof id === 'string')
         : base.hiddenRepos,
       semanticResults: bool(parsed.semanticResults, base.semanticResults),
+      showTeamViews: bool(parsed.showTeamViews, base.showTeamViews),
     };
   } catch {
     // Private modes and sandboxes can throw, and old values can be malformed:
@@ -121,6 +130,7 @@ export const useUiPrefs = create<UiPrefsState>((set, get) => {
       sidebarBeforeMaximize: state.sidebarBeforeMaximize,
       hiddenRepos: state.hiddenRepos,
       semanticResults: state.semanticResults,
+      showTeamViews: state.showTeamViews,
     });
   };
 
@@ -149,6 +159,7 @@ export const useUiPrefs = create<UiPrefsState>((set, get) => {
       }
     },
     setSemanticResults: (semanticResults) => update({ semanticResults }),
+    setShowTeamViews: (showTeamViews) => update({ showTeamViews }),
     toggleRepoHidden: (repoId) => {
       const hidden = get().hiddenRepos;
       update({
