@@ -75,10 +75,11 @@ export function useProject(key: string) {
 }
 
 /** Cursor-paginated item list. `fetchNextPage` is the "Load more" action. */
-export function useItems(filter: ItemFilter) {
+export function useItems(filter: ItemFilter, options: { enabled?: boolean } = {}) {
   const provider = useProvider();
   const project = filter.project ?? '';
   return useInfiniteQuery({
+    enabled: options.enabled ?? true,
     queryKey: backlogKeys.list(project, filter),
     queryFn: ({ pageParam }) =>
       provider.listItems(pageParam ? { ...filter, cursor: pageParam } : filter),

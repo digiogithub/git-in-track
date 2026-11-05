@@ -35,12 +35,18 @@ import {
   TypeBadge,
 } from '@/features/backlog/Badges';
 import { BulkMoveBar } from '@/features/backlog/BulkMoveBar';
+import { useBacklogFilterMemory } from '@/features/backlog/filter-memory';
 import { FilterBar } from '@/features/backlog/FilterBar';
 import { formatDate } from '@/features/backlog/item-meta';
 import { NewItemLink } from '@/features/backlog/NewItemLink';
 import { useBacklogEvents, useItems, useProject } from '@/features/backlog/queries';
 import { QuickViews } from '@/features/backlog/QuickViews';
-import { isEmptySearch, toItemFilter, type SortField } from '@/features/backlog/search';
+import {
+  clearedSearch,
+  showsEverything,
+  toItemFilter,
+  type SortField,
+} from '@/features/backlog/search';
 import { useItemSearch, useSetItemSearch } from '@/features/backlog/use-search';
 import { AddToInboxButton } from '@/features/inbox/AddToInboxButton';
 import { ImportFromYouTrackButton } from '@/features/youtrack/ImportButton';
@@ -106,12 +112,20 @@ function ItemTableView() {
 
   const projectQuery = useProject(projectKey);
   const project: ProjectSummary | undefined = projectQuery.data;
+  // An empty URL is filled from the project's stored filter or the default
+  // before anything is fetched (GIT-US-0203).
+  const { ready } = useBacklogFilterMemory({
+    projectKey,
+    project,
+    settled: !projectQuery.isPending,
+    search,
+  });
 
   const filter = useMemo(
     () => toItemFilter(search, { project: projectKey, projectSummary: project }),
     [search, projectKey, project],
   );
-  const itemsQuery = useItems(filter);
+  const itemsQuery = useItems(filter, { enabled: ready });
 
   const milestonesQuery = useItems(
     useMemo(
@@ -305,7 +319,7 @@ function ItemTableView() {
     };
   }, []);
 
-  const filtered = !isEmptySearch(search);
+  const filtered = !showsEverything(search);
 
   return (
     <div className="space-y-4" ref={containerRef}>
@@ -376,18 +390,7 @@ function ItemTableView() {
                   size="sm"
                   variant="outline"
                   onClick={() => {
-                    setSearch({
-                      q: undefined,
-                      type: undefined,
-                      status: undefined,
-                      category: undefined,
-                      priority: undefined,
-                      label: undefined,
-                      assignee: undefined,
-                      milestone: undefined,
-                      parent: undefined,
-                      view: undefined,
-                    });
+                    setSearch(clearedSearch);
                   }}
                 >
                   Clear filters

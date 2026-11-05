@@ -2,14 +2,15 @@
 id: GIT-US-0203
 type: story
 title: Default the backlog view to open work and remember its filter per project
-status: todo
+status: in_review
 priority: medium
 parent: GIT-EP-0033
 author: mcp
 labels: [web, agent-ok]
+assignees: [claude-code]
 estimate: 3
 created: 2026-11-05T14:58:06Z
-updated: 2026-11-05T14:58:06Z
+updated: 2026-11-05T15:05:39Z
 ---
 
 ## Description

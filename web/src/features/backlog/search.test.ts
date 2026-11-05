@@ -2,7 +2,17 @@ import { describe, expect, it } from 'vitest';
 
 import { sampleProject } from '@/api/fake-provider';
 
-import { isEmptySearch, parseItemSearch, toItemFilter, toSearchInput } from './search';
+import {
+  clearedSearch,
+  defaultSearch,
+  isDefaultSearch,
+  isEmptySearch,
+  openStatuses,
+  parseItemSearch,
+  showsEverything,
+  toItemFilter,
+  toSearchInput,
+} from './search';
 
 describe('parseItemSearch', () => {
   it('reads comma-separated lists', () => {
@@ -79,6 +89,27 @@ describe('toItemFilter', () => {
     });
 
     expect(filter.status).toEqual(['backlog', 'todo', 'in_progress', 'in_review']);
+  });
+
+  it('counts every category but done and cancelled as open, from the workflow', () => {
+    const project = {
+      ...sampleProject,
+      statuses: [{ id: 'triage', name: 'Triage', category: 'triage' }, ...sampleProject.statuses],
+    };
+    expect(openStatuses(project)).toEqual([
+      'triage',
+      'backlog',
+      'todo',
+      'in_progress',
+      'in_review',
+    ]);
+  });
+
+  it('tells the default, the cleared and a narrowed filter apart', () => {
+    expect(isDefaultSearch(parseItemSearch(defaultSearch))).toBe(true);
+    expect(showsEverything(parseItemSearch(defaultSearch))).toBe(false);
+    expect(showsEverything(parseItemSearch(clearedSearch))).toBe(true);
+    expect(isDefaultSearch(parseItemSearch({ view: 'open', status: 'todo' }))).toBe(false);
   });
 
   it('passes the priority list to the provider filter', () => {
