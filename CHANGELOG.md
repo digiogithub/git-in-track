@@ -12,6 +12,13 @@ because a commit list cannot express them.
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [2.7.0] — 2026-11-05
+
+A minor release: selectable colour palettes for clarity and visibility. Per-browser only; no
+configuration key, data-model path, CLI flag or API field changes.
+
 ### Added
 
 - **Colour palettes** (`GIT-US-0206`, docs/05 §13.1). Settings has an Appearance card with the
@@ -2049,7 +2056,8 @@ each, `Contents: read and write`. GHCR needs no secret. The release workflow ver
 tokens before it builds anything and fails with the fix in the message when either is
 missing. Full procedure: [docs/09](docs/09-ci-cd-and-releases.md) §9 and §10.
 
-[Unreleased]: https://github.com/digiogithub/git-in-track/compare/v2.6.0...HEAD
+[Unreleased]: https://github.com/digiogithub/git-in-track/compare/v2.7.0...HEAD
+[2.7.0]: https://github.com/digiogithub/git-in-track/compare/v2.6.0...v2.7.0
 [2.6.0]: https://github.com/digiogithub/git-in-track/compare/v2.5.0...v2.6.0
 [2.5.0]: https://github.com/digiogithub/git-in-track/compare/v2.4.1...v2.5.0
 [2.4.1]: https://github.com/digiogithub/git-in-track/compare/v2.4.0...v2.4.1
