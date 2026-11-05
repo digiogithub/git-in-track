@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { companionCapabilities } from '@/api/companion-provider';
 import { resetTokenCache } from '@/api/token';
 import { useAppStore } from '@/app/store';
+import { useUiPrefs } from '@/app/ui-prefs';
 import { SettingsPage } from '@/features/settings/SettingsPage';
 
 describe('SettingsPage runtime section', () => {
@@ -89,5 +90,32 @@ describe('SettingsPage runtime section', () => {
 
     expect(globalThis.sessionStorage.getItem('gintrack:companion-token')).toBe('s7Q1e9Zk');
     expect(await screen.findByRole('button', { name: 'Forget token' })).toBeInTheDocument();
+  });
+});
+
+describe('SettingsPage team views switch (GIT-US-0204)', () => {
+  beforeEach(() => {
+    useAppStore.getState().reset();
+    useUiPrefs.setState({ showTeamViews: true });
+    globalThis.localStorage.clear();
+  });
+
+  it('is on by default and turns the team views off and on again', async () => {
+    const user = userEvent.setup();
+    render(<SettingsPage />);
+
+    const toggle = screen.getByRole('switch', { name: 'Show team views' });
+    expect(toggle).toHaveAttribute('aria-checked', 'true');
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-checked', 'false');
+    expect(useUiPrefs.getState().showTeamViews).toBe(false);
+    const stored = JSON.parse(globalThis.localStorage.getItem('gintrack:ui-prefs') ?? '{}') as {
+      showTeamViews?: boolean;
+    };
+    expect(stored.showTeamViews).toBe(false);
+
+    await user.click(toggle);
+    expect(useUiPrefs.getState().showTeamViews).toBe(true);
   });
 });

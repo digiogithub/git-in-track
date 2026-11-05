@@ -45,6 +45,24 @@ describe('ui preferences', () => {
     expect(reloaded.getState().kbTocOpen).toBe(false);
     expect(reloaded.getState().semanticResults).toBe(false);
   });
+
+  it('shows team views until the user turns them off (GIT-US-0204)', async () => {
+    const useUiPrefs = await loadPrefs();
+    expect(useUiPrefs.getState().showTeamViews).toBe(true);
+  });
+
+  it('persists the team views toggle across a reload (GIT-US-0204)', async () => {
+    const useUiPrefs = await loadPrefs();
+    useUiPrefs.getState().setShowTeamViews(false);
+
+    const stored = JSON.parse(globalThis.localStorage.getItem(STORAGE_KEY) ?? '{}') as {
+      showTeamViews?: boolean;
+    };
+    expect(stored.showTeamViews).toBe(false);
+
+    const reloaded = await loadPrefs();
+    expect(reloaded.getState().showTeamViews).toBe(false);
+  });
 });
 
 describe('workspace layout (GIT-US-0205)', () => {

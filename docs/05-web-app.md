@@ -921,6 +921,54 @@ override. The strip is dismissible; the dismissed version is kept in
 again. Every storage access is wrapped in `try/catch`: with storage blocked the notice
 still closes for the session and returns on the next load.
 
+### 3.3 The backlog's default and remembered filter (as built, GIT-US-0203)
+
+The item list (`/p/$projectKey/items`) opens on **pending work**: the "All open" quick
+view (`?view=open`), which resolves at render time to every status of the project's own
+workflow whose category is neither `done` nor `cancelled` — a `triage` status counts as
+pending, and no status id is hard-coded (`openStatuses` in `features/backlog/search.ts`).
+
+The URL stays the source of truth for what the list shows; `features/backlog/filter-memory.ts`
+only decides what an **empty** URL means:
+
+- A URL that carries any filter, quick view or sort param wins, and is stored as the
+  project's last filter. A shared link therefore opens exactly as shared, and becomes the
+  recipient's remembered filter for that project.
+- An empty URL — reload, the sidebar's "Backlog" link, coming back from an item — is
+  filled from the stored filter, or from the default when nothing usable is stored. The
+  item list is not fetched until that happens, so the unfiltered list never flashes.
+- "Clear filters" writes `?view=all` rather than an empty URL, so opting out of the
+  default is remembered too. "Reset to default" (shown whenever the filter is not the
+  default) goes back to `?view=open`. Both keep the sort.
+
+The filter is stored per browser in `localStorage` under
+`gintrack:backlog-filter:<vaultId>/<projectKey>` (`gintrack:backlog-filter:<projectKey>`
+when the provider reports no repository id), so two projects — and two repositories that
+reuse a project key — keep independent filters. It is never written to the repository.
+A value that cannot be used — bad JSON, not an object, a status the workflow no longer
+declares, an unknown quick view — is removed and the default applies; storage that
+throws (private modes, sandboxes) behaves as if nothing were stored.
+
+### 3.4 Hiding the team views (as built, GIT-US-0204)
+
+Settings carries a **Team views** card with one switch, **Show team views**, on by default. It is
+a per-browser preference: `showTeamViews` in `web/src/app/ui-prefs.ts`, stored in `localStorage`
+under `gintrack:ui-prefs` with the other layout preferences, and never written to a repository.
+
+While it is off:
+
+- the workspace home renders no team panel, and so no `TeamSelector` (`TeamPanel` returns
+  nothing), however many team repositories are connected;
+- the sidebar drops the team entries — Boards, Retros and Metrics (Sprints has no sidebar entry;
+  it is reached from the boards) — keeping Workspace, Sync, Agent and Settings;
+- `AppShell` answers a visit to `/boards`, `/sprints`, `/retros`, `/metrics` or any of their
+  children (`/boards/$slug`, `/retros/$retroId`, `/metrics/$sprintId`) with a short "Team views
+  are hidden" notice linking to Settings, in place of the routed page. The route list lives in
+  `web/src/app/team-views.ts` (`TEAM_VIEW_ROUTES`, `isTeamViewPath`).
+
+Nothing else changes: the team repository stays mounted, its files are untouched, and the team
+knowledge base and the team projects card in Settings still work. Turning the switch back on
+restores every view without a reload.
 ## 4. The data provider boundary
 
 `src/data/provider.ts` defines one interface. Both implementations satisfy it and

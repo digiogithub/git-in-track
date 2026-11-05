@@ -2,14 +2,15 @@
 id: GIT-US-0204
 type: story
 title: "Settings toggle to hide the team surface: team panel, boards, retros and metrics"
-status: todo
+status: in_review
 priority: medium
 parent: GIT-EP-0033
 author: mcp
+assignees: [claude-code]
 labels: [web, agent-ok]
 estimate: 2
 created: 2026-11-05T14:58:06Z
-updated: 2026-11-05T14:58:06Z
+updated: 2026-11-05T15:04:33Z
 ---
 
 ## Description
