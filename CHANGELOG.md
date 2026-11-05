@@ -14,6 +14,36 @@ because a commit list cannot express them.
 
 Nothing yet.
 
+## [2.6.0] — 2026-11-05
+
+A minor release of web-app ergonomics (`GIT-EP-0033`): the backlog opens on pending work and
+remembers its filter, a setting hides the team views, and the workspace home shows each
+project's figures. All three preferences are per-browser (`localStorage`); no data-model path,
+front-matter field or configuration key changes. One read-only API route is added.
+
+### Added
+
+- **Workspace KPIs** (`GIT-US-0205`, docs/05 §3.1). Each project on the workspace home shows
+  its knowledge-base docs, milestones and epics (total and open), stories (total and
+  remaining), specs (total and with unverified requirements) and a "% closed" bar (done ÷
+  non-cancelled stories, estimate-weighted when estimates exist). Every figure links to its
+  section. A List/Cards switch picks the layout; list stays the default. The figures come
+  from a new core query, `project.kpis`, served in companion mode at
+  `GET /api/v1/projects/{key}/kpis` (docs/07) and through the WASM core in browser-only mode.
+- **Hide the team views** (`GIT-US-0204`, docs/05 §3.4). Settings → Team views → "Show team
+  views" (on by default). Off hides the team panel and the Boards, Retros and Metrics entries,
+  and the team routes show a notice linking back to Settings. The team repository stays
+  connected and untouched.
+
+### Changed
+
+- **The backlog opens on pending work and remembers its filter** (`GIT-US-0203`, docs/05
+  §3.3). An empty backlog URL now resolves to the "All open" view — every workflow status
+  whose category is neither `done` nor `cancelled`, `triage` included — or to the project's
+  last filter, stored per browser and per project. URL filters still win and become the
+  remembered filter. "Clear filters" now writes `?view=all`, and "Reset to default" returns to
+  `?view=open`.
+
 ## [2.5.0] — 2026-10-28
 
 A minor release: Mermaid diagrams in item bodies and knowledge-base pages render with Pele, a
@@ -2008,7 +2038,8 @@ each, `Contents: read and write`. GHCR needs no secret. The release workflow ver
 tokens before it builds anything and fails with the fix in the message when either is
 missing. Full procedure: [docs/09](docs/09-ci-cd-and-releases.md) §9 and §10.
 
-[Unreleased]: https://github.com/digiogithub/git-in-track/compare/v2.5.0...HEAD
+[Unreleased]: https://github.com/digiogithub/git-in-track/compare/v2.6.0...HEAD
+[2.6.0]: https://github.com/digiogithub/git-in-track/compare/v2.5.0...v2.6.0
 [2.5.0]: https://github.com/digiogithub/git-in-track/compare/v2.4.1...v2.5.0
 [2.4.1]: https://github.com/digiogithub/git-in-track/compare/v2.4.0...v2.4.1
 [2.4.0]: https://github.com/digiogithub/git-in-track/compare/v2.3.2...v2.4.0
