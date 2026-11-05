@@ -37,8 +37,8 @@ id_allocation:
   strategy: scan
   write_counters: true
   counters: # hints only, NOT authoritative (the index scan wins)
-    epic: 32
-    story: 202
+    epic: 33
+    story: 205
     task: 242
     milestone: 18
     spec: 4
