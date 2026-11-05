@@ -264,6 +264,410 @@
     --chart-ideal: 36 12% 61%;
   }
 
+  /* ---- Colour palettes (GIT-US-0206) -----------------------------------
+     A palette is a second, independent dimension next to the mode: it is
+     stamped as `data-palette` on <html> (src/app/palette.ts) and every one
+     has a light and a dark variant, written like the default ones — once
+     bare, once under the media query, once under `data-theme='dark'`. A
+     palette's dark selectors carry one attribute more than its light one, so
+     in dark mode the dark block always wins; that is also why a light block
+     may only override tokens its dark block overrides too, or the light
+     value would leak into dark mode. Palettes never touch the default blocks.
+     `src/app/palette-tokens.test.ts` checks that, the identity of the two
+     dark blocks, and every contrast promise per palette and mode. */
+
+  /* High contrast: near-black on white and white on near-black. Body, muted
+     and subtle text reach AAA (7:1) on every surface; borders, control edges
+     and the focus ring reach 3:1. The accent turns a deep link blue, the
+     convention people relying on contrast already know. */
+  :root[data-palette='high-contrast'] {
+    --background: 0 0% 100%;
+    --surface: 0 0% 100%;
+    --surface-muted: 0 0% 94%;
+    --elevated: 0 0% 100%;
+    --sidebar: 0 0% 97%;
+    --sidebar-border: 0 0% 46%;
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 7%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 7%;
+    --foreground: 0 0% 7%;
+    --muted-foreground: 0 0% 24%;
+    --subtle-foreground: 0 0% 30%;
+    --primary: 0 0% 7%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 0 0% 92%;
+    --secondary-foreground: 0 0% 7%;
+    --muted: 0 0% 92%;
+    --accent: 216 100% 28%;
+    --accent-foreground: 0 0% 100%;
+    --accent-hover: 216 100% 20%;
+    --accent-subtle: 216 70% 92%;
+    --destructive: 0 80% 34%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 140 80% 20%;
+    --warning: 32 100% 24%;
+    --info: 205 90% 28%;
+    --border: 0 0% 58%;
+    --border-strong: 0 0% 40%;
+    --input: 0 0% 32%;
+    --ring: 216 100% 28%;
+    --overlay: 0 0% 0%;
+    --code: 0 0% 95%;
+    --status-backlog: 0 0% 28%;
+    --status-todo: 205 90% 26%;
+    --status-in-progress: 32 100% 22%;
+    --status-in-review: 267 50% 34%;
+    --status-done: 140 80% 19%;
+    --status-cancelled: 0 0% 38%;
+    --priority-critical: 0 80% 32%;
+    --priority-high: 8 75% 34%;
+    --priority-medium: 32 100% 22%;
+    --priority-low: 0 0% 28%;
+    --chart-grid: 0 0% 70%;
+    --chart-ideal: 0 0% 24%;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root[data-palette='high-contrast']:not([data-theme='light']) {
+      --background: 0 0% 4%;
+      --surface: 0 0% 7%;
+      --surface-muted: 0 0% 14%;
+      --elevated: 0 0% 10%;
+      --sidebar: 0 0% 6%;
+      --sidebar-border: 0 0% 50%;
+      --card: 0 0% 7%;
+      --card-foreground: 0 0% 98%;
+      --popover: 0 0% 10%;
+      --popover-foreground: 0 0% 98%;
+      --foreground: 0 0% 98%;
+      --muted-foreground: 0 0% 82%;
+      --subtle-foreground: 0 0% 76%;
+      --primary: 0 0% 98%;
+      --primary-foreground: 0 0% 4%;
+      --secondary: 0 0% 16%;
+      --secondary-foreground: 0 0% 98%;
+      --muted: 0 0% 16%;
+      --accent: 212 100% 76%;
+      --accent-foreground: 0 0% 4%;
+      --accent-hover: 212 100% 86%;
+      --accent-subtle: 214 45% 20%;
+      --destructive: 0 100% 76%;
+      --destructive-foreground: 0 0% 4%;
+      --success: 140 60% 66%;
+      --warning: 42 100% 64%;
+      --info: 200 90% 72%;
+      --border: 0 0% 48%;
+      --border-strong: 0 0% 64%;
+      --input: 0 0% 70%;
+      --ring: 212 100% 76%;
+      --overlay: 0 0% 0%;
+      --code: 0 0% 11%;
+      --status-backlog: 0 0% 80%;
+      --status-todo: 205 90% 76%;
+      --status-in-progress: 42 100% 66%;
+      --status-in-review: 268 80% 82%;
+      --status-done: 140 60% 68%;
+      --status-cancelled: 0 0% 64%;
+      --priority-critical: 0 100% 78%;
+      --priority-high: 12 100% 80%;
+      --priority-medium: 42 100% 66%;
+      --priority-low: 0 0% 80%;
+      --chart-grid: 0 0% 40%;
+      --chart-ideal: 0 0% 82%;
+    }
+  }
+
+  :root[data-palette='high-contrast'][data-theme='dark'] {
+    --background: 0 0% 4%;
+    --surface: 0 0% 7%;
+    --surface-muted: 0 0% 14%;
+    --elevated: 0 0% 10%;
+    --sidebar: 0 0% 6%;
+    --sidebar-border: 0 0% 50%;
+    --card: 0 0% 7%;
+    --card-foreground: 0 0% 98%;
+    --popover: 0 0% 10%;
+    --popover-foreground: 0 0% 98%;
+    --foreground: 0 0% 98%;
+    --muted-foreground: 0 0% 82%;
+    --subtle-foreground: 0 0% 76%;
+    --primary: 0 0% 98%;
+    --primary-foreground: 0 0% 4%;
+    --secondary: 0 0% 16%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 0 0% 16%;
+    --accent: 212 100% 76%;
+    --accent-foreground: 0 0% 4%;
+    --accent-hover: 212 100% 86%;
+    --accent-subtle: 214 45% 20%;
+    --destructive: 0 100% 76%;
+    --destructive-foreground: 0 0% 4%;
+    --success: 140 60% 66%;
+    --warning: 42 100% 64%;
+    --info: 200 90% 72%;
+    --border: 0 0% 48%;
+    --border-strong: 0 0% 64%;
+    --input: 0 0% 70%;
+    --ring: 212 100% 76%;
+    --overlay: 0 0% 0%;
+    --code: 0 0% 11%;
+    --status-backlog: 0 0% 80%;
+    --status-todo: 205 90% 76%;
+    --status-in-progress: 42 100% 66%;
+    --status-in-review: 268 80% 82%;
+    --status-done: 140 60% 68%;
+    --status-cancelled: 0 0% 64%;
+    --priority-critical: 0 100% 78%;
+    --priority-high: 12 100% 80%;
+    --priority-medium: 42 100% 66%;
+    --priority-low: 0 0% 80%;
+    --chart-grid: 0 0% 40%;
+    --chart-ideal: 0 0% 82%;
+  }
+
+  /* Cool: crisp blue-grey surfaces and a blue accent, for people who find the
+     warm paper low in contrast. Surfaces, text, lines and the accent change;
+     the status, priority and chart hues stay the default ones. */
+  :root[data-palette='cool'] {
+    --background: 214 30% 96%;
+    --surface: 210 40% 99%;
+    --surface-muted: 214 28% 92%;
+    --elevated: 0 0% 100%;
+    --sidebar: 214 30% 94%;
+    --sidebar-border: 214 22% 84%;
+    --card: 210 40% 99%;
+    --card-foreground: 218 30% 14%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 218 30% 14%;
+    --foreground: 218 30% 14%;
+    --muted-foreground: 216 16% 35%;
+    --subtle-foreground: 216 13% 40%;
+    --primary: 218 30% 18%;
+    --primary-foreground: 210 40% 99%;
+    --secondary: 214 28% 92%;
+    --secondary-foreground: 218 30% 20%;
+    --muted: 214 28% 92%;
+    --accent: 217 75% 42%;
+    --accent-foreground: 210 40% 99%;
+    --accent-hover: 217 80% 34%;
+    --accent-subtle: 214 70% 91%;
+    --border: 214 24% 86%;
+    --border-strong: 214 20% 78%;
+    --input: 215 15% 50%;
+    --ring: 217 75% 42%;
+    --overlay: 218 30% 10%;
+    --code: 214 30% 94%;
+    --chart-grid: 214 24% 86%;
+    --chart-unknown: 214 16% 72%;
+    --chart-ideal: 216 16% 35%;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root[data-palette='cool']:not([data-theme='light']) {
+      --background: 218 22% 9%;
+      --surface: 218 20% 12%;
+      --surface-muted: 218 18% 16%;
+      --elevated: 218 19% 14%;
+      --sidebar: 218 21% 11%;
+      --sidebar-border: 218 16% 19%;
+      --card: 218 20% 12%;
+      --card-foreground: 214 30% 92%;
+      --popover: 218 19% 14%;
+      --popover-foreground: 214 30% 92%;
+      --foreground: 214 30% 92%;
+      --muted-foreground: 215 16% 66%;
+      --subtle-foreground: 215 12% 57%;
+      --primary: 214 30% 92%;
+      --primary-foreground: 218 22% 9%;
+      --secondary: 218 18% 16%;
+      --secondary-foreground: 214 30% 92%;
+      --muted: 218 18% 16%;
+      --accent: 213 90% 68%;
+      --accent-foreground: 218 30% 8%;
+      --accent-hover: 213 95% 76%;
+      --accent-subtle: 216 35% 22%;
+      --border: 218 16% 20%;
+      --border-strong: 218 14% 28%;
+      --input: 216 12% 44%;
+      --ring: 213 85% 62%;
+      --overlay: 218 30% 4%;
+      --code: 218 18% 13%;
+      --chart-grid: 218 16% 20%;
+      --chart-unknown: 218 12% 33%;
+      --chart-ideal: 215 16% 66%;
+    }
+  }
+
+  :root[data-palette='cool'][data-theme='dark'] {
+    --background: 218 22% 9%;
+    --surface: 218 20% 12%;
+    --surface-muted: 218 18% 16%;
+    --elevated: 218 19% 14%;
+    --sidebar: 218 21% 11%;
+    --sidebar-border: 218 16% 19%;
+    --card: 218 20% 12%;
+    --card-foreground: 214 30% 92%;
+    --popover: 218 19% 14%;
+    --popover-foreground: 214 30% 92%;
+    --foreground: 214 30% 92%;
+    --muted-foreground: 215 16% 66%;
+    --subtle-foreground: 215 12% 57%;
+    --primary: 214 30% 92%;
+    --primary-foreground: 218 22% 9%;
+    --secondary: 218 18% 16%;
+    --secondary-foreground: 214 30% 92%;
+    --muted: 218 18% 16%;
+    --accent: 213 90% 68%;
+    --accent-foreground: 218 30% 8%;
+    --accent-hover: 213 95% 76%;
+    --accent-subtle: 216 35% 22%;
+    --border: 218 16% 20%;
+    --border-strong: 218 14% 28%;
+    --input: 216 12% 44%;
+    --ring: 213 85% 62%;
+    --overlay: 218 30% 4%;
+    --code: 218 18% 13%;
+    --chart-grid: 218 16% 20%;
+    --chart-unknown: 218 12% 33%;
+    --chart-ideal: 215 16% 66%;
+  }
+
+  /* Colour-blind safe: the default surfaces with every semantic hue redrawn
+     from a blue / orange / magenta family (after Okabe and Ito) that stays
+     apart under protanopia and deuteranopia. Red against green is never the
+     difference: done and success are blue, in progress and warning orange,
+     in review and high priority magenta, danger a dark vermillion, and pairs
+     that share a hue family are split by lightness. */
+  :root[data-palette='colour-blind'] {
+    --destructive: 5 80% 30%;
+    --success: 210 85% 28%;
+    --warning: 40 100% 26%;
+    --info: 265 40% 50%;
+    --status-todo: 205 85% 33%;
+    --status-in-progress: 28 100% 31%;
+    --status-in-review: 320 50% 38%;
+    --status-done: 225 70% 24%;
+    --priority-critical: 10 85% 32%;
+    --priority-high: 320 50% 38%;
+    --priority-medium: 210 70% 36%;
+    --chart-todo: 202 80% 40%;
+    --chart-progress: 36 100% 38%;
+    --chart-done: 225 60% 22%;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root[data-palette='colour-blind']:not([data-theme='light']) {
+      --destructive: 14 100% 68%;
+      --success: 205 75% 62%;
+      --warning: 42 90% 56%;
+      --info: 275 70% 85%;
+      --status-todo: 200 80% 60%;
+      --status-in-progress: 32 90% 58%;
+      --status-in-review: 320 55% 72%;
+      --status-done: 220 90% 85%;
+      --priority-critical: 14 100% 68%;
+      --priority-high: 320 55% 74%;
+      --priority-medium: 205 70% 62%;
+      --chart-todo: 205 75% 50%;
+      --chart-progress: 36 90% 55%;
+      --chart-done: 215 80% 86%;
+    }
+  }
+
+  :root[data-palette='colour-blind'][data-theme='dark'] {
+    --destructive: 14 100% 68%;
+    --success: 205 75% 62%;
+    --warning: 42 90% 56%;
+    --info: 275 70% 85%;
+    --status-todo: 200 80% 60%;
+    --status-in-progress: 32 90% 58%;
+    --status-in-review: 320 55% 72%;
+    --status-done: 220 90% 85%;
+    --priority-critical: 14 100% 68%;
+    --priority-high: 320 55% 74%;
+    --priority-medium: 205 70% 62%;
+    --chart-todo: 205 75% 50%;
+    --chart-progress: 36 90% 55%;
+    --chart-done: 215 80% 86%;
+  }
+
+  /* Swatches for the palette picker in Settings (AppearanceCard.tsx): each
+     palette's page, text, accent, in-progress and done colours, available
+     whichever palette is active and following the mode like every token.
+     Generated from the blocks above; palette-tokens.test.ts fails if a
+     swatch stops matching the token it previews. */
+  :root {
+    --swatch-default-background: 38 33% 95%;
+    --swatch-default-foreground: 30 10% 15%;
+    --swatch-default-accent: 27 54% 40%;
+    --swatch-default-progress: 43 80% 27%;
+    --swatch-default-done: 150 37% 29%;
+    --swatch-high-contrast-background: 0 0% 100%;
+    --swatch-high-contrast-foreground: 0 0% 7%;
+    --swatch-high-contrast-accent: 216 100% 28%;
+    --swatch-high-contrast-progress: 32 100% 22%;
+    --swatch-high-contrast-done: 140 80% 19%;
+    --swatch-cool-background: 214 30% 96%;
+    --swatch-cool-foreground: 218 30% 14%;
+    --swatch-cool-accent: 217 75% 42%;
+    --swatch-cool-progress: 43 80% 27%;
+    --swatch-cool-done: 150 37% 29%;
+    --swatch-colour-blind-background: 38 33% 95%;
+    --swatch-colour-blind-foreground: 30 10% 15%;
+    --swatch-colour-blind-accent: 27 54% 40%;
+    --swatch-colour-blind-progress: 28 100% 31%;
+    --swatch-colour-blind-done: 225 70% 24%;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme='light']) {
+      --swatch-default-background: 36 11% 9%;
+      --swatch-default-foreground: 39 32% 90%;
+      --swatch-default-accent: 27 70% 64%;
+      --swatch-default-progress: 45 57% 63%;
+      --swatch-default-done: 146 33% 64%;
+      --swatch-high-contrast-background: 0 0% 4%;
+      --swatch-high-contrast-foreground: 0 0% 98%;
+      --swatch-high-contrast-accent: 212 100% 76%;
+      --swatch-high-contrast-progress: 42 100% 66%;
+      --swatch-high-contrast-done: 140 60% 68%;
+      --swatch-cool-background: 218 22% 9%;
+      --swatch-cool-foreground: 214 30% 92%;
+      --swatch-cool-accent: 213 90% 68%;
+      --swatch-cool-progress: 45 57% 63%;
+      --swatch-cool-done: 146 33% 64%;
+      --swatch-colour-blind-background: 36 11% 9%;
+      --swatch-colour-blind-foreground: 39 32% 90%;
+      --swatch-colour-blind-accent: 27 70% 64%;
+      --swatch-colour-blind-progress: 32 90% 58%;
+      --swatch-colour-blind-done: 220 90% 85%;
+    }
+  }
+
+  :root[data-theme='dark'] {
+    --swatch-default-background: 36 11% 9%;
+    --swatch-default-foreground: 39 32% 90%;
+    --swatch-default-accent: 27 70% 64%;
+    --swatch-default-progress: 45 57% 63%;
+    --swatch-default-done: 146 33% 64%;
+    --swatch-high-contrast-background: 0 0% 4%;
+    --swatch-high-contrast-foreground: 0 0% 98%;
+    --swatch-high-contrast-accent: 212 100% 76%;
+    --swatch-high-contrast-progress: 42 100% 66%;
+    --swatch-high-contrast-done: 140 60% 68%;
+    --swatch-cool-background: 218 22% 9%;
+    --swatch-cool-foreground: 214 30% 92%;
+    --swatch-cool-accent: 213 90% 68%;
+    --swatch-cool-progress: 45 57% 63%;
+    --swatch-cool-done: 146 33% 64%;
+    --swatch-colour-blind-background: 36 11% 9%;
+    --swatch-colour-blind-foreground: 39 32% 90%;
+    --swatch-colour-blind-accent: 27 70% 64%;
+    --swatch-colour-blind-progress: 32 90% 58%;
+    --swatch-colour-blind-done: 220 90% 85%;
+  }
+
   * {
     @apply border-border;
   }
@@ -372,6 +776,19 @@
   /* Small uppercase section label used above a group of fields or a list. */
   .section-label {
     @apply text-[11px] font-medium uppercase tracking-[0.08em] text-subtle-foreground;
+  }
+
+  /* A label chip in its `project.yaml` colour (Badges.tsx). The colour is data,
+     so the palettes that promise legibility keep it on the border and set the
+     text in the foreground colour instead. */
+  .label-chip[style] {
+    border-color: var(--label-colour);
+    color: var(--label-colour);
+  }
+
+  :root[data-palette='high-contrast'] .label-chip[style],
+  :root[data-palette='colour-blind'] .label-chip[style] {
+    color: hsl(var(--foreground));
   }
 
   /* An empty state is a surface, not a paragraph floating in the page. */

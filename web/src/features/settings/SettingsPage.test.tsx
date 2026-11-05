@@ -119,3 +119,18 @@ describe('SettingsPage team views switch (GIT-US-0204)', () => {
     expect(useUiPrefs.getState().showTeamViews).toBe(true);
   });
 });
+
+describe('SettingsPage appearance card (GIT-US-0206)', () => {
+  beforeEach(() => {
+    useAppStore.getState().reset();
+    globalThis.localStorage.clear();
+  });
+
+  it('carries the mode and palette choices', () => {
+    render(<SettingsPage />);
+
+    expect(screen.getByRole('heading', { name: 'Appearance' })).toBeInTheDocument();
+    expect(screen.getByRole('group', { name: 'Mode' })).toBeInTheDocument();
+    expect(screen.getByRole('group', { name: 'Colour palette' })).toBeInTheDocument();
+  });
+});
