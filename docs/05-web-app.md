@@ -886,6 +886,34 @@ override. The strip is dismissible; the dismissed version is kept in
 again. Every storage access is wrapped in `try/catch`: with storage blocked the notice
 still closes for the session and returns on the next load.
 
+### 3.3 The backlog's default and remembered filter (as built, GIT-US-0203)
+
+The item list (`/p/$projectKey/items`) opens on **pending work**: the "All open" quick
+view (`?view=open`), which resolves at render time to every status of the project's own
+workflow whose category is neither `done` nor `cancelled` — a `triage` status counts as
+pending, and no status id is hard-coded (`openStatuses` in `features/backlog/search.ts`).
+
+The URL stays the source of truth for what the list shows; `features/backlog/filter-memory.ts`
+only decides what an **empty** URL means:
+
+- A URL that carries any filter, quick view or sort param wins, and is stored as the
+  project's last filter. A shared link therefore opens exactly as shared, and becomes the
+  recipient's remembered filter for that project.
+- An empty URL — reload, the sidebar's "Backlog" link, coming back from an item — is
+  filled from the stored filter, or from the default when nothing usable is stored. The
+  item list is not fetched until that happens, so the unfiltered list never flashes.
+- "Clear filters" writes `?view=all` rather than an empty URL, so opting out of the
+  default is remembered too. "Reset to default" (shown whenever the filter is not the
+  default) goes back to `?view=open`. Both keep the sort.
+
+The filter is stored per browser in `localStorage` under
+`gintrack:backlog-filter:<vaultId>/<projectKey>` (`gintrack:backlog-filter:<projectKey>`
+when the provider reports no repository id), so two projects — and two repositories that
+reuse a project key — keep independent filters. It is never written to the repository.
+A value that cannot be used — bad JSON, not an object, a status the workflow no longer
+declares, an unknown quick view — is removed and the default applies; storage that
+throws (private modes, sandboxes) behaves as if nothing were stored.
+
 ## 4. The data provider boundary
 
 `src/data/provider.ts` defines one interface. Both implementations satisfy it and
