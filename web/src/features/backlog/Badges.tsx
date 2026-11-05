@@ -1,5 +1,5 @@
 import { Link } from '@tanstack/react-router';
-import type { ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 
 import type { ItemType, Priority, ProjectSummary } from '@/api/provider';
 import { Badge } from '@/components/ui/badge';
@@ -58,13 +58,20 @@ export function TypeBadge({ type, className }: { type: ItemType; className?: str
   );
 }
 
+/**
+ * A label in the colour `project.yaml` gives it. The colour is repository data,
+ * not a token, so it travels as `--label-colour` and `.label-chip` in
+ * `index.css` decides how to use it: the high-contrast and colour-blind palettes
+ * keep it on the border only and set the text in the foreground colour, so a
+ * label never has to be told apart by an arbitrary hue (GIT-US-0206).
+ */
 export function LabelChip({ label, color }: { label: string; color?: string | undefined }) {
   return (
     <Badge
       variant="outline"
       size="sm"
-      className="font-normal"
-      style={color ? { borderColor: color, color } : undefined}
+      className="label-chip font-normal"
+      style={color ? ({ '--label-colour': color } as CSSProperties) : undefined}
     >
       {label}
     </Badge>

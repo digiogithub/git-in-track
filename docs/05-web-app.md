@@ -2023,6 +2023,61 @@ disabled with the same reason rather than being enabled and failing with a raw
 - Status and priority colours are configurable per project in `project.yaml`;
   the UI maps unknown statuses to a neutral token instead of failing.
 
+### 13.1 Colour palettes (as built, GIT-US-0206)
+
+A **palette** is a second preference next to the mode, chosen in the
+**Appearance** card of Settings together with the mode (the same
+`gintrack:theme` preference the sidebar toggle writes). The two combine freely:
+every palette has a light and a dark variant, and the mode picks which.
+
+| Palette | `data-palette` | What changes |
+|---|---|---|
+| Default | *(absent)* | Nothing: the warm paper palette above. |
+| High contrast | `high-contrast` | Near-black on white / white on near-black. Body, muted and subtle text reach WCAG AAA (7:1) on every surface; borders, sidebar border, control edges and the focus ring reach 3:1. The accent is a deep link blue; status and priority chips are darkened (light) or lightened (dark). |
+| Cool | `cool` | Blue-grey surfaces, text and lines with a blue accent; status, priority and chart hues stay the default ones. |
+| Colour-blind safe | `colour-blind` | Default surfaces; status, priority, `success`/`warning`/`destructive`/`info` and chart colours redrawn from a blue / orange / magenta family (after Okabe and Ito). Done and success are blue, in progress and warning orange, in review and high priority magenta, critical and danger dark vermillion; red against green is never the difference. |
+
+- **Storage and boot.** The palette is stored under `gintrack:palette`
+  (`web/src/app/palette.ts`); `default` stores nothing and stamps nothing.
+  `public/theme-boot.js` applies it before first paint next to the theme, and
+  `main.tsx` applies it again on mount. A value it does not know — a typo, a
+  palette from a newer build — is ignored, which is the default palette. A
+  change in another tab is followed through the `storage` event.
+- **Tokens only.** A palette is a set of token overrides in `web/src/index.css`
+  under `:root[data-palette='…']`, written three times like the default dark
+  palette: bare (light), under `prefers-color-scheme: dark` with
+  `:not([data-theme='light'])`, and under `[data-theme='dark']`. Status and
+  priority badges, boards, charts and the editor already read tokens, so every
+  palette reaches them with no component change. Label chips carry their
+  `project.yaml` colour as `--label-colour`; under high contrast and
+  colour-blind safe the colour stays on the chip's border and the text uses
+  `--foreground`, because a user-chosen hex cannot be remapped to a safe hue.
+  Board column colours (also repository data) are left as they are.
+- **Swatches.** The Settings picker previews each palette with `--swatch-<palette>-*`
+  tokens (page, text, accent, in progress, done) declared for both modes, so
+  every preview is true to the current mode whatever palette is active.
+- **Contrast check.** `web/src/app/palette-tokens.test.ts` parses `index.css`
+  and asserts, per palette and mode: identical dark blocks; no light-only
+  override that would leak into dark; text on every surface (4.5:1, or 7:1 for
+  high contrast); `input` at 3:1; status and priority text at 4.5:1 on its own
+  tint (cancelled 3:1); chart series at 3:1 and ΔE ≥ 20 under normal vision,
+  protanopia and deuteranopia; for colour-blind safe, statuses, priorities and
+  the four semantic colours at ΔE ≥ 12 from each other and the red/green-risk
+  pairs (success/destructive, done/in progress, done/critical) at ΔE ≥ 40; and
+  that every swatch matches the token it previews. `npm run tokens:check` keeps
+  guarding the default palette. Lowest ratio on any surface:
+
+| Palette | Mode | Body | Muted | Subtle | Input edge | Accent |
+|---|---|---|---|---|---|---|
+| Default | light | 13.0:1 | 5.2:1 | 4.6:1 | 3.0:1 | 4.6:1 |
+| Default | dark | 12.7:1 | 5.8:1 | 4.6:1 | 3.0:1 | 7.2:1 |
+| High contrast | light | 17.6:1 | 10.1:1 | 8.5:1 | 7.9:1 | 10.6:1 |
+| High contrast | dark | 16.7:1 | 11.5:1 | 10.5:1 | 8.9:1 | 9.6:1 |
+| Cool | light | 14.0:1 | 6.4:1 | 5.5:1 | 3.9:1 | 6.0:1 |
+| Cool | dark | 13.2:1 | 6.5:1 | 5.2:1 | 3.3:1 | 6.7:1 |
+| Colour-blind safe | light | 13.0:1 | 5.2:1 | 4.6:1 | 3.0:1 | 4.6:1 |
+| Colour-blind safe | dark | 12.7:1 | 5.8:1 | 4.6:1 | 3.0:1 | 7.2:1 |
+
 ---
 
 ## 14. Testing strategy

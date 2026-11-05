@@ -69,6 +69,13 @@ Because tokens are bare `H S% L%` triplets (which is what lets Tailwind compose
 `@media (prefers-color-scheme: dark)` and once under `[data-theme="dark"]`.
 `npm run tokens:check` fails if the two blocks ever drift.
 
+A colour **palette** (default, high contrast, cool, colour-blind safe) is a
+second, independent preference stamped as `data-palette` and stored under
+`gintrack:palette`; each palette overrides tokens for both modes under
+`:root[data-palette='…']`. Its rules and contrast table are in
+[05-web-app.md §13.1](./05-web-app.md), and `web/src/app/palette-tokens.test.ts`
+checks them.
+
 > **Never use Tailwind's `dark:` variant in this codebase.** `darkMode` is bound
 > to the attribute, so a `dark:` utility silently does nothing for the many
 > people on `system`. Theming is a token swap; if a component needs a value that

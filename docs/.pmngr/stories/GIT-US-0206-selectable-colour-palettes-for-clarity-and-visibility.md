@@ -2,14 +2,15 @@
 id: GIT-US-0206
 type: story
 title: Selectable colour palettes for clarity and visibility, chosen in Settings
-status: todo
+status: in_review
 priority: medium
 parent: GIT-EP-0033
 author: mcp
+assignees: [claude-code]
 labels: [web, agent-ok]
 estimate: 3
 created: 2026-11-05T18:55:03Z
-updated: 2026-11-05T18:55:03Z
+updated: 2026-11-05T19:07:07Z
 ---
 
 ## Description

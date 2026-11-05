@@ -12,7 +12,18 @@ because a commit list cannot express them.
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- **Colour palettes** (`GIT-US-0206`, docs/05 §13.1). Settings has an Appearance card with the
+  mode (light, dark, system) and a palette choice with swatch previews: Default (unchanged),
+  High contrast (AAA body and muted text, 3:1 borders and focus ring), Cool (blue-grey with a
+  blue accent) and Colour-blind safe (status, priority, semantic and chart colours from a
+  blue/orange/magenta family that never relies on red against green). Each palette has a light
+  and a dark variant. The choice is stored per browser under `localStorage` key
+  `gintrack:palette`, applied before first paint by `theme-boot.js` and followed across tabs;
+  an unknown value falls back to Default. Label chips keep their `project.yaml` colour on the
+  border and use the text colour under High contrast and Colour-blind safe. No data-model
+  path, front-matter field or configuration key changes.
 
 ## [2.6.0] — 2026-11-05
 
