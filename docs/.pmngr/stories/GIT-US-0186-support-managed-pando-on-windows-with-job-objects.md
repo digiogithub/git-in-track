@@ -8,7 +8,8 @@ parent: GIT-EP-0031
 author: mcp
 labels: [server, agent-ok]
 created: 2026-09-30T07:00:52Z
-updated: 2026-09-30T07:00:52Z
+updated: 2026-10-29T08:19:21Z
+deleted: true
 ---
 
 ## Description
