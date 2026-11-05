@@ -82,6 +82,21 @@ export function renderWithRouter(options: RenderWithRouterOptions): RenderResult
     }),
     createRoute({ getParentRoute: () => rootRoute, path: '/boards', component: Placeholder }),
     createRoute({ getParentRoute: () => rootRoute, path: '/boards/$slug', component: Placeholder }),
+    // The rest of the team surface, so the shell's "team views off" guard can
+    // be exercised on every root and child it covers (GIT-US-0204).
+    createRoute({ getParentRoute: () => rootRoute, path: '/sprints', component: Placeholder }),
+    createRoute({ getParentRoute: () => rootRoute, path: '/retros', component: Placeholder }),
+    createRoute({
+      getParentRoute: () => rootRoute,
+      path: '/retros/$retroId',
+      component: Placeholder,
+    }),
+    createRoute({ getParentRoute: () => rootRoute, path: '/metrics', component: Placeholder }),
+    createRoute({
+      getParentRoute: () => rootRoute,
+      path: '/metrics/$sprintId',
+      component: Placeholder,
+    }),
     createRoute({ getParentRoute: () => rootRoute, path: '/settings', component: Placeholder }),
   ]);
 

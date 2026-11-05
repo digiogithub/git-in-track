@@ -2,7 +2,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { FakeProvider } from '@/api/fake-provider';
+import { FakeProvider, sampleTeam } from '@/api/fake-provider';
 import { AppShell } from '@/app/layout/AppShell';
 import { useAppStore } from '@/app/store';
 import { useUiPrefs } from '@/app/ui-prefs';
@@ -15,7 +15,7 @@ function Blank() {
 describe('AppShell', () => {
   beforeEach(() => {
     useAppStore.getState().reset();
-    useUiPrefs.setState({ sidebarCollapsed: false, hiddenRepos: [] });
+    useUiPrefs.setState({ sidebarCollapsed: false, hiddenRepos: [], showTeamViews: true });
   });
 
   it('folds the sidebar down to a menu button and opens it again', async () => {
@@ -169,5 +169,74 @@ describe('AppShell', () => {
       'href',
       '/settings',
     );
+  });
+
+  describe('with team views turned off (GIT-US-0204)', () => {
+    it('lists Boards, Retros and Metrics while team views are on', async () => {
+      renderWithRouter({
+        index: Blank,
+        root: AppShell,
+        provider: new FakeProvider({ team: sampleTeam }),
+      });
+
+      const nav = await screen.findByRole('navigation', { name: 'Main' });
+      for (const name of ['Boards', 'Retros', 'Metrics']) {
+        expect(within(nav).getByRole('link', { name })).toBeInTheDocument();
+      }
+    });
+
+    it('drops the team entries from the navigation even with a team repository', async () => {
+      useUiPrefs.setState({ showTeamViews: false });
+      renderWithRouter({
+        index: Blank,
+        root: AppShell,
+        provider: new FakeProvider({ team: sampleTeam }),
+      });
+
+      const nav = await screen.findByRole('navigation', { name: 'Main' });
+      for (const name of ['Boards', 'Sprints', 'Retros', 'Metrics']) {
+        expect(within(nav).queryByRole('link', { name })).toBeNull();
+      }
+      expect(within(nav).getByRole('link', { name: 'Workspace' })).toBeInTheDocument();
+      expect(within(nav).getByRole('link', { name: 'Settings' })).toBeInTheDocument();
+      expect(screen.getByTestId('route')).toBeInTheDocument();
+    });
+
+    it.each([
+      '/boards',
+      '/boards/main',
+      '/sprints',
+      '/retros',
+      '/retros/ACME-TEAM-RT-0001',
+      '/metrics',
+      '/metrics/ACME-TEAM-SP-0001',
+    ])('answers a direct visit to %s with a notice linking to Settings', async (path) => {
+      useUiPrefs.setState({ showTeamViews: false });
+      renderWithRouter({
+        index: Blank,
+        root: AppShell,
+        provider: new FakeProvider({ team: sampleTeam }),
+        initialPath: path,
+      });
+
+      const heading = await screen.findByRole('heading', { name: 'Team views are hidden' });
+      expect(heading).toBeInTheDocument();
+      expect(screen.queryByTestId('placeholder')).toBeNull();
+      expect(
+        screen.getByRole('link', { name: 'Turn team views back on in Settings' }),
+      ).toHaveAttribute('href', '/settings');
+    });
+
+    it('renders the team page itself while team views are on', async () => {
+      renderWithRouter({
+        index: Blank,
+        root: AppShell,
+        provider: new FakeProvider({ team: sampleTeam }),
+        initialPath: '/boards',
+      });
+
+      expect(await screen.findByTestId('placeholder')).toBeInTheDocument();
+      expect(screen.queryByRole('heading', { name: 'Team views are hidden' })).toBeNull();
+    });
   });
 });

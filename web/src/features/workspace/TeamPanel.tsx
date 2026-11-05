@@ -2,6 +2,7 @@ import { Link } from '@tanstack/react-router';
 import { BookOpen, CloudOff, ExternalLink, ListChecks, Users } from 'lucide-react';
 
 import type { TeamProjectSummary } from '@/api/provider';
+import { useUiPrefs } from '@/app/ui-prefs';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useActiveTeam } from '@/features/workspace/active-team';
@@ -20,11 +21,16 @@ import { TeamSelector } from '@/features/workspace/TeamSelector';
  * A project the workspace has not opened is listed and marked "not cloned"; it
  * is never hidden. Rendering its cards from a committed snapshot is
  * GIT-US-0019's job, so this panel shows the declaration and the way in.
+ *
+ * The panel, and the selector it carries, render nothing while the "Show team
+ * views" setting is off (GIT-US-0204), however many team repositories are
+ * connected.
  */
 export function TeamPanel() {
+  const showTeamViews = useUiPrefs((state) => state.showTeamViews);
   const { team: activeTeam, isPending } = useActiveTeam();
 
-  if (isPending || activeTeam === undefined) return null;
+  if (!showTeamViews || isPending || activeTeam === undefined) return null;
 
   const { key, name, description, members, projects, knowledgePath, diagnostics } = activeTeam;
   const active = members.filter((member) => member.active);

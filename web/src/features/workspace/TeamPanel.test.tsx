@@ -1,12 +1,31 @@
 import { screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
 import { FakeProvider, sampleTeam } from '@/api/fake-provider';
+import { useUiPrefs } from '@/app/ui-prefs';
 import { renderWithRouter } from '@/test/router';
 
 import { TeamPanel } from './TeamPanel';
 
 describe('TeamPanel', () => {
+  beforeEach(() => {
+    useUiPrefs.setState({ showTeamViews: true });
+  });
+
+  it('renders nothing, selector included, while team views are off (GIT-US-0204)', async () => {
+    useUiPrefs.setState({ showTeamViews: false });
+    const provider = new FakeProvider({ team: sampleTeam });
+    renderWithRouter({ index: TeamPanel, provider });
+
+    await expect(
+      screen.findByText('ACME Delivery Team', undefined, { timeout: 1000 }),
+    ).rejects.toThrow();
+    expect(screen.queryByRole('heading', { name: 'Team' })).toBeNull();
+    expect(screen.queryByRole('combobox')).toBeNull();
+    // The team repository itself is still there: only the view is folded away.
+    await expect(provider.getTeam()).resolves.toMatchObject({ key: 'ACME-TEAM' });
+  });
+
   it('renders nothing when no team repository is open', async () => {
     renderWithRouter({ index: TeamPanel, provider: new FakeProvider({ repos: [] }) });
 

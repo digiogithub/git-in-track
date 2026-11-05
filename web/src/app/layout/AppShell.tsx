@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { Link, Outlet } from '@tanstack/react-router';
+import { Link, Outlet, useRouterState } from '@tanstack/react-router';
 import {
   BookOpen,
   Bot,
@@ -23,7 +23,9 @@ import { useEffect, useState, type ReactNode } from 'react';
 
 import type { RepoInfo } from '@/api/provider';
 import { useOptionalProvider } from '@/api/provider-context';
+import { TeamViewsOff } from '@/app/layout/TeamViewsOff';
 import { useAppStore, type AppMode } from '@/app/store';
+import { isTeamViewPath } from '@/app/team-views';
 import { useUiPrefs } from '@/app/ui-prefs';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -39,20 +41,29 @@ type NavItem = {
   to: string;
   label: string;
   icon: ReactNode;
+  /** A team view: listed only while "Show team views" is on (GIT-US-0204). */
+  team?: boolean;
 };
 
 const navItems: NavItem[] = [
   { to: '/', label: 'Workspace', icon: <LayoutDashboard aria-hidden="true" className="h-4 w-4" /> },
-  { to: '/boards', label: 'Boards', icon: <Boxes aria-hidden="true" className="h-4 w-4" /> },
+  {
+    to: '/boards',
+    label: 'Boards',
+    icon: <Boxes aria-hidden="true" className="h-4 w-4" />,
+    team: true,
+  },
   {
     to: '/retros',
     label: 'Retros',
     icon: <NotebookPen aria-hidden="true" className="h-4 w-4" />,
+    team: true,
   },
   {
     to: '/metrics',
     label: 'Metrics',
     icon: <ChartLine aria-hidden="true" className="h-4 w-4" />,
+    team: true,
   },
   { to: '/sync', label: 'Sync', icon: <RefreshCw aria-hidden="true" className="h-4 w-4" /> },
 ];
@@ -115,8 +126,11 @@ export function AppShell() {
   }, [provider, reposUpdatedAt, setCapabilities]);
 
   const rows = repos.data ?? [];
+  const showTeamViews = useUiPrefs((state) => state.showTeamViews);
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const teamViewHidden = !showTeamViews && isTeamViewPath(pathname);
   const mainNavItems: NavItem[] = [
-    ...navItems,
+    ...navItems.filter((item) => showTeamViews || item.team !== true),
     ...(capabilities.agent ? [agentNavItem] : []),
     settingsNavItem,
   ];
@@ -230,7 +244,7 @@ export function AppShell() {
           <UpdateNotice />
           <main id="main" className="flex-1 px-6 py-6 lg:px-8">
             <div className="mx-auto w-full max-w-[100rem]">
-              <Outlet />
+              {teamViewHidden ? <TeamViewsOff /> : <Outlet />}
             </div>
           </main>
         </div>
