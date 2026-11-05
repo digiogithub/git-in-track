@@ -11,6 +11,7 @@ import {
   type SearchIndexedRepo,
 } from '@/api/provider';
 import { useAppStore } from '@/app/store';
+import { useUiPrefs } from '@/app/ui-prefs';
 import { ToastProvider } from '@/components/ui/toast';
 import { InboxNavLink } from '@/features/inbox/InboxNavLink';
 import { renderWithRouter } from '@/test/router';
@@ -414,5 +415,120 @@ describe('managed Pando opt-in per repository (GIT-US-0177)', () => {
     await waitFor(() => {
       expect(provider.optInCalls).toEqual([{ repo: 'repo-1', enabled: false, deleteIndex: false }]);
     });
+  });
+});
+
+const acmeKpis = {
+  project: 'ACME',
+  kbPages: 7,
+  milestones: { total: 3, open: 2 },
+  epics: { total: 4, open: 1 },
+  stories: { total: 10, open: 6, done: 3, cancelled: 1, estimated: 0 },
+  specs: { total: 2, unverified: 1, requirements: 4, unverifiedRequirements: 2 },
+  progress: { ratio: 1 / 3, weighted: false, done: 3, scope: 9 },
+};
+
+describe('repository KPIs (GIT-US-0205)', () => {
+  afterEach(() => {
+    useUiPrefs.getState().setWorkspaceLayout('list');
+  });
+
+  it('links every figure to its section', async () => {
+    renderWithRouter({
+      index: WorkspaceHome,
+      provider: new FakeProvider({ repos: [readyRepo], kpis: { ACME: acmeKpis } }),
+    });
+
+    const docs = await screen.findByRole(
+      'link',
+      { name: '7 knowledge-base docs in ACME' },
+      { timeout: 5000 },
+    );
+    expect(docs).toHaveAttribute('href', '/p/ACME/kb');
+    expect(screen.getByRole('link', { name: '3 milestones, 2 open, in ACME' })).toHaveAttribute(
+      'href',
+      '/p/ACME/milestones',
+    );
+    expect(screen.getByRole('link', { name: '4 epics, 1 open, in ACME' })).toHaveAttribute(
+      'href',
+      '/p/ACME/items?type=epic',
+    );
+    expect(screen.getByRole('link', { name: '10 stories, 6 remaining, in ACME' })).toHaveAttribute(
+      'href',
+      '/p/ACME/items?type=story',
+    );
+    expect(
+      screen.getByRole('link', { name: '2 specs, 1 with unverified requirements, in ACME' }),
+    ).toHaveAttribute('href', '/p/ACME/specs');
+
+    const bar = screen.getByRole('progressbar', { name: 'Estimated progress of ACME' });
+    expect(bar).toHaveAttribute('aria-valuetext', '33%');
+    expect(screen.getByText('33% closed')).toBeInTheDocument();
+  });
+
+  it('explains the progress formula in a tooltip', async () => {
+    renderWithRouter({
+      index: WorkspaceHome,
+      provider: new FakeProvider({ repos: [readyRepo], kpis: { ACME: acmeKpis } }),
+    });
+
+    const label = await screen.findByText('33% closed', undefined, { timeout: 5000 });
+    await userEvent.hover(label);
+    expect(
+      (await screen.findAllByText(/Done stories ÷ non-cancelled stories/)).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it('keeps the other repositories when one project fails', async () => {
+    const otherRepo: RepoInfo = { ...readyRepo, id: 'repo-3', name: 'web-repo', projects: ['WEB'] };
+    renderWithRouter({
+      index: WorkspaceHome,
+      provider: new FakeProvider({
+        repos: [readyRepo, otherRepo],
+        kpis: { ACME: acmeKpis, WEB: new ProviderError('internal', 'index unreadable') },
+      }),
+    });
+
+    expect(
+      await screen.findByText(/figures of WEB could not be read: index unreadable/, undefined, {
+        timeout: 5000,
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '7 knowledge-base docs in ACME' })).toBeInTheDocument();
+    expect(screen.getByText('web-repo')).toBeInTheDocument();
+  });
+
+  it('asks for no figures from a folder that needs permission', async () => {
+    const provider = new FakeProvider({
+      repos: [{ ...expiredRepo, projects: ['ACME'] }],
+      kpis: { ACME: acmeKpis },
+    });
+    const kpis = vi.spyOn(provider, 'getProjectKpis');
+    renderWithRouter({ index: WorkspaceHome, provider });
+
+    await screen.findByText('beta-repo', undefined, { timeout: 5000 });
+    expect(kpis).not.toHaveBeenCalled();
+  });
+
+  it('switches between the list and the cards and remembers the choice', async () => {
+    renderWithRouter({
+      index: WorkspaceHome,
+      provider: new FakeProvider({ repos: [readyRepo], kpis: { ACME: acmeKpis } }),
+    });
+
+    const list = await screen.findByRole('button', { name: 'List' }, { timeout: 5000 });
+    const cards = screen.getByRole('button', { name: 'Cards' });
+    expect(list).toHaveAttribute('aria-pressed', 'true');
+    expect(cards).toHaveAttribute('aria-pressed', 'false');
+
+    await userEvent.click(cards);
+
+    expect(cards).toHaveAttribute('aria-pressed', 'true');
+    expect(useUiPrefs.getState().workspaceLayout).toBe('cards');
+    const stored = JSON.parse(globalThis.localStorage.getItem('gintrack:ui-prefs') ?? '{}') as {
+      workspaceLayout?: string;
+    };
+    expect(stored.workspaceLayout).toBe('cards');
+    expect(screen.getByRole('link', { name: '7 knowledge-base docs in ACME' })).toBeInTheDocument();
   });
 });

@@ -128,6 +128,7 @@ import type {
   RequirementWriteResult,
   SpecFilter,
   TracedRequirement,
+  ProjectKpis,
 } from '@/api/provider';
 import {
   BROWSER_GIT_REFS_REASON,
@@ -565,6 +566,12 @@ export class BrowserProvider implements DataProvider {
 
     this.#emit({ kind: 'repo', repoId: mount.id });
     return project;
+  }
+
+  /** The KPIs of one project, computed by the WASM core over its index (GIT-US-0205). */
+  async getProjectKpis(project: string): Promise<ProjectKpis> {
+    const mount = this.#mountForProject(project) ?? (await this.#ensureActive());
+    return this.#call('project.kpis', { vaultId: mount.id, project });
   }
 
   /**

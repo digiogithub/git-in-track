@@ -2970,6 +2970,7 @@ GET /api/v1/projects/{key}              # project.yaml: key, name, workflow, lab
                                         # members, templates, id counters
 PATCH /api/v1/projects/{key}            # If-Match required; writes project.yaml
 POST /api/v1/projects/{key}/inbox       # If-Match optional (configRev); adds the triage status
+GET /api/v1/projects/{key}/kpis         # workspace-home figures (GIT-US-0205)
 ```
 
 Every project answer carries `writable` and `configRev`, the revision of its `project.yaml`.
@@ -2984,6 +2985,26 @@ already declares a triage status is `409 inbox_already_enabled`; one whose workf
 ordinary status called `triage` is `409 triage_status_id_taken` and the file is left alone. The
 answer is `{project, writes}` with the new `configRev` as `ETag`, and the write is announced with
 `file.changed` plus a full `index.updated` and staged by commit-on-save like any other.
+
+`GET /projects/{key}/kpis` (story GIT-US-0205) answers the figures the workspace home shows for the
+project. It is the core method `project.kpis` (`{project}`, `core.Index.ProjectKPIs`), so browser-only
+mode reads the same numbers through the WASM core; an unknown key is `404 not_found`. The answer:
+
+```json
+{ "project": "ACME", "kbPages": 12,
+  "milestones": { "total": 3, "open": 1 },
+  "epics": { "total": 4, "open": 2 },
+  "stories": { "total": 10, "open": 6, "done": 3, "cancelled": 1, "estimated": 4 },
+  "specs": { "total": 2, "unverified": 1, "requirements": 5, "unverifiedRequirements": 2 },
+  "progress": { "ratio": 0.42, "weighted": true, "done": 13, "scope": 31 } }
+```
+
+`open` is neither a `done` nor a `cancelled` category; soft-deleted items and items in the `triage`
+category are not counted. A spec counts as `unverified` when it is not cancelled and holds a
+requirement, not cancelled itself, whose `verified.rev` is absent or is not its current block rev.
+`progress.ratio` is `done / scope` over the non-cancelled stories (0 when `scope` is 0): by story
+count, or — when any of them carries an `estimate` (`weighted: true`) — by story points, a story
+without an estimate weighing the mean estimate of those that have one.
 
 #### Specs and requirements (GIT-US-0127)
 

@@ -141,6 +141,7 @@ import type {
   SpecTemplates,
   TraceEdge,
   TracedRequirement,
+  ProjectKpis,
 } from '@/core-bridge/api';
 
 export type {
@@ -261,6 +262,7 @@ export type {
   SpecTemplates,
   TraceEdge,
   TracedRequirement,
+  ProjectKpis,
 };
 
 export type ProviderKind = 'browser' | 'companion';
@@ -1944,6 +1946,11 @@ export interface DataProvider {
    * `listProjects` now reports it. Both modes go through the same core code.
    */
   enableInbox(input: EnableInboxInput): Promise<ProjectSummary>;
+  /**
+   * The workspace-home figures of one project (`project.kpis`, `GET
+   * /projects/{key}/kpis`, GIT-US-0205), answered by the core in both modes.
+   */
+  getProjectKpis(project: string): Promise<ProjectKpis>;
   /**
    * Turns a mounted folder into a team repository, and returns it as `getTeam`
    * reports it. Both modes go through the same core code, so the `team.yaml` a

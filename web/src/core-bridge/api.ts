@@ -1630,6 +1630,34 @@ export type WorkspaceSummary = {
   diagnostics: Diagnostic[];
 };
 
+/**
+ * The workspace-home figures of one project (`project.kpis`, GIT-US-0205),
+ * computed by the core over the index so both modes agree. "Open" is neither a
+ * done nor a cancelled category; soft-deleted and triage items are left out.
+ */
+export type ProjectKpis = {
+  project: string;
+  kbPages: number;
+  milestones: { total: number; open: number };
+  epics: { total: number; open: number };
+  stories: { total: number; open: number; done: number; cancelled: number; estimated: number };
+  /**
+   * `unverified` counts the specs holding at least one live requirement with no
+   * `verified` stamp on its current block rev.
+   */
+  specs: {
+    total: number;
+    unverified: number;
+    requirements: number;
+    unverifiedRequirements: number;
+  };
+  /**
+   * Done stories over non-cancelled stories; weighted by `estimate` when any of
+   * them carries one, an unestimated story then weighing the mean estimate.
+   */
+  progress: { ratio: number; weighted: boolean; done: number; scope: number };
+};
+
 export type IndexStats = {
   projects: number;
   items: number;
@@ -1948,6 +1976,8 @@ export type CoreApi = {
    * `stale_revision`.
    */
   'project.inbox.enable': { params: ProjectInboxEnableParams; result: ProjectInboxEnabled };
+  /** The workspace-home KPIs of one project (GIT-US-0205). */
+  'project.kpis': { params: { project?: string; vaultId?: string }; result: ProjectKpis };
 
   /** Every board of the team repository. */
   'board.list': {
