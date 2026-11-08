@@ -72,6 +72,25 @@ func (f *jjFixture) try(args ...string) (string, error) {
 	return string(raw), err //nolint:wrapcheck // a test helper reports the raw failure
 }
 
+// pushNew pushes a bookmark that does not exist on the remote yet.
+//
+// Older jj releases refuse to create a remote bookmark unless the push says
+// --allow-new; newer ones dropped the flag (jj 0.43 rejects it as an unknown
+// argument) and push a new bookmark like any other. The fixture asks for the
+// old spelling first and falls back to the plain push only when jj rejects the
+// flag itself, so it works on both without parsing a version string.
+func (f *jjFixture) pushNew(bookmark string) {
+	f.t.Helper()
+	out, err := f.try("git", "push", "--allow-new", "-b", bookmark)
+	if err == nil {
+		return
+	}
+	if !strings.Contains(out, "--allow-new") {
+		f.t.Fatalf("jj git push --allow-new -b %s: %v\n%s", bookmark, err, out)
+	}
+	f.run("git", "push", "-b", bookmark)
+}
+
 // write puts a file in the fixture's working copy.
 func (f *jjFixture) write(rel, text string) {
 	f.t.Helper()
@@ -321,7 +340,7 @@ func TestJujutsuSyncStatus(t *testing.T) {
 				f.commit("chore: seed the fixture")
 				f.bookmark("main", "@-")
 				f.remote()
-				f.run("git", "push", "--allow-new", "-b", "main")
+				f.pushNew("main")
 			},
 			state:    StateUpToDate,
 			upstream: "origin/main",
@@ -333,7 +352,7 @@ func TestJujutsuSyncStatus(t *testing.T) {
 				f.commit("chore: seed the fixture")
 				f.bookmark("main", "@-")
 				f.remote()
-				f.run("git", "push", "--allow-new", "-b", "main")
+				f.pushNew("main")
 				f.write("README.md", "# fixture\n\nmore\n")
 				f.commit("docs: add more")
 				f.bookmark("main", "@-")
@@ -351,7 +370,7 @@ func TestJujutsuSyncStatus(t *testing.T) {
 				f.commit("docs: add more")
 				f.bookmark("main", "@-")
 				f.remote()
-				f.run("git", "push", "--allow-new", "-b", "main")
+				f.pushNew("main")
 				f.bookmark("main", "@--")
 			},
 			state:    StateBehind,
@@ -365,7 +384,7 @@ func TestJujutsuSyncStatus(t *testing.T) {
 				f.commit("chore: seed the fixture")
 				f.bookmark("main", "@-")
 				f.remote()
-				f.run("git", "push", "--allow-new", "-b", "main")
+				f.pushNew("main")
 				f.write("README.md", "# fixture\n\nedited\n")
 				f.run("status")
 			},
@@ -526,7 +545,7 @@ func TestJujutsuCommits(t *testing.T) {
 	f.commit("chore: seed the fixture")
 	f.bookmark("main", "@-")
 	f.remote()
-	f.run("git", "push", "--allow-new", "-b", "main")
+	f.pushNew("main")
 	f.write("README.md", "# fixture\n\nmore\n")
 	f.commit("docs: add more")
 	f.bookmark("main", "@-")
@@ -561,7 +580,7 @@ func TestJujutsuReadsCreateNoOperation(t *testing.T) {
 	f.commit("chore: seed the fixture")
 	f.bookmark("main", "@-")
 	f.remote()
-	f.run("git", "push", "--allow-new", "-b", "main")
+	f.pushNew("main")
 	// An edit jj has not snapshotted yet: the tempting moment to snapshot.
 	f.write("README.md", "# fixture\n\nedited\n")
 	f.write("docs/new.md", "new\n")
