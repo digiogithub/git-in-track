@@ -25,6 +25,12 @@ because a commit list cannot express them.
   once. Every write is committed with the principal as author and the hub as committer, and an
   agent's write carries `Agent:` and `On-Behalf-Of:` trailers. The companion is unchanged: without a
   principal, commits keep the machine's git identity.
+- **gintrack-hub grants** (`GIT-US-0209`, docs/02 §12.2). Principals carry grants per scope
+  (`project/<key>`, `org/<team>`, wildcards) with `read`, `propose`, `write`, `delete` and `admin`.
+  One guard authorises every core call from REST and MCP, filters what reads return, forces author
+  fields, and answers out-of-scope reads with `not_found`. A route allowlist keeps operator surfaces
+  to admins and post-filters `/repos` and `/workspaces`, and the event stream delivers only what the
+  connection may read and closes when its token is revoked.
 
 ### Changed
 

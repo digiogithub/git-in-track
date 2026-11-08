@@ -79,7 +79,7 @@ func (s *Server) newMCPServer(opts Options, allowWrite bool) *mcp.Server {
 		roots = append(roots, m.path)
 	}
 	srv, err := mcp.New(mcp.Options{
-		Core:       s.repos.workspace(),
+		Core:       s.core(),
 		Version:    opts.Version,
 		Agent:      opts.MCPAgent,
 		AllowWrite: allowWrite,

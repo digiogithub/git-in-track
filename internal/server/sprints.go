@@ -38,7 +38,7 @@ func (s *Server) handleSprintList(w http.ResponseWriter, r *http.Request) {
 		"state": r.URL.Query().Get("state"),
 		"team":  teamOf(r),
 	}
-	result, err := s.repos.workspace().Dispatch(r.Context(), "sprint.list", mustJSON(params))
+	result, err := s.core().Dispatch(r.Context(), "sprint.list", mustJSON(params))
 	if err != nil {
 		writeVaultError(w, r, err)
 		return
@@ -49,7 +49,7 @@ func (s *Server) handleSprintList(w http.ResponseWriter, r *http.Request) {
 // handleSprintGet serves GET /api/v1/sprints/{id}: the scope, the candidates
 // the board would offer and the metrics, with the sprint's revision as ETag.
 func (s *Server) handleSprintGet(w http.ResponseWriter, r *http.Request) {
-	result, err := s.repos.workspace().Dispatch(r.Context(), "sprint.get",
+	result, err := s.core().Dispatch(r.Context(), "sprint.get",
 		mustJSON(map[string]string{"id": chi.URLParam(r, "id"), "team": teamOf(r)}))
 	if err != nil {
 		writeVaultError(w, r, err)
@@ -70,7 +70,7 @@ func (s *Server) handleSprintGet(w http.ResponseWriter, r *http.Request) {
 // The three come back together because they are one reconstruction of one
 // window: splitting them across routes would walk the history twice.
 func (s *Server) handleSprintMetrics(w http.ResponseWriter, r *http.Request) {
-	result, err := s.repos.workspace().Dispatch(r.Context(), "sprint.metrics",
+	result, err := s.core().Dispatch(r.Context(), "sprint.metrics",
 		mustJSON(map[string]string{"id": chi.URLParam(r, "id"), "team": teamOf(r)}))
 	if err != nil {
 		writeVaultError(w, r, err)
@@ -96,7 +96,7 @@ func (s *Server) handleSprintCreate(w http.ResponseWriter, r *http.Request) {
 		failProblem(w, r, codeInvalidRequest, "A sprint needs a `start` and an `end` date.")
 		return
 	}
-	result, err := s.repos.workspace().Dispatch(r.Context(), "sprint.create", mustJSON(body))
+	result, err := s.core().Dispatch(r.Context(), "sprint.create", mustJSON(body))
 	if err != nil {
 		writeVaultError(w, r, err)
 		return
@@ -121,7 +121,7 @@ func (s *Server) handleSprintUpdate(w http.ResponseWriter, r *http.Request) {
 		TeamScope: vault.TeamScope{Team: teamOf(r)},
 		ID:        chi.URLParam(r, "id"), Rev: rev, Patch: patch,
 	}
-	result, err := s.repos.workspace().Dispatch(r.Context(), "sprint.update", mustJSON(params))
+	result, err := s.core().Dispatch(r.Context(), "sprint.update", mustJSON(params))
 	if err != nil {
 		writeVaultError(w, r, err)
 		return
@@ -146,7 +146,7 @@ func (s *Server) handleSprintStart(w http.ResponseWriter, r *http.Request) {
 		TeamScope: vault.TeamScope{Team: teamOf(r)},
 		ID:        chi.URLParam(r, "id"), Rev: rev, Force: body.Force,
 	}
-	result, err := s.repos.workspace().Dispatch(r.Context(), "sprint.start", mustJSON(params))
+	result, err := s.core().Dispatch(r.Context(), "sprint.start", mustJSON(params))
 	if err != nil {
 		writeVaultError(w, r, err)
 		return
@@ -176,7 +176,7 @@ func (s *Server) handleSprintClose(w http.ResponseWriter, r *http.Request) {
 		ID:        chi.URLParam(r, "id"), Rev: rev, Carry: body.Carry,
 		Transfer: body.Transfer, DryRun: body.DryRun,
 	}
-	result, err := s.repos.workspace().Dispatch(r.Context(), "sprint.close", mustJSON(params))
+	result, err := s.core().Dispatch(r.Context(), "sprint.close", mustJSON(params))
 	if err != nil {
 		writeVaultError(w, r, err)
 		return
@@ -212,7 +212,7 @@ func (s *Server) handleSprintTransfer(w http.ResponseWriter, r *http.Request) {
 		ID:        chi.URLParam(r, "id"), Rev: rev,
 		Mode: body.Mode, Target: body.Target, Carry: body.Carry, DryRun: body.DryRun,
 	}
-	result, err := s.repos.workspace().Dispatch(r.Context(), "sprint.transfer", mustJSON(params))
+	result, err := s.core().Dispatch(r.Context(), "sprint.transfer", mustJSON(params))
 	if err != nil {
 		writeVaultError(w, r, err)
 		return
@@ -237,7 +237,7 @@ func (s *Server) handleBoardUpdate(w http.ResponseWriter, r *http.Request) {
 		TeamScope: vault.TeamScope{Team: teamOf(r)},
 		Board:     chi.URLParam(r, "slug"), Rev: rev, Patch: patch,
 	}
-	result, err := s.repos.workspace().Dispatch(r.Context(), "board.update", mustJSON(params))
+	result, err := s.core().Dispatch(r.Context(), "board.update", mustJSON(params))
 	if err != nil {
 		writeVaultError(w, r, err)
 		return

@@ -191,7 +191,7 @@ func (s *Server) inboxPendingCount(r *http.Request, m *mount, project string) in
 	if m == nil || !m.ready() {
 		return 0
 	}
-	result, err := m.vlt.Dispatch(r.Context(), "inbox.list",
+	result, err := s.guarded(m.vlt, m.id).Dispatch(r.Context(), "inbox.list",
 		mustJSON(inboxListParams{Project: project, Limit: 1, Fields: []string{"id"}}))
 	if err != nil {
 		return 0

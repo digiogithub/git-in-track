@@ -14,7 +14,7 @@ import (
 // and the list is returned even when it is empty, because the client must be
 // able to tell "no team repository is open" from an error.
 func (s *Server) handleTeams(w http.ResponseWriter, r *http.Request) {
-	result, err := s.repos.workspace().Dispatch(r.Context(), "team.list", nil)
+	result, err := s.core().Dispatch(r.Context(), "team.list", nil)
 	if err != nil {
 		writeVaultError(w, r, err)
 		return
@@ -27,7 +27,7 @@ func (s *Server) handleTeams(w http.ResponseWriter, r *http.Request) {
 // against every mounted team rather than against the first one.
 func (s *Server) handleTeam(w http.ResponseWriter, r *http.Request) {
 	key := chi.URLParam(r, "key")
-	summary, err := s.repos.workspace().Dispatch(r.Context(), "team.get",
+	summary, err := s.core().Dispatch(r.Context(), "team.get",
 		mustJSON(map[string]string{"team": key}))
 	if err != nil {
 		writeVaultError(w, r, err)
@@ -74,7 +74,7 @@ func (s *Server) handleResolveRef(w http.ResponseWriter, r *http.Request) {
 		failProblem(w, r, codeInvalidRequest, err.Error())
 		return
 	}
-	result, err := s.repos.workspace().Dispatch(r.Context(), "ref.resolve", params)
+	result, err := s.core().Dispatch(r.Context(), "ref.resolve", params)
 	if err != nil {
 		writeVaultError(w, r, err)
 		return
@@ -86,7 +86,7 @@ func (s *Server) handleResolveRef(w http.ResponseWriter, r *http.Request) {
 // its projects, the team repository among them and the findings only a
 // multi-repository view can make (a project key served twice, for instance).
 func (s *Server) handleWorkspaceTree(w http.ResponseWriter, r *http.Request) {
-	result, err := s.repos.workspace().Dispatch(r.Context(), "workspace.list", nil)
+	result, err := s.core().Dispatch(r.Context(), "workspace.list", nil)
 	if err != nil {
 		writeVaultError(w, r, err)
 		return
@@ -97,7 +97,7 @@ func (s *Server) handleWorkspaceTree(w http.ResponseWriter, r *http.Request) {
 // handleSnapshotList serves GET /api/v1/snapshots: the committed index snapshot
 // of every project team.yaml declares, with its age and its staleness.
 func (s *Server) handleSnapshotList(w http.ResponseWriter, r *http.Request) {
-	result, err := s.repos.workspace().Dispatch(r.Context(), "snapshot.list",
+	result, err := s.core().Dispatch(r.Context(), "snapshot.list",
 		mustJSON(map[string]string{"team": teamOf(r)}))
 	if err != nil {
 		writeVaultError(w, r, err)
@@ -121,7 +121,7 @@ func (s *Server) handleSnapshotRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body.Team = teamFallback(r, body.Team)
-	result, err := s.repos.workspace().Dispatch(r.Context(), "snapshot.refresh", mustJSON(body))
+	result, err := s.core().Dispatch(r.Context(), "snapshot.refresh", mustJSON(body))
 	if err != nil {
 		writeVaultError(w, r, err)
 		return

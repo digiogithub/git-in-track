@@ -43,7 +43,7 @@ func (s *Server) handleTeamProjectAdd(w http.ResponseWriter, r *http.Request) {
 		TeamScope: vault.TeamScope{Team: chi.URLParam(r, "key")},
 		Project:   body.TeamProject,
 	}
-	result, err := s.repos.workspace().Dispatch(r.Context(), "team.project.add", mustJSON(params))
+	result, err := s.core().Dispatch(r.Context(), "team.project.add", mustJSON(params))
 	if err != nil {
 		writeVaultError(w, r, err)
 		return
@@ -71,7 +71,7 @@ func (s *Server) handleTeamProjectRemove(w http.ResponseWriter, r *http.Request)
 		Key:       chi.URLParam(r, "project"),
 		Force:     force,
 	}
-	result, dispatchErr := s.repos.workspace().Dispatch(r.Context(), "team.project.remove", mustJSON(params))
+	result, dispatchErr := s.core().Dispatch(r.Context(), "team.project.remove", mustJSON(params))
 	if dispatchErr != nil {
 		writeVaultError(w, r, dispatchErr)
 		return

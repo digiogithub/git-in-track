@@ -42,7 +42,7 @@ func (s *Server) handleBoardCreate(w http.ResponseWriter, r *http.Request) {
 		failProblem(w, r, codeInvalidRequest, "A board needs a `title`.")
 		return
 	}
-	result, err := s.repos.workspace().Dispatch(r.Context(), "board.create", mustJSON(params))
+	result, err := s.core().Dispatch(r.Context(), "board.create", mustJSON(params))
 	if err != nil {
 		writeVaultError(w, r, err)
 		return
@@ -69,7 +69,7 @@ func (s *Server) handleBoardDelete(w http.ResponseWriter, r *http.Request) {
 		TeamScope: vault.TeamScope{Team: teamOf(r)},
 		Board:     chi.URLParam(r, "slug"), Rev: rev,
 	}
-	result, err := s.repos.workspace().Dispatch(r.Context(), "board.delete", mustJSON(params))
+	result, err := s.core().Dispatch(r.Context(), "board.delete", mustJSON(params))
 	if err != nil {
 		writeVaultError(w, r, err)
 		return
@@ -84,7 +84,7 @@ func (s *Server) handleBoardDelete(w http.ResponseWriter, r *http.Request) {
 
 // handleBoardList serves GET /api/v1/boards.
 func (s *Server) handleBoardList(w http.ResponseWriter, r *http.Request) {
-	result, err := s.repos.workspace().Dispatch(r.Context(), "board.list",
+	result, err := s.core().Dispatch(r.Context(), "board.list",
 		mustJSON(map[string]string{"team": teamOf(r)}))
 	if err != nil {
 		writeVaultError(w, r, err)
@@ -98,7 +98,7 @@ func (s *Server) handleBoardList(w http.ResponseWriter, r *http.Request) {
 // comes back marked remote rather than missing (docs/04 section 7).
 func (s *Server) handleBoardGet(w http.ResponseWriter, r *http.Request) {
 	slug := chi.URLParam(r, "slug")
-	result, err := s.repos.workspace().Dispatch(r.Context(), "board.get",
+	result, err := s.core().Dispatch(r.Context(), "board.get",
 		mustJSON(map[string]string{"board": slug, "team": teamOf(r)}))
 	if err != nil {
 		writeVaultError(w, r, err)
@@ -159,7 +159,7 @@ func (s *Server) handleBoardCardMove(w http.ResponseWriter, r *http.Request) {
 		"rev": rev, "itemRev": body.ItemRev, "force": force,
 		"team": teamOf(r),
 	}
-	result, err := s.repos.workspace().Dispatch(r.Context(), "board.move", mustJSON(params))
+	result, err := s.core().Dispatch(r.Context(), "board.move", mustJSON(params))
 	if err != nil {
 		writeVaultError(w, r, err)
 		return

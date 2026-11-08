@@ -63,7 +63,52 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	go s.readFrames(ctx, cancel, conn, client)
+	if s.opts.Authenticate != nil {
+		go s.revalidate(ctx, cancel, conn, streamToken(r))
+	}
 	s.writeFrames(ctx, conn, client)
+}
+
+// streamToken is the token an event stream was opened with, wherever the
+// client put it.
+func streamToken(r *http.Request) string {
+	if token := headerToken(r); token != "" {
+		return token
+	}
+	if token := r.URL.Query().Get("token"); token != "" {
+		return token
+	}
+	return subprotocolToken(r)
+}
+
+// revalidate re-resolves the stream's token periodically and closes the stream
+// once it no longer resolves to a valid principal: revoking a token or
+// disabling a principal must end the connections it already opened.
+func (s *Server) revalidate(ctx context.Context, cancel context.CancelFunc, conn *websocket.Conn, token string) {
+	every := s.opts.RevalidateEvery
+	if every <= 0 {
+		every = pingInterval
+	}
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if p, err := s.opts.Authenticate(token); err != nil || !p.Valid() {
+				s.log.Info("event stream closed: its token no longer authenticates")
+				_ = conn.Close(websocket.StatusPolicyViolation, "unauthorized")
+				cancel()
+				return
+			}
+		}
+	}
+}
+
+// admits reports whether the host's event filter lets ev reach this stream.
+func (s *Server) admits(ctx context.Context, ev Event) bool {
+	return s.opts.EventFilter == nil || s.opts.EventFilter(ctx, ev)
 }
 
 // readFrames handles the client half of the protocol.
@@ -141,10 +186,16 @@ func (s *Server) writeFrames(ctx context.Context, conn *websocket.Conn, client *
 			_ = conn.Close(websocket.StatusTryAgainLater, eventStreamOverflow)
 			return
 		case ev := <-client.control:
+			if !s.admits(ctx, ev) {
+				continue
+			}
 			if err := s.writeFrame(ctx, conn, ev); err != nil {
 				return
 			}
 		case ev := <-client.events:
+			if !s.admits(ctx, ev) {
+				continue
+			}
 			if err := s.writeFrame(ctx, conn, ev); err != nil {
 				return
 			}

@@ -254,7 +254,7 @@ func (s *Server) dispatch(r *http.Request, m *mount, method string, params any) 
 	if err != nil {
 		return nil, fmt.Errorf("encode %s parameters: %w", method, err)
 	}
-	result, err := m.vlt.Dispatch(r.Context(), method, raw)
+	result, err := s.guarded(m.vlt, m.id).Dispatch(r.Context(), method, raw)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", method, err)
 	}

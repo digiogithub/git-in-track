@@ -2,14 +2,15 @@
 id: GIT-US-0209
 type: story
 title: Grant-checking wrapper around the vault Dispatcher for the hub
-status: todo
+status: in_review
 priority: high
 parent: GIT-EP-0034
 author: claude-code
+assignees: [claude-code]
 labels: [server, security, agent-ok]
 estimate: 5
 created: 2026-11-08T17:59:20Z
-updated: 2026-11-08T17:59:20Z
+updated: 2026-11-09T03:00:00Z
 links:
   - { kind: blocked_by, target: GIT-US-0208 }
 ---

@@ -8,9 +8,13 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/digiogithub/git-in-track/internal/config"
 	"github.com/digiogithub/git-in-track/internal/gitops"
+	"github.com/digiogithub/git-in-track/internal/mcp"
 	"github.com/digiogithub/git-in-track/internal/server"
+	"github.com/digiogithub/git-in-track/internal/vault"
 )
 
 // Mode is the server mode the hub reports, next to the companion's.
@@ -26,6 +30,9 @@ type Deps struct {
 	Logger *slog.Logger
 	// Git is the git executable used for clones; empty means "git".
 	Git string
+	// RevalidateEvery is how often an event stream re-checks its token; zero
+	// means the server default. Tests shorten it.
+	RevalidateEvery time.Duration
 }
 
 // Hub is a configured server plus the loop that keeps its clones in step with
@@ -54,6 +61,7 @@ func New(ctx context.Context, cfg *Config, deps Deps) (*Hub, error) {
 	h.syncer = newSyncLoop(time.Duration(cfg.PullInterval), commitPushDelay, log)
 
 	opts := serverOptions(cfg, deps, log, h.syncer.trigger)
+	opts.RevalidateEvery = deps.RevalidateEvery
 	if cfg.Auth.PrincipalsFile != "" {
 		auth, err := NewAuthenticator(cfg.Auth.PrincipalsFile, log)
 		if err != nil {
@@ -64,6 +72,33 @@ func New(ctx context.Context, cfg *Config, deps Deps) (*Hub, error) {
 			opts.Token = ""
 		}
 		opts.Authenticate = auth.Authenticate
+		space := func() *vault.Workspace { return h.srv.Workspace() }
+		guard := func(next mcp.Dispatcher, mount string) *Guard {
+			return NewGuard(next, space, mount, auth.GrantsOf, log)
+		}
+		opts.Guard = func(next mcp.Dispatcher, mount string) mcp.Dispatcher { return guard(next, mount) }
+		opts.SearchScope = guard(nil, "").ScopeSearch
+		filter := &scopeFilter{grants: auth.GrantsOf, repoProjects: func(repo string) []scope {
+			m, ok := h.srv.Workspace().Lookup(repo)
+			if !ok {
+				return nil
+			}
+			var out []scope
+			for _, ref := range m.Vault.Projects() {
+				out = append(out, scope{key: string(ref.Key), team: ref.Team})
+			}
+			return out
+		}}
+		rg := &routeGuard{
+			routes: func() chi.Routes {
+				routes, _ := h.srv.Handler().(chi.Routes)
+				return routes
+			},
+			grants: auth.GrantsOf,
+			filter: filter.response,
+		}
+		opts.Middleware = rg.middleware
+		opts.EventFilter = filter.event
 	}
 	srv, err := server.New(opts) //nolint:contextcheck // server.New takes no context; it mounts synchronously and listens only in Start
 	if err != nil {
