@@ -185,6 +185,13 @@ type Options struct {
 	// of any Pando configuration. gintrack-hub installs its pando/rag index
 	// here (GIT-US-0214).
 	Semantic vault.SemanticSearcher
+	// Routes, when set, mounts extra unauthenticated routes at the root, next
+	// to /health: gintrack-hub's OAuth endpoints and metadata (GIT-US-0215).
+	Routes func(r chi.Router)
+	// AuthChallenge, when set, is the WWW-Authenticate value of every 401 the
+	// principal authentication answers, e.g. a Bearer challenge pointing at
+	// the protected-resource metadata.
+	AuthChallenge string
 	// Middleware, when set, runs on every /api/v1 route after authentication,
 	// with the principal in the request context. gintrack-hub uses it for its
 	// route allowlist and to filter responses that do not come from the core
@@ -523,6 +530,9 @@ func (s *Server) routes() chi.Router {
 	// the configured proxy with the remote's host and path, so the mount point
 	// has to be a bare prefix.
 	s.mountCORSProxy(r)
+	if s.opts.Routes != nil {
+		s.opts.Routes(r)
+	}
 
 	r.NotFound(s.spaHandler())
 	r.MethodNotAllowed(s.spaHandler())
@@ -694,7 +704,10 @@ func (s *Server) principalAuth(next http.Handler, w http.ResponseWriter, r *http
 	reason := "no token presented"
 	if token != "" {
 		p, err := s.opts.Authenticate(token)
-		if err == nil && p.Valid() {
+		switch {
+		case err == nil && p.Valid() && p.Audience != "" && !strings.HasPrefix(r.URL.Path, p.Audience):
+			err = errors.New("the token was issued for another resource")
+		case err == nil && p.Valid():
 			next.ServeHTTP(w, r.WithContext(principal.With(r.Context(), p)))
 			return
 		}
@@ -704,7 +717,11 @@ func (s *Server) principalAuth(next http.Handler, w http.ResponseWriter, r *http
 		}
 	}
 	s.log.Info("request refused", "path", r.URL.Path, "reason", reason)
-	w.Header().Set("WWW-Authenticate", `Bearer realm="gintrack"`)
+	challenge := `Bearer realm="gintrack"`
+	if s.opts.AuthChallenge != "" {
+		challenge = s.opts.AuthChallenge
+	}
+	w.Header().Set("WWW-Authenticate", challenge)
 	writeProblem(w, r, http.StatusUnauthorized, "unauthorized", "Unauthorized",
 		"A valid bearer token is required.")
 }

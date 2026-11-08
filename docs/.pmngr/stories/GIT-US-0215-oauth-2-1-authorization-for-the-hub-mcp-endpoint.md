@@ -2,14 +2,15 @@
 id: GIT-US-0215
 type: story
 title: OAuth 2.1 authorization for the hub MCP endpoint
-status: todo
+status: in_review
 priority: high
 parent: GIT-EP-0034
 author: claude-code
+assignees: [claude-code]
 labels: [server, security, mcp, agent-ok]
 estimate: 8
 created: 2026-11-08T17:59:20Z
-updated: 2026-11-08T17:59:20Z
+updated: 2026-11-09T07:00:00Z
 links:
   - { kind: blocked_by, target: GIT-US-0208 }
 ---

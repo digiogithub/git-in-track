@@ -31,6 +31,12 @@ because a commit list cannot express them.
   fields, and answers out-of-scope reads with `not_found`. A route allowlist keeps operator surfaces
   to admins and post-filters `/repos` and `/workspaces`, and the event stream delivers only what the
   connection may read and closes when its token is revoked.
+- **gintrack-hub OAuth 2.1 for MCP** (`GIT-US-0215`, docs/02 §12.2). With an `oauth:` section the
+  hub is the authorization server of its `/mcp`, with Google sign-in and a consent page, so a
+  claude.ai Project can connect as a person. It supports dynamic client registration, PKCE S256,
+  resource-bound access tokens, rotating refresh tokens with reuse detection, and revocation. Writes
+  carry the person as author and the client as `Agent:`. `coreos/go-oidc` and `golang.org/x/oauth2`
+  become direct dependencies; they were already indirect ones.
 - **gintrack-hub semantic index** (`GIT-US-0214`, docs/02 §12.2). The hub reindexes by commit
   range instead of running a file watcher: the vault index, with the usual events, and a semantic
   store per repository whose watermark is the last commit applied, so a restart resumes where it

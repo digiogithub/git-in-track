@@ -12,6 +12,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -54,6 +55,9 @@ type Config struct {
 	Git GitIdentity `yaml:"git,omitempty"`
 	// Auth configures per-principal authentication (GIT-US-0208).
 	Auth Auth `yaml:"auth,omitempty"`
+	// OAuth makes the hub an OAuth 2.1 authorization server for /mcp, with
+	// Google sign-in (GIT-US-0215). Nil leaves it off.
+	OAuth *OAuthConfig `yaml:"oauth,omitempty"`
 	// Organization is the one organization this hub serves.
 	Organization Organization `yaml:"organization"`
 }
@@ -64,6 +68,38 @@ type Auth struct {
 	// When set, the single Token is ignored. Relative paths resolve against
 	// the config file.
 	PrincipalsFile string `yaml:"principalsFile,omitempty"`
+}
+
+// DefaultRedirects are the redirect URIs allowed when oauth.allowedRedirects
+// is empty: claude.ai and claude.com connectors.
+var DefaultRedirects = []string{
+	"https://claude.ai/api/mcp/auth_callback",
+	"https://claude.com/api/mcp/auth_callback",
+}
+
+// OAuthConfig is the `oauth:` section.
+type OAuthConfig struct {
+	// Issuer is the hub's public URL. Every published URL is built from it,
+	// never from a request's Host. https, except on loopback.
+	Issuer           string       `yaml:"issuer"`
+	Google           GoogleConfig `yaml:"google"`
+	AllowedRedirects []string     `yaml:"allowedRedirects,omitempty"`
+	AccessTTL        Duration     `yaml:"accessTTL,omitempty"`
+	RefreshTTL       Duration     `yaml:"refreshTTL,omitempty"`
+	MaxClients       int          `yaml:"maxClients,omitempty"`
+	ClientIdleTTL    Duration     `yaml:"clientIdleTTL,omitempty"`
+}
+
+// GoogleConfig is the identity provider people sign in with.
+type GoogleConfig struct {
+	// IssuerURL is the OIDC issuer; Google by default.
+	IssuerURL string `yaml:"issuerURL,omitempty"`
+	ClientID  string `yaml:"clientID"`
+	// ClientSecretEnv names the variable holding the client secret, which is
+	// never written in the file.
+	ClientSecretEnv string `yaml:"clientSecretEnv"`
+	// HostedDomains admits only accounts whose verified hd claim is listed.
+	HostedDomains []string `yaml:"hostedDomains,omitempty"`
 }
 
 // GitIdentity is a commit identity.
@@ -163,6 +199,9 @@ func (c *Config) applyDefaults(base string) {
 	}
 	c.DataDir = resolve(base, c.DataDir)
 	c.Auth.PrincipalsFile = resolve(base, c.Auth.PrincipalsFile)
+	if c.OAuth != nil && len(c.OAuth.AllowedRedirects) == 0 {
+		c.OAuth.AllowedRedirects = append([]string(nil), DefaultRedirects...)
+	}
 	for _, r := range c.Repos() {
 		r.DeployKey = resolve(base, r.DeployKey)
 	}
@@ -228,6 +267,31 @@ func (c *Config) Validate() error {
 	if c.Organization.Team != nil {
 		check("organization.team", c.Organization.Team)
 	}
+	if o := c.OAuth; o != nil {
+		if c.Auth.PrincipalsFile == "" {
+			fail("oauth", "needs auth.principalsFile: people are matched by their oidc email there")
+		}
+		u, err := url.Parse(o.Issuer)
+		switch {
+		case err != nil || u.Host == "" || u.Path != "" && u.Path != "/":
+			fail("oauth.issuer", "%q must be the hub's base URL, e.g. https://hub.acme.example", o.Issuer)
+		case u.Scheme != "https" && (u.Scheme != "http" || !isLoopbackName(u.Hostname())):
+			fail("oauth.issuer", "%q must use https (http only on loopback)", o.Issuer)
+		}
+		if strings.TrimSpace(o.Google.ClientID) == "" {
+			fail("oauth.google.clientID", "required")
+		}
+		if strings.TrimSpace(o.Google.ClientSecretEnv) == "" {
+			fail("oauth.google.clientSecretEnv", "required: the name of the variable holding the secret")
+		}
+		for i, r := range o.AllowedRedirects {
+			ru, err := url.Parse(r)
+			if err != nil || ru.Host == "" || ru.Fragment != "" ||
+				(ru.Scheme != "https" && (ru.Scheme != "http" || !isLoopbackName(ru.Hostname()))) {
+				fail(fmt.Sprintf("oauth.allowedRedirects[%d]", i), "%q must be an https URL, or http on loopback", r)
+			}
+		}
+	}
 	for i := range c.Organization.Projects {
 		check(fmt.Sprintf("organization.projects[%d]", i), &c.Organization.Projects[i])
 	}
@@ -239,3 +303,5 @@ func (c *Config) RepoDir(id string) string { return filepath.Join(c.DataDir, "re
 
 // CacheDir holds derived data that can be deleted at any time.
 func (c *Config) CacheDir() string { return filepath.Join(c.DataDir, "cache") }
+
+func isLoopbackName(h string) bool { return h == "127.0.0.1" || h == "::1" || h == "localhost" }

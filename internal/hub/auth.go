@@ -54,6 +54,13 @@ type PrincipalEntry struct {
 	// Grants are the scopes the principal may act in (GIT-US-0209). None
 	// means nothing is visible.
 	Grants []GrantEntry `yaml:"grants,omitempty"`
+	// OIDC is how a person signs in through OAuth (GIT-US-0215).
+	OIDC *OIDCEntry `yaml:"oidc,omitempty"`
+}
+
+// OIDCEntry matches a verified identity-provider account to a principal.
+type OIDCEntry struct {
+	Email string `yaml:"email"`
 }
 
 // NewToken returns a fresh token and the hash line that stores it.
@@ -108,6 +115,9 @@ func ParsePrincipals(raw []byte) (map[string]principalRecord, error) {
 		if kind == principal.Agent && strings.TrimSpace(e.Agent) == "" {
 			fail(i, "agent", "required for an agent")
 		}
+		if e.OIDC != nil && (kind != principal.Human || !strings.Contains(e.OIDC.Email, "@")) {
+			fail(i, "oidc.email", "only a human signs in, with a full email address")
+		}
 		if kind == principal.Human && (e.Agent != "" || e.OnBehalfOf != "") {
 			fail(i, "agent", "agent and onBehalfOf only apply to an agent")
 		}
@@ -134,6 +144,7 @@ func ParsePrincipals(raw []byte) (map[string]principalRecord, error) {
 					},
 					disabled: e.Disabled,
 					grants:   grants,
+					email:    oidcEmail(e),
 				}
 			}
 		}
@@ -157,6 +168,7 @@ type principalRecord struct {
 	p        principal.Principal
 	disabled bool
 	grants   Grants
+	email    string
 }
 
 // Authenticator resolves tokens through a principals file that it reloads
@@ -220,6 +232,39 @@ func (a *Authenticator) Authenticate(token string) (principal.Principal, error) 
 		return principal.Principal{}, fmt.Errorf("%w: %s", errDisabled, rec.p.Handle)
 	}
 	return rec.p, nil
+}
+
+func oidcEmail(e PrincipalEntry) string {
+	if e.OIDC == nil {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(e.OIDC.Email))
+}
+
+// HumanByEmail finds the enabled human whose oidc email this is.
+func (a *Authenticator) HumanByEmail(email string) (principal.Principal, bool) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, rec := range a.byHash {
+		if rec.email != "" && rec.email == email && !rec.disabled && rec.p.Kind == principal.Human {
+			return rec.p, true
+		}
+	}
+	return principal.Principal{}, false
+}
+
+// Lookup returns the enabled principal with this handle, as the file now has
+// it, so an OAuth token stops working once its principal is disabled.
+func (a *Authenticator) Lookup(handle string) (principal.Principal, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, rec := range a.byHash {
+		if rec.p.Handle == handle && !rec.disabled {
+			return rec.p, true
+		}
+	}
+	return principal.Principal{}, false
 }
 
 // GrantsOf returns the grants of a principal, as the file currently in force

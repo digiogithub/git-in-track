@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net/http"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -13,8 +16,10 @@ import (
 	"github.com/digiogithub/git-in-track/internal/config"
 	"github.com/digiogithub/git-in-track/internal/core"
 	"github.com/digiogithub/git-in-track/internal/gitops"
+	"github.com/digiogithub/git-in-track/internal/hub/oauth"
 	"github.com/digiogithub/git-in-track/internal/hub/rag"
 	"github.com/digiogithub/git-in-track/internal/mcp"
+	"github.com/digiogithub/git-in-track/internal/principal"
 	"github.com/digiogithub/git-in-track/internal/server"
 	"github.com/digiogithub/git-in-track/internal/vault"
 )
@@ -38,6 +43,9 @@ type Deps struct {
 	// OpenStore opens the semantic index of a repository. Nil uses the
 	// in-memory store until the pando/rag module is tagged.
 	OpenStore func(rag.Repo) (rag.Store, error)
+	// OAuthClient is the HTTP client the OAuth server reaches Google with;
+	// tests point it at a fake provider. Nil is http.DefaultClient.
+	OAuthClient *http.Client
 }
 
 // Hub is a configured server plus the loop that keeps its clones in step with
@@ -48,6 +56,7 @@ type Hub struct {
 	log     *slog.Logger
 	syncer  *syncLoop
 	indexer *rag.Indexer
+	oauth   *oauth.Server
 }
 
 // New prepares the data directory (ssh configuration and clones) and builds the
@@ -96,6 +105,30 @@ func New(ctx context.Context, cfg *Config, deps Deps) (*Hub, error) {
 			opts.Token = ""
 		}
 		opts.Authenticate = auth.Authenticate
+		if cfg.OAuth != nil {
+			as, err := oauth.New(oauth.Config{
+				Issuer: cfg.OAuth.Issuer, GoogleIssuer: cfg.OAuth.Google.IssuerURL,
+				GoogleClientID: cfg.OAuth.Google.ClientID, GoogleClientSecret: oauth.SecretFromEnv(cfg.OAuth.Google.ClientSecretEnv),
+				HostedDomains: cfg.OAuth.Google.HostedDomains, AllowedRedirects: cfg.OAuth.AllowedRedirects,
+				AccessTTL: time.Duration(cfg.OAuth.AccessTTL), RefreshTTL: time.Duration(cfg.OAuth.RefreshTTL),
+				MaxClients: cfg.OAuth.MaxClients, ClientIdleTTL: time.Duration(cfg.OAuth.ClientIdleTTL),
+			}, filepath.Join(cfg.DataDir, "oauth"), auth, log)
+			if err != nil {
+				return nil, fmt.Errorf("oauth: %w", err)
+			}
+			if deps.OAuthClient != nil {
+				as.SetHTTPClient(deps.OAuthClient)
+			}
+			h.oauth = as
+			opts.Routes = as.Routes
+			opts.AuthChallenge = as.Challenge()
+			opts.Authenticate = func(token string) (principal.Principal, error) {
+				if strings.HasPrefix(token, oauth.AccessPrefix) {
+					return as.Authenticate(token, auth.Lookup)
+				}
+				return auth.Authenticate(token)
+			}
+		}
 		space := func() *vault.Workspace { return h.srv.Workspace() }
 		guard := func(next mcp.Dispatcher, mount string) *Guard {
 			return NewGuard(next, space, mount, auth.GrantsOf, log)

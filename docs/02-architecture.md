@@ -1103,8 +1103,33 @@ forge (GitHub, Gitea…) ⇄ deploy key ⇄ <dataDir>/repos/<id>  (one clone per
 
   Drift tests parse the CoreApi dispatch switches and walk the router, so a
   new method or route without a policy fails `make test`.
-- **Not yet.** Memory over MCP and `alchemai.memory.v2`, semantic search and
-  OAuth follow in the stories of `GIT-EP-0034`.
+- **OAuth 2.1 for MCP** (`GIT-US-0215`, `internal/hub/oauth`). With an
+  `oauth:` section the hub is the authorization server of its own `/mcp`, as
+  the MCP authorization specification describes, so a claude.ai Project
+  connects with a person's identity.
+  - **Metadata and challenge:** protected-resource and authorization-server
+    metadata, built from `oauth.issuer` and never from `Host` or
+    forwarding headers. A 401 on `/mcp` carries the `resource_metadata`
+    challenge.
+  - **Registration:** dynamic client registration of public clients. It is
+    capped, forgets clients unused for 30 days, is rate-limited per peer
+    address, and the client name is sanitized.
+  - **Grant:** the authorization-code grant with mandatory PKCE S256 and a
+    resource indicator. Sign-in is with Google (an optional `hostedDomains`
+    check on the verified `hd` claim), followed by the hub's own consent page.
+  - **Tokens:** `gto_` access tokens bound to `/mcp`, and rotating refresh
+    tokens where a reused one revokes the whole family. Revocation is
+    supported.
+  - **Identity:** a token resolves to the person whose `oidc.email` the
+    principals file lists, with the client's name as `Agent:`, and is
+    read-only without `mcp:write`.
+  - **Allowed redirects:** the claude.ai and claude.com callbacks by
+    default. A loopback entry admits any port, with the same scheme, host and
+    exact path.
+  - **State:** clients and token hashes live in `<dataDir>/oauth/`, outside
+    git.
+- **Not yet.** `alchemai.memory.v2` (blocked on the public `wire` module) and
+  the web UI for memory proposals follow in the stories of `GIT-EP-0034`.
 
 ---
 
