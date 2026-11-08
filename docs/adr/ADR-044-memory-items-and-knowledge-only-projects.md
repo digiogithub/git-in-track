@@ -51,27 +51,34 @@ Two things in today's model stand in the way:
   `user/*` is `scope_unknown` (ADR-043).
 - **File name**: `<ID>-<slug(key)>.md`.
 
-### 2. Front matter
+### 2. Front matter: a `memory:` block
+
+The common fields keep their meaning, with `title` holding the fact in one
+line. The memory's own fields live in a `memory:` block, the way the inbox
+keeps its own in `inbox:` (ADR-033): the list of top-level fields does not
+change, `key` and `version` cannot collide with a generic use, and an older
+gintrack that rewrites the file preserves the block as an unknown key.
 
 ```yaml
 id: ACME-MEM-0042
 type: memory
 title: "Customer X is invoiced quarterly"    # the fact, one line
-key: customer-x-invoicing     # stable slug, unique per scope; the upsert key
-status: active                # proposed | active | superseded | forgotten | cancelled
+status: active                # fixed lifecycle, section 3
 author: ana                   # the authenticated principal, never free text
-created: 2026-11-08
-updated: 2026-11-08
-version: 17                   # monotonic per project, allocated like an id
-content_hash: 9f2c…           # sha256 as alchemai.memory.v2 defines it
-local_id: project/acme/customer-x-invoicing
-valid_from: 2026-11-08T10:00:00Z
-valid_to: 2027-06-30T00:00:00Z            # optional; set on forget
-superseded_by: ACME-MEM-0051              # optional; computed, see §4
+created: 2026-11-08T10:00:00Z
+updated: 2026-11-08T10:00:00Z
 labels: [billing]
-source: {kind: agent, ref: "memsync/<instance>"}   # agent|human|conversation|document|external
 links:
   - {kind: supersedes, target: ACME-MEM-0017}
+memory:
+  key: customer-x-invoicing     # stable slug, unique per scope; the upsert key
+  version: 17                   # monotonic per project, allocated like an id
+  content_hash: 9f2c…           # sha256 as alchemai.memory.v2 defines it
+  local_id: project/acme/customer-x-invoicing
+  valid_from: 2026-11-08T10:00:00Z
+  valid_to: 2027-06-30T00:00:00Z            # optional; required once forgotten
+  superseded_by: ACME-MEM-0051              # computed, see section 4
+  source: {kind: agent, ref: "memsync/<instance>"}   # agent|human|conversation|document|external
 inbox: {status: pending, source: memsync, received: 2026-11-08T10:00:00Z}  # ADR-033, while proposed
 ```
 
@@ -80,10 +87,13 @@ inbox: {status: pending, source: memsync, received: 2026-11-08T10:00:00Z}  # ADR
   the protocol's changes feed. If it lived only in a derived index, rebuilding
   that index would renumber every record and break every client's cursor. It
   is allocated under the project lock as max(scan) + 1. Every accepted
-  content change, acceptance or forget bumps it.
+  content change, acceptance or forget bumps it. When an offline merge leaves
+  two memories on one version, the lowest id keeps it and the others move past
+  the highest version, in id order (`ReconcileMemoryVersions`).
 - **`content_hash` is recomputed by the server** on every write and compared
   with the live file of the same `local_id`. An equal hash is a duplicate and
-  writes nothing.
+  writes nothing. The core computes it itself and a fixed test vector pins it
+  to the protocol's formula, so the core never imports the protocol SDK.
 - `rev` is unchanged: the content hash of the file, never stored. The
   protocol's `base_version` and MCP's `rev` are two spellings of the same
   optimistic lock.
@@ -98,8 +108,14 @@ Memory has a **fixed lifecycle owned by `internal/core`**, not the workflow of
 | `proposed` | `triage` (ADR-033) | Waiting for review. Not returned by search or by the changes feed to anyone but reviewers |
 | `active` | `done` | Accepted, visible and injected into agent context |
 | `superseded` | `done` | Replaced by a newer memory through `supersedes` |
-| `forgotten` | `cancelled` | Withdrawn. The file stays and the feed emits a tombstone |
-| `cancelled` | `cancelled` | A proposal that was rejected. It was never visible, so there is no tombstone |
+| `cancelled` | `cancelled` | A proposal that was rejected. It was never visible, so there is no tombstone. It may be reopened to `proposed` |
+| `forgotten` | `cancelled` | Withdrawn. The file stays and the feed emits a tombstone. It may be restored to `active` |
+
+The transitions are `proposed → active | cancelled`, `active → superseded |
+forgotten`, `cancelled → proposed` and `forgotten → active`; `superseded` is
+terminal. `cancelled` is declared before `forgotten`, so a rejection, which
+moves an item to the first status of the cancelled category, lands on
+`cancelled`.
 
 - Because `proposed` is in the triage category, **the existing inbox lists
   proposals** and `triage_inbox_item` accepts or rejects them. Accepting moves
@@ -111,13 +127,17 @@ Memory has a **fixed lifecycle owned by `internal/core`**, not the workflow of
   `version`, and git keeps the history. The web app's soft-delete rule
   (ADR-026) applies.
 
-### 4. `supersedes` is a link kind
+### 4. Memories reuse the `supersedes` link kind
 
-- `links` gains `supersedes` and its inverse `superseded_by`.
+- `supersedes` and `superseded_by` already exist for specs (ADR-037). A memory
+  may write `supersedes` to another memory, which modifies requirement
+  GIT-SP-0003.R5 through the Spec Delta of `GIT-US-0210`. It never writes
+  `superseded_by` in `links`.
 - Writing `supersedes: B` on memory A moves B to `superseded` and fills B's
-  `superseded_by` in the same commit.
-- `superseded_by` in front matter is the computed mirror, never hand-written,
-  in the same spirit as ADR-037's `implemented_by`.
+  `memory.superseded_by` in the same commit (the vault does it, `GIT-US-0211`).
+- `memory.superseded_by` is the computed mirror, never hand-written, in the
+  same spirit as ADR-037's `implemented_by`. A `supersedes` target that is not
+  `superseded` is `W-MEM-SUPERSEDE-STATE`.
 
 ### 5. A project may be knowledge-only
 
@@ -132,19 +152,23 @@ kind: knowledge     # backlog (default) | knowledge
 - Discovery is unchanged: a knowledge project is found exactly where a backlog
   is.
 - Validation skips statuses and workflow for it.
-- The indexer treats it as it treats the team pseudo-project: pages, memory
-  and comments, no backlog.
+- The indexer scans it like any backlog; its `.pmngr/` simply holds memory and
+  comments, and any other item is `E-KIND-NOT-BACKLOG`.
 - It keeps its `ProjectKey`, so memory ids and cross-project wikilinks work.
 - Item tools other than memory answer `not_a_backlog`, and the web app hides
   backlog, boards, sprints and specs for it.
-- The team pseudo-project becomes the same mechanism, which removes a special
-  case.
+- The team pseudo-project keeps its own scan, which now also reads
+  `.pmngr/memory/` of the team repository (`ProjectRef.TeamDir`). Folding it
+  into the knowledge-project path would have pulled boards, sprints and retros
+  into the backlog scan, so the special case stays, one folder larger.
 - The team key grammar (`[A-Z][A-Z0-9-]{1,15}`,
   `internal/core/teamscaffold.go:122`) is wider than the project key grammar
   (`[A-Z][A-Z0-9]{1,9}`, `internal/core/ids.go:38`), and `KBScope` casts one to
-  the other (`teamdiscover.go:116`). Organisation memory ids need a valid
-  project key, so a team that holds memory must have a key that satisfies the
-  project grammar, and `team init` must say so.
+  the other (`teamdiscover.go:116`). Organization memory ids need a valid
+  project key, so a team whose key the project grammar refuses gets
+  `E-TEAM-KEY-MEMORY` on every memory file and its memory folder is ignored;
+  the rest of the team keeps working. Making `team init` require such a key is
+  a separate story (`GIT-US-0218`).
 
 ## Consequences
 
@@ -159,8 +183,8 @@ kind: knowledge     # backlog (default) | knowledge
 
 ### Harder — the price we are paying
 
-- **A data-model change.** The id grammar, a new item type, a new link kind,
-  new front-matter fields and a new `project.yaml` key. Older `gintrack`
+- **A data-model change.** The id grammar, a new item type, a new use of the
+  `supersedes` link kind, a new front-matter block and a new `project.yaml` key. Older `gintrack`
   versions will report `MEM` ids and `kind: knowledge` as invalid. The release
   that ships this must say so, and validation must degrade to read-only rather
   than refuse.

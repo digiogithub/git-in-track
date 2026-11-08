@@ -36,12 +36,16 @@ const (
 	// are addressable blocks of its body (ADR-037, docs/03 section 21).
 	TypeSpec    ItemType = "spec"
 	TypeComment ItemType = "comment"
+	// TypeMemory is a short, explicit fact with an author, a scope and a review
+	// queue (ADR-044). It is knowledge, not work: queries leave it out unless
+	// asked for it by type or through the inbox.
+	TypeMemory ItemType = "memory"
 )
 
 // Valid reports whether t is one of the known item types.
 func (t ItemType) Valid() bool {
 	switch t {
-	case TypeEpic, TypeStory, TypeTask, TypeMilestone, TypeSpec, TypeComment:
+	case TypeEpic, TypeStory, TypeTask, TypeMilestone, TypeSpec, TypeComment, TypeMemory:
 		return true
 	default:
 		return false
@@ -50,7 +54,7 @@ func (t ItemType) Valid() bool {
 
 // ItemTypes lists every known item type in a stable order.
 func ItemTypes() []ItemType {
-	return []ItemType{TypeEpic, TypeStory, TypeTask, TypeMilestone, TypeSpec, TypeComment}
+	return []ItemType{TypeEpic, TypeStory, TypeTask, TypeMilestone, TypeSpec, TypeComment, TypeMemory}
 }
 
 // Status is the identifier of a workflow status declared in project.yaml.
@@ -476,6 +480,8 @@ type Item struct {
 	Custom      map[string]any `json:"custom,omitempty" yaml:"custom,omitempty"`
 	// Inbox is the triage block, present only on items sitting in the inbox.
 	Inbox *ItemInbox `json:"inbox,omitempty" yaml:"inbox,omitempty"`
+	// Memory is the block of a memory item (ADR-044); nil on every other type.
+	Memory *ItemMemory `json:"memory,omitempty" yaml:"memory,omitempty"`
 	// Requirements is the per-requirement metadata of a spec, keyed by R<n>
 	// (docs/03 section 21.4). Only spec files carry it.
 	Requirements Requirements `json:"requirements,omitempty" yaml:"-"`

@@ -119,5 +119,6 @@ func (t *TeamRef) KBScope() ProjectRef {
 		BacklogPath: joinPath(t.KnowledgePath, BacklogDirName),
 		ConfigPath:  t.ConfigPath,
 		Team:        true,
+		TeamDir:     t.TeamDirPath,
 	}
 }

@@ -29,7 +29,7 @@ var canonicalKeyOrder = []string{
 	"estimate", "effort", "spent",
 	"created", "updated", "started", "closed", "start", "due",
 	"links", "blocks", "depends_on", "in_reply_to", "kind", "reactions",
-	"external", "attachments", "custom", "inbox", "requirements", "deleted",
+	"external", "attachments", "custom", "inbox", "memory", "requirements", "deleted",
 }
 
 // knownKeys is the set of front-matter keys this version understands. Everything
@@ -302,7 +302,7 @@ func ParseItem(path string, data []byte) (*Item, error) {
 		_, code, _, idErr := ParseItemID(rawID)
 		switch {
 		case idErr != nil:
-			p.fail("id", CodeIDGrammar, fmt.Sprintf("%q does not match <KEY>-<EP|US|T|M|SP>-<NNNN>", rawID))
+			p.fail("id", CodeIDGrammar, fmt.Sprintf("%q does not match <KEY>-<EP|US|T|M|SP|MEM>-<NNNN>", rawID))
 		default:
 			if want, ok := TypeCodeFor(it.Type); ok && want != code {
 				p.fail("id", CodeIDTypeCode, fmt.Sprintf("type code %q does not match type %q", code, it.Type))
@@ -352,6 +352,7 @@ func ParseItem(path string, data []byte) (*Item, error) {
 	it.Attachments = p.strList("attachments")
 	it.Custom = p.mapping("custom")
 	it.Inbox = p.inbox("inbox")
+	it.Memory = p.memory("memory")
 	it.Requirements = p.requirements("requirements")
 	it.Deleted = p.boolean("deleted")
 	it.Extra = p.extra()
@@ -473,6 +474,9 @@ func SerializeItem(it *Item) ([]byte, error) {
 		return nil, fmt.Errorf("serialize item %s: %w", it.Path, err)
 	}
 	if err := w.inbox("inbox", it.Inbox); err != nil {
+		return nil, fmt.Errorf("serialize item %s: %w", it.Path, err)
+	}
+	if err := w.memory("memory", it.Memory); err != nil {
 		return nil, fmt.Errorf("serialize item %s: %w", it.Path, err)
 	}
 	if err := w.requirements("requirements", it.Requirements); err != nil {

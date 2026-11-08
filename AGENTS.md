@@ -141,6 +141,7 @@ docs/.pmngr/epics/           # <KEY>-EP-<NNNN>-<slug>.md
 docs/.pmngr/stories/         # <KEY>-US-<NNNN>-<slug>.md
 docs/.pmngr/tasks/           # <KEY>-T-<NNNN>-<slug>.md
 docs/.pmngr/milestones/      # <KEY>-M-<NNNN>-<slug>.md
+docs/.pmngr/memory/          # <KEY>-MEM-<NNNN>-<slug>.md (facts, ADR-044)
 docs/.pmngr/comments/<ITEM-ID>/<timestamp>-<author>.md
 ```
 
@@ -150,12 +151,16 @@ dependencies (`links` of type `blocked_by`) are `done`.
 
 ### Front matter fields
 
-`id` (immutable), `type` (`epic|story|task|milestone|comment|board|sprint|retro`),
+`id` (immutable), `type` (`epic|story|task|milestone|spec|memory|comment|board|sprint|retro`),
 `title`, `status`, `created`, `updated`, `author`, `assignees[]`, `labels[]`,
 `priority` (`critical|high|medium|low`), `parent` (epic for a story, story for a
 task), `milestone`, `estimate` (story points) or `effort` (hours), `due`, and
 `links[]` — a list of `{kind, target}` pairs whose `kind` is one of `blocks`,
-`blocked_by`, `relates_to`, `duplicates`, `duplicated_by`.
+`blocked_by`, `relates_to`, `duplicates`, `duplicated_by` (plus the spec kinds
+of ADR-037, and `supersedes` between memories).
+A `memory` item keeps its own fields in a `memory:` block and follows a fixed
+lifecycle (`proposed` in the inbox, `active`, `superseded`, `cancelled`,
+`forgotten`) that `project.yaml` cannot change: docs/03 §22.
 `rev` is never stored in a file — it is a content hash computed at read time.
 The body is free Markdown with the conventional sections `## Description`,
 `## Acceptance Criteria` (task-list checkboxes) and `## Notes`.

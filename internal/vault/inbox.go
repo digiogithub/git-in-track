@@ -298,6 +298,9 @@ func (v *Vault) inboxTriage(ctx context.Context, raw []byte) (any, error) {
 func (v *Vault) triagePatch(
 	action InboxTriageAction, p InboxTriageParams, current *core.Item, cfg *core.ProjectConfig,
 ) (core.ItemPatch, *core.ItemID, error) {
+	// A memory follows its own fixed lifecycle, whatever project.yaml declares
+	// (ADR-044 section 3).
+	cfg = cfg.For(current.Type)
 	block := current.Inbox.Clone()
 	if block == nil {
 		block = &core.ItemInbox{}
@@ -311,6 +314,11 @@ func (v *Vault) triagePatch(
 	switch action {
 	case TriageAccept:
 		status, err := acceptStatus(p.Status, cfg)
+		if current.Type == core.TypeMemory && strings.TrimSpace(p.Status) == "" {
+			// The memory lifecycle starts in triage, so its initial status is no
+			// target: an accepted memory is active.
+			status, err = core.MemoryActive, nil
+		}
 		if err != nil {
 			return core.ItemPatch{}, nil, err
 		}

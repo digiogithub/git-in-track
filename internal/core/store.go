@@ -433,7 +433,7 @@ func (s *FileStore) Create(ctx context.Context, draft ItemDraft) (*Item, error) 
 		Path:         path.Join(s.backlog, dir, FileName(id, draft.Title)),
 	}
 	s.applyDefaults(it)
-	if cat := s.cfg.CategoryOf(it.Status); cat == CategoryInProgress {
+	if cat := s.cfg.For(it.Type).CategoryOf(it.Status); cat == CategoryInProgress {
 		it.Started = now
 	}
 	if err := s.validateAndUpgrade(it, false); err != nil {
@@ -635,7 +635,7 @@ func (s *FileStore) MoveReport(ctx context.Context, id ItemID, status Status, ex
 // warning in a file (W-WORKFLOW-TRANSITION) that this layer escalates to a
 // refusal, unless the caller forces it (docs/03 section 6.1).
 func (s *FileStore) checkTransition(it *Item, to Status, force bool) error {
-	d := ValidateTransition(s.cfg, it.Status, to)
+	d := ValidateTransition(s.cfg.For(it.Type), it.Status, to)
 	switch {
 	case d.Code == "":
 		return nil
@@ -645,7 +645,7 @@ func (s *FileStore) checkTransition(it *Item, to Status, force bool) error {
 	case force:
 		return nil
 	default:
-		return &TransitionError{ID: it.ID, From: it.Status, To: to, Allowed: s.cfg.Workflow.Transitions[it.Status]}
+		return &TransitionError{ID: it.ID, From: it.Status, To: to, Allowed: s.cfg.For(it.Type).Workflow.Transitions[it.Status]}
 	}
 }
 
@@ -653,8 +653,9 @@ func (s *FileStore) checkTransition(it *Item, to Status, force bool) error {
 // is stamped the first time the item enters the in_progress category, closed
 // when it enters a terminal one and cleared when it leaves it (docs/03 7.1).
 func (s *FileStore) stampTransition(it *Item, from, to Status, now Timestamp) {
-	fromCat := s.cfg.CategoryOf(from)
-	toCat := s.cfg.CategoryOf(to)
+	cfg := s.cfg.For(it.Type)
+	fromCat := cfg.CategoryOf(from)
+	toCat := cfg.CategoryOf(to)
 	if toCat == CategoryInProgress && it.Started.IsZero() {
 		it.Started = now
 	}

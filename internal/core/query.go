@@ -251,6 +251,13 @@ func (ix *Index) matches(it *Item, f Filter) bool {
 	if len(f.Types) > 0 && !containsType(f.Types, it.Type) {
 		return false
 	}
+	// A memory is knowledge, not work (ADR-044): a filter that names no type
+	// leaves it out, so boards, sprints, metrics and every query written before
+	// memories existed keep their meaning. It is listed when asked for by type,
+	// and as a proposal through the inbox.
+	if len(f.Types) == 0 && it.Type == TypeMemory && f.Inbox != InboxOnly {
+		return false
+	}
 	if len(f.Statuses) > 0 && !containsStatus(f.Statuses, it.Status) {
 		return false
 	}
@@ -982,6 +989,7 @@ func cloneItem(it *Item) Item {
 	out.Links = append([]Link(nil), it.Links...)
 	out.External = cloneExternals(it.External)
 	out.Inbox = it.Inbox.Clone()
+	out.Memory = it.Memory.Clone()
 	out.Requirements = it.Requirements.Clone()
 	out.Attachments = append([]string(nil), it.Attachments...)
 	out.Custom = cloneMap(it.Custom)

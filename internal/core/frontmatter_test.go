@@ -342,6 +342,12 @@ func TestSerializeItemGolden(t *testing.T) {
 			golden: "inbox-item.md",
 		},
 		{
+			name:   "memory block keeps its key order and its unknown keys",
+			source: "memory-item.md",
+			path:   "memory/ACME-MEM-0042-customer-x-is-invoiced-quarterly.md",
+			golden: "memory-item.md",
+		},
+		{
 			name:   "spec keeps its requirements map in canonical order",
 			source: "spec-item.md",
 			path:   "specs/ACME-SP-0003-item-id-allocation.md",

@@ -286,6 +286,12 @@ func isDerivedCode(c Code) bool {
 // categoryOf maps an item's status to its coarse category. The caller holds the
 // lock.
 func (ix *Index) categoryOf(it *Item) StatusCategory {
+	if it.Type == TypeMemory {
+		// The memory lifecycle is fixed, so it needs no project.yaml at all —
+		// a team's organization memory has none (ADR-044 section 3).
+		var none *ProjectConfig
+		return none.For(TypeMemory).CategoryOf(it.Status)
+	}
 	key := ix.projectOf(it)
 	for _, p := range ix.projects {
 		if p.Key == key && p.Config != nil {

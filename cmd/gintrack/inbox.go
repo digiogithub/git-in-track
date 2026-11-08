@@ -567,7 +567,7 @@ func runInboxTriage(
 ) error {
 	id := strings.TrimSpace(raw)
 	if !core.ItemID(id).Valid() {
-		return failf(exitValidation, "%q is not an item id: want <KEY>-<EP|US|T|M|SP>-<NNNN>", raw)
+		return failf(exitValidation, "%q is not an item id: want <KEY>-<EP|US|T|M|SP|MEM>-<NNNN>", raw)
 	}
 	space, err := openSpaceFor(flags)
 	if err != nil {
