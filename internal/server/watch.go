@@ -166,6 +166,29 @@ func (s *Server) watchLoop(ctx context.Context, w FileWatcher, done chan struct{
 	}
 }
 
+// ApplyFileEvents folds changes the host learned of on its own — gintrack-hub
+// reads them from a commit range instead of running the file watcher — into
+// one repository's index, and announces them exactly as the watcher does.
+func (s *Server) ApplyFileEvents(ctx context.Context, repo string, events []core.FileEvent) error {
+	m, ok := s.repos.lookup(repo)
+	if !ok || !m.ready() {
+		return fmt.Errorf("repository %s is not mounted or not indexed", repo)
+	}
+	for _, ev := range events {
+		s.hub.Publish(eventFileChanged, fileChangedData{
+			Repo: m.id, Path: ev.Path, Op: string(ev.Kind),
+			IsPmngr: isBacklogPath(ev.Path), IsKb: !isBacklogPath(ev.Path),
+		})
+	}
+	delta, err := m.vlt.ApplyEvents(ctx, events)
+	if err != nil {
+		return fmt.Errorf("apply file events to %s: %w", repo, err)
+	}
+	m.touch(s.now())
+	s.publishDelta(m, delta)
+	return nil
+}
+
 // applyBatch applies one debounced batch: it announces the raw file events,
 // folds them into the index of the repository they belong to and announces the
 // items the pass changed.

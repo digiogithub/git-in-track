@@ -1036,10 +1036,23 @@ forge (GitHub, Gitea…) ⇄ deploy key ⇄ <dataDir>/repos/<id>  (one clone per
 - **Serving.** The clones are mounted exactly as the companion mounts
   registered repositories, and `server.New` serves them with commit-on-save
   on, the system git backend, push on sync, and the MCP endpoint on.
-- **Sync.** A loop calls `Server.SyncNow`: once at start, on every
+- **Sync and reindex.** A loop calls `Server.SyncNow` once at start, on every
   `pullInterval`, and two seconds after commit-on-save commits (through
   `Options.OnCommit`), so a write reaches the forge without waiting for the
-  timer. The file watcher reindexes what a pull brings in.
+  timer. After each sync the indexer (`internal/hub/rag`, `GIT-US-0214`) reads
+  the commit range since the last one it applied, `git diff --name-status -M`.
+  It folds the changed files into the vault index through
+  `Server.ApplyFileEvents`, which announces them like the watcher would, and
+  into each repository's semantic store, which records the commit as its
+  watermark. The hub runs no file watcher.
+- **Semantic search.** `Options.Semantic` installs the hub's searcher for both
+  `search.semantic` and the semantic half of `GET /search`. It asks each
+  repository's store under the documentation folders of the projects the
+  query admits, which the Guard has already narrowed to the readable ones.
+  Every hit is resolved against the live file: a document changed since it
+  was indexed is dropped. The store is `pando/rag` behind `rag.Store`; until
+  that module is tagged, the hub ships an in-memory full-text store with the
+  same contract.
 - **Authentication** (`GIT-US-0208`). With `auth.principalsFile` set, every
   request needs a principal's token, and the single `token` is ignored:
   - the principals file lists each person or agent (`handle`, `name`,

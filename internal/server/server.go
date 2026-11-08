@@ -180,6 +180,11 @@ type Options struct {
 	// and semantic halves alike, to the ones the request may read. An error
 	// answers 404. Nil searches what was asked.
 	SearchScope func(ctx context.Context, asked []string) ([]string, error)
+	// Semantic, when set, is the semantic backend: the workspace's
+	// search.semantic and the semantic half of GET /search both use it, ahead
+	// of any Pando configuration. gintrack-hub installs its pando/rag index
+	// here (GIT-US-0214).
+	Semantic vault.SemanticSearcher
 	// Middleware, when set, runs on every /api/v1 route after authentication,
 	// with the principal in the request context. gintrack-hub uses it for its
 	// route allowlist and to filter responses that do not come from the core

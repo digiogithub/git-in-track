@@ -2,14 +2,15 @@
 id: GIT-US-0214
 type: story
 title: Semantic search in the hub with pando/rag behind SemanticSearcher
-status: todo
+status: in_review
 priority: medium
 parent: GIT-EP-0034
 author: claude-code
+assignees: [claude-code]
 labels: [server, agent-ok]
 estimate: 5
 created: 2026-11-08T17:59:20Z
-updated: 2026-11-08T23:00:00Z
+updated: 2026-11-09T05:00:00Z
 links:
   - { kind: blocked_by, target: GIT-US-0207 }
 ---
@@ -31,3 +32,5 @@ Install a `vault.SemanticSearcher` backed by the `pando/rag` library (one SQLite
 Part of the gintrack hub PoC; see ADR-043 and ADR-044.
 
 The hub skeleton (GIT-US-0207) keeps the companion's file watcher on, so that a pull is reindexed; that is a stopgap accepted on 2026-11-08 until this story reindexes by commit. Until the `pando/rag` module is tagged, a `replace` to the local checkout is used only on this story's branch and never committed in go.mod.
+
+Validated locally on 2026-11-09 against the pando/rag `rag-api` bookmark through an uncommitted go.work and adapter (FTS mode): initial index with watermark = HEAD, ApplyChanges by commit, search narrowed by grants, rename of an unchanged blob reported as Renamed with nothing re-read. The adapter is committed when `rag/vX.Y.Z` is tagged.
