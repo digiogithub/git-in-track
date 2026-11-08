@@ -13,7 +13,19 @@
  *   types listed in `CoreApi`.
  */
 
-export type ItemType = 'epic' | 'story' | 'task' | 'milestone' | 'spec' | 'comment';
+export type ItemType = 'epic' | 'story' | 'task' | 'milestone' | 'spec' | 'comment' | 'memory';
+
+/** The `memory:` block of a memory item (ADR-044, docs/03 §22). */
+export type ItemMemory = {
+  key: string;
+  version: number;
+  contentHash?: string;
+  localId?: string;
+  validFrom?: string;
+  validTo?: string;
+  supersededBy?: string;
+  source?: { kind?: string; ref?: string };
+};
 export type Priority = 'critical' | 'high' | 'medium' | 'low';
 /** Relation kinds of docs/03-data-model.md §12.1; the last six are ADR-037's spec kinds. */
 export type LinkKind =
@@ -99,6 +111,8 @@ export type Item = {
   external?: External[];
   /** Present only while the item sits in the triage queue (ADR-033). */
   inbox?: ItemInbox;
+  /** Present on memory items only. */
+  memory?: ItemMemory;
   deleted?: boolean;
   extra?: Record<string, unknown>;
   /** Markdown body after the front matter. Omitted by list calls unless `fields` asks for it. */
@@ -170,6 +184,8 @@ export type ProjectSummary = {
   writable?: boolean;
   /** Revision of `project.yaml`, the precondition of `project.inbox.enable`. */
   configRev?: string;
+  /** `knowledge` for a knowledge-only project: pages and memory, no backlog (ADR-044). */
+  kind?: 'knowledge';
   /** Repository the project was discovered in; set by a workspace-wide answer. */
   vaultId?: string;
   /** Initial status and transition map (`from -> [to...]`); absent transitions mean any. */

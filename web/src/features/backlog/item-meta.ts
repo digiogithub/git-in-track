@@ -77,6 +77,7 @@ const typeNames: Record<ItemType, string> = {
   milestone: 'Milestone',
   spec: 'Spec',
   comment: 'Comment',
+  memory: 'Memory',
 };
 
 export function typeName(type: ItemType): string {

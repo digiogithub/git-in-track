@@ -159,8 +159,14 @@ export function InboxPage() {
   const openAccept = useNavigateToAccept(projectKey);
   const onAccept = useCallback(() => {
     if (!selected) return;
+    // A memory has no status or parent to pick: accepting makes it active
+    // (ADR-044), so it is a one-click decision like a rejection.
+    if (selected.type === 'memory') {
+      decide({ action: 'accept' });
+      return;
+    }
     openAccept(selected.id);
-  }, [openAccept, selected]);
+  }, [openAccept, selected, decide]);
 
   useKeyboardTriage({
     enabled: selected !== null && !triage.isPending,

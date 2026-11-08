@@ -31,6 +31,10 @@ because a commit list cannot express them.
   fields, and answers out-of-scope reads with `not_found`. A route allowlist keeps operator surfaces
   to admins and post-filters `/repos` and `/workspaces`, and the event stream delivers only what the
   connection may read and closes when its token is revoked.
+- **Memory proposals in the web app** (`GIT-US-0216`, docs/05). The inbox lists memory proposals
+  with their key and source and accepts one in a click; it previously failed on an item type it did
+  not know. A knowledge-only project shows its docs and inbox, but no backlog or specs links, and
+  `project.list` reports `kind: knowledge`.
 - **gintrack-hub OAuth 2.1 for MCP** (`GIT-US-0215`, docs/02 §12.2). With an `oauth:` section the
   hub is the authorization server of its `/mcp`, with Google sign-in and a consent page, so a
   claude.ai Project can connect as a person. It supports dynamic client registration, PKCE S256,

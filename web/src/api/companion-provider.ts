@@ -48,6 +48,7 @@ import type {
   InboxTriageInput,
   InboxTriageResult,
   ItemInbox,
+  ItemMemory,
   KbPageSyncStatus,
   KbSyncJobResult,
   KbUnlinkResult,
@@ -588,7 +589,7 @@ function toVersionStatus(body: unknown): VersionStatus {
 
 // ------------------------------------------------------------------ mappers
 
-const ITEM_TYPES: ItemType[] = ['epic', 'story', 'task', 'milestone', 'spec', 'comment'];
+const ITEM_TYPES: ItemType[] = ['epic', 'story', 'task', 'milestone', 'spec', 'comment', 'memory'];
 const PRIORITIES: Priority[] = ['critical', 'high', 'medium', 'low'];
 
 function asItemType(value: unknown): ItemType | undefined {
@@ -826,8 +827,30 @@ export function toItem(value: unknown): Item {
   put(item, 'custom', asRecord(record['custom']) ?? undefined);
   put(item, 'external', toExternalList(record['external']));
   put(item, 'inbox', toItemInbox(record['inbox']));
+  put(item, 'memory', toItemMemory(record['memory']));
   put(item, 'deleted', asBoolean(record['deleted']));
   return item;
+}
+
+/** The memory block of a memory item, or undefined when absent or malformed. */
+function toItemMemory(value: unknown): ItemMemory | undefined {
+  const record = asRecord(value);
+  const key = record ? asString(record['key']) : undefined;
+  if (!record || key === undefined) return undefined;
+  const memory: ItemMemory = { key, version: asNumber(record['version']) ?? 0 };
+  put(memory, 'contentHash', asString(record['contentHash']));
+  put(memory, 'localId', asString(record['localId']));
+  put(memory, 'validFrom', asString(record['validFrom']));
+  put(memory, 'validTo', asString(record['validTo']));
+  put(memory, 'supersededBy', asString(record['supersededBy']));
+  const source = asRecord(record['source']);
+  if (source) {
+    const src: NonNullable<ItemMemory['source']> = {};
+    put(src, 'kind', asString(source['kind']));
+    put(src, 'ref', asString(source['ref']));
+    memory.source = src;
+  }
+  return memory;
 }
 
 function toItemPage(value: unknown, totalHeader: string | null): ItemPage {
@@ -955,6 +978,7 @@ function toItemCounts(value: unknown): Record<ItemType, number> {
     milestone: asNumber(record['milestones']) ?? 0,
     spec: asNumber(record['specs']) ?? 0,
     comment: asNumber(record['comments']) ?? 0,
+    memory: asNumber(record['memory']) ?? asNumber(record['memories']) ?? 0,
   };
 }
 
@@ -991,6 +1015,7 @@ export function toProjectSummary(value: unknown): ProjectSummary {
   };
   put(project, 'writable', asBoolean(record['writable']));
   put(project, 'configRev', asString(record['configRev']));
+  if (record['kind'] === 'knowledge') project.kind = 'knowledge';
   return project;
 }
 

@@ -1163,7 +1163,7 @@ export const sampleProject: ProjectSummary = {
     { name: 'security', color: '#dc2626' },
   ],
   priorities: ['critical', 'high', 'medium', 'low'],
-  itemCounts: { epic: 1, story: 2, task: 1, milestone: 1, spec: 0, comment: 1 },
+  itemCounts: { epic: 1, story: 2, task: 1, milestone: 1, spec: 0, comment: 1, memory: 0 },
 };
 
 export const sampleItems: Item[] = [
@@ -1879,7 +1879,7 @@ export class FakeProvider implements DataProvider {
       ],
       labels: [],
       priorities: ['critical', 'high', 'medium', 'low'],
-      itemCounts: { epic: 0, story: 0, task: 0, milestone: 0, spec: 0, comment: 0 },
+      itemCounts: { epic: 0, story: 0, task: 0, milestone: 0, spec: 0, comment: 0, memory: 0 },
     };
     this.projects.push(project);
     const repo = this.repos.find((r) => r.id === input.repoId) ?? this.repos[0];
@@ -2143,7 +2143,7 @@ export class FakeProvider implements DataProvider {
 
   createItem(input: ItemDraft): Promise<Item> {
     this.assertWritable();
-    const code = { epic: 'EP', story: 'US', task: 'T', milestone: 'M', spec: 'SP' }[input.type];
+    const code = { epic: 'EP', story: 'US', task: 'T', milestone: 'M', spec: 'SP', memory: 'MEM' }[input.type];
     const existing = [...this.items.keys()].filter((k) =>
       k.startsWith(`${input.project}-${code}-`),
     );
@@ -2159,6 +2159,7 @@ export class FakeProvider implements DataProvider {
       task: 'tasks',
       milestone: 'milestones',
       spec: 'specs',
+      memory: 'memory',
     }[input.type];
     const now = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
     const item: Item = {
