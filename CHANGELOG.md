@@ -12,7 +12,19 @@ because a commit list cannot express them.
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- **gintrack-hub skeleton** (`GIT-US-0207`, ADR-043 Proposed, docs/02 §12.2). A separate, optional
+  binary, `cmd/gintrack-hub`, that clones one organization's repositories from their forge (with a
+  per-repository deploy key) and serves them through the companion's REST API, WebSocket events,
+  MCP endpoint and web app. It syncs on a timer and right after each commit. `gintrack` itself is
+  unchanged. Proof of concept only: not part of any release artifact yet.
+- `make build-hub` builds `bin/gintrack-hub`.
+
+### Changed
+
+- `make wasm` copies `wasm_exec.js` with `cp -f`, so a second run works when the Go toolchain is
+  installed read-only.
 
 ## [2.7.0] — 2026-11-05
 

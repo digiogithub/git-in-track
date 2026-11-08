@@ -152,6 +152,11 @@ type Options struct {
 	// soon as the listener is bound, before any request is served. `gintrack
 	// serve` uses it to record its runtime file (GIT-US-0197).
 	OnListen func(addr string)
+	// OnCommit, when set, is called after every commit-on-save that produced a
+	// commit, with the repository id and the new SHA. It runs on the
+	// committer's goroutine, so it must return quickly; gintrack-hub uses it to
+	// schedule a push (ADR-043). The companion leaves it nil.
+	OnCommit func(repo, sha string)
 
 	// The managed-Pando seams. Production leaves them nil; a test replaces them
 	// so that no process is spawned.

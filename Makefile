@@ -33,7 +33,7 @@ GOLANGCI_LINT_VERSION ?= v2.15.0
 export CGO_ENABLED := 0
 
 .DEFAULT_GOAL := build
-.PHONY: help deps web wasm wasm-smoke build test test-go test-web lint lint-go lint-web lint-ci spec-check fmt run dev release-check release-snapshot clean
+.PHONY: help deps web wasm wasm-smoke build build-hub test test-go test-web lint lint-go lint-web lint-ci spec-check fmt run dev release-check release-snapshot clean
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -67,6 +67,10 @@ web: wasm ## Build the React app into web/dist
 build: ## Build the gintrack binary, embedding web/dist
 	mkdir -p $(BIN_DIR)
 	go build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY) $(CMD)
+
+build-hub: ## Build the optional gintrack-hub binary, embedding web/dist (ADR-043)
+	mkdir -p $(BIN_DIR)
+	go build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/gintrack-hub ./cmd/gintrack-hub
 
 test: test-go test-web ## Run every test suite
 

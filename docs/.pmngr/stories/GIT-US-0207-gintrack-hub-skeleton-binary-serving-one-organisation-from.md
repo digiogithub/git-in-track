@@ -2,14 +2,15 @@
 id: GIT-US-0207
 type: story
 title: gintrack-hub skeleton binary serving one organisation from forge clones
-status: todo
+status: in_review
 priority: high
 parent: GIT-EP-0034
 author: claude-code
+assignees: [claude-code]
 labels: [server, git, agent-ok]
 estimate: 8
 created: 2026-11-08T17:59:20Z
-updated: 2026-11-08T17:59:20Z
+updated: 2026-11-08T20:45:00Z
 ---
 
 ## Description

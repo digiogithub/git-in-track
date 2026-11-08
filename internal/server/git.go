@@ -545,6 +545,9 @@ func (s *Server) publishCommit(data commitEventData) {
 		return
 	}
 	s.hub.Publish(eventGitCommit, data)
+	if s.opts.OnCommit != nil && data.SHA != "" && data.Code == "" {
+		s.opts.OnCommit(data.Repo, data.SHA)
+	}
 }
 
 // writeGitError maps a gitops failure onto the problem contract.

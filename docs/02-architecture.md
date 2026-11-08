@@ -1009,6 +1009,42 @@ is a first-class repository: it commits on save, syncs and resolves conflicts
 like any other, and `Capabilities.writes` — not the VCS kind — is what a surface
 disables its write actions from.
 
+## 12.2 gintrack-hub (optional, proposed)
+
+[ADR-043](adr/ADR-043-gintrack-hub-optional-self-hosted-multi-user-server.md)
+(Proposed) adds a second, optional binary, `cmd/gintrack-hub`, built from the
+same module. `gintrack` itself is unchanged and stays serverless. The proof of
+concept is tracked as `GIT-EP-0034`.
+
+```
+forge (GitHub, Gitea…) ⇄ deploy key ⇄ <dataDir>/repos/<id>  (one clone per repository)
+                                          │
+                     internal/hub ── server.New(Options) ── vault.Workspace ── core
+                     (config, clones,     (same REST, WS, MCP,
+                      sync loop)           SPA as the companion)
+```
+
+- **Configuration.** One YAML file (`internal/hub/config.go`): `dataDir`, the
+  listener, `pullInterval`, the commit identity, and one `organization` with an
+  optional team repository and its project repositories, each with a forge URL
+  and an optional deploy key. Unknown keys are errors.
+- **Clones.** On start the hub clones every repository missing from
+  `<dataDir>/repos/` with system git. A deploy key becomes a host alias in
+  `<dataDir>/ssh_config`, and the process exports
+  `GIT_SSH_COMMAND="ssh -F <that file>"`. A per-repository `core.sshCommand`
+  would not work, because gitops pins `GIT_SSH_COMMAND` for every git it runs.
+- **Serving.** The clones are mounted exactly as the companion mounts
+  registered repositories, and `server.New` serves them with commit-on-save
+  on, the system git backend, push on sync, and the MCP endpoint on.
+- **Sync.** A loop calls `Server.SyncNow`: once at start, on every
+  `pullInterval`, and two seconds after commit-on-save commits (through
+  `Options.OnCommit`), so a write reaches the forge without waiting for the
+  timer. The file watcher reindexes what a pull brings in.
+- **Not yet.** Until `GIT-US-0208` the hub has the companion's single bearer
+  token and commits with the configured identity. Per-principal
+  authentication, grants, memory, semantic search and OAuth follow in the
+  stories of `GIT-EP-0034`.
+
 ---
 
 ## 13. Open architectural questions
