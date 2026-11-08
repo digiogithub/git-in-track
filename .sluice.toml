@@ -1,0 +1,60 @@
+# Sluice repository configuration for git-in-track.
+#
+# Every gate is a target of the Makefile, so a gate passes here exactly when
+# the same target passes locally and in CI (AGENTS.md "Build and test
+# commands"). The gates are split so that the per-tree cache can answer each
+# one on its own: a docs-only change re-runs nothing that a previous tree with
+# the same inputs already passed.
+#
+# No hook is wired: `sluice verify` reads this file directly, and `hooks` is
+# left out so that a plain verify runs every gate. Enabling hooks
+# (core.hooksPath) is a separate, deliberate decision.
+#
+# The web gates expect `make deps` to have run in the working tree.
+version = 1
+
+[defaults]
+agent_hook_policy = "fail-fast"
+human_hook_policy = "wait"
+tail_lines = 60
+
+[gates.lint-go]
+cmd = "make lint-go"
+weight = 4
+timeout = "20m"
+key_inputs = ["go version"]
+
+[gates.lint-web]
+cmd = "make lint-web"
+weight = 2
+timeout = "10m"
+key_inputs = ["node --version"]
+
+[gates.lint-ci]
+cmd = "make lint-ci"
+weight = 1
+timeout = "5m"
+
+[gates.test-go]
+cmd = "make test-go"
+weight = "auto"
+timeout = "30m"
+key_inputs = ["go version"]
+
+[gates.test-web]
+cmd = "make test-web"
+weight = "auto"
+timeout = "15m"
+key_inputs = ["node --version"]
+
+[gates.wasm]
+cmd = "make wasm"
+weight = 2
+timeout = "10m"
+key_inputs = ["go version"]
+
+[gates.wasm-smoke]
+cmd = "make wasm-smoke"
+weight = 2
+timeout = "10m"
+key_inputs = ["go version", "node --version"]
