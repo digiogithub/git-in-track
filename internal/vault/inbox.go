@@ -333,6 +333,14 @@ func (v *Vault) triagePatch(
 		}
 		block.Status = core.InboxAccepted
 		patch.Status = &status
+		if current.Type == core.TypeMemory && current.Memory != nil {
+			// Accepting a memory is what makes it visible, so it takes a new
+			// version and enters the changes feed past every cursor (ADR-044).
+			memory := current.Memory.Clone()
+			key, _, _, _ := core.ParseItemID(string(current.ID))
+			memory.Version = core.NextMemoryVersion(v.index.Memories(key))
+			patch.Memory = memory
+		}
 	case TriageReject:
 		status, err := rejectStatus(cfg)
 		if err != nil {

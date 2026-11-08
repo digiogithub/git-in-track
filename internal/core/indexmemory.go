@@ -71,3 +71,37 @@ func (ix *Index) checkMemory() {
 		}
 	}
 }
+
+// Memories returns every memory item whose id carries key, deleted ones
+// excluded, sorted by version and then id: the order of the
+// alchemai.memory.v2 changes feed. It is unpaginated on purpose — a vault
+// upserting by key, allocating the next version or serving a changes cursor
+// needs the whole scope, and a scope holds facts, not a backlog.
+func (ix *Index) Memories(key ProjectKey) []*Item {
+	ix.mu.RLock()
+	defer ix.mu.RUnlock()
+	var out []*Item
+	for _, it := range ix.byID {
+		if it.Type != TypeMemory || it.Deleted || ix.projectOf(it) != key {
+			continue
+		}
+		c := cloneItem(it)
+		out = append(out, &c)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		vi, vj := memoryVersion(out[i]), memoryVersion(out[j])
+		if vi != vj {
+			return vi < vj
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out
+}
+
+// memoryVersion is the version of a memory, 0 when it has no block.
+func memoryVersion(it *Item) int64 {
+	if it.Memory == nil {
+		return 0
+	}
+	return it.Memory.Version
+}

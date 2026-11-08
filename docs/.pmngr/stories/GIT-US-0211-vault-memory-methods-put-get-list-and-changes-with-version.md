@@ -2,14 +2,15 @@
 id: GIT-US-0211
 type: story
 title: "Vault memory methods: put, get, list and changes with version and dedup"
-status: todo
+status: in_review
 priority: high
 parent: GIT-EP-0034
 author: claude-code
+assignees: [claude-code]
 labels: [core, agent-ok]
 estimate: 5
 created: 2026-11-08T17:59:20Z
-updated: 2026-11-08T17:59:20Z
+updated: 2026-11-09T01:30:00Z
 links:
   - { kind: blocked_by, target: GIT-US-0210 }
 ---

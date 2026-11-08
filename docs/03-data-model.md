@@ -3362,3 +3362,28 @@ memories reads a `MEM` file as `E-ID-GRAMMAR` and opens it read-only, preserving
 an unknown key; it reads a `kind: knowledge` project as one with no statuses (`E-PROJ-INITIAL`) and
 opens it read-only too. Neither loses data.
 
+### 22.8 The core methods
+
+Every surface that writes memory — the hub's `alchemai.memory.v2` server and its MCP tools — goes
+through four CoreApi methods (`internal/vault/memory.go`):
+
+- **`memory.put`** `{project, items[]}` applies a batch to one scope (`project` is a project key, or
+  the team key for organization memory) and writes every file before one commit. Each entry is
+  `{op: upsert|forget, key, title?, content, labels?, status?: proposed|active, author?, source?,
+  supersedes?[], baseVersion?, rev?}` and gets its own result — `created`, `updated`, `duplicate`,
+  `forgotten` or `rejected` with a code — so one bad entry never fails the batch:
+  - an upsert recomputes `content_hash`; the same content is a `duplicate` that writes nothing, new
+    content takes the next version. A new memory is `proposed` unless `active` is asked for;
+  - `baseVersion` or `rev` that no longer match reject the entry with `stale_revision` and the
+    current version;
+  - `supersedes` moves each named active memory to `superseded` and mirrors the newer id into its
+    `memory.superseded_by`, in the same batch;
+  - a forget moves an active memory to `forgotten` with `valid_to`, and withdraws a proposal to
+    `cancelled`.
+- **`memory.get`** `{id}` or `{project, key}`, and **`memory.list`** `{project, statuses?}`, in version
+  order.
+- **`memory.changes`** `{project, since, limit?}` returns, in version order, every memory above `since`:
+  `active` and `superseded` ones as records, `forgotten` ones as tombstones. Proposals and rejected
+  proposals are never visible and are skipped, and accepting a proposal in the inbox gives it a new
+  version, which is what first shows it. `cursor` is the highest version the page covered.
+

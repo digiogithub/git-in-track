@@ -49,7 +49,7 @@ Two things in today's model stand in the way:
 
   The hub has no personal scope. Personal memory stays local in Pando, and
   `user/*` is `scope_unknown` (ADR-043).
-- **File name**: `<ID>-<slug(key)>.md`.
+- **File name**: `<ID>-<slug>.md`, the slug of the title, like every item.
 
 ### 2. Front matter: a `memory:` block
 

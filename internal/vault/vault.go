@@ -45,14 +45,19 @@ type Vault struct {
 	// mem is base when it is an in-memory file system, nil otherwise. It is what
 	// tells the two modes apart: only an in-memory vault can be replaced
 	// wholesale by "vault.load" or fed file contents by "vault.apply".
-	mem       *core.MemFS
-	fs        *trackingFS
-	projects  []core.ProjectRef
-	team      *core.TeamRef
-	index     *core.Index
-	stores    map[core.ProjectKey]*core.FileStore
-	rootLabel string
-	version   string
+	mem      *core.MemFS
+	fs       *trackingFS
+	projects []core.ProjectRef
+	team     *core.TeamRef
+	index    *core.Index
+	stores   map[core.ProjectKey]*core.FileStore
+	// teamMemory writes the organization memory of the team repository, its
+	// .pmngr/memory/ (ADR-044). It is nil without a team, or when the team key
+	// cannot form memory ids. It is separate from stores on purpose: nothing
+	// else may be created in a team repository's .pmngr/.
+	teamMemory *core.FileStore
+	rootLabel  string
+	version    string
 	// docsFolders are the documentation folders the host declares. Discovery
 	// probes the vault root and its first-level directories on its own; a
 	// folder deeper than that is found only because it is listed here
@@ -433,6 +438,14 @@ func (v *Vault) Dispatch(ctx context.Context, method string, raw []byte) (any, e
 		return v.itemChildren(raw)
 	case "item.create":
 		return v.itemCreate(ctx, raw)
+	case "memory.put":
+		return v.memoryPut(ctx, raw)
+	case "memory.get":
+		return v.memoryGet(raw)
+	case "memory.list":
+		return v.memoryList(raw)
+	case "memory.changes":
+		return v.memoryChanges(raw)
 	case "item.update":
 		return v.itemUpdate(ctx, raw)
 	case "item.move":
@@ -618,6 +631,16 @@ func (v *Vault) rediscover() (bool, error) {
 		// implements or modifies, in the same write (R-REQ-11a (a)).
 		store.DoneHook = v.doneStamp
 		v.stores[p.Key] = store
+	}
+	v.teamMemory = nil
+	if hasTeam && core.ValidProjectKey(core.ProjectKey(team.Key)) {
+		store := core.NewStore(v.fs, team.TeamDirPath, &core.ProjectConfig{
+			Schema: core.SupportedSchema, Key: core.ProjectKey(team.Key), Name: team.Name,
+		})
+		if v.now != nil {
+			store.Clock = core.ClockFunc(v.now)
+		}
+		v.teamMemory = store
 	}
 	return changed, nil
 }
