@@ -527,12 +527,17 @@ func TestSemanticSearchIsScopedAndFresh(t *testing.T) {
 	ana := f.as(t, "ana")
 	ws := f.guard(t, "")
 
-	out, err := callAs(ana, t, ws, "search.semantic", map[string]any{"q": "hidden secret story page"})
+	// One word per query: the pando/rag full-text half matches every word.
+	out, err := callAs(ana, t, ws, "search.semantic", map[string]any{"q": "secret"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "ACME-US-0001") || strings.Contains(out, "WEB") || strings.Contains(out, "Web hidden") {
-		t.Fatalf("search.semantic = %s", out)
+	if !strings.Contains(out, "ACME-US-0001") {
+		t.Fatalf("search.semantic secret = %s", out)
+	}
+	hidden, _ := callAs(ana, t, ws, "search.semantic", map[string]any{"q": "hidden"})
+	if strings.Contains(hidden, "WEB") || strings.Contains(hidden, "Web hidden") {
+		t.Fatalf("search.semantic leaked WEB: %s", hidden)
 	}
 
 	if _, err := callAs(ana, t, ws, "kb.write", map[string]any{"vaultId": "acme", "path": "docs/intro.md",
