@@ -47,10 +47,12 @@ wasm: ## Compile the shared Go core to WebAssembly
 	GOOS=js GOARCH=wasm go build -trimpath -ldflags "-s -w" -o $(WASM_OUT) ./wasm
 	@# The runtime shim must come from the toolchain that produced core.wasm:
 	@# Go 1.24+ ships it under lib/wasm, earlier releases under misc/wasm.
+	@# -f: a toolchain installed read-only hands over a read-only copy, and a
+	@# second `make wasm` must still be able to replace it.
 	@if [ -f "$$(go env GOROOT)/lib/wasm/wasm_exec.js" ]; then \
-	  cp "$$(go env GOROOT)/lib/wasm/wasm_exec.js" $(WASM_EXEC); \
+	  cp -f "$$(go env GOROOT)/lib/wasm/wasm_exec.js" $(WASM_EXEC); \
 	elif [ -f "$$(go env GOROOT)/misc/wasm/wasm_exec.js" ]; then \
-	  cp "$$(go env GOROOT)/misc/wasm/wasm_exec.js" $(WASM_EXEC); \
+	  cp -f "$$(go env GOROOT)/misc/wasm/wasm_exec.js" $(WASM_EXEC); \
 	else \
 	  echo "wasm_exec.js not found in $$(go env GOROOT)" >&2; exit 1; \
 	fi
