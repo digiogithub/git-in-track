@@ -11,6 +11,7 @@ import (
 	"github.com/digiogithub/git-in-track/internal/config"
 	"github.com/digiogithub/git-in-track/internal/core"
 	"github.com/digiogithub/git-in-track/internal/gitops"
+	"github.com/digiogithub/git-in-track/internal/principal"
 	"github.com/digiogithub/git-in-track/internal/vault"
 )
 
@@ -164,6 +165,9 @@ func (g *gitState) newCommitter(tpl *gitops.Template, settings config.Git, publi
 		Template: tpl,
 		Sign:     settings.SignCommits,
 		Backend:  g.backendFor,
+		// The configured identity commits; the principal, when there is one,
+		// authors. Without a principal both are this identity, as before.
+		Committer: gitops.Identity{Name: settings.AuthorName, Email: settings.AuthorEmail},
 		OnResult: func(out gitops.Outcome) {
 			if publish == nil {
 				return
@@ -212,7 +216,26 @@ func (g *gitState) enqueue(ctx context.Context, change gitops.Change) {
 		return
 	}
 	change.Fields.Tool = g.tool
+	attribute(ctx, &change)
 	committer.Enqueue(ctx, change)
+}
+
+// attribute records the authenticated principal of the request, if any, as the
+// author of a change: its name and email become the commit author, its handle
+// the {{.User}} of the message, and an agent's name and the person it acts for
+// the Agent: and On-Behalf-Of: trailers. Without a principal — the companion —
+// the change keeps the git identity of the machine.
+func attribute(ctx context.Context, change *gitops.Change) {
+	p, ok := principal.From(ctx)
+	if !ok {
+		return
+	}
+	change.Author = gitops.Identity{Name: p.Name, Email: p.Email}
+	change.Fields.User = p.Handle
+	if p.Kind == principal.Agent {
+		change.Fields.Agent = p.Agent
+		change.Fields.OnBehalfOf = p.OnBehalfOf
+	}
 }
 
 // flush commits everything pending right now.

@@ -168,9 +168,13 @@ func (b *systemBackend) Commit(ctx context.Context, req CommitRequest) (CommitRe
 		args = append(args, "--only", "--")
 		args = append(args, paths...)
 	}
+	committer := author
+	if req.Committer.Valid() {
+		committer = req.Committer
+	}
 	env := append(b.env(),
 		"GIT_AUTHOR_NAME="+author.Name, "GIT_AUTHOR_EMAIL="+author.Email,
-		"GIT_COMMITTER_NAME="+author.Name, "GIT_COMMITTER_EMAIL="+author.Email,
+		"GIT_COMMITTER_NAME="+committer.Name, "GIT_COMMITTER_EMAIL="+committer.Email,
 	)
 	if _, err := b.runWith(ctx, env, req.Message.String(), args...); err != nil {
 		return CommitResult{}, b.commitError(ctx, err, len(paths))

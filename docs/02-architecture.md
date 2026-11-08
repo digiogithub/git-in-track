@@ -1040,9 +1040,24 @@ forge (GitHub, Gitea…) ⇄ deploy key ⇄ <dataDir>/repos/<id>  (one clone per
   `pullInterval`, and two seconds after commit-on-save commits (through
   `Options.OnCommit`), so a write reaches the forge without waiting for the
   timer. The file watcher reindexes what a pull brings in.
-- **Not yet.** Until `GIT-US-0208` the hub has the companion's single bearer
-  token and commits with the configured identity. Per-principal
-  authentication, grants, memory, semantic search and OAuth follow in the
+- **Authentication** (`GIT-US-0208`). With `auth.principalsFile` set, every
+  request needs a principal's token, and the single `token` is ignored:
+  - the principals file lists each person or agent (`handle`, `name`,
+    `email`, `kind`, and for an agent `agent` and `onBehalfOf`) with the
+    sha256 hashes of its tokens. It is reloaded when it changes, so revoking a
+    token is an edit;
+  - `gintrack-hub token new` prints a fresh `gth_…` token once, on stdout, with
+    the hash line to paste. The hub never stores or writes a token;
+  - the token travels in the `Authorization` header. The query string and the
+    WebSocket subprotocol are accepted on a WebSocket upgrade only;
+  - every refusal is the same 401. The reason (unknown token, disabled
+    principal) is logged, never the token.
+- **Authorship.** The principal resolved for a request travels in its context
+  (`internal/principal`) down to the one place every write is committed
+  from, `gitState.enqueue`: the principal is the author, the hub's `git`
+  identity the committer, and an agent adds `Agent:` and `On-Behalf-Of:`
+  trailers. This holds for REST and for MCP tools over HTTP alike.
+- **Not yet.** Grants, memory, semantic search and OAuth follow in the
   stories of `GIT-EP-0034`.
 
 ---

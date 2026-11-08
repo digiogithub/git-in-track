@@ -36,6 +36,7 @@ import (
 
 	"github.com/digiogithub/git-in-track/internal/config"
 	"github.com/digiogithub/git-in-track/internal/pando/supervisor"
+	"github.com/digiogithub/git-in-track/internal/principal"
 )
 
 // DefaultPort is the loopback port the companion listens on.
@@ -157,6 +158,13 @@ type Options struct {
 	// committer's goroutine, so it must return quickly; gintrack-hub uses it to
 	// schedule a push (ADR-043). The companion leaves it nil.
 	OnCommit func(repo, sha string)
+	// Authenticate, when set, replaces the single Token: it resolves the token a
+	// request presents to the principal it runs as, which then travels in the
+	// request context down to the commit author (ADR-043, GIT-US-0208). Its
+	// error is logged and never sent: every refusal is the same 401, and
+	// neither the error nor the log may quote the token. Nil keeps the
+	// companion's single-token behaviour.
+	Authenticate func(token string) (principal.Principal, error)
 
 	// The managed-Pando seams. Production leaves them nil; a test replaces them
 	// so that no process is spawned.
@@ -253,13 +261,13 @@ func New(opts Options) (*Server, error) {
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
 	}
-	if opts.Token == "" && !isLoopback(opts.Bind) {
+	if opts.Token == "" && opts.Authenticate == nil && !isLoopback(opts.Bind) {
 		return nil, fmt.Errorf("refusing to serve %s without a token: authentication may only be disabled on loopback", opts.Bind)
 	}
 	// A tunnel keeps the bind on loopback, so the check above never fires for
 	// it: without this one, autostarting a tunnel on a server with no token
 	// would publish the repositories, writes included, to anyone with the URL.
-	if opts.Tunnel.Enabled && opts.Token == "" {
+	if opts.Tunnel.Enabled && opts.Token == "" && opts.Authenticate == nil {
 		return nil, errTunnelNeedsToken
 	}
 	if err := validateTunnelAllowList(opts.Tunnel.AllowedEmails); err != nil {
@@ -602,6 +610,10 @@ func (s *Server) uiState() string {
 // bearerAuth guards every route but the health probe.
 func (s *Server) bearerAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.opts.Authenticate != nil {
+			s.principalAuth(next, w, r)
+			return
+		}
 		if s.opts.Token == "" {
 			// Authentication is disabled; New has already refused this on a
 			// non-loopback bind.
@@ -616,6 +628,46 @@ func (s *Server) bearerAuth(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// principalAuth resolves the request's token to a principal and runs next
+// with it in the context. The token comes from the Authorization header; the
+// query string and the WebSocket subprotocol, which a browser needs because it
+// cannot set headers on a WebSocket, are accepted on an upgrade only, so a
+// token never has to travel in the URL of an ordinary request. A refusal is
+// one 401 whatever the reason; the reason is logged without the token.
+func (s *Server) principalAuth(next http.Handler, w http.ResponseWriter, r *http.Request) {
+	token := headerToken(r)
+	if token == "" && isUpgrade(r) {
+		token = r.URL.Query().Get("token")
+		if token == "" {
+			token = subprotocolToken(r)
+		}
+	}
+	reason := "no token presented"
+	if token != "" {
+		p, err := s.opts.Authenticate(token)
+		if err == nil && p.Valid() {
+			next.ServeHTTP(w, r.WithContext(principal.With(r.Context(), p)))
+			return
+		}
+		reason = "the token was refused"
+		if err != nil {
+			reason = err.Error()
+		}
+	}
+	s.log.Info("request refused", "path", r.URL.Path, "reason", reason)
+	w.Header().Set("WWW-Authenticate", `Bearer realm="gintrack"`)
+	writeProblem(w, r, http.StatusUnauthorized, "unauthorized", "Unauthorized",
+		"A valid bearer token is required.")
+}
+
+// headerToken is the bearer token of the Authorization header, or "".
+func headerToken(r *http.Request) string {
+	if token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok {
+		return strings.TrimSpace(token)
+	}
+	return ""
 }
 
 // presentedToken extracts the token from the Authorization header or, for

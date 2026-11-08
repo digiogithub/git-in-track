@@ -188,6 +188,11 @@ type CommitRequest struct {
 	// Author overrides the identity resolved from the git configuration. Both
 	// halves must be set for the override to apply.
 	Author Identity
+	// Committer, when valid, is recorded as the committer while Author stays
+	// the author: gintrack-hub commits as itself on behalf of a principal.
+	// The zero value commits as the author. The jj backend has no separate
+	// committer and ignores it.
+	Committer Identity
 	// Sign asks for a signed commit. It is honored by the system backend only
 	// and reported as unsupported by go-git.
 	Sign bool

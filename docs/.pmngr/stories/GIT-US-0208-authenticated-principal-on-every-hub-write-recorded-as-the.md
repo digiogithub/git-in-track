@@ -2,14 +2,15 @@
 id: GIT-US-0208
 type: story
 title: Authenticated principal on every hub write, recorded as the commit author
-status: todo
+status: in_review
 priority: high
 parent: GIT-EP-0034
 author: claude-code
+assignees: [claude-code]
 labels: [server, security, git, agent-ok]
 estimate: 5
 created: 2026-11-08T17:59:20Z
-updated: 2026-11-08T17:59:20Z
+updated: 2026-11-09T00:30:00Z
 links:
   - { kind: blocked_by, target: GIT-US-0207 }
 ---

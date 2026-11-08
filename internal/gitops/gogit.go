@@ -163,9 +163,13 @@ func (b *goGitBackend) Commit(ctx context.Context, req CommitRequest) (CommitRes
 
 	when := b.opts.clock()()
 	sig := &object.Signature{Name: author.Name, Email: author.Email, When: when}
+	committer := sig
+	if req.Committer.Valid() {
+		committer = &object.Signature{Name: req.Committer.Name, Email: req.Committer.Email, When: when}
+	}
 	hash, err := wt.Commit(req.Message.String(), &git.CommitOptions{
 		Author:            sig,
-		Committer:         sig,
+		Committer:         committer,
 		AllowEmptyCommits: req.AllowEmpty,
 	})
 	if err != nil {
