@@ -183,9 +183,10 @@ func (g *Guard) Dispatch(ctx context.Context, method string, raw []byte) (any, e
 	}
 
 	need := r.perm
-	if method == "memory.put" && !grants.Allows(projectParam(params), false, PermWrite) {
-		need = PermPropose
-	}
+	// memory.put needs only propose; whoever may also write it records active
+	// memories, and everyone else's are forced to proposals below.
+	memoryKey := projectParam(params)
+	canWriteMemory := grants.Allows(memoryKey, g.isTeam(memoryKey), PermWrite)
 	switch r.scope {
 	case scopeNone:
 	case scopeFanOut:
@@ -209,12 +210,12 @@ func (g *Guard) Dispatch(ctx context.Context, method string, raw []byte) (any, e
 		}
 	}
 
-	if method == "memory.put" && need == PermPropose {
+	if method == "memory.put" && !canWriteMemory {
 		forceProposals(params)
 	}
 	if method == "memory.put" {
 		for _, it := range itemsOf(params) {
-			if op, _ := it["op"].(string); op == "forget" && !grants.Allows(projectParam(params), false, PermDelete) {
+			if op, _ := it["op"].(string); op == "forget" && !grants.Allows(memoryKey, g.isTeam(memoryKey), PermDelete) {
 				return nil, g.deny(method, p.Handle, PermDelete, "forgetting a memory needs delete")
 			}
 		}

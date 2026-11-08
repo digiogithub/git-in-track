@@ -31,6 +31,10 @@ because a commit list cannot express them.
   fields, and answers out-of-scope reads with `not_found`. A route allowlist keeps operator surfaces
   to admins and post-filters `/repos` and `/workspaces`, and the event stream delivers only what the
   connection may read and closes when its token is revoked.
+- **gintrack-hub MCP tools** (`GIT-US-0212`, docs/08 §4.x). `write_kb_page` (never overwrites
+  without a `rev`), `add_memory`, `propose_memory`, `update_memory`, `forget_memory`,
+  `accept_memory`, `reject_memory`, `search_memory` and `project_context`, on the hub's `/mcp` only.
+  Their writes are committed with the session's principal as author.
 - **Memory items** (`GIT-US-0210`, ADR-044 Proposed, docs/03 §22). A new item type, `memory`, with ids
   `<KEY>-MEM-<NNNN>` under `.pmngr/memory/` of a project, or of a team repository for organization
   memory. Its fields live in a `memory:` block (`key`, `version`, `content_hash`, `local_id`,

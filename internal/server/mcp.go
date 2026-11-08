@@ -8,6 +8,8 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/digiogithub/git-in-track/internal/config"
+	"github.com/digiogithub/git-in-track/internal/core"
+	"github.com/digiogithub/git-in-track/internal/gitops"
 	"github.com/digiogithub/git-in-track/internal/mcp"
 	"github.com/digiogithub/git-in-track/internal/vault"
 )
@@ -83,6 +85,7 @@ func (s *Server) newMCPServer(opts Options, allowWrite bool) *mcp.Server {
 		Version:    opts.Version,
 		Agent:      opts.MCPAgent,
 		AllowWrite: allowWrite,
+		HubTools:   opts.MCPHubTools,
 		Roots:      roots,
 		AfterWrite: s.publishAgentWrite,
 		Logger:     s.log,
@@ -264,6 +267,10 @@ func (s *Server) publishAgentWrite(ctx context.Context, ev mcp.WriteEvent) {
 		s.publishAgentItemEvent(moved, ev.Op)
 		return
 	}
+	if ev.Project != "" && (ev.Method == "memory.put" || ev.Method == "kb.write") {
+		s.publishScopedWrite(ctx, ev)
+		return
+	}
 	m, found := s.repos.forItem(ev.ItemID)
 	if !found {
 		return
@@ -284,6 +291,46 @@ func (s *Server) publishAgentWrite(ctx context.Context, ev mcp.WriteEvent) {
 	s.publishIndexUpdated(m, counts, "")
 	m.touch(s.now())
 	s.commitItemWrite(ctx, m, ev.Result, ev.ItemID, ev.Op)
+}
+
+// publishScopedWrite commits a write a hub tool made that names a project
+// rather than an item: a knowledge-base page, or a memory batch, whose write
+// set covers every file of the batch.
+func (s *Server) publishScopedWrite(ctx context.Context, ev mcp.WriteEvent) {
+	mounted, ok := s.repos.workspace().MountForProject(core.ProjectKey(ev.Project))
+	if !ok {
+		return
+	}
+	m, found := s.repos.lookup(mounted.ID)
+	if !found {
+		return
+	}
+	var writes vault.WriteSet
+	fields := gitops.Fields{ProjectKey: ev.Project, Action: gitops.ActionUpdate}
+	switch result := ev.Result.(type) {
+	case vault.MemoryPutResult:
+		writes = result.Writes
+		fields.Type, fields.ItemID, fields.Title = "memory", ev.ItemID, ev.ItemID
+	default:
+		set, ok := writesOf(ev.Result)
+		if !ok {
+			return
+		}
+		writes = set
+		fields.Type = "page"
+		if len(writes.Written) > 0 {
+			fields.ItemID, fields.Title = writes.Written[0].Path, writes.Written[0].Path
+		}
+	}
+	paths := pathsOf(writes)
+	if len(paths) == 0 {
+		return
+	}
+	s.publishIndexUpdated(m, indexCounts{Updated: len(paths)}, "")
+	m.touch(s.now())
+	if s.git != nil && s.git.enabled() {
+		s.git.enqueue(ctx, gitops.Change{Repo: m.id, Paths: paths, Fields: fields})
+	}
 }
 
 // publishAgentItemEvent announces the item half of a card move an agent made.

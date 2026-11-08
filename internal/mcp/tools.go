@@ -32,6 +32,7 @@ func registerTools(s *Server) {
 	registerKBTools(s)
 	registerSearchTools(s)
 	registerYouTrackTools(s)
+	registerHubTools(s)
 }
 
 // A toolDef is the framing of one tool.

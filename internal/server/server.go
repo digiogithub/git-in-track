@@ -131,6 +131,9 @@ type Options struct {
 	// MCPAgent is the name agent-authored comments are attributed to. Empty
 	// means the default the MCP package picks.
 	MCPAgent string
+	// MCPHubTools adds the gintrack-hub tools to the MCP endpoint
+	// (GIT-US-0212). The companion leaves it off.
+	MCPHubTools bool
 
 	// Agent mounts the AG-UI proxy at /api/v1/agent (`serve --agent` or
 	// `agent.enabled`). Without it the routes answer `not_implemented`.
