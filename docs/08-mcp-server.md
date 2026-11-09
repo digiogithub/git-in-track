@@ -1372,6 +1372,12 @@ as author, and a principal that may only propose gets proposals.
 - **`project_context`** `{project, budget?}`: the active memories and the knowledge-base page
   titles of a project, and the number of proposals waiting, inside an approximate token budget.
 
+Connecting a claude.ai Project to a hub with `oauth:` configured: add a custom connector whose URL
+is `<issuer>/mcp`. claude.ai discovers the authorization server from the 401 challenge, registers
+itself, and sends the person through Google sign-in and the hub's consent page. The person needs an
+`oidc.email` in the hub's principals file, and grants for the projects the Project should reach
+(docs/02 §12.2).
+
 ## 5. Resources — *planned*
 
 Resources let clients attach context without a tool call and let them subscribe to changes.

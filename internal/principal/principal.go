@@ -40,6 +40,13 @@ type Principal struct {
 	// OnBehalfOf is the handle of the person an agent acts for, written as the
 	// `On-Behalf-Of:` trailer. Optional.
 	OnBehalfOf string
+	// Audience, when set, is the only URL path prefix the credential is valid
+	// for: an OAuth token issued for the MCP endpoint (RFC 8707) is refused
+	// anywhere else.
+	Audience string
+	// ReadOnly marks a credential granted read scopes only: its writes are
+	// refused whatever the principal's grants allow.
+	ReadOnly bool
 }
 
 var handleRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)

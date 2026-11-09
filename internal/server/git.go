@@ -232,8 +232,11 @@ func attribute(ctx context.Context, change *gitops.Change) {
 	}
 	change.Author = gitops.Identity{Name: p.Name, Email: p.Email}
 	change.Fields.User = p.Handle
+	// An agent principal names itself; a person writing through an OAuth
+	// client (claude.ai) carries the client's name. Either way it is the
+	// Agent: trailer.
+	change.Fields.Agent = p.Agent
 	if p.Kind == principal.Agent {
-		change.Fields.Agent = p.Agent
 		change.Fields.OnBehalfOf = p.OnBehalfOf
 	}
 }

@@ -161,6 +161,11 @@ func (g *Guard) Dispatch(ctx context.Context, method string, raw []byte) (any, e
 		return nil, g.deny(method, p.Handle, PermAdmin, "the method has no policy")
 	}
 	grants := g.grants(p.Handle)
+	if p.ReadOnly && r.perm != PermRead {
+		// A credential granted read scopes only (an OAuth token without
+		// mcp:write) never writes, whatever the grants allow.
+		return nil, g.deny(method, p.Handle, PermWrite, "the credential is read-only")
+	}
 	if r.scope == scopeDenied {
 		return nil, g.deny(method, p.Handle, PermAdmin, "not available through the hub")
 	}
