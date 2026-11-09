@@ -45,8 +45,9 @@ because a commit list cannot express them.
   range instead of running a file watcher: the vault index, with the usual events, and a semantic
   store per repository whose watermark is the last commit applied, so a restart resumes where it
   stopped. `search.semantic` and the semantic half of `GET /search` answer from it, narrowed to the
-  readable projects, and drop any hit whose file changed since it was indexed. The store interface
-  follows `pando/rag`; the hub ships an in-memory full-text store until that module is tagged.
+  readable projects, and drop any hit whose file changed since it was indexed. The store is
+  `github.com/digiogithub/pando/rag` v0.1.1, one SQLite index per repository in the cache, with
+  `modernc.org/sqlite` (pure Go) as its driver.
 - **gintrack-hub MCP tools** (`GIT-US-0212`, docs/08 §4.x). `write_kb_page` (never overwrites
   without a `rev`), `add_memory`, `propose_memory`, `update_memory`, `forget_memory`,
   `accept_memory`, `reject_memory`, `search_memory` and `project_context`, on the hub's `/mcp` only.

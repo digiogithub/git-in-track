@@ -527,12 +527,21 @@ func TestSemanticSearchIsScopedAndFresh(t *testing.T) {
 	ana := f.as(t, "ana")
 	ws := f.guard(t, "")
 
+	// A multi-word query matches any of its words (pando/rag v0.1.1), so it
+	// reaches the visible story and would reach WEB's pages if scoping leaked.
 	out, err := callAs(ana, t, ws, "search.semantic", map[string]any{"q": "hidden secret story page"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "ACME-US-0001") || strings.Contains(out, "WEB") || strings.Contains(out, "Web hidden") {
-		t.Fatalf("search.semantic = %s", out)
+	if !strings.Contains(out, "ACME-US-0001") {
+		t.Fatalf("search.semantic missed the visible story: %s", out)
+	}
+	// ACME's own intro page links [[WEB:web]], so the bare key is not a leak;
+	// WEB's ids, titles, project and vault are.
+	for _, leak := range []string{"WEB-US-0001", "Web hidden", `"project":"WEB"`, `"vaultId":"web"`} {
+		if strings.Contains(out, leak) {
+			t.Fatalf("search.semantic leaked %s: %s", leak, out)
+		}
 	}
 
 	if _, err := callAs(ana, t, ws, "kb.write", map[string]any{"vaultId": "acme", "path": "docs/intro.md",

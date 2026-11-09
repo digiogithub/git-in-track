@@ -40,8 +40,8 @@ type Deps struct {
 	// RevalidateEvery is how often an event stream re-checks its token; zero
 	// means the server default. Tests shorten it.
 	RevalidateEvery time.Duration
-	// OpenStore opens the semantic index of a repository. Nil uses the
-	// in-memory store until the pando/rag module is tagged.
+	// OpenStore opens the semantic index of a repository. Nil uses pando/rag
+	// in <dataDir>/cache/rag/; tests may pass rag.NewMemoryStore.
 	OpenStore func(rag.Repo) (rag.Store, error)
 	// OAuthClient is the HTTP client the OAuth server reaches Google with;
 	// tests point it at a fake provider. Nil is http.DefaultClient.
@@ -79,7 +79,11 @@ func New(ctx context.Context, cfg *Config, deps Deps) (*Hub, error) {
 	opts.RevalidateEvery = deps.RevalidateEvery
 	h.indexer = &rag.Indexer{
 		Git: deps.Git, Log: log,
-		Open: func(rag.Repo) (rag.Store, error) { return rag.NewMemoryStore(), nil },
+		// One pando/rag index per repository, in the cache: derived data a
+		// deletion only costs a reindex from HEAD.
+		Open: func(r rag.Repo) (rag.Store, error) {
+			return rag.OpenPando(ctx, filepath.Join(cfg.CacheDir(), "rag", r.ID+".db"))
+		},
 		Apply: func(ctx context.Context, repo string, events []core.FileEvent) error {
 			return h.srv.ApplyFileEvents(ctx, repo, events)
 		},

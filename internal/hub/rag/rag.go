@@ -3,10 +3,8 @@
 // file watcher, and a vault.SemanticSearcher that answers over the stores and
 // resolves every hit back to the live document.
 //
-// Store is shaped after the pando/rag library (its kb.KBStore), so the
-// adapter that wires the real library in is a matter of type conversion. Until
-// that module is tagged, the hub ships with NewMemoryStore, a dependency-free
-// full-text store with the same contract.
+// The hub's store is PandoStore, over the pando/rag library; MemoryStore is
+// a dependency-free implementation of the same contract for tests.
 package rag
 
 import (

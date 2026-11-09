@@ -1050,9 +1050,9 @@ forge (GitHub, Gitea…) ⇄ deploy key ⇄ <dataDir>/repos/<id>  (one clone per
   repository's store under the documentation folders of the projects the
   query admits, which the Guard has already narrowed to the readable ones.
   Every hit is resolved against the live file: a document changed since it
-  was indexed is dropped. The store is `pando/rag` behind `rag.Store`; until
-  that module is tagged, the hub ships an in-memory full-text store with the
-  same contract.
+  was indexed is dropped. The store is `pando/rag` v0.1.1 behind `rag.Store`,
+  one SQLite file per repository under `<dataDir>/cache/rag/` (pure-Go
+  driver, FTS5). It is derived data: deleting it costs a reindex from HEAD.
 - **Authentication** (`GIT-US-0208`). With `auth.principalsFile` set, every
   request needs a principal's token, and the single `token` is ignored:
   - the principals file lists each person or agent (`handle`, `name`,
