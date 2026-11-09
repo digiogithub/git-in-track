@@ -27,6 +27,36 @@ import (
 // non-destructive on failure, so an interrupted sync leaves a tree the user can
 // carry on from.
 
+// SyncNow runs the sync pipeline over every mounted git repository with the
+// configured strategy and push setting, exactly as POST /api/v1/sync does with
+// an empty body: it commits what commit-on-save batched, then fetches,
+// integrates and pushes each repository, and refreshes the index snapshots when
+// something was pulled. gintrack-hub calls it on a timer and after commits
+// (ADR-043); the companion only syncs when the user asks.
+func (s *Server) SyncNow(ctx context.Context) []gitops.SyncResult {
+	settings, _ := s.git.current()
+	strategy := gitops.Strategy(settings.PullStrategy)
+	if strategy == "" || !strategy.Valid() {
+		strategy = gitops.StrategyRebase
+	}
+	op := "sync-" + strconv.FormatUint(syncCounter.Add(1), 10)
+	s.git.flush(ctx)
+	var results []gitops.SyncResult
+	for _, m := range s.repos.all() {
+		if _, ok := s.git.backendFor(m.id); !ok {
+			continue
+		}
+		results = append(results, s.syncOne(ctx, op, m, gitops.SyncOptions{
+			Repo:           m.id,
+			Strategy:       strategy,
+			Push:           settings.PushOnSync,
+			MaxPushRetries: settings.MaxPushRetries,
+		}))
+	}
+	s.refreshSnapshotsAfterSync(ctx, results)
+	return results
+}
+
 // syncRepoStatus is one repository in GET /api/v1/sync/status.
 type syncRepoStatus struct {
 	Repo string `json:"repo"`
