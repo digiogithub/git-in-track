@@ -2,14 +2,14 @@
 id: GIT-US-0217
 type: story
 title: jj test fixtures push new bookmarks on jj releases without --allow-new
-status: in_review
+status: done
 priority: medium
 author: claude-code
 assignees: [claude-code]
 labels: [git, ci, agent-ok]
 estimate: 1
 created: 2026-11-08T19:10:00Z
-updated: 2026-11-08T19:10:00Z
+updated: 2026-11-09T13:00:00Z
 ---
 
 ## Description
@@ -26,9 +26,9 @@ never passes `--allow-new`.
 
 ## Acceptance Criteria
 
-- [ ] The fixtures push a new bookmark with `--allow-new` on releases that need it and without it on releases that reject it, detected from jj's own answer rather than from a version string.
-- [ ] `make test-go` passes with jj 0.43 installed and still skips cleanly without jj.
-- [ ] No change to production code in `internal/gitops`.
+- [x] The fixtures push a new bookmark with `--allow-new` on releases that need it and without it on releases that reject it, detected from jj's own answer rather than from a version string.
+- [x] `make test-go` passes with jj 0.43 installed and still skips cleanly without jj.
+- [x] No change to production code in `internal/gitops`.
 
 ## Notes
 

@@ -2,7 +2,7 @@
 id: GIT-US-0215
 type: story
 title: OAuth 2.1 authorization for the hub MCP endpoint
-status: in_review
+status: done
 priority: high
 parent: GIT-EP-0034
 author: claude-code
@@ -10,7 +10,7 @@ assignees: [claude-code]
 labels: [server, security, mcp, agent-ok]
 estimate: 8
 created: 2026-11-08T17:59:20Z
-updated: 2026-11-09T07:00:00Z
+updated: 2026-11-09T13:00:00Z
 links:
   - { kind: blocked_by, target: GIT-US-0208 }
 ---
@@ -21,10 +21,10 @@ Make the hub an OAuth 2.1 authorization server for `/mcp` as the MCP specificati
 
 ## Acceptance Criteria
 
-- [ ] Design approved by the supervisor before implementation.
-- [ ] A claude.ai custom connector completes the flow and lists the hub tools.
-- [ ] Tokens map to the same `Principal` and grants as agent tokens.
-- [ ] Revoked or expired tokens are refused; secrets are never logged or committed.
+- [x] Design approved by the supervisor before implementation.
+- [x] A claude.ai custom connector completes the flow and lists the hub tools.
+- [x] Tokens map to the same `Principal` and grants as agent tokens.
+- [x] Revoked or expired tokens are refused; secrets are never logged or committed.
 
 ## Notes
 

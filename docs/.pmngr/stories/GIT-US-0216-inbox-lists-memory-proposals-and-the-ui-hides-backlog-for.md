@@ -2,7 +2,7 @@
 id: GIT-US-0216
 type: story
 title: Inbox lists memory proposals and the UI hides backlog for knowledge projects
-status: in_review
+status: done
 priority: medium
 parent: GIT-EP-0034
 author: claude-code
@@ -10,7 +10,7 @@ assignees: [claude-code]
 labels: [web, agent-ok]
 estimate: 3
 created: 2026-11-08T17:59:20Z
-updated: 2026-11-09T08:00:00Z
+updated: 2026-11-09T13:00:00Z
 links:
   - { kind: blocked_by, target: GIT-US-0210 }
 ---
@@ -21,9 +21,9 @@ Reuse the existing inbox (`web/src/features/inbox`) to review memory proposals (
 
 ## Acceptance Criteria
 
-- [ ] A proposed memory shows in the inbox with its source and author; accepting moves it to `active`.
-- [ ] Knowledge projects show the KB and memory only.
-- [ ] Vitest coverage for both.
+- [x] A proposed memory shows in the inbox with its source and author; accepting moves it to `active`.
+- [x] Knowledge projects show the KB and memory only.
+- [x] Vitest coverage for both.
 
 ## Notes
 

@@ -2,7 +2,7 @@
 id: GIT-US-0209
 type: story
 title: Grant-checking wrapper around the vault Dispatcher for the hub
-status: in_review
+status: done
 priority: high
 parent: GIT-EP-0034
 author: claude-code
@@ -10,7 +10,7 @@ assignees: [claude-code]
 labels: [server, security, agent-ok]
 estimate: 5
 created: 2026-11-08T17:59:20Z
-updated: 2026-11-09T03:00:00Z
+updated: 2026-11-09T13:00:00Z
 links:
   - { kind: blocked_by, target: GIT-US-0208 }
 ---
@@ -21,11 +21,11 @@ One authorisation point shared by REST, MCP and the memory protocol (ADR-043 §4
 
 ## Acceptance Criteria
 
-- [ ] Design approved by the supervisor before implementation.
-- [ ] Every Dispatcher method is classified (read/write/admin) and a test walks all of them with a principal holding no grant: none succeeds or leaks a row.
-- [ ] Search, semantic search, KPIs and graph results are restricted to granted projects.
-- [ ] `propose` without `write` can only create memory in `proposed`.
-- [ ] Unknown methods are denied by default.
+- [x] Design approved by the supervisor before implementation.
+- [x] Every Dispatcher method is classified (read/write/admin) and a test walks all of them with a principal holding no grant: none succeeds or leaks a row.
+- [x] Search, semantic search, KPIs and graph results are restricted to granted projects.
+- [x] `propose` without `write` can only create memory in `proposed`.
+- [x] Unknown methods are denied by default.
 
 ## Notes
 
