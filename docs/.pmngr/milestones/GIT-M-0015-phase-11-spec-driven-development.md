@@ -2,10 +2,12 @@
 id: GIT-M-0015
 type: milestone
 title: Phase 11 — Spec-driven development
-status: backlog
+status: done
 author: claude
 created: 2026-09-24T12:07:44Z
-updated: 2026-09-24T12:07:44Z
+updated: 2026-11-05T19:36:57Z
+started: 2026-11-05T19:36:49Z
+closed: 2026-11-05T19:36:57Z
 links:
   - { kind: relates_to, target: GIT-T-0238 }
 ---
@@ -20,12 +22,12 @@ Design and decisions: [[research/2026-09-24-spec-driven-development-overview]] (
 
 ## Acceptance Criteria
 
-- [ ] The impact report for a typical PR is ≤ 1.5k tokens and at least 10× cheaper than reading the relevant spec folder (measured in the dogfood epic).
-- [ ] Impact tiers 1 and 2 are deterministic: the same diff gives the same result, with or without an LLM.
-- [ ] Every requirement shows one of `untested`, `passing`, `failing` or `suspect` in the CLI, MCP and web (including the coverage matrix).
-- [ ] `make wasm` passes; browser-only mode keeps authoring and lint, while impact and ingest answer `unavailable`.
-- [ ] `gintrack spec impact --since <ref> --fail-on failing,suspect` runs as a PR check.
-- [ ] Every epic of this milestone is done.
+- [x] The impact report for a typical PR is ≤ 1.5k tokens and at least 10× cheaper than reading the relevant spec folder (measured in the dogfood epic).
+- [x] Impact tiers 1 and 2 are deterministic: the same diff gives the same result, with or without an LLM.
+- [x] Every requirement shows one of `untested`, `passing`, `failing` or `suspect` in the CLI, MCP and web (including the coverage matrix).
+- [x] `make wasm` passes; browser-only mode keeps authoring and lint, while impact and ingest answer `unavailable`.
+- [x] `gintrack spec impact --since <ref> --fail-on failing,suspect` runs as a PR check.
+- [x] Every epic of this milestone is done.
 
 ## Notes
 
