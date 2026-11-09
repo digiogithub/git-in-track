@@ -76,6 +76,8 @@ Every ADR uses the same sections:
 | [ADR-040](ADR-040-gintrack-update-verified-self-update.md) | `gintrack update` is a stdlib self-update, verified against `checksums.txt` | Accepted | Post-1.0 |
 | [ADR-041](ADR-041-protected-quick-tunnels-put-otp-in-front-of-the-token.md) | Protected quick tunnels put Cloudflare Access OTP in front of the token | Accepted | Post-1.0 |
 | [ADR-042](ADR-042-render-mermaid-diagrams-with-pele.md) | Render Mermaid diagrams with Pele instead of mermaid | Accepted | Post-1.0 |
+| [ADR-043](ADR-043-gintrack-hub-optional-self-hosted-multi-user-server.md) | gintrack hub: an optional self-hosted multi-user server built from the same core | Proposed | Post-1.0 |
+| [ADR-044](ADR-044-memory-items-and-knowledge-only-projects.md) | Memory is an item type, and a project may be knowledge-only | Proposed | Post-1.0 |
 
 ## Related documents
 
