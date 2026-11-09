@@ -6,11 +6,11 @@
   "$defs": {
     "id": {
       "type": "string",
-      "pattern": "^[A-Z][A-Z0-9]{1,9}-(EP|US|T|M|SP)-[0-9]{4,}$"
+      "pattern": "^[A-Z][A-Z0-9]{1,9}-(EP|US|T|M|SP|MEM)-[0-9]{4,}$"
     },
     "qualifiedId": {
       "type": "string",
-      "pattern": "^([A-Z][A-Z0-9]{1,9}/)?[A-Z][A-Z0-9]{1,9}-(EP|US|T|M|SP)-[0-9]{4,}$"
+      "pattern": "^([A-Z][A-Z0-9]{1,9}/)?[A-Z][A-Z0-9]{1,9}-(EP|US|T|M|SP|MEM)-[0-9]{4,}$"
     },
     "reqRef": {
       "type": "string",
@@ -149,6 +149,61 @@
         },
         "received": {
           "$ref": "#/$defs/timestamp"
+        }
+      }
+    },
+    "memory": {
+      "type": "object",
+      "description": "The memory block of a memory item (docs/03-data-model.md section 23, ADR-044). Unknown keys are preserved (R-FMT-6).",
+      "required": [
+        "key",
+        "version"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "key": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._/-]{0,127}$"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "local_id": {
+          "type": "string",
+          "pattern": "^(project|org)/[^/]+/[a-z0-9][a-z0-9._/-]{0,127}$"
+        },
+        "valid_from": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "valid_to": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "superseded_by": {
+          "$ref": "#/$defs/id",
+          "description": "Computed from the supersedes link of the newer memory; never hand-written."
+        },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "agent",
+                "human",
+                "conversation",
+                "document",
+                "external"
+              ]
+            },
+            "ref": {
+              "type": "string"
+            }
+          }
         }
       }
     },

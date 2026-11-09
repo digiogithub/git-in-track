@@ -17,18 +17,20 @@ func (k ProjectKey) String() string { return string(k) }
 // TypeCode is the two-letter (or one-letter) code embedded in an item id.
 type TypeCode string
 
-// The five type codes of the id grammar (R-ID-1). SP is the spec type of
-// ADR-037.
+// The six type codes of the id grammar (R-ID-1). SP is the spec type of
+// ADR-037 and MEM the memory type of ADR-044.
 const (
 	CodeEpic      TypeCode = "EP"
 	CodeStory     TypeCode = "US"
 	CodeTask      TypeCode = "T"
 	CodeMilestone TypeCode = "M"
 	CodeSpec      TypeCode = "SP"
+	// CodeMemory is the memory type of ADR-044.
+	CodeMemory TypeCode = "MEM"
 )
 
 // idGrammar is the human-readable form of the id grammar, used in messages.
-const idGrammar = "<KEY>-<EP|US|T|M|SP>-<NNNN>"
+const idGrammar = "<KEY>-<EP|US|T|M|SP|MEM>-<NNNN>"
 
 // minIDDigits is the minimum zero padding of the numeric part. Padding is a
 // minimum, not a maximum: after 9999 items an id simply grows a digit (R-ID-3).
@@ -38,7 +40,7 @@ const minIDDigits = 4
 var projectKeyRE = regexp.MustCompile(`^[A-Z][A-Z0-9]{1,9}$`)
 
 // itemIDRE is the grammar of an item id: <KEY>-<TYPECODE>-<NUMBER>.
-var itemIDRE = regexp.MustCompile(`^([A-Z][A-Z0-9]{1,9})-(EP|US|T|M|SP)-(\d{4,})$`)
+var itemIDRE = regexp.MustCompile(`^([A-Z][A-Z0-9]{1,9})-(EP|US|T|M|SP|MEM)-(\d{4,})$`)
 
 // ValidProjectKey reports whether k matches the project-key grammar.
 func ValidProjectKey(k ProjectKey) bool { return projectKeyRE.MatchString(string(k)) }
@@ -56,6 +58,8 @@ func TypeCodeFor(t ItemType) (TypeCode, bool) {
 		return CodeMilestone, true
 	case TypeSpec:
 		return CodeSpec, true
+	case TypeMemory:
+		return CodeMemory, true
 	case TypeComment:
 		return "", false
 	default:
@@ -76,6 +80,8 @@ func ItemTypeFor(c TypeCode) (ItemType, bool) {
 		return TypeMilestone, true
 	case CodeSpec:
 		return TypeSpec, true
+	case CodeMemory:
+		return TypeMemory, true
 	default:
 		return "", false
 	}

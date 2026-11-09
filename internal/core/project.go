@@ -32,10 +32,14 @@ const BacklogDirName = ".pmngr"
 
 // ProjectConfig is the parsed form of .pmngr/project.yaml.
 type ProjectConfig struct {
-	Schema       int                       `yaml:"schema"`
-	Key          ProjectKey                `yaml:"key"`
-	Name         string                    `yaml:"name"`
-	Description  string                    `yaml:"description,omitempty"`
+	Schema      int        `yaml:"schema"`
+	Key         ProjectKey `yaml:"key"`
+	Name        string     `yaml:"name"`
+	Description string     `yaml:"description,omitempty"`
+	// Kind is "backlog" (the default, written as nothing) or "knowledge": a
+	// knowledge-only project holds pages, memory and comments, and no backlog
+	// (ADR-044 section 5).
+	Kind         ProjectKind               `yaml:"kind,omitempty"`
 	Timezone     string                    `yaml:"timezone,omitempty"`
 	Docs         DocsConfig                `yaml:"docs"`
 	Workflow     Workflow                  `yaml:"workflow"`
@@ -293,6 +297,32 @@ func (p *ProjectConfig) Validate() []Diagnostic {
 			fmt.Sprintf("%q does not match [A-Z][A-Z0-9]{1,9}", p.Key))
 	}
 
+	if !p.Kind.Valid() {
+		add(CodeProjKind, SeverityError, "kind", fmt.Sprintf("%q is not a project kind: use backlog or knowledge", p.Kind))
+	}
+	if p.IsKnowledge() {
+		// A knowledge-only project has no backlog, so it declares no workflow:
+		// its memories follow the fixed lifecycle of MemoryWorkflow.
+		if len(p.Workflow.Statuses) > 0 {
+			add(CodeProjKind, SeverityWarning, "workflow",
+				"a knowledge-only project ignores its workflow; memories follow the fixed memory lifecycle")
+		}
+	} else {
+		p.validateWorkflow(add)
+	}
+
+	p.validateLabels(add)
+	for _, d := range p.Specs.validate() {
+		add(d.Code, d.Severity, d.Field, d.Message)
+	}
+
+	sortDiagnostics(out)
+	return out
+}
+
+// validateWorkflow applies the workflow rules of docs/03 section 6.3 to a
+// backlog project.
+func (p *ProjectConfig) validateWorkflow(add func(code Code, sev Severity, field, msg string)) {
 	seen := make(map[Status]bool, len(p.Workflow.Statuses))
 	hasDone := false
 	if len(p.Workflow.Statuses) == 0 {
@@ -331,7 +361,10 @@ func (p *ProjectConfig) Validate() []Diagnostic {
 			}
 		}
 	}
+}
 
+// validateLabels applies the label-catalog rules of docs/03 section 6.3.
+func (p *ProjectConfig) validateLabels(add func(code Code, sev Severity, field, msg string)) {
 	labels := make(map[string]bool, len(p.Labels))
 	for _, l := range p.Labels {
 		if len(l.Unexpected) > 0 {
@@ -346,13 +379,6 @@ func (p *ProjectConfig) Validate() []Diagnostic {
 		}
 		labels[name] = true
 	}
-
-	for _, d := range p.Specs.validate() {
-		add(d.Code, d.Severity, d.Field, d.Message)
-	}
-
-	sortDiagnostics(out)
-	return out
 }
 
 // sortDiagnostics orders findings by field then message so that two runs over
@@ -371,6 +397,21 @@ func diagLess(a, b Diagnostic) bool {
 	}
 	return a.Message < b.Message
 }
+
+// ProjectKind is what a project holds.
+type ProjectKind string
+
+// The project kinds of ADR-044 section 5.
+const (
+	ProjectBacklog   ProjectKind = "backlog"
+	ProjectKnowledge ProjectKind = "knowledge"
+)
+
+// Valid reports whether k is a known kind; the empty kind is a backlog.
+func (k ProjectKind) Valid() bool { return k == "" || k == ProjectBacklog || k == ProjectKnowledge }
+
+// IsKnowledge reports whether the project is knowledge-only.
+func (p *ProjectConfig) IsKnowledge() bool { return p != nil && p.Kind == ProjectKnowledge }
 
 // StatusDef returns the declaration of a status.
 func (p *ProjectConfig) StatusDef(id Status) (StatusDef, bool) {

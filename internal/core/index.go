@@ -40,6 +40,7 @@ var itemFolders = []struct {
 	{"tasks", TypeTask},
 	{"milestones", TypeMilestone},
 	{SpecsDirName, TypeSpec},
+	{MemoryDirName, TypeMemory},
 }
 
 // commentsDirName is the one folder of a backlog with a level of subfolders.
@@ -79,6 +80,10 @@ type ProjectRef struct {
 	// knowledge base (docs/04 section 4). It has no backlog: the indexer scans
 	// its pages and nothing else, and it is never reported as a project.
 	Team bool `json:"team,omitempty"`
+	// TeamDir is the team repository's `.pmngr/` folder, set on the team
+	// pseudo-project only. Its memory/ subfolder holds the organization's
+	// memory items (ADR-044 section 1).
+	TeamDir string `json:"team_dir,omitempty"`
 }
 
 // DiscoveryDepth is how far below a root a project backlog is looked for when
@@ -481,6 +486,8 @@ func (ix *Index) Build(ctx context.Context, full bool) (IndexStats, error) {
 			if err := ix.scanBacklog(ctx, p, pass); err != nil {
 				return ix.stats.clone(), err
 			}
+		} else if err := ix.scanTeamMemory(ctx, p, pass); err != nil {
+			return ix.stats.clone(), err
 		}
 		if err := ix.scanKnowledgeBase(ctx, p, pass); err != nil {
 			return ix.stats.clone(), err
@@ -554,6 +561,40 @@ func (ix *Index) scanBacklog(ctx context.Context, p ProjectRef, pass *buildPass)
 }
 
 // scanItemFolder indexes one flat item folder.
+// scanTeamMemory indexes the organization memory of a team repository,
+// `.pmngr/memory/` beside its boards and sprints. Its ids carry the team key, so
+// a key that the project-key grammar refuses disables the folder with
+// E-TEAM-KEY-MEMORY on every file instead of failing the rest of the team.
+func (ix *Index) scanTeamMemory(ctx context.Context, p ProjectRef, pass *buildPass) error {
+	if p.TeamDir == "" {
+		return nil
+	}
+	scope := p
+	scope.BacklogPath = p.TeamDir
+	if ValidProjectKey(p.Key) {
+		return ix.scanItemFolder(ctx, scope, MemoryDirName, TypeMemory, pass)
+	}
+	base := joinPath(p.TeamDir, MemoryDirName)
+	entries, err := readDirTolerant(ix.fs, base)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if e.IsDir || !isMarkdown(e.Name) {
+			continue
+		}
+		full := joinPath(base, e.Name)
+		pass.seen[full] = true
+		ix.files[full] = FileMeta{}
+		ix.setFileDiags(full, []Diagnostic{{
+			Code: CodeTeamKeyMemory, Severity: SeverityError, Path: full, Field: "key",
+			Message: fmt.Sprintf("team key %q does not match the project-key grammar [A-Z][A-Z0-9]{1,9}, "+
+				"so organization memory ids cannot be formed; the memory folder is ignored", p.Key),
+		}})
+	}
+	return nil
+}
+
 func (ix *Index) scanItemFolder(ctx context.Context, p ProjectRef, dir string, typ ItemType, pass *buildPass) error {
 	base := joinPath(p.BacklogPath, dir)
 	entries, err := readDirTolerant(ix.fs, base)
@@ -1015,8 +1056,17 @@ const (
 func (ix *Index) classify(filePath string) (ProjectRef, fileKind, ItemType, bool) {
 	for _, p := range ix.projects {
 		if p.Team {
-			// A team scope owns pages only: its `.pmngr/` holds boards, sprints
-			// and retros, which are not this story's business.
+			// A team scope owns pages and the organization memory: the rest of
+			// its `.pmngr/` holds boards, sprints and retros, which the team
+			// layer reads on its own.
+			if p.TeamDir != "" {
+				if rel, ok := underDir(joinPath(p.TeamDir, MemoryDirName), filePath); ok &&
+					!strings.Contains(rel, "/") && isMarkdown(rel) && ValidProjectKey(p.Key) {
+					scope := p
+					scope.BacklogPath = p.TeamDir
+					return scope, fileItem, TypeMemory, true
+				}
+			}
 			if _, ok := underDir(p.DocsPath, filePath); ok && isMarkdown(filePath) {
 				return p, filePage, "", true
 			}
@@ -1226,6 +1276,7 @@ func (ix *Index) rebuild() {
 
 	ix.checkReferentialIntegrity()
 	ix.checkSpecs()
+	ix.checkMemory()
 	ix.checkCounters()
 	ix.collectDiagnostics()
 	ix.computeFingerprint()

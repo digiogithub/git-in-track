@@ -98,7 +98,7 @@ func ValidateItem(item *Item, cfg *ProjectConfig) []Diagnostic {
 	}
 	d := &diagSet{path: item.Path}
 	validateIdentity(d, item, cfg)
-	validateItemStatus(d, item, cfg)
+	validateItemStatus(d, item, cfg.For(item.Type))
 	validateHierarchy(d, item, cfg)
 	validateItemLinks(d, item, cfg)
 	validateDates(d, item)
@@ -107,7 +107,8 @@ func ValidateItem(item *Item, cfg *ProjectConfig) []Diagnostic {
 	validateLabels(d, item, cfg)
 	validateCustom(d, item, cfg)
 	validateExternal(d, "external", item.External)
-	validateInbox(d, item, cfg)
+	validateInbox(d, item, cfg.For(item.Type))
+	validateMemory(d, item, cfg)
 	validateSpec(d, item, cfg)
 	validateSpecDelta(d, item, cfg)
 	validateSchemaFeature(d, item, cfg)
@@ -152,7 +153,7 @@ func validateIdentity(d *diagSet, item *Item, cfg *ProjectConfig) {
 	if item.ID == "" {
 		d.errorf("id", CodeIDMissing, "missing")
 	} else if key, code, _, err := ParseItemID(string(item.ID)); err != nil {
-		d.errorf("id", CodeIDGrammar, "%q does not match <KEY>-<EP|US|T|M|SP>-<NNNN>", item.ID)
+		d.errorf("id", CodeIDGrammar, "%q does not match <KEY>-<EP|US|T|M|SP|MEM>-<NNNN>", item.ID)
 	} else {
 		if cfg != nil && cfg.Key != "" && key != cfg.Key {
 			d.errorf("id", CodeIDKey, "project key %q does not match the project key %q", key, cfg.Key)
@@ -255,7 +256,7 @@ func validateHierarchy(d *diagSet, item *Item, cfg *ProjectConfig) {
 func validateReference(d *diagSet, cfg *ProjectConfig, field, raw string) (TypeCode, bool) {
 	key, code, _, err := ParseItemID(raw)
 	if err != nil {
-		d.errorf(field, CodeIDGrammar, "%q does not match <KEY>-<EP|US|T|M|SP>-<NNNN>", raw)
+		d.errorf(field, CodeIDGrammar, "%q does not match <KEY>-<EP|US|T|M|SP|MEM>-<NNNN>", raw)
 		return "", false
 	}
 	if cfg != nil && cfg.Key != "" && key != cfg.Key {
@@ -310,7 +311,7 @@ func validateLinkTarget(d *diagSet, cfg *ProjectConfig, field, target string) bo
 	}
 	key, ok := linkTargetKey(id)
 	if !ok {
-		d.errorf(field, CodeIDGrammar, "%q does not match <KEY>-<EP|US|T|M|SP>-<NNNN> or <KEY>-SP-<NNNN>.R<n>", target)
+		d.errorf(field, CodeIDGrammar, "%q does not match <KEY>-<EP|US|T|M|SP|MEM>-<NNNN> or <KEY>-SP-<NNNN>.R<n>", target)
 		return false
 	}
 	if qualifier != "" {
@@ -345,6 +346,7 @@ const (
 	targetItem
 	targetSpec
 	targetRequirement
+	targetMemory
 )
 
 // classifyLinkTarget tells an item id, a spec id and a requirement ref apart,
@@ -361,6 +363,8 @@ func classifyLinkTarget(target string) linkTargetType {
 		return targetMalformed
 	case code == CodeSpec:
 		return targetSpec
+	case code == CodeMemory:
+		return targetMemory
 	default:
 		return targetItem
 	}
@@ -381,6 +385,10 @@ func validateLinkTargetType(d *diagSet, item *Item, field string, l Link) {
 			d.errorf(field, CodeLinkTargetType, "%s must target a spec or a requirement ref, not %q", l.Kind, l.Target)
 		}
 	case LinkSupersedes, LinkSupersededBy:
+		if item.Type == TypeMemory {
+			validateMemorySupersession(d, field, l, t)
+			return
+		}
 		switch {
 		case item.Type != TypeSpec:
 			d.errorf(field, CodeLinkTargetType,
@@ -389,6 +397,21 @@ func validateLinkTargetType(d *diagSet, item *Item, field string, l Link) {
 			d.errorf(field, CodeLinkTargetType,
 				"a spec's %s must target a spec, not %q; a requirement's goes in requirements.R<n>.links", l.Kind, l.Target)
 		}
+	}
+}
+
+// validateMemorySupersession applies the memory half of R-LINK-6 (ADR-044
+// section 4): a memory writes supersedes to another memory, and never
+// superseded_by, which the index mirrors into the memory block of the target.
+// Implements: GIT-SP-0003.R5
+func validateMemorySupersession(d *diagSet, field string, l Link, t linkTargetType) {
+	if l.Kind == LinkSupersededBy {
+		d.errorf(field, CodeLinkTargetType,
+			"a memory writes supersedes on the newer memory; superseded_by is mirrored into memory.superseded_by")
+		return
+	}
+	if t != targetMemory {
+		d.errorf(field, CodeLinkTargetType, "a memory supersedes another memory, not %q", l.Target)
 	}
 }
 

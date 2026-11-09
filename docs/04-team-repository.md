@@ -84,6 +84,8 @@ flowchart LR
       ACME-TEAM-S-0008.md
     retros/
       ACME-TEAM-R-0007-sprint-7.md
+    memory/                          # optional; organization memory (ADR-044)
+      OPS-MEM-0001-on-call-rotation.md
     index/
       ACME.json                      # committed snapshot of project ACME's backlog
       WEB.json
@@ -96,7 +98,11 @@ flowchart LR
 - **R-TEAM-LOC-1** `team.yaml` MUST be at the repository root. Its presence is the discovery marker
   for "this is a team repository".
 - **R-TEAM-LOC-2** `.pmngr/` at the team-repo root holds only team artefacts: `boards/`, `sprints/`,
-  `retros/`, `index/`, `templates/`. It MUST NOT contain `epics/`, `stories/`, `tasks/`,
+  `retros/`, `index/`, `templates/`, and `memory/` for the organization's memory items
+  ([docs/03 §22](03-data-model.md#22-memory-items-and-knowledge-only-projects)). Memory ids carry the
+  team key, so a team that holds memory needs a key that also satisfies the project-key grammar
+  `[A-Z][A-Z0-9]{1,9}` (the example team key `ACME-TEAM` does not, so its memory would be ignored
+  with `E-TEAM-KEY-MEMORY`). It MUST NOT contain `epics/`, `stories/`, `tasks/`,
   `milestones/`, or `comments/`. Such a folder is error `E-TEAM-BACKLOG-IN-TEAM-REPO` — it is the
   hard rule of §1 expressed as a validation.
 - **R-TEAM-LOC-3** `.pmngr/index/*.json` **is committed** (unlike the project-local `index.json`,

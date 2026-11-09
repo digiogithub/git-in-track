@@ -68,6 +68,22 @@ const (
 	CodeWarnInboxDupDead    Code = "W-INBOX-DUP-DEAD"
 	CodeWarnInboxNoCategory Code = "W-INBOX-NO-TRIAGE-STATUS"
 
+	// Memory codes (docs/03 section 23, ADR-044). The E- codes are file-level;
+	// the W- codes are computed by the index across the files of a scope.
+	CodeMemoryBlock          Code = "E-MEM-BLOCK"
+	CodeMemoryKey            Code = "E-MEM-KEY"
+	CodeMemoryVersion        Code = "E-MEM-VERSION"
+	CodeMemoryHash           Code = "E-MEM-HASH"
+	CodeMemoryLocalID        Code = "E-MEM-LOCALID"
+	CodeMemoryValidTo        Code = "E-MEM-VALIDTO"
+	CodeMemoryPlanning       Code = "E-MEM-PARENT"
+	CodeWarnMemoryKeyDup     Code = "W-MEM-KEY-DUP"
+	CodeWarnMemoryVersionDup Code = "W-MEM-VERSION-DUP"
+	CodeWarnMemorySupersede  Code = "W-MEM-SUPERSEDE-STATE"
+	CodeKindNotBacklog       Code = "E-KIND-NOT-BACKLOG"
+	CodeProjKind             Code = "E-PROJ-KIND"
+	CodeTeamKeyMemory        Code = "E-TEAM-KEY-MEMORY"
+
 	CodeProjMissing          Code = "E-PROJ-MISSING"
 	CodeProjKey              Code = "E-PROJ-KEY"
 	CodeProjSchema           Code = "E-PROJ-SCHEMA"

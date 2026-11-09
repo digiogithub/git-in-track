@@ -221,13 +221,18 @@ func walkSchema(t *testing.T, s *schemaSet, n node, at string) {
 //     (parentCodes);
 //   - start and owner only on a milestone (docs/03 section 10);
 //   - requirements only on a spec (E-REQ-FIELD);
-//   - none of specOnlyAbsentFields on a spec (E-FIELD-TYPE).
+//   - none of specOnlyAbsentFields on a spec (E-FIELD-TYPE);
+//   - memory only on a memory, which takes none of memoryPlanningFields
+//     (E-MEM-BLOCK, E-MEM-PARENT).
 func itemSchemaKeys(typ ItemType) []string {
 	commentOnly := map[string]bool{"item": true, "in_reply_to": true, "kind": true, "reactions": true}
 	milestoneOnly := map[string]bool{"start": true, "owner": true}
 	specAbsent := map[string]bool{}
 	for _, f := range specOnlyAbsentFields {
 		specAbsent[f] = true
+	}
+	memoryPlanning := map[string]bool{
+		"milestone": true, "sprint": true, "assignees": true, "estimate": true, "effort": true,
 	}
 	keys := map[string]bool{}
 	for _, k := range canonicalKeyOrder {
@@ -237,6 +242,8 @@ func itemSchemaKeys(typ ItemType) []string {
 		case milestoneOnly[k] && typ != TypeMilestone:
 		case k == "requirements" && typ != TypeSpec:
 		case specAbsent[k] && typ == TypeSpec:
+		case k == "memory" && typ != TypeMemory:
+		case memoryPlanning[k] && typ == TypeMemory:
 		default:
 			keys[k] = true
 		}
@@ -278,12 +285,16 @@ func TestJSONSchemaNestedKeysMatchGo(t *testing.T) {
 	sameStrings(t, "external", keysOf(t, s, def("external")), sortedSet(yamlTags(reflect.TypeOf(External{}))))
 	sameStrings(t, "inbox", keysOf(t, s, def("inbox")), sortedSet(inboxKnownKeys))
 	sameStrings(t, "inbox (struct)", keysOf(t, s, def("inbox")), sortedSet(yamlTags(reflect.TypeOf(ItemInbox{}))))
+	sameStrings(t, "memory", keysOf(t, s, def("memory")), sortedSet(memoryKnownKeys))
+	sameStrings(t, "memory (struct)", keysOf(t, s, def("memory")), sortedSet(yamlTags(reflect.TypeOf(ItemMemory{}))))
+	sameStrings(t, "memory.source", keysOf(t, s, s.child(t, def("memory"), "properties", "source")),
+		sortedSet(yamlTags(reflect.TypeOf(MemorySource{}))))
 	sameStrings(t, "requirement", keysOf(t, s, def("requirement")), sortedSet(requirementKnownKeys))
 	sameStrings(t, "requirement.trace", keysOf(t, s, s.child(t, def("requirement"), "properties", "trace")), sortedSet(traceKnownKeys))
 	sameStrings(t, "requirement.verified", keysOf(t, s, s.child(t, def("requirement"), "properties", "verified")), sortedSet(verifiedKnownKeys))
 
 	// The open blocks preserve unknown keys (R-FMT-6), the fixed ones do not.
-	for name, open := range map[string]bool{"inbox": true, "requirement": true, "link": false, "external": false} {
+	for name, open := range map[string]bool{"inbox": true, "memory": true, "requirement": true, "link": false, "external": false} {
 		if got := def(name).schema.(map[string]any)["additionalProperties"]; got != open {
 			t.Errorf("$defs/%s additionalProperties = %v, want %v", name, got, open)
 		}
@@ -411,7 +422,7 @@ func TestJSONSchemaPatternsMatchGo(t *testing.T) {
 		samples []string
 	}{
 		{"id", def("id"), func(v string) bool { return ItemID(v).Valid() },
-			[]string{"ACME-US-0042", "ACME-T-10234", "ACME-SP-0003", "A-US-0001", "acme-US-0001", "ACME-US-042", "ACME-XX-0001", "ACMEACMEACM-US-0001", "ACME-SP-0003.R1"}},
+			[]string{"ACME-US-0042", "ACME-T-10234", "ACME-SP-0003", "ACME-MEM-0001", "ACME-ME-0001", "A-US-0001", "acme-US-0001", "ACME-US-042", "ACME-XX-0001", "ACMEACMEACM-US-0001", "ACME-SP-0003.R1"}},
 		{"reqRef", def("reqRef"), func(v string) bool {
 			key, bare, qualified := strings.Cut(v, "/")
 			if !qualified {
@@ -447,7 +458,7 @@ func TestJSONSchemaPatternsMatchGo(t *testing.T) {
 	}
 
 	// The id and parent of every item type follow its type code and parentCodes.
-	codes := []TypeCode{CodeEpic, CodeStory, CodeTask, CodeMilestone, CodeSpec}
+	codes := []TypeCode{CodeEpic, CodeStory, CodeTask, CodeMilestone, CodeSpec, CodeMemory}
 	for _, typ := range ItemTypes() {
 		own, ok := TypeCodeFor(typ)
 		if !ok {
@@ -492,7 +503,7 @@ func fullItem(typ ItemType) *Item {
 		Extra:       map[string]any{"x-tool": "kept"},
 		Deleted:     true,
 	}
-	if typ != TypeSpec {
+	if typ != TypeSpec && typ != TypeMemory {
 		it.Milestone, it.Sprint = "ACME-M-0001", "ACME-TEAM-S-0004"
 		it.Estimate, it.Effort, it.Spent = num(5), num(8), num(2.5)
 		it.Due = day("2026-10-01")
@@ -507,6 +518,21 @@ func fullItem(typ ItemType) *Item {
 		it.Parent = "ACME-US-0042"
 	case TypeMilestone:
 		it.Owner, it.Start = "jose", day("2026-09-01")
+	case TypeMemory:
+		it.Status, it.Assignees = MemoryProposed, nil
+		it.Spent, it.Due = num(1), day("2026-10-01")
+		it.Links = append(it.Links, Link{Kind: LinkSupersedes, Target: "ACME-MEM-0001"})
+		it.Inbox = &ItemInbox{Status: InboxPending, Source: "memsync", Received: ts("2026-09-01T09:00:00Z")}
+		it.Memory = &ItemMemory{
+			Key: "customer-x/invoicing", Version: 17,
+			ContentHash:  strings.Repeat("ab", 32),
+			LocalID:      "project/acme/customer-x/invoicing",
+			ValidFrom:    ts("2026-09-01T10:00:00Z"),
+			ValidTo:      ts("2027-06-30T00:00:00Z"),
+			SupersededBy: "ACME-MEM-0009",
+			Source:       &MemorySource{Kind: MemorySourceAgent, Ref: "memsync/inst-1"},
+			Extra:        map[string]any{"x-confidence": "high"},
+		}
 	case TypeSpec:
 		it.Links = append(it.Links, Link{Kind: LinkSupersedes, Target: "ACME-SP-0001"})
 		it.Requirements = Requirements{

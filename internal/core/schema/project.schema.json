@@ -7,8 +7,7 @@
   "required": [
     "schema",
     "key",
-    "name",
-    "workflow"
+    "name"
   ],
   "properties": {
     "schema": {
@@ -26,6 +25,13 @@
     },
     "description": {
       "type": "string"
+    },
+    "kind": {
+      "enum": [
+        "backlog",
+        "knowledge"
+      ],
+      "description": "backlog (the default) or knowledge: a knowledge-only project holds pages, memory and comments, declares no workflow (ADR-044 section 5)."
     },
     "timezone": {
       "type": "string"
@@ -143,7 +149,8 @@
               "story",
               "task",
               "milestone",
-              "spec"
+              "spec",
+              "memory"
             ]
           },
           "additionalProperties": {
@@ -473,5 +480,22 @@
   "patternProperties": {
     "^x-": true
   },
-  "additionalProperties": false
+  "additionalProperties": false,
+  "anyOf": [
+    {
+      "required": [
+        "workflow"
+      ]
+    },
+    {
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "const": "knowledge"
+        }
+      }
+    }
+  ]
 }

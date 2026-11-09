@@ -66,6 +66,8 @@ func ItemDirName(t ItemType) (string, bool) {
 		return MilestonesDirName, true
 	case TypeSpec:
 		return SpecsDirName, true
+	case TypeMemory:
+		return MemoryDirName, true
 	case TypeComment:
 		return CommentsDirName, true
 	default:
@@ -76,7 +78,7 @@ func ItemDirName(t ItemType) (string, bool) {
 // itemDirNames lists the five item folders in a stable order, so that two runs
 // of a scan visit the tree identically.
 func itemDirNames() []string {
-	return []string{EpicsDirName, MilestonesDirName, SpecsDirName, StoriesDirName, TasksDirName}
+	return []string{EpicsDirName, MemoryDirName, MilestonesDirName, SpecsDirName, StoriesDirName, TasksDirName}
 }
 
 // BacklogDir normalises the folder a caller points at: it accepts either the

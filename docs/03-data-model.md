@@ -238,14 +238,15 @@ because it is the largest block a file can carry.
 <ID> ::= <KEY> "-" <TYPECODE> "-" <NUMBER>
 
 <KEY>      ::= [A-Z][A-Z0-9]{1,9}          # from project.yaml `key`
-<TYPECODE> ::= "EP" | "US" | "T" | "M" | "SP"   # "SP" added by ADR-037
+<TYPECODE> ::= "EP" | "US" | "T" | "M" | "SP" | "MEM"   # "SP" added by ADR-037, "MEM" by ADR-044
 <NUMBER>   ::= [0-9]{4,}                    # zero-padded to at least 4 digits
 
 <REQREF>   ::= <KEY> "-SP-" <NUMBER> ".R" <RNUM>   # a requirement block, ADR-037
 <RNUM>     ::= [1-9][0-9]*                  # no padding, no leading zero
 ```
 
-Examples: `ACME-EP-0001`, `ACME-US-0042`, `ACME-T-0107`, `ACME-M-0003`, and after 9999 items
+Examples: `ACME-EP-0001`, `ACME-US-0042`, `ACME-T-0107`, `ACME-M-0003`, `ACME-MEM-0042` (a memory,
+[§22](#22-memory-items-and-knowledge-only-projects)), and after 9999 items
 `ACME-T-10234` (five digits — padding is a *minimum*, not a maximum).
 
 - **R-ID-1** IDs are case-sensitive and MUST be uppercase for `KEY` and `TYPECODE`.
@@ -550,9 +551,10 @@ The only non-Markdown file in `.pmngr/`. Plain YAML, no front matter.
 | `key` | string `[A-Z][A-Z0-9]{1,9}` | yes | — | ID prefix. Immutable in practice (see `--rekey`). |
 | `name` | string | yes | — | Human name, e.g. `ACME Platform`. |
 | `description` | string | no | — | One paragraph; shown in project pickers. |
+| `kind` | `backlog` \| `knowledge` | no | `backlog` | `knowledge`: pages, memory and comments only, no backlog and no `workflow` ([§22.6](#226-knowledge-only-projects), ADR-044). |
 | `timezone` | IANA tz | no | `UTC` | Presentation of date-only fields only. |
 | `docs` | mapping | no | see below | KB rendering settings. |
-| `workflow` | mapping | yes | see below | Status definitions and transitions. |
+| `workflow` | mapping | yes, unless `kind: knowledge` | see below | Status definitions and transitions. Never governs memory items ([§22.3](#223-lifecycle)). |
 | `id_allocation` | mapping | no | see below | Counters, strategy, reserved ranges, redirects. |
 | `labels` | list of mappings | no | `[]` | Label catalog. |
 | `priorities` | list of strings | no | the four defaults | Reordering allowed, renaming not. |
@@ -3229,3 +3231,134 @@ answers `unavailable`.
 
   `suspect` is printed after a status other than `suspect`; `test-only` marks a `test-only` hit
   (a behaviour hit carries no word, the common case); `+<n>` counts the other reasons.
+
+---
+
+## 22. Memory items and knowledge-only projects
+
+Added by [ADR-044](adr/ADR-044-memory-items-and-knowledge-only-projects.md). A **memory** is a short,
+explicit fact — "customer X is invoiced quarterly" — with an author, a scope and a review queue. It is
+an ordinary item file of type `memory`, so it gets ids, `rev`, the three-way merge, comments and the
+inbox for free, but it is knowledge, not work: no query that names no type returns it, and no board,
+sprint, metric or KPI counts it.
+
+### 22.1 Ids and location
+
+- Ids are `<KEY>-MEM-<NNNN>` and are allocated by the scan like every other id ([§4](#4-id-allocation-and-collision-handling)).
+- A project's memories live in `<docs>/.pmngr/memory/<ID>-<slug>.md`, beside the other item folders.
+- An organization's memories live in the team repository's `.pmngr/memory/`, beside boards and
+  sprints ([docs/04](04-team-repository.md)). Their ids carry the team key, so a team that holds
+  memory needs a key that also satisfies the project-key grammar `[A-Z][A-Z0-9]{1,9}`; otherwise the
+  folder is ignored with `E-TEAM-KEY-MEMORY` on every file.
+- The **scope** is derived from the location and never stored: `project/<key>` for a project,
+  `org/<key>` for a team, lower-cased. There is no personal scope in a repository.
+
+### 22.2 Front matter
+
+The common fields of [§3](#3-common-conventions) apply, with `title` holding the fact in one line.
+The memory's own fields live in a `memory:` block, the way the inbox keeps its own in `inbox:`
+([§6.4](#64-the-triage-category-and-the-inbox)). Unknown keys inside it are preserved (R-FMT-6), so an older reader that
+rewrites the file keeps the block intact.
+
+```yaml
+---
+id: ACME-MEM-0042
+type: memory
+title: Customer X is invoiced quarterly
+status: active
+author: ana
+labels: [billing]
+created: 2026-11-08T10:00:00Z
+updated: 2026-11-08T10:00:00Z
+links:
+  - { kind: supersedes, target: ACME-MEM-0017 }
+memory:
+  key: customer-x-invoicing     # required; [a-z0-9][a-z0-9._/-]{0,127}; unique per scope; the upsert key
+  version: 17                   # required; positive; strictly increasing per project
+  content_hash: 9f2c…           # optional; lowercase sha256 hex, written by the vault
+  local_id: project/acme/customer-x-invoicing   # optional; <scope>/<key>
+  valid_from: 2026-11-08T10:00:00Z               # optional
+  valid_to: 2027-06-30T00:00:00Z                 # optional; required once forgotten
+  superseded_by: ACME-MEM-0051                   # computed, never hand-written
+  source: {kind: agent, ref: "memsync/inst-1"}   # kind: agent|human|conversation|document|external
+---
+
+Customer X receives one invoice per quarter.
+
+## Evidence
+
+Confirmed in the 2026-11-07 billing call.
+```
+
+- `version` is the cursor of the `alchemai.memory.v2` changes feed, so it lives in the file: rebuilding
+  a derived index never renumbers it. Two offline writers can take the same version; the index reports
+  `W-MEM-VERSION-DUP`, and reconciliation keeps the version on the lowest id and moves the others past
+  the highest version, in id order. Versions only ever grow.
+- `content_hash` is `sha256(kind ␟ scope ␟ key ␟ path ␟ content)` with U+001F as the separator, the
+  deduplication key of the protocol.
+- A memory takes no `parent`, `epic`, `milestone`, `sprint`, `estimate`, `effort` or `assignees`.
+
+### 22.3 Lifecycle
+
+Memory statuses are fixed by the core. `project.yaml` cannot declare or redefine them, and a project's
+own statuses never apply to a memory.
+
+| Status | Category | Transitions to | Meaning |
+|---|---|---|---|
+| `proposed` | `triage` | `active`, `cancelled` | Waiting for review in the inbox. Initial. |
+| `active` | `done` | `superseded`, `forgotten` | Accepted and visible. |
+| `superseded` | `done` | — | Replaced through a `supersedes` link. |
+| `cancelled` | `cancelled` | `proposed` | A rejected proposal; it may be reopened. |
+| `forgotten` | `cancelled` | `active` | Withdrawn. The file stays and `valid_to` is set. |
+
+Accepting a memory from the inbox moves it to `active`; rejecting it moves it to `cancelled`. Forgetting
+never deletes the file (ADR-026): git keeps the history.
+
+### 22.4 Supersession
+
+A memory writes `supersedes` to the older memory it replaces. `superseded_by` is never written in
+`links` of a memory (`E-LINK-TARGET-TYPE`); it is mirrored into `memory.superseded_by` of the target.
+A `supersedes` link whose target is not `superseded` is `W-MEM-SUPERSEDE-STATE`. The kinds themselves
+are the spec kinds of [§21](#21-specs-and-requirement-blocks); like them, a link of either kind requires
+schema 2.
+
+### 22.5 Validation codes
+
+| Code | Sev | Rule |
+|---|---|---|
+| `E-MEM-BLOCK` | E | `type: memory` without a `memory:` block, or the block on another type |
+| `E-MEM-KEY` | E | `memory.key` empty or outside its grammar |
+| `E-MEM-VERSION` | E | `memory.version` below 1 |
+| `E-MEM-HASH` | E | `memory.content_hash` present and not lowercase sha256 hex |
+| `E-MEM-LOCALID` | E | `memory.local_id` present and not `<project\|org>/<name>/<key>` |
+| `E-MEM-VALIDTO` | E | `forgotten` without `valid_to`, or `valid_to` before `valid_from` |
+| `E-MEM-PARENT` | E | a memory with `epic`, `milestone`, `sprint`, `estimate`, `effort` or `assignees` |
+| `E-KIND-NOT-BACKLOG` | E | an item other than a memory or a comment in a `kind: knowledge` project |
+| `E-PROJ-KIND` | E | `kind` is neither `backlog` nor `knowledge` (a warning when a knowledge project declares a workflow) |
+| `E-TEAM-KEY-MEMORY` | E | the team key does not satisfy the project-key grammar, so organization memory is ignored |
+| `W-MEM-KEY-DUP` | W | two memories of one scope share a key |
+| `W-MEM-VERSION-DUP` | W | two memories of one project share a version |
+| `W-MEM-SUPERSEDE-STATE` | W | a `supersedes` target is not `superseded` |
+
+### 22.6 Knowledge-only projects
+
+```yaml
+schema: 2
+key: ACME
+name: Acme knowledge
+kind: knowledge
+docs: {path: docs}
+```
+
+A `kind: knowledge` project is discovered exactly where a backlog is, keeps its key (so memory ids and
+cross-project wikilinks work), and declares no `workflow`. It holds pages, memories and comments; any
+other item is `E-KIND-NOT-BACKLOG`.
+
+### 22.7 Compatibility
+
+Nothing is migrated: a repository without a `memory/` folder and without `kind` behaves exactly as
+before, and `schema` stays where it was. A gintrack release older than the one that introduced
+memories reads a `MEM` file as `E-ID-GRAMMAR` and opens it read-only, preserving the `memory:` block as
+an unknown key; it reads a `kind: knowledge` project as one with no statuses (`E-PROJ-INITIAL`) and
+opens it read-only too. Neither loses data.
+

@@ -31,11 +31,31 @@ because a commit list cannot express them.
   fields, and answers out-of-scope reads with `not_found`. A route allowlist keeps operator surfaces
   to admins and post-filters `/repos` and `/workspaces`, and the event stream delivers only what the
   connection may read and closes when its token is revoked.
+- **Memory items** (`GIT-US-0210`, ADR-044 Proposed, docs/03 §22). A new item type, `memory`, with ids
+  `<KEY>-MEM-<NNNN>` under `.pmngr/memory/` of a project, or of a team repository for organization
+  memory. Its fields live in a `memory:` block (`key`, `version`, `content_hash`, `local_id`,
+  `valid_from`, `valid_to`, `superseded_by`, `source`), and it follows a fixed lifecycle: `proposed`
+  waits in the inbox, accepting makes it `active`, rejecting makes it `cancelled` (reopenable), and
+  `forgotten` withdraws it without deleting the file. A memory may `supersede` another. Queries that
+  name no type, boards, sprints, metrics and KPIs leave memories out.
+- **Knowledge-only projects** (`kind: knowledge` in `project.yaml`): pages, memory and comments, no
+  backlog and no `workflow`.
+- New diagnostics: `E-MEM-BLOCK`, `E-MEM-KEY`, `E-MEM-VERSION`, `E-MEM-HASH`, `E-MEM-LOCALID`,
+  `E-MEM-VALIDTO`, `E-MEM-PARENT`, `E-KIND-NOT-BACKLOG`, `E-PROJ-KIND`, `E-TEAM-KEY-MEMORY`,
+  `W-MEM-KEY-DUP`, `W-MEM-VERSION-DUP`, `W-MEM-SUPERSEDE-STATE`.
 
 ### Changed
 
 - `make wasm` copies `wasm_exec.js` with `cp -f`, so a second run works when the Go toolchain is
   installed read-only.
+
+### Compatibility
+
+- **Older binaries open memory read-only.** A gintrack release older than this one does not know the
+  `MEM` id code: it reports every memory file as `E-ID-GRAMMAR` and opens it read-only, keeping the
+  `memory:` block intact as an unknown key. It reads a `kind: knowledge` project as one that declares
+  no statuses and opens it read-only too. No data is lost, and nothing is migrated: a repository with
+  no `memory/` folder and no `kind` behaves exactly as before.
 
 ## [2.7.0] — 2026-11-05
 
