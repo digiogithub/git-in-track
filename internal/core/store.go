@@ -145,6 +145,8 @@ type ItemDraft struct {
 	Custom      map[string]any `json:"custom,omitempty"`
 	// Inbox is the triage block a submission arrives with.
 	Inbox *ItemInbox `json:"inbox,omitempty"`
+	// Memory is the block of a memory item (ADR-044); nil for every other type.
+	Memory *ItemMemory `json:"memory,omitempty"`
 	// Requirements is the requirements: map a new spec starts with (docs/03
 	// section 21.4). Only a spec may carry one.
 	Requirements Requirements   `json:"requirements,omitempty"`
@@ -203,6 +205,9 @@ type ItemPatch struct {
 	// Inbox replaces the triage block; a nil pointer leaves it alone and
 	// unset: ["inbox"] removes it.
 	Inbox *ItemInbox `json:"inbox,omitempty"`
+
+	// Memory replaces the memory block of a memory item; nil leaves it alone.
+	Memory *ItemMemory `json:"memory,omitempty"`
 
 	// Custom merges into the custom mapping; a nil value removes a key.
 	Custom map[string]any `json:"custom,omitempty"`
@@ -427,6 +432,7 @@ func (s *FileStore) Create(ctx context.Context, draft ItemDraft) (*Item, error) 
 		Attachments:  draft.Attachments,
 		Custom:       draft.Custom,
 		Inbox:        draft.Inbox.Clone(),
+		Memory:       draft.Memory.Clone(),
 		Requirements: draft.Requirements.Clone(),
 		Extra:        draft.Extra,
 		Body:         body,
@@ -453,7 +459,7 @@ func (s *FileStore) applyDefaults(it *Item) {
 		it.Status = d.Status
 	}
 	if it.Status == "" {
-		it.Status = s.cfg.InitialStatus()
+		it.Status = s.cfg.For(it.Type).InitialStatus()
 	}
 	if it.Priority == "" {
 		it.Priority = d.Priority
@@ -934,6 +940,9 @@ func duplicateError(id ItemID, matches []scannedItem) error {
 // applyPatch mutates an item in place. It never touches id, type, created or the
 // derived fields.
 func applyPatch(it *Item, p ItemPatch) error {
+	if p.Memory != nil {
+		it.Memory = p.Memory.Clone()
+	}
 	if p.Title != nil {
 		title := strings.TrimSpace(*p.Title)
 		if title == "" {

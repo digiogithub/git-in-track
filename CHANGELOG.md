@@ -38,6 +38,10 @@ because a commit list cannot express them.
   waits in the inbox, accepting makes it `active`, rejecting makes it `cancelled` (reopenable), and
   `forgotten` withdraws it without deleting the file. A memory may `supersede` another. Queries that
   name no type, boards, sprints, metrics and KPIs leave memories out.
+- **Memory core methods** (`GIT-US-0211`, docs/03 §22.8): `memory.put` (batched upsert by key,
+  server-side content hash and dedup, per-project versions, `baseVersion`/`rev` locking, forget and
+  supersede, one commit per batch), `memory.get`, `memory.list` and `memory.changes` (a version-ordered
+  feed of records and tombstones). Accepting a memory in the inbox gives it a new version.
 - **Knowledge-only projects** (`kind: knowledge` in `project.yaml`): pages, memory and comments, no
   backlog and no `workflow`.
 - New diagnostics: `E-MEM-BLOCK`, `E-MEM-KEY`, `E-MEM-VERSION`, `E-MEM-HASH`, `E-MEM-LOCALID`,
