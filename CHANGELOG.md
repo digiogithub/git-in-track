@@ -31,6 +31,12 @@ because a commit list cannot express them.
   fields, and answers out-of-scope reads with `not_found`. A route allowlist keeps operator surfaces
   to admins and post-filters `/repos` and `/workspaces`, and the event stream delivers only what the
   connection may read and closes when its token is revoked.
+- **gintrack-hub semantic index** (`GIT-US-0214`, docs/02 §12.2). The hub reindexes by commit
+  range instead of running a file watcher: the vault index, with the usual events, and a semantic
+  store per repository whose watermark is the last commit applied, so a restart resumes where it
+  stopped. `search.semantic` and the semantic half of `GET /search` answer from it, narrowed to the
+  readable projects, and drop any hit whose file changed since it was indexed. The store interface
+  follows `pando/rag`; the hub ships an in-memory full-text store until that module is tagged.
 - **gintrack-hub MCP tools** (`GIT-US-0212`, docs/08 §4.x). `write_kb_page` (never overwrites
   without a `rev`), `add_memory`, `propose_memory`, `update_memory`, `forget_memory`,
   `accept_memory`, `reject_memory`, `search_memory` and `project_context`, on the hub's `/mcp` only.

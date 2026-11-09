@@ -516,3 +516,60 @@ func TestEventStreamClosesWhenTheTokenIsRevoked(t *testing.T) {
 		}
 	}
 }
+
+// TestSemanticSearchIsScopedAndFresh indexes the fixture, then searches by
+// meaning as ana: only ACME answers, and a page changed since it was indexed
+// is dropped until the next commit range is applied.
+func TestSemanticSearchIsScopedAndFresh(t *testing.T) {
+	t.Parallel()
+	f := newGrantFixture(t)
+	f.hub.syncer.after(t.Context())
+	ana := f.as(t, "ana")
+	ws := f.guard(t, "")
+
+	out, err := callAs(ana, t, ws, "search.semantic", map[string]any{"q": "hidden secret story page"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "ACME-US-0001") || strings.Contains(out, "WEB") || strings.Contains(out, "Web hidden") {
+		t.Fatalf("search.semantic = %s", out)
+	}
+
+	if _, err := callAs(ana, t, ws, "kb.write", map[string]any{"vaultId": "acme", "path": "docs/intro.md",
+		"text": "# Acme intro page\n\nRewritten after indexing.\n", "rev": revOf(ana, t, ws)}); err != nil {
+		t.Fatal(err)
+	}
+	stale, _ := callAs(ana, t, ws, "search.semantic", map[string]any{"q": "intro"})
+	if strings.Contains(stale, "docs/intro.md") {
+		t.Errorf("a page changed since indexing was returned: %s", stale)
+	}
+	// The guard wrote the file; in the hub a REST or MCP write is committed by
+	// commit-on-save, which this direct call bypasses, so commit it here.
+	clone := filepath.Join(f.root, "acme")
+	git(t, clone, "add", "-A")
+	git(t, clone, "commit", "--quiet", "-m", "rewrite intro")
+	f.hub.syncer.after(t.Context())
+	fresh, _ := callAs(ana, t, ws, "search.semantic", map[string]any{"q": "rewritten"})
+	if !strings.Contains(fresh, "docs/intro.md") {
+		t.Errorf("after the commit range was applied the page is missing: %s", fresh)
+	}
+}
+
+func revOf(ctx context.Context, t *testing.T, g *Guard) string {
+	t.Helper()
+	out, err := callAs(ctx, t, g, "kb.page", map[string]any{"vaultId": "acme", "path": "docs/intro.md"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var page struct {
+		Rev  string `json:"rev"`
+		Page struct {
+			Rev string `json:"rev"`
+		} `json:"page"`
+	}
+	_ = json.Unmarshal([]byte(out), &page)
+	if page.Rev != "" {
+		return page.Rev
+	}
+	return page.Page.Rev
+}

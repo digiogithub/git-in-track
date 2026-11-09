@@ -64,11 +64,14 @@ var defaultPandoLookPath = exec.LookPath
 // client is nil, which answers "core" for the backend and `not_configured` for
 // a reindex — a different thing from a route that is not there.
 type searchState struct {
-	log        *slog.Logger
-	repos      *registry
-	hub        *Hub
-	now        func() time.Time
-	configPath string
+	// hostSearcher is the host's own semantic backend (Options.Semantic); it
+	// wins over every Pando setting.
+	hostSearcher vault.SemanticSearcher
+	log          *slog.Logger
+	repos        *registry
+	hub          *Hub
+	now          func() time.Time
+	configPath   string
 
 	mu sync.RWMutex
 	// settings is the running `search.pando` section. It carries the resolved
@@ -146,6 +149,11 @@ func newSearchState(opts Options, repos *registry, hub *Hub, log *slog.Logger, n
 		now:        now,
 		configPath: opts.ConfigPath,
 		settings:   opts.Search.Pando,
+	}
+	if opts.Semantic != nil {
+		s.hostSearcher = opts.Semantic
+		repos.workspace().SetSemanticSearcher(opts.Semantic)
+		return s
 	}
 	lookPath := opts.pandoLookPath
 	if lookPath == nil {
@@ -319,6 +327,9 @@ func (s *searchState) pando() pandoAPI {
 
 // semantic returns the searcher, nil when semantic search is off.
 func (s *searchState) semantic() vault.SemanticSearcher {
+	if s.hostSearcher != nil {
+		return s.hostSearcher
+	}
 	if s.offSearcher != nil {
 		return s.offSearcher
 	}

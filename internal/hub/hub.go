@@ -11,7 +11,9 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/digiogithub/git-in-track/internal/config"
+	"github.com/digiogithub/git-in-track/internal/core"
 	"github.com/digiogithub/git-in-track/internal/gitops"
+	"github.com/digiogithub/git-in-track/internal/hub/rag"
 	"github.com/digiogithub/git-in-track/internal/mcp"
 	"github.com/digiogithub/git-in-track/internal/server"
 	"github.com/digiogithub/git-in-track/internal/vault"
@@ -33,15 +35,19 @@ type Deps struct {
 	// RevalidateEvery is how often an event stream re-checks its token; zero
 	// means the server default. Tests shorten it.
 	RevalidateEvery time.Duration
+	// OpenStore opens the semantic index of a repository. Nil uses the
+	// in-memory store until the pando/rag module is tagged.
+	OpenStore func(rag.Repo) (rag.Store, error)
 }
 
 // Hub is a configured server plus the loop that keeps its clones in step with
 // the forge.
 type Hub struct {
-	cfg    *Config
-	srv    *server.Server
-	log    *slog.Logger
-	syncer *syncLoop
+	cfg     *Config
+	srv     *server.Server
+	log     *slog.Logger
+	syncer  *syncLoop
+	indexer *rag.Indexer
 }
 
 // New prepares the data directory (ssh configuration and clones) and builds the
@@ -62,6 +68,24 @@ func New(ctx context.Context, cfg *Config, deps Deps) (*Hub, error) {
 
 	opts := serverOptions(cfg, deps, log, h.syncer.trigger)
 	opts.RevalidateEvery = deps.RevalidateEvery
+	h.indexer = &rag.Indexer{
+		Git: deps.Git, Log: log,
+		Open: func(rag.Repo) (rag.Store, error) { return rag.NewMemoryStore(), nil },
+		Apply: func(ctx context.Context, repo string, events []core.FileEvent) error {
+			return h.srv.ApplyFileEvents(ctx, repo, events)
+		},
+	}
+	if deps.OpenStore != nil {
+		h.indexer.Open = deps.OpenStore
+	}
+	opts.Semantic = &rag.Searcher{Indexer: h.indexer, Space: func() *vault.Workspace { return h.srv.Workspace() }}
+	h.syncer.after = func(ctx context.Context) {
+		repos := make([]rag.Repo, 0, len(cfg.Repos()))
+		for _, r := range cfg.Repos() {
+			repos = append(repos, rag.Repo{ID: r.ID, Dir: cfg.RepoDir(r.ID)})
+		}
+		_ = h.indexer.Sync(ctx, repos)
+	}
 	if cfg.Auth.PrincipalsFile != "" {
 		auth, err := NewAuthenticator(cfg.Auth.PrincipalsFile, log)
 		if err != nil {
@@ -133,10 +157,10 @@ func serverOptions(cfg *Config, deps Deps, log *slog.Logger, onCommit func()) se
 		Logger:    log,
 		Repos:     repos,
 		Workspace: cfg.Organization.ID,
-		// Writes through the hub land on disk through the vault, which
-		// reindexes them itself; the watcher is what notices the files a pull
-		// brings in.
-		Watch: true,
+		// No file watcher: the indexer applies what a pull or a commit changed
+		// from the commit range, to the vault and to the semantic index alike
+		// (GIT-US-0214).
+		Watch: false,
 		Git: config.Git{
 			Backend:        config.BackendSystem,
 			CommitOnSave:   true,
@@ -189,6 +213,8 @@ type syncLoop struct {
 	delay    time.Duration
 	kick     chan struct{}
 	log      *slog.Logger
+	// after runs after every sync: the indexer applying the commit range.
+	after func(ctx context.Context)
 }
 
 func newSyncLoop(interval, delay time.Duration, log *slog.Logger) *syncLoop {
@@ -238,5 +264,8 @@ func (l *syncLoop) once(ctx context.Context) {
 		if !res.OK() {
 			l.log.Warn("sync with the forge failed", "repo", res.Repo, "code", res.Code, "message", res.Message)
 		}
+	}
+	if l.after != nil {
+		l.after(ctx)
 	}
 }
