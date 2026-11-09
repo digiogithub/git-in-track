@@ -62,6 +62,9 @@ type Fields struct {
 	// Agent is the `Agent:` trailer written when the change came from the MCP
 	// server (docs/07 section 6.4). Empty for a human edit.
 	Agent string `json:"agent,omitempty"`
+	// OnBehalfOf is the `On-Behalf-Of:` trailer: the person an agent acted
+	// for, when gintrack-hub knows it (ADR-043). Empty otherwise.
+	OnBehalfOf string `json:"onBehalfOf,omitempty"`
 	// Extra carries trailers a caller wants beyond the standard set.
 	Extra map[string]string `json:"extra,omitempty"`
 }
@@ -226,6 +229,7 @@ func trailers(f Fields) []string {
 	}
 	add("Tool", f.Tool)
 	add("Agent", f.Agent)
+	add("On-Behalf-Of", f.OnBehalfOf)
 
 	keys := make([]string, 0, len(f.Extra))
 	for k := range f.Extra {

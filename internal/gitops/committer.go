@@ -28,6 +28,11 @@ type Change struct {
 	Paths []string
 	// Fields render the commit message.
 	Fields Fields
+	// Author is the person or agent the write is attributed to. The zero
+	// value keeps the identity from the git configuration, which is what the
+	// companion always does; gintrack-hub sets the authenticated principal
+	// (ADR-043). Writes by different authors never share a commit.
+	Author Identity
 }
 
 // Outcome is the result of committing one batch.
@@ -61,6 +66,10 @@ type CommitterOptions struct {
 	OnResult func(Outcome)
 	// Now is the clock. Nil means time.Now.
 	Now func() time.Time
+	// Committer is the committer identity of every commit, the service
+	// identity of a gintrack-hub. The zero value commits as the author, as
+	// git does by default.
+	Committer Identity
 }
 
 // Committer batches writes into commits.
@@ -99,7 +108,9 @@ type Committer struct {
 
 // batch is the accumulated state of one coalescing key.
 type batch struct {
-	repo   string
+	repo string
+	// author is shared by every change of the batch: it is part of the key.
+	author Identity
 	paths  map[string]bool
 	fields Fields
 	items  map[string]bool
@@ -198,7 +209,7 @@ func (c *Committer) Enqueue(ctx context.Context, change Change) {
 	}
 	ctx = context.WithoutCancel(ctx)
 
-	key := change.Repo + "\x00" + coalesceKey(change.Fields)
+	key := change.Repo + "\x00" + change.Author.String() + "\x00" + coalesceKey(change.Fields)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
@@ -333,9 +344,11 @@ func (c *Committer) commit(ctx context.Context, b *batch) Outcome {
 		return c.report(fail(out, err))
 	}
 	res, err := backend.Commit(ctx, CommitRequest{
-		Paths:   sortedSet(b.paths),
-		Message: msg,
-		Sign:    c.opts.Sign,
+		Paths:     sortedSet(b.paths),
+		Message:   msg,
+		Sign:      c.opts.Sign,
+		Author:    b.author,
+		Committer: c.opts.Committer,
 	})
 	if err != nil {
 		return c.report(fail(out, err))
@@ -375,6 +388,7 @@ func fail(out Outcome, err error) Outcome {
 func newBatch(change Change) *batch {
 	b := &batch{
 		repo:   change.Repo,
+		author: change.Author,
 		paths:  map[string]bool{},
 		items:  map[string]bool{},
 		fields: change.Fields,

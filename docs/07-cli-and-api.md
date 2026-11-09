@@ -5492,7 +5492,8 @@ Commit message templating uses `text/template` against the context defined in
 `06-git-sync.md` (`.ItemID`, `.Title`, `.Type`, `.Status`, `.PrevStatus`, `.ProjectKey`,
 `.Board`, `.Action`, `.Count`, `.User`, `.Date`). Commits also carry the machine-readable
 trailers specified there (`Item:`, `Type:`, `Status:`, `Tool:`), plus `Agent:` when the
-change originated from the MCP server. Every placeholder also has a short
+change originated from the MCP server, and in gintrack-hub `Agent:` and `On-Behalf-Of:` taken
+from the authenticated principal (docs/06 §3.3, ADR-043). Every placeholder also has a short
 lowercase spelling (`{{action}} {{id}}: {{title}}`), bound as a niladic template
 function over the same fields, so both forms render identically.
 

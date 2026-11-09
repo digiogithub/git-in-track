@@ -20,6 +20,11 @@ because a commit list cannot express them.
   MCP endpoint and web app. It syncs on a timer and right after each commit. `gintrack` itself is
   unchanged. Proof of concept only: not part of any release artifact yet.
 - `make build-hub` builds `bin/gintrack-hub`.
+- **gintrack-hub principals** (`GIT-US-0208`, docs/02 §12.2). `auth.principalsFile` names people
+  and agents with the sha256 hashes of their tokens; `gintrack-hub token new` prints a fresh token
+  once. Every write is committed with the principal as author and the hub as committer, and an
+  agent's write carries `Agent:` and `On-Behalf-Of:` trailers. The companion is unchanged: without a
+  principal, commits keep the machine's git identity.
 
 ### Changed
 

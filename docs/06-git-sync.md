@@ -150,6 +150,13 @@ Status: todo -> in_progress
 Tool: gintrack 0.4.1 (companion)
 ```
 
+**Authorship in gintrack-hub.** The companion commits as the git identity of the
+machine. gintrack-hub (ADR-043) commits as its service identity, the committer, on
+behalf of the authenticated principal, the author. An agent's write adds
+`Agent: <agent>`, plus `On-Behalf-Of: <handle>` when the agent acts for a person.
+Writes by two principals never share a commit, even on the same item within the
+debounce window.
+
 **Cross-repository writes.** Moving a card writes the item in its project clone
 and the board in the team repository. Those are two repositories, so they are two
 commits, one in each, and never one commit spanning both — which is also why they

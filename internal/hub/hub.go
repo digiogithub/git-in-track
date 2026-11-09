@@ -53,7 +53,19 @@ func New(ctx context.Context, cfg *Config, deps Deps) (*Hub, error) {
 	h := &Hub{cfg: cfg, log: log}
 	h.syncer = newSyncLoop(time.Duration(cfg.PullInterval), commitPushDelay, log)
 
-	srv, err := server.New(serverOptions(cfg, deps, log, h.syncer.trigger)) //nolint:contextcheck // server.New takes no context; it mounts synchronously and listens only in Start
+	opts := serverOptions(cfg, deps, log, h.syncer.trigger)
+	if cfg.Auth.PrincipalsFile != "" {
+		auth, err := NewAuthenticator(cfg.Auth.PrincipalsFile, log)
+		if err != nil {
+			return nil, err
+		}
+		if opts.Token != "" {
+			log.Warn("auth.principalsFile is set: the single token is ignored; every request needs a principal's token")
+			opts.Token = ""
+		}
+		opts.Authenticate = auth.Authenticate
+	}
+	srv, err := server.New(opts) //nolint:contextcheck // server.New takes no context; it mounts synchronously and listens only in Start
 	if err != nil {
 		return nil, fmt.Errorf("build the server: %w", err)
 	}

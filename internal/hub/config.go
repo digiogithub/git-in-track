@@ -49,14 +49,24 @@ type Config struct {
 	Token string `yaml:"token,omitempty"`
 	// PullInterval is how often every repository is synced with its forge.
 	PullInterval Duration `yaml:"pullInterval,omitempty"`
-	// Git is the identity the hub commits with until commits carry the
-	// authenticated principal (GIT-US-0208).
+	// Git is the hub's service identity: the committer of every commit, and
+	// its author too when no principal is known (single-token mode).
 	Git GitIdentity `yaml:"git,omitempty"`
+	// Auth configures per-principal authentication (GIT-US-0208).
+	Auth Auth `yaml:"auth,omitempty"`
 	// Organization is the one organization this hub serves.
 	Organization Organization `yaml:"organization"`
 }
 
-// GitIdentity is a commit author.
+// Auth configures authentication.
+type Auth struct {
+	// PrincipalsFile lists the principals and the hashes of their tokens.
+	// When set, the single Token is ignored. Relative paths resolve against
+	// the config file.
+	PrincipalsFile string `yaml:"principalsFile,omitempty"`
+}
+
+// GitIdentity is a commit identity.
 type GitIdentity struct {
 	AuthorName  string `yaml:"authorName,omitempty"`
 	AuthorEmail string `yaml:"authorEmail,omitempty"`
@@ -152,6 +162,7 @@ func (c *Config) applyDefaults(base string) {
 		c.Git.AuthorEmail = DefaultAuthorEmail
 	}
 	c.DataDir = resolve(base, c.DataDir)
+	c.Auth.PrincipalsFile = resolve(base, c.Auth.PrincipalsFile)
 	for _, r := range c.Repos() {
 		r.DeployKey = resolve(base, r.DeployKey)
 	}
