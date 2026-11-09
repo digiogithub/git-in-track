@@ -263,6 +263,7 @@ func TestGuardScopes(t *testing.T) {
 	t.Parallel()
 	f := newGrantFixture(t)
 	ana := f.as(t, "ana")
+	proposer := f.as(t, "proposer")
 	ws := f.guard(t, "")
 
 	t.Run("fan-out reads see only the readable project", func(t *testing.T) {
@@ -344,6 +345,26 @@ func TestGuardScopes(t *testing.T) {
 		}
 		if _, err := callAs(prop, t, ws, "comment.add", map[string]any{"id": "ACME-US-0001", "body": "hi", "author": "x"}); err != nil {
 			t.Errorf("comment.add with propose = %v", err)
+		}
+	})
+
+	t.Run("memory.put keeps a writer's status and forces a proposer's", func(t *testing.T) {
+		out, err := callAs(ana, t, ws, "memory.put", map[string]any{"project": "ACME", "items": []any{
+			map[string]any{"key": "writer-fact", "content": "Written.", "status": "active"},
+		}})
+		if err != nil || !strings.Contains(out, `"outcome":"created"`) {
+			t.Fatalf("memory.put as a writer = %s, %v", out, err)
+		}
+		if got, _ := callAs(ana, t, ws, "memory.get", map[string]any{"project": "ACME", "key": "writer-fact"}); !strings.Contains(got, `"status":"active"`) {
+			t.Errorf("a writer's memory = %s, want active", got)
+		}
+		if _, err := callAs(proposer, t, ws, "memory.put", map[string]any{"project": "ACME", "items": []any{
+			map[string]any{"key": "proposed-fact", "content": "Proposed.", "status": "active"},
+		}}); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := callAs(ana, t, ws, "memory.get", map[string]any{"project": "ACME", "key": "proposed-fact"}); !strings.Contains(got, `"status":"proposed"`) {
+			t.Errorf("a proposer's memory = %s, want proposed", got)
 		}
 	})
 

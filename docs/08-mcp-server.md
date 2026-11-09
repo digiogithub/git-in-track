@@ -1351,6 +1351,27 @@ in the UI or the CLI, and an agent may only move an item to `cancelled`.
 
 ---
 
+### 4.x gintrack-hub tools
+
+`gintrack-hub` (ADR-043, docs/02 §12.2) registers nine more tools on its `/mcp` endpoint. The
+local `gintrack mcp` does not, so the counts above do not include them. Every call they make goes
+through the hub's Guard: the session's principal must hold the grant, writes are committed with it
+as author, and a principal that may only propose gets proposals.
+
+- **`write_kb_page`** `{project, path, text, rev?}`: creates a page under the project's
+  documentation folder, or replaces one quoting the `rev` `get_kb_page` returned. Without a `rev`,
+  an existing page is never overwritten (`already_exists`).
+- **`add_memory`** and **`propose_memory`** `{project, key, content, title?, labels?, supersedes?,
+  sourceRef?}`: record a fact (docs/03 §22). `add_memory` makes it active when the principal may
+  write, and otherwise records a proposal and says so in `note`; `propose_memory` always proposes.
+- **`update_memory`** `{project, key, rev, content, …}` and **`forget_memory`** `{project, key,
+  rev?}`: change or withdraw a memory under its `rev`.
+- **`accept_memory`** and **`reject_memory`** `{id, rev}`: review a proposal, as the inbox does.
+- **`search_memory`** `{project, query?, statuses?, limit?}`: the memories of a scope containing
+  the words, active ones by default.
+- **`project_context`** `{project, budget?}`: the active memories and the knowledge-base page
+  titles of a project, and the number of proposals waiting, inside an approximate token budget.
+
 ## 5. Resources — *planned*
 
 Resources let clients attach context without a tool call and let them subscribe to changes.

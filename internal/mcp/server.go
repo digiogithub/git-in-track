@@ -68,6 +68,9 @@ type WriteEvent struct {
 	Method string
 	// ItemID is the item that changed, empty for a page or a board.
 	ItemID string
+	// Project is the project or team a write without an item id is about: a
+	// knowledge-base page or a memory batch (gintrack-hub tools).
+	Project string
 	// Op is "created", "updated", "moved" or "commented".
 	Op string
 	// Result is the value the core returned, carrying the WriteSet the host
@@ -89,6 +92,10 @@ type Options struct {
 	// tools/list, not merely rejected: an agent cannot attempt what it cannot
 	// see (docs/08 section 7.1).
 	AllowWrite bool
+	// HubTools registers the gintrack-hub tools: write_kb_page, the memory
+	// tools and project_context (GIT-US-0212). The local `gintrack mcp` leaves
+	// it off, so its tool surface does not change.
+	HubTools bool
 	// Roots are the host directories the repositories are mounted at, used to
 	// confine path arguments. Empty performs the lexical check only, which is
 	// what a browser-backed or in-memory host wants.
@@ -113,6 +120,7 @@ type Server struct {
 	core       Dispatcher
 	agent      string
 	allowWrite bool
+	hubTools   bool
 	guard      *PathGuard
 	afterWrite func(ctx context.Context, ev WriteEvent)
 	beforeCall func(ctx context.Context)
@@ -146,6 +154,7 @@ func New(opts Options) (*Server, error) {
 		core:       opts.Core,
 		agent:      agent,
 		allowWrite: opts.AllowWrite,
+		hubTools:   opts.HubTools,
 		guard:      NewPathGuard(opts.Roots...),
 		afterWrite: opts.AfterWrite,
 		beforeCall: opts.BeforeCall,

@@ -150,6 +150,7 @@ func serverOptions(cfg *Config, deps Deps, log *slog.Logger, onCommit func()) se
 		MCPHTTP:       true,
 		MCPAllowWrite: true,
 		MCPAgent:      "gintrack-hub",
+		MCPHubTools:   true,
 		OnCommit:      func(string, string) { onCommit() },
 	}
 }
