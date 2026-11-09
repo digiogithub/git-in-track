@@ -2,12 +2,12 @@
 id: GIT-EP-0034
 type: epic
 title: gintrack hub proof of concept
-status: todo
+status: in_progress
 priority: high
 author: claude-code
 labels: [server, core, mcp, security]
 created: 2026-11-08T17:59:20Z
-updated: 2026-11-08T17:59:20Z
+updated: 2026-11-09T13:00:00Z
 ---
 
 ## Description

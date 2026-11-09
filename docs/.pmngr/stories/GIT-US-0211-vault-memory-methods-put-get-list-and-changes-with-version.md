@@ -2,7 +2,7 @@
 id: GIT-US-0211
 type: story
 title: "Vault memory methods: put, get, list and changes with version and dedup"
-status: in_review
+status: done
 priority: high
 parent: GIT-EP-0034
 author: claude-code
@@ -10,7 +10,7 @@ assignees: [claude-code]
 labels: [core, agent-ok]
 estimate: 5
 created: 2026-11-08T17:59:20Z
-updated: 2026-11-09T01:30:00Z
+updated: 2026-11-09T13:00:00Z
 links:
   - { kind: blocked_by, target: GIT-US-0210 }
 ---
@@ -21,11 +21,11 @@ Add `memory.put` (batch), `memory.get`, `memory.list` and `memory.changes{since,
 
 ## Acceptance Criteria
 
-- [ ] Upserting the same content twice reports a duplicate and writes nothing.
-- [ ] `version` is strictly increasing per project and survives an index rebuild.
-- [ ] `memory.changes` with a cursor returns only newer records and tombstones, in version order.
-- [ ] A stale `rev` or `base_version` fails with `stale_revision`.
-- [ ] Pure Go: compiles under `GOOS=js GOARCH=wasm`.
+- [x] Upserting the same content twice reports a duplicate and writes nothing.
+- [x] `version` is strictly increasing per project and survives an index rebuild.
+- [x] `memory.changes` with a cursor returns only newer records and tombstones, in version order.
+- [x] A stale `rev` or `base_version` fails with `stale_revision`.
+- [x] Pure Go: compiles under `GOOS=js GOARCH=wasm`.
 
 ## Notes
 

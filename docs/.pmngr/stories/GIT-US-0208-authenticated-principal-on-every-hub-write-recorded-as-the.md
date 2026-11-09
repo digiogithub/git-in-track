@@ -2,7 +2,7 @@
 id: GIT-US-0208
 type: story
 title: Authenticated principal on every hub write, recorded as the commit author
-status: in_review
+status: done
 priority: high
 parent: GIT-EP-0034
 author: claude-code
@@ -10,7 +10,7 @@ assignees: [claude-code]
 labels: [server, security, git, agent-ok]
 estimate: 5
 created: 2026-11-08T17:59:20Z
-updated: 2026-11-09T00:30:00Z
+updated: 2026-11-09T13:00:00Z
 links:
   - { kind: blocked_by, target: GIT-US-0207 }
 ---
@@ -21,12 +21,12 @@ Replace the single bearer token with an `Authenticator` that resolves opaque per
 
 ## Acceptance Criteria
 
-- [ ] Design (types, signatures, token file format) approved by the supervisor before implementation.
-- [ ] A write through REST or MCP commits with the principal's name and email as author; an agent write carries `Agent:`.
-- [ ] Two principals editing the same item within the debounce window produce two commits.
-- [ ] Token hashes only on disk; a wrong or revoked token is 401 and never reaches the vault.
-- [ ] The companion's behaviour is unchanged (no principal → today's git identity).
-- [ ] Table-driven tests in `internal/gitops` and the hub auth package.
+- [x] Design (types, signatures, token file format) approved by the supervisor before implementation.
+- [x] A write through REST or MCP commits with the principal's name and email as author; an agent write carries `Agent:`.
+- [x] Two principals editing the same item within the debounce window produce two commits.
+- [x] Token hashes only on disk; a wrong or revoked token is 401 and never reaches the vault.
+- [x] The companion's behaviour is unchanged (no principal → today's git identity).
+- [x] Table-driven tests in `internal/gitops` and the hub auth package.
 
 ## Notes
 
