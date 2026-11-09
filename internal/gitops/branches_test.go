@@ -88,7 +88,7 @@ func TestJujutsuBranches(t *testing.T) {
 			f.commit("chore: base")
 			f.bookmark("base", "@-")
 			f.remote()
-			f.run("git", "push", "--allow-new", "-b", "base")
+			f.pushNew("base")
 			f.write("b.md", "b\n")
 			f.commit("feat: main")
 			f.bookmark("main", "@-")

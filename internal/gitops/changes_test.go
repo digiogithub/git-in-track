@@ -184,7 +184,7 @@ func TestJujutsuChangedFiles(t *testing.T) {
 			f.commit("chore: base")
 			f.bookmark("base", "@-")
 			f.remote()
-			f.run("git", "push", "--allow-new", "-b", "base")
+			f.pushNew("base")
 			applyMainChanges(t, f.dir)
 			f.commit("feat: main")
 			f.bookmark("main", "@-")
