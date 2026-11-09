@@ -46,7 +46,7 @@ because a commit list cannot express them.
   store per repository whose watermark is the last commit applied, so a restart resumes where it
   stopped. `search.semantic` and the semantic half of `GET /search` answer from it, narrowed to the
   readable projects, and drop any hit whose file changed since it was indexed. The store is
-  `github.com/digiogithub/pando/rag` v0.1.0, one SQLite index per repository in the cache, with
+  `github.com/digiogithub/pando/rag` v0.1.1, one SQLite index per repository in the cache, with
   `modernc.org/sqlite` (pure Go) as its driver.
 - **gintrack-hub MCP tools** (`GIT-US-0212`, docs/08 §4.x). `write_kb_page` (never overwrites
   without a `rev`), `add_memory`, `propose_memory`, `update_memory`, `forget_memory`,

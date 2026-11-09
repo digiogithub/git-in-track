@@ -6,7 +6,7 @@ require (
 	github.com/cloudflare/cloudflared v0.0.0-20261027105943-a1dd44f389c6
 	github.com/coder/websocket v1.8.15
 	github.com/coreos/go-oidc/v3 v3.17.0
-	github.com/digiogithub/pando/rag v0.1.0
+	github.com/digiogithub/pando/rag v0.1.1
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/go-chi/chi/v5 v5.5.0
 	github.com/go-git/go-billy/v5 v5.9.0
