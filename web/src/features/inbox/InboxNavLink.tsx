@@ -26,7 +26,11 @@ export type InboxNavLinkProps = {
  */
 export function InboxNavLink({ project, className, activeClassName }: InboxNavLinkProps) {
   const projectQuery = useProject(project);
-  const enabled = projectQuery.isSuccess && hasTriageStatus(projectQuery.data);
+  // A knowledge-only project declares no workflow, yet its memory proposals
+  // wait in the triage category of the fixed memory lifecycle (ADR-044).
+  const enabled =
+    projectQuery.isSuccess &&
+    (hasTriageStatus(projectQuery.data) || projectQuery.data?.kind === 'knowledge');
   const pending = useInboxPending(project, enabled);
   useInboxEvents(project);
 

@@ -2,14 +2,15 @@
 id: GIT-US-0216
 type: story
 title: Inbox lists memory proposals and the UI hides backlog for knowledge projects
-status: todo
+status: in_review
 priority: medium
 parent: GIT-EP-0034
 author: claude-code
+assignees: [claude-code]
 labels: [web, agent-ok]
 estimate: 3
 created: 2026-11-08T17:59:20Z
-updated: 2026-11-08T17:59:20Z
+updated: 2026-11-09T08:00:00Z
 links:
   - { kind: blocked_by, target: GIT-US-0210 }
 ---

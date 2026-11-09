@@ -184,6 +184,12 @@ is marked *not cloned* and shows the `git clone` URL — it is listed, never hid
 when the file its cards come from was last generated (GIT-US-0019). The provider
 exposes `listSnapshots()` and `refreshSnapshots()` in both modes.
 
+**Memory proposals and knowledge-only projects (as built, story GIT-US-0216)** — the inbox lists
+memory proposals (ADR-044) beside ordinary submissions, with the memory key and its source in the
+detail pane. *Accept* on a memory decides in one click, because a memory has no status or parent
+to pick: it becomes active. A project whose `project.yaml` says `kind: knowledge` shows its docs and
+its inbox in the sidebar, but not its backlog or specs links.
+
 **Enable inbox (as built, story GIT-US-0100)** — each project chip in a repository card carries an
 *Enable inbox* button when the project has no inbox yet: it declares no status in the `triage`
 category (ADR-033), it opened writable, its repository is ready and the workspace is not read-only.

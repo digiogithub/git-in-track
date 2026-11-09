@@ -897,6 +897,9 @@ func (v *Vault) projectList() []projectSummary {
 			Writable:    writable,
 			Diagnostics: p.Diagnostics,
 		}
+		if p.Config != nil && p.Config.IsKnowledge() {
+			summary.Kind = string(core.ProjectKnowledge)
+		}
 		if p.ConfigPath != "" {
 			if data, err := v.fs.ReadFile(p.ConfigPath); err == nil {
 				summary.ConfigRev = string(core.ComputeRev(data))

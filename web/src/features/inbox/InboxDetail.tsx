@@ -81,6 +81,12 @@ export function InboxDetail({ item, projectKey, project, today }: InboxDetailPro
         <Meta label="Arrived via">{item.inbox?.source ?? 'unknown'}</Meta>
         <Meta label="Received">{formatDate(item.inbox?.received ?? item.created)}</Meta>
         <Meta label="Submitted by">{item.author ?? '—'}</Meta>
+        {item.memory ? (
+          <>
+            <Meta label="Memory key">{item.memory.key}</Meta>
+            {item.memory.source?.ref ? <Meta label="Source">{item.memory.source.ref}</Meta> : null}
+          </>
+        ) : null}
         <Meta label="Open item">
           <Link
             to="/p/$project/items/$id"

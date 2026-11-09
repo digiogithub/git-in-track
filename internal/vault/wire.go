@@ -162,7 +162,10 @@ type projectSummary struct {
 	Priorities []core.Priority       `json:"priorities"`
 	ItemCounts map[core.ItemType]int `json:"itemCounts"`
 
-	BacklogPath string            `json:"backlogPath,omitempty"`
+	BacklogPath string `json:"backlogPath,omitempty"`
+	// Kind is "knowledge" for a knowledge-only project (ADR-044); empty for a
+	// backlog.
+	Kind        string            `json:"kind,omitempty"`
 	Writable    bool              `json:"writable"`
 	Diagnostics []core.Diagnostic `json:"diagnostics,omitempty"`
 

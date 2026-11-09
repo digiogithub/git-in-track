@@ -32,6 +32,7 @@ import { Input } from '@/components/ui/input';
 import { Logo } from '@/components/ui/logo';
 import { ThemeToggle } from '@/components/ui/theme-toggle';
 import { ToastProvider } from '@/components/ui/toast';
+import { useProject } from '@/features/backlog/queries';
 import { InboxNavLink } from '@/features/inbox/InboxNavLink';
 import { SyncJobToasts } from '@/features/sync/SyncJobToasts';
 import { UpdateNotice } from '@/features/update/UpdateNotice';
@@ -330,15 +331,17 @@ function RepoNav({ rows }: { rows: RepoInfo[] }) {
                 <ul className="space-y-0.5 border-l border-sidebar-border pl-2">
                   {repo.projects.map((project) => (
                     <li key={project} className="space-y-0.5">
-                      <Link
-                        to="/p/$project/items"
-                        params={{ project }}
-                        className={cn(navLinkClass, 'py-1 text-[0.8125rem]')}
-                        activeProps={{ className: navLinkActiveClass }}
-                      >
-                        <ListChecks aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
-                        <span className="truncate">{project} backlog</span>
-                      </Link>
+                      <BacklogOnly project={project}>
+                        <Link
+                          to="/p/$project/items"
+                          params={{ project }}
+                          className={cn(navLinkClass, 'py-1 text-[0.8125rem]')}
+                          activeProps={{ className: navLinkActiveClass }}
+                        >
+                          <ListChecks aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+                          <span className="truncate">{project} backlog</span>
+                        </Link>
+                      </BacklogOnly>
                       <Link
                         to="/p/$project/kb/$"
                         params={{ project, _splat: '' }}
@@ -348,15 +351,17 @@ function RepoNav({ rows }: { rows: RepoInfo[] }) {
                         <BookOpen aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
                         <span className="truncate">{project} docs</span>
                       </Link>
-                      <Link
-                        to="/p/$project/specs"
-                        params={{ project }}
-                        className={cn(navLinkClass, 'py-1 text-[0.8125rem]')}
-                        activeProps={{ className: navLinkActiveClass }}
-                      >
-                        <FileCheck aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
-                        <span className="truncate">{project} specs</span>
-                      </Link>
+                      <BacklogOnly project={project}>
+                        <Link
+                          to="/p/$project/specs"
+                          params={{ project }}
+                          className={cn(navLinkClass, 'py-1 text-[0.8125rem]')}
+                          activeProps={{ className: navLinkActiveClass }}
+                        >
+                          <FileCheck aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+                          <span className="truncate">{project} specs</span>
+                        </Link>
+                      </BacklogOnly>
                       {/* Renders nothing for a project without a triage status:
                           such a project has no inbox at all (ADR-033). */}
                       <InboxNavLink
@@ -542,4 +547,15 @@ function ReadOnlyBanner() {
       to edit from any browser.
     </Banner>
   );
+}
+
+/**
+ * Renders its children for a backlog project and nothing for a knowledge-only
+ * one, which has pages and memory but no backlog, boards, sprints or specs
+ * (ADR-044). Until the project summary loads it renders the links, as before.
+ */
+export function BacklogOnly({ project, children }: { project: string; children: ReactNode }) {
+  const summary = useProject(project);
+  if (summary.data?.kind === 'knowledge') return null;
+  return <>{children}</>;
 }
