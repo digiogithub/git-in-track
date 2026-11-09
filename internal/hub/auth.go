@@ -51,6 +51,9 @@ type PrincipalEntry struct {
 	OnBehalfOf string   `yaml:"onBehalfOf,omitempty"`
 	Tokens     []string `yaml:"tokens"`
 	Disabled   bool     `yaml:"disabled,omitempty"`
+	// Grants are the scopes the principal may act in (GIT-US-0209). None
+	// means nothing is visible.
+	Grants []GrantEntry `yaml:"grants,omitempty"`
 }
 
 // NewToken returns a fresh token and the hash line that stores it.
@@ -108,6 +111,15 @@ func ParsePrincipals(raw []byte) (map[string]principalRecord, error) {
 		if kind == principal.Human && (e.Agent != "" || e.OnBehalfOf != "") {
 			fail(i, "agent", "agent and onBehalfOf only apply to an agent")
 		}
+		var grants Grants
+		for j, ge := range e.Grants {
+			g, err := parseGrant(fmt.Sprintf("principals[%d].grants[%d]", i, j), ge)
+			if err != nil {
+				errs = append(errs, err)
+				continue
+			}
+			grants.entries = append(grants.entries, g)
+		}
 		for j, h := range e.Tokens {
 			switch {
 			case !tokenHashRE.MatchString(h):
@@ -121,6 +133,7 @@ func ParsePrincipals(raw []byte) (map[string]principalRecord, error) {
 						Agent: e.Agent, OnBehalfOf: e.OnBehalfOf,
 					},
 					disabled: e.Disabled,
+					grants:   grants,
 				}
 			}
 		}
@@ -143,6 +156,7 @@ func ParsePrincipals(raw []byte) (map[string]principalRecord, error) {
 type principalRecord struct {
 	p        principal.Principal
 	disabled bool
+	grants   Grants
 }
 
 // Authenticator resolves tokens through a principals file that it reloads
@@ -206,6 +220,19 @@ func (a *Authenticator) Authenticate(token string) (principal.Principal, error) 
 		return principal.Principal{}, fmt.Errorf("%w: %s", errDisabled, rec.p.Handle)
 	}
 	return rec.p, nil
+}
+
+// GrantsOf returns the grants of a principal, as the file currently in force
+// lists them; an unknown or disabled handle has none.
+func (a *Authenticator) GrantsOf(handle string) Grants {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, rec := range a.byHash {
+		if rec.p.Handle == handle && !rec.disabled {
+			return rec.grants
+		}
+	}
+	return Grants{}
 }
 
 // reload re-reads the file when its size or modification time changed. The

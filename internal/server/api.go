@@ -24,6 +24,9 @@ func (s *Server) mountAPI(api chi.Router) {
 
 	api.Group(func(p chi.Router) {
 		p.Use(s.bearerAuth)
+		if s.opts.Middleware != nil {
+			p.Use(s.opts.Middleware)
+		}
 
 		p.Get("/capabilities", s.handleCapabilities)
 		// Whether a newer gintrack release exists (GIT-US-0195).
@@ -184,7 +187,7 @@ func (s *Server) call(w http.ResponseWriter, r *http.Request, m *mount, method s
 		failProblem(w, r, codeInvalidRequest, fmt.Sprintf("The request could not be encoded: %v", err))
 		return nil, false
 	}
-	result, err := m.vlt.Dispatch(r.Context(), method, raw)
+	result, err := s.guarded(m.vlt, m.id).Dispatch(r.Context(), method, raw)
 	if err != nil {
 		writeVaultError(w, r, err)
 		return nil, false

@@ -35,7 +35,7 @@ func (s *Server) handleRetroList(w http.ResponseWriter, r *http.Request) {
 		"state":  r.URL.Query().Get("state"),
 		"team":   teamOf(r),
 	}
-	result, err := s.repos.workspace().Dispatch(r.Context(), "retro.list", mustJSON(params))
+	result, err := s.core().Dispatch(r.Context(), "retro.list", mustJSON(params))
 	if err != nil {
 		writeVaultError(w, r, err)
 		return
@@ -46,7 +46,7 @@ func (s *Server) handleRetroList(w http.ResponseWriter, r *http.Request) {
 // handleRetroGet serves GET /api/v1/retros/{id}, with the retro's revision as
 // ETag.
 func (s *Server) handleRetroGet(w http.ResponseWriter, r *http.Request) {
-	result, err := s.repos.workspace().Dispatch(r.Context(), "retro.get",
+	result, err := s.core().Dispatch(r.Context(), "retro.get",
 		mustJSON(map[string]string{"id": chi.URLParam(r, "id"), "team": teamOf(r)}))
 	if err != nil {
 		writeVaultError(w, r, err)
@@ -67,7 +67,7 @@ func (s *Server) handleRetroCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body.Team = teamFallback(r, body.Team)
-	result, err := s.repos.workspace().Dispatch(r.Context(), "retro.create", mustJSON(body))
+	result, err := s.core().Dispatch(r.Context(), "retro.create", mustJSON(body))
 	if err != nil {
 		writeVaultError(w, r, err)
 		return
@@ -91,7 +91,7 @@ func (s *Server) handleRetroUpdate(w http.ResponseWriter, r *http.Request) {
 		TeamScope: vault.TeamScope{Team: teamOf(r)},
 		ID:        chi.URLParam(r, "id"), Rev: rev, Patch: patch,
 	}
-	result, err := s.repos.workspace().Dispatch(r.Context(), "retro.update", mustJSON(params))
+	result, err := s.core().Dispatch(r.Context(), "retro.update", mustJSON(params))
 	if err != nil {
 		writeVaultError(w, r, err)
 		return
@@ -126,7 +126,7 @@ func (s *Server) handleRetroPromote(w http.ResponseWriter, r *http.Request) {
 		ID:        chi.URLParam(r, "id"), Action: body.Action,
 		Project: body.Project, Labels: body.Labels, Rev: rev,
 	}
-	result, err := s.repos.workspace().Dispatch(r.Context(), "retro.promote", mustJSON(params))
+	result, err := s.core().Dispatch(r.Context(), "retro.promote", mustJSON(params))
 	if err != nil {
 		writeVaultError(w, r, err)
 		return

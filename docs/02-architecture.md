@@ -1057,8 +1057,41 @@ forge (GitHub, Gitea…) ⇄ deploy key ⇄ <dataDir>/repos/<id>  (one clone per
   from, `gitState.enqueue`: the principal is the author, the hub's `git`
   identity the committer, and an agent adds `Agent:` and `On-Behalf-Of:`
   trailers. This holds for REST and for MCP tools over HTTP alike.
-- **Not yet.** Grants, memory, semantic search and OAuth follow in the
-  stories of `GIT-EP-0034`.
+- **Authorization** (`GIT-US-0209`). Each principal in the principals file
+  lists `grants`: a scope (`project/<key>`, `org/<team>`, `project/*`,
+  `org/*`) and its permissions (`read`, `propose`, `write`, `delete`,
+  `admin`). Nothing is granted by default. Enforcement happens in three places:
+  - **The Guard** (`internal/hub/guard.go`) wraps every core call a request
+    makes: REST through a mount's vault or the workspace, and the MCP tools.
+    - Every CoreApi method has a policy entry (permission and how its scope
+      is found); a method without one is refused.
+    - A call whose scope cannot be resolved is refused. It never reaches the
+      workspace's route fallback.
+    - Fan-out reads get the reachable projects injected, and reads are
+      post-filtered: an item, link, page or summary out of scope is removed.
+    - A read out of scope answers `not_found`, a write out of scope
+      `forbidden`, and the reason is logged.
+    - Author fields are forced to the principal. `propose` without `write`
+      can comment and propose, not write.
+    - `GET /search` narrows both halves through `Options.SearchScope`, so the
+      semantic backend receives the filter.
+  - **The route allowlist** (`internal/hub/routes.go`) classifies every
+    `/api/v1` route:
+    - core routes reach only guarded calls;
+    - `/repos`, `/workspaces` and `/capabilities` are served from the mount
+      registry and post-filtered;
+    - operator surfaces (sync, git, settings, YouTrack, agent, tunnel,
+      managed search) need `admin`;
+    - an unclassified route is refused.
+  - **The event stream** delivers an event only when everything it names is
+    readable by the connection's principal. It re-authenticates the
+    connection's token periodically and closes the stream once the token is
+    revoked or its principal disabled.
+
+  Drift tests parse the CoreApi dispatch switches and walk the router, so a
+  new method or route without a policy fails `make test`.
+- **Not yet.** Memory over MCP and `alchemai.memory.v2`, semantic search and
+  OAuth follow in the stories of `GIT-EP-0034`.
 
 ---
 

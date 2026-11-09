@@ -76,8 +76,8 @@ func writePrincipals(t *testing.T, dir string) (path string, tokens map[string]s
 	t.Helper()
 	tokens = map[string]string{"ana": "gth_ana", "pando-ana": "gth_pando", "old": "gth_old"}
 	text := `principals:
-  - {handle: ana, name: Ana García, email: ana@acme.example, kind: human, tokens: ["` + HashToken(tokens["ana"]) + `"]}
-  - {handle: pando-ana, name: Pando (Ana), email: pando-ana@agents.acme.example, kind: agent, agent: pando, onBehalfOf: ana, tokens: ["` + HashToken(tokens["pando-ana"]) + `"]}
+  - {handle: ana, name: Ana García, email: ana@acme.example, kind: human, tokens: ["` + HashToken(tokens["ana"]) + `"], grants: [{scope: project/acme, perms: [read, write]}]}
+  - {handle: pando-ana, name: Pando (Ana), email: pando-ana@agents.acme.example, kind: agent, agent: pando, onBehalfOf: ana, tokens: ["` + HashToken(tokens["pando-ana"]) + `"], grants: [{scope: project/acme, perms: [read, write]}]}
   - {handle: old, name: Old, email: old@acme.example, kind: human, disabled: true, tokens: ["` + HashToken(tokens["old"]) + `"]}
 `
 	path = filepath.Join(dir, "principals.yaml")

@@ -35,8 +35,10 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/digiogithub/git-in-track/internal/config"
+	"github.com/digiogithub/git-in-track/internal/mcp"
 	"github.com/digiogithub/git-in-track/internal/pando/supervisor"
 	"github.com/digiogithub/git-in-track/internal/principal"
+	"github.com/digiogithub/git-in-track/internal/vault"
 )
 
 // DefaultPort is the loopback port the companion listens on.
@@ -165,6 +167,29 @@ type Options struct {
 	// neither the error nor the log may quote the token. Nil keeps the
 	// companion's single-token behaviour.
 	Authenticate func(token string) (principal.Principal, error)
+	// Guard, when set, wraps every core call a request makes — REST through
+	// one mount's vault or the workspace, and the MCP tools — so a host can
+	// authorize it (gintrack-hub, GIT-US-0209). mount is the repository id,
+	// or "" for the workspace. Calls the server makes on its own behalf
+	// (sync, snapshot refresh) are not wrapped. Nil leaves every call as is.
+	Guard func(next mcp.Dispatcher, mount string) mcp.Dispatcher
+	// SearchScope, when set, narrows the projects GET /search covers, exact
+	// and semantic halves alike, to the ones the request may read. An error
+	// answers 404. Nil searches what was asked.
+	SearchScope func(ctx context.Context, asked []string) ([]string, error)
+	// Middleware, when set, runs on every /api/v1 route after authentication,
+	// with the principal in the request context. gintrack-hub uses it for its
+	// route allowlist and to filter responses that do not come from the core
+	// (GIT-US-0209). Nil adds nothing.
+	Middleware func(http.Handler) http.Handler
+	// EventFilter, when set, decides per connection whether an event reaches
+	// it; ctx carries the connection's principal. The event stream is
+	// otherwise broadcast to every client. Nil delivers everything.
+	EventFilter func(ctx context.Context, ev Event) bool
+	// RevalidateEvery is how often a long-lived event stream re-runs
+	// Authenticate on the token it was opened with, closing the stream when
+	// the token stopped resolving. Zero means the ping interval.
+	RevalidateEvery time.Duration
 
 	// The managed-Pando seams. Production leaves them nil; a test replaces them
 	// so that no process is spawned.
@@ -629,6 +654,20 @@ func (s *Server) bearerAuth(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
+
+// guarded wraps next with the host's Guard, if any.
+func (s *Server) guarded(next mcp.Dispatcher, mount string) mcp.Dispatcher {
+	if s.opts.Guard == nil {
+		return next
+	}
+	return s.opts.Guard(next, mount)
+}
+
+// Workspace returns the workspace the server serves.
+func (s *Server) Workspace() *vault.Workspace { return s.repos.workspace() }
+
+// core is the workspace as a request may reach it.
+func (s *Server) core() mcp.Dispatcher { return s.guarded(s.repos.workspace(), "") }
 
 // principalAuth resolves the request's token to a principal and runs next
 // with it in the context. The token comes from the Authorization header; the

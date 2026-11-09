@@ -340,7 +340,7 @@ func (s *Server) handleItemMove(w http.ResponseWriter, r *http.Request) {
 // because the two halves of the answer live in different repositories.
 func (s *Server) handleItemReferences(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	result, err := s.repos.workspace().Dispatch(r.Context(), "item.references",
+	result, err := s.core().Dispatch(r.Context(), "item.references",
 		mustJSON(vault.ItemReferencesParams{ID: id, Team: teamOf(r)}))
 	if err != nil {
 		writeVaultError(w, r, err)
@@ -567,6 +567,14 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	// and several clones answers one query instead of one per repository
 	// (GIT-US-0016).
 	text := q.Get("q")
+	if s.opts.SearchScope != nil {
+		narrowed, err := s.opts.SearchScope(r.Context(), projects)
+		if err != nil {
+			failProblem(w, r, codeNotFound, "No mounted repository exposes that project.")
+			return
+		}
+		projects = narrowed
+	}
 	hits, err := s.repos.workspace().Search(r.Context(), text, limit, projects)
 	if err != nil {
 		writeVaultError(w, r, err)
